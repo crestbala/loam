@@ -33,6 +33,111 @@ let mem: WebAssembly.Memory | null = null;
   if (Math.abs(whole.d - (half.d + rest.d)) > 1e-9) throw new Error("fling: distance depends on frame rate");
 }
 
+{
+  // The analytics host, on a fake browser: a clock to move and a tab to hide.
+  const store = new Map<string, string>();
+  const posts: { vid: string; events: Record<string, unknown>[] }[] = [];
+  let clock = 1_000_000;
+  let next = 0;
+  let visible = true;
+  let blocked = false;
+  let show = () => {};
+  let hide = () => {};
+  const env = {
+    now: () => clock,
+    id: () => `id${++next}`,
+    get: (k: string) => store.get(k) ?? null,
+    set: (k: string, v: string) => void store.set(k, v),
+    remove: (k: string) => void store.delete(k),
+    after: () => 1,
+    cancel: () => {},
+    post: (_url: string, body: string) => void posts.push(JSON.parse(body)),
+    visible: () => visible,
+    width: () => 1200,
+    referrer: () => "news.example",
+    blocked: () => blocked,
+    watch: (s: () => void, h: () => void) => {
+      show = s;
+      hide = h;
+    },
+  };
+  type Tracker = {
+    start(url: string, local: boolean): void;
+    send(kind: number, name: string, data: string): void;
+    optOut(off: boolean): void;
+    optedOut(): boolean;
+  };
+  const make = (globalThis as Record<string, unknown>).zeusTracker as (e: typeof env) => Tracker;
+  const check = (ok: boolean, what: string) => {
+    if (!ok) throw new Error(`tracker: ${what}`);
+  };
+  const events = () => posts.flatMap((p) => p.events);
+  const hideTab = () => {
+    visible = false;
+    hide();
+  };
+  const showTab = () => {
+    visible = true;
+    show();
+  };
+
+  const t = make(env);
+  t.start("/api/track", false);
+  t.send(0, "/", "");
+  clock += 3000;
+  t.send(1, "Run", "");
+  t.send(0, "/language", "");
+  clock += 2000;
+  hideTab();
+  clock += 60_000;
+  showTab();
+  clock += 500;
+  hideTab();
+  const e = events();
+  check(e.map((x) => x.k).join() === "page,click,leave,page,leave,leave", `order ${e.map((x) => x.k)}`);
+  check(e[0].ref === "news.example", "first page keeps the referrer");
+  check(!("ref" in e[3]), "a later page has no referrer");
+  check(e[1].path === "/" && e[1].name === "Run", "a click names its control and page");
+  check(e[2].ms === 3000 && e[2].path === "/", "time on a page");
+  check(e[3].pv !== e[0].pv, "each view has its own id");
+  check(e[4].ms === 2000 && e[5].ms === 500, "hidden time does not count");
+  check(new Set(e.map((x) => x.sid)).size === 1, "one session");
+
+  // Thirty idle minutes: the same visitor, a new visit, counted as a page.
+  const vid = posts[0].vid;
+  clock += 31 * 60 * 1000;
+  showTab();
+  hideTab();
+  const later = events().filter((x) => x.sid !== e[0].sid);
+  check(later[0].k === "page" && later[0].path === "/language", "a return opens a new session");
+  check(later[0].ref === "news.example", "a new session keeps its referrer");
+  check(posts.at(-1)!.vid === vid, "the visitor survives the session");
+
+  // Twenty events go out without waiting for the timer.
+  posts.length = 0;
+  showTab();
+  for (let i = 0; i < 20; i++) t.send(2, "e", "");
+  check(posts.length === 1 && posts[0].events.length === 20, "a full batch flushes");
+
+  // Opted out: nothing is sent and the ids are gone.
+  t.optOut(true);
+  check(t.optedOut() && !store.has("zeus.track.id"), "opting out forgets the visitor");
+  posts.length = 0;
+  t.send(0, "/x", "");
+  t.send(1, "y", "");
+  hideTab();
+  check(posts.length === 0, "an opted out browser sends nothing");
+  t.optOut(false);
+  check(!t.optedOut(), "opting back in");
+
+  // A blocked browser (Global Privacy Control, a bot) never starts.
+  blocked = true;
+  const b = make(env);
+  b.start("/api/track", false);
+  b.send(0, "/", "");
+  check(!store.has("zeus.track.id") && posts.length === 0, "a blocked browser sends nothing");
+}
+
 const decodeFrame = (globalThis as Record<string, unknown>).zeusDecodeFrame as (
   buf: ArrayBuffer,
   head: number,

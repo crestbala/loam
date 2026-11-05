@@ -1265,6 +1265,42 @@ fn link_of(id: int) -> string {
     return ""
 }
 
+/// The first text under `id`, depth first. Stops at input fields: what a user
+/// typed is not a control's name.
+fn click_text(id: int) -> string {
+    let k = int(nodes.tree[id].kind)
+    if k == 10 {
+        return ""
+    }
+    if (k == 3 || k == 4) && nodes.look[id].text.len > 0 {
+        return nodes.look[id].text
+    }
+    let kids = nodes.tree[id].kids
+    for i in 0..kids.len {
+        let t = click_text(kids[i])
+        if t.len > 0 {
+            return t
+        }
+    }
+    return ""
+}
+
+/// What to call control `id` in a report: its accessible label, else its text.
+fn click_name(id: int) -> string {
+    if nodes.ui[id].a11y_label.len > 0 {
+        return nodes.ui[id].a11y_label
+    }
+    return click_text(id)
+}
+
+/// Run `watch(name, link)` for every click or key press on a control, before
+/// the control's own handler. `name` is `click_name`, `link` its `href` or "".
+fn watch_clicks(watch: fn(string, string)) {
+    arena.set_click_hook(fn(id: int) {
+        watch(click_name(id), link_of(id))
+    })
+}
+
 /// The text on the page, one `font<TAB>x<TAB>y<TAB>width<TAB>href<TAB>text` line
 /// per text node. `zeli build` turns it into the markup a page shows before its
 /// wasm arrives.

@@ -2614,6 +2614,52 @@ void loam_platform_plat_appearance_save(int64_t dark) {
 }
 
 #ifdef __wasm32__
+__attribute__((import_module("zeus"), import_name("track_start")))
+void zeus_js_track_start(const char *endpoint, int32_t len, int32_t local);
+__attribute__((import_module("zeus"), import_name("track_send")))
+void zeus_js_track_send(int32_t kind, const char *name, int32_t name_len, const char *data, int32_t data_len);
+__attribute__((import_module("zeus"), import_name("track_opt_out")))
+void zeus_js_track_opt_out(int32_t off);
+__attribute__((import_module("zeus"), import_name("track_opted_out")))
+int32_t zeus_js_track_opted_out(void);
+#endif
+
+void loam_platform_plat_track_start(loam_str endpoint, int64_t local) {
+#ifdef __wasm32__
+    zeus_js_track_start(endpoint.ptr, (int32_t)endpoint.len, (int32_t)local);
+#else
+    (void)endpoint;
+    (void)local;
+#endif
+}
+
+void loam_platform_plat_track_send(int64_t kind, loam_str name, loam_str data) {
+#ifdef __wasm32__
+    zeus_js_track_send((int32_t)kind, name.ptr, (int32_t)name.len, data.ptr, (int32_t)data.len);
+#else
+    (void)kind;
+    (void)name;
+    (void)data;
+#endif
+}
+
+void loam_platform_plat_track_opt_out(int64_t off) {
+#ifdef __wasm32__
+    zeus_js_track_opt_out((int32_t)off);
+#else
+    (void)off;
+#endif
+}
+
+int64_t loam_platform_plat_track_opted_out(void) {
+#ifdef __wasm32__
+    return zeus_js_track_opted_out();
+#else
+    return 0;
+#endif
+}
+
+#ifdef __wasm32__
 __attribute__((import_module("zeus"), import_name("open_external")))
 void zeus_js_open_external(const char *url, int32_t len);
 #endif
