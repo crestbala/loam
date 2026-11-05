@@ -28,6 +28,11 @@ From the repo root:
 ./run.sh www
 ```
 
+## Logs
+
+`zeli serve` and `zeli preview` print navigation, clicks, and `zeus.logger`
+lines to the terminal. Nothing reaches the browser console.
+
 ## Publish
 
 ```

@@ -156,25 +156,26 @@
     let rsSlots = new Array(4).fill(null);
     /* Console text waiting for its newline (see `write`). */
     let consoleLine = "";
-    /* Log lines go to the terminal running the dev server (`zeli serve`, or an
-       app's Vite config), posted in batches to `/__zeus/log`, not to the
-       console. Without such a server (a static deploy) the first post fails
-       and the lines, that batch included, fall back to the console. */
-    const logRelay = { on: true, queue: [], timer: 0 };
-    const consoleOut = (line) => {
-      if (/^\+\d+\.\d{3}s ERROR /.test(line)) console.error(line);
-      else if (/^\+\d+\.\d{3}s WARN /.test(line)) console.warn(line);
-      else console.log(line);
+    /* Log lines (`std:log`, `fmt.println`) go only to the terminal running
+       `zeli serve`, `zeli preview` or an app's Vite config, posted in batches to
+       `/__zeus/log`. Never to the console. Those servers are on loopback, so a
+       deployed page sends nothing: a post it could not land would have the
+       browser print the failure to the console by itself. */
+    const logRelay = {
+      on:
+        typeof location === "object" &&
+        /^(localhost|127\.\d+\.\d+\.\d+|\[::1\])$/.test(location.hostname),
+      queue: [],
+      timer: 0,
     };
     const relayFlush = () => {
       logRelay.timer = 0;
       const batch = logRelay.queue;
       logRelay.queue = [];
       if (!batch.length) return;
-      const back = () => {
+      const off = () => {
         logRelay.on = false;
-        for (const l of batch) consoleOut(l);
-        for (const l of logRelay.queue.splice(0)) consoleOut(l);
+        logRelay.queue = [];
       };
       try {
         fetch("/__zeus/log", {
@@ -183,17 +184,14 @@
           body: batch.join("\n") + "\n",
           keepalive: true,
         }).then((r) => {
-          if (!r.ok) back();
-        }, back);
+          if (!r.ok) off();
+        }, off);
       } catch (e) {
-        back();
+        off();
       }
     };
     const logLine = (line) => {
-      if (!logRelay.on || typeof fetch !== "function") {
-        consoleOut(line);
-        return;
-      }
+      if (!logRelay.on || typeof fetch !== "function") return;
       logRelay.queue.push(line);
       if (!logRelay.timer) logRelay.timer = setTimeout(relayFlush, 100);
     };

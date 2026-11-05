@@ -14,6 +14,7 @@ import "enums.loam"
 import "zeusbase.loam"
 import "zeus_constants.loam"
 import "std:fmt"
+import "zeuscore/logs.loam"
 import "zeuscore/platform.loam"
 import "zeuscore/runtime.loam"
 import "zeuscore/arena.loam"
@@ -1271,6 +1272,7 @@ fn Boundary(build: fn() -> Node, fallback: fn(string) -> Node) -> Node {
     if msg.len == 0 {
         ui_pop()
     } else {
+        logs.failure("caught: {{msg}}")
         // A trap skipped the normal pop: unwind the build stack by hand.
         while ui_parents.len > stack0 {
             pop(ui_parents)

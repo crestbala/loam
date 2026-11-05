@@ -60,6 +60,7 @@
 import "std:zeus"
 import "std:zui"
 import "zeuscore/input.loam" as input
+import "zeuscore/logs.loam" as logs
 import "zeuscore/platform.loam"
 
 /// Captured `:name` segments of a matched route.
@@ -487,9 +488,21 @@ fn meta_title() -> string {
     return cur_title
 }
 
+/// Record a move off the current path: `navigate /a -> /b`.
+fn note_nav(verb: string, to: string) {
+    if logs.tracking() {
+        logs.nav("{{verb}} {{cur_path.peek()}} -> {{to}}")
+    }
+}
+
 /// Push `path` onto history and mount its route.
 fn navigate(path: string) {
     ensure_path()
+    note_nav("navigate", path)
+    push_path(path)
+}
+
+fn push_path(path: string) {
     let mut out = []string {}
     let mut i = 0
     while i <= hist_at {
@@ -507,6 +520,7 @@ fn navigate(path: string) {
 /// Replace the current history entry (no new back step).
 fn replace(path: string) {
     ensure_path()
+    note_nav("redirect", path)
     if hist.len == 0 {
         push(hist, path)
         hist_at = 0
@@ -522,6 +536,7 @@ fn replace(path: string) {
 fn back() {
     ensure_path()
     if hist_at > 0 {
+        note_nav("back", hist[hist_at - 1])
         hist_at = hist_at - 1
         start_loaders(hist[hist_at])
         set_path(hist[hist_at])
@@ -534,7 +549,8 @@ fn back() {
 /// receive; the core keeps the stack).
 fn engine_open_url(url: string) {
     ensure_path()
-    navigate(url)
+    note_nav("open", url)
+    push_path(url)
 }
 
 /// How many times `preload` has matched a route. A hover onto a node with
@@ -607,6 +623,9 @@ fn engine_history_back() {
 fn RouterPage(p: RouterProps) -> Node {
     if cur_index < 0 {
         // Nothing here to index, and nothing of the last page's to keep.
+        if logs.tracking() {
+            logs.nav_warn("not found {{cur_path.peek()}}")
+        }
         apply_meta(Meta { robots: "noindex" })
         return p.notFound()
     }
@@ -631,6 +650,7 @@ fn Router(routes: []Route, p: RouterProps) -> Node {
     resolve(cur_path.get())
     if initial_loads_done == 0 {
         initial_loads_done = 1
+        logs.nav("open {{cur_path.peek()}}")
         start_loaders(cur_path.get())
     }
     return zui.Match(page_key, fn(k: int) { return RouterPage(p) })

@@ -3,6 +3,7 @@
 //! read and write them there (`nodes.tree`, `nodes.lay`, `nodes.box`, ...).
 
 import "geometry.loam"
+import "logs.loam"
 import "nodes.loam"
 import "platform.loam"
 import "runtime.loam"
@@ -2007,6 +2008,7 @@ fn boundary_fail(host: int, msg: string) {
     if nodes.tree[host].bnd == 0 {
         return
     }
+    logs.failure("caught: {{msg}}")
     while bnd_msg.len <= host {
         push(bnd_msg, "")
     }

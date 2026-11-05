@@ -1648,6 +1648,8 @@ static Type *peek_value_type(AstNode *a) {
         AstNode *c = a->as.call.callee;
         AstNode *f = NULL;
         if (c->kind == AST_IDENT) {
+            /* An interpolated literal parses as this call; it has no decl. */
+            if (strcmp(c->as.ident.name, "__interp") == 0) return ty_string();
             f = lookup_unqualified(c->as.ident.name, find_fn_in);
         } else if (c->kind == AST_FIELD && !c->as.access.via_colon && c->as.access.target &&
                    c->as.access.target->kind == AST_IDENT &&

@@ -5,10 +5,15 @@
  * Loam — the same fill / text / clip / SVG list as Cocoa, iOS, and Canvas2D.
  */
 #include "zeus_rt.h"
+#include <android/log.h>
 #include <jni.h>
+#include <pthread.h>
+#include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
+#include <unistd.h>
 
 int loam_app_main(void);
 
@@ -20,6 +25,34 @@ static jobject g_canvas;
 static int g_started;
 static volatile int g_ready;
 static int g_view_w, g_view_h;
+
+/* Android drops stdout, and `std:log` and `fmt.println` write there. The write
+   end of this pipe becomes stdout, and each line reaches logcat as tag `zeus`,
+   where `zeli serve` follows it. */
+static void *stdout_pump(void *arg) {
+    int fd = (int)(intptr_t)arg;
+    char line[1024];
+    size_t n = 0;
+    for (;;) {
+        char c;
+        if (read(fd, &c, 1) <= 0) return NULL;
+        if (c != '\n') line[n++] = c;
+        if (c != '\n' && n < sizeof line - 1) continue;
+        line[n] = 0;
+        __android_log_write(ANDROID_LOG_INFO, "zeus", line);
+        n = 0;
+    }
+}
+
+static void stdout_to_logcat(void) {
+    int fds[2];
+    pthread_t t;
+    if (pipe(fds) != 0) return;
+    setvbuf(stdout, NULL, _IONBF, 0);
+    dup2(fds[1], STDOUT_FILENO);
+    close(fds[1]);
+    if (pthread_create(&t, NULL, stdout_pump, (void *)(intptr_t)fds[0]) == 0) pthread_detach(t);
+}
 
 static JNIEnv *env_now(void) {
     JNIEnv *env = NULL;
@@ -280,6 +313,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
 JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativeStart(JNIEnv *env, jobject thiz) {
     if (g_started) return;
     g_started = 1;
+    stdout_to_logcat();
     g_env = env;
     if (g_view) (*env)->DeleteGlobalRef(env, g_view);
     g_view = (*env)->NewGlobalRef(env, thiz);

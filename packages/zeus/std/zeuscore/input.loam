@@ -8,6 +8,7 @@
 import "arena.loam"
 import "nodes.loam"
 import "geometry.loam"
+import "logs.loam"
 import "platform.loam"
 import "runtime.loam"
 import "std:unicode"
@@ -267,6 +268,7 @@ fn context_click(px: int, py: int) -> int {
     // Over the scrim of something open, a secondary click dismisses it as a
     // primary one does, then lands on what it was covering.
     if hit > 0 && int(nodes.tree[hit].kind) == 9 && nodes.ui[hit].click_fn > 0 {
+        note_click(hit)
         arena.invoke_handler(nodes.ui[hit].click_fn, hit)
         arena.mark_chrome()
         hit = hit_floaters(arena.root_id, px, py)
@@ -284,6 +286,7 @@ fn context_click(px: int, py: int) -> int {
     arena.ev_x = px
     arena.ev_y = py
     arena.ev_button = 2
+    note_event("context", id)
     arena.invoke_handler(arena.hook_of(id, arena.HOOK_CONTEXT), id)
     arena.ev_button = 0
     arena.mark_chrome()
@@ -323,6 +326,69 @@ fn grab(px: int, py: int) -> int {
         return 2
     }
     return 0
+}
+
+// --- user events, for `zeuscore/logs.loam` ---
+
+/// The input whose first edit has been recorded. One line per visit to a field:
+/// a keystroke is not an event worth a line, and its text is never written.
+let mut edited_id: int = 0
+
+/// The first text at or under `id`, depth first, or "".
+fn text_under(id: int) -> string {
+    if nodes.ui[id].a11y_label.len > 0 {
+        return nodes.ui[id].a11y_label
+    }
+    if nodes.look[id].text.len > 0 {
+        return nodes.look[id].text
+    }
+    let kids = nodes.tree[id].kids
+    for i in 0..kids.len {
+        let t = text_under(kids[i])
+        if t.len > 0 {
+            return t
+        }
+    }
+    return ""
+}
+
+/// What a log line calls node `id`: its label or text in quotes, else its role.
+/// An input is named by its label alone, so what was typed stays out of the log.
+fn node_name(id: int) -> string {
+    let mut t = ""
+    if int(nodes.tree[id].kind) == 10 {
+        t = nodes.ui[id].a11y_label
+    } else {
+        t = text_under(id)
+    }
+    if t.len > 0 {
+        return "\"{{t}}\""
+    }
+    if nodes.ui[id].a11y_role.len > 0 {
+        return nodes.ui[id].a11y_role
+    }
+    return if int(nodes.tree[id].kind) == 10 { "input" } else { "element" }
+}
+
+fn note_event(verb: string, id: int) {
+    edited_id = 0
+    if logs.tracking() {
+        logs.event("{{verb}} {{node_name(id)}}")
+    }
+}
+
+/// An overlay's click handler is its dismissal.
+fn note_click(id: int) {
+    note_event(if int(nodes.tree[id].kind) == 9 { "dismiss" } else { "click" }, id)
+}
+
+fn note_edit(id: int) {
+    if id != edited_id {
+        edited_id = id
+        if logs.tracking() {
+            logs.event("edit {{node_name(id)}}")
+        }
+    }
 }
 
 fn click(px: int, py: int) -> int {
@@ -393,6 +459,7 @@ fn click(px: int, py: int) -> int {
     }
     if int(nodes.tree[id].kind) == 13 {
         if nodes.ui[id].bind_sig > 0 {
+            note_event("change", id)
             arena.slider_seek(id, px)
             arena.drag_id = id
             return 1
@@ -424,12 +491,15 @@ fn click(px: int, py: int) -> int {
         mode: int(nodes.ui[id].click_mode),
         setv: nodes.ui[id].click_set,
     }
-    apply_click(c1)
     let c2 = Click {
         signal_id: nodes.ui[id].click2_sig,
         mode: int(nodes.ui[id].click2_mode),
         setv: nodes.ui[id].click2_set,
     }
+    if c1.signal_id > 0 || c2.signal_id > 0 || nodes.ui[id].click_fn > 0 {
+        note_click(id)
+    }
+    apply_click(c1)
     apply_click(c2)
     if nodes.ui[id].click_fn > 0 {
         arena.invoke_handler(nodes.ui[id].click_fn, id)
@@ -888,6 +958,9 @@ fn press_focused() -> int {
     if int(nodes.tree[id].kind) == 10 {
         return 0
     }
+    if nodes.ui[id].click_sig > 0 || nodes.ui[id].click2_sig > 0 || nodes.ui[id].click_fn > 0 {
+        note_event("press", id)
+    }
     let mut ran = 0
     let c1 = Click {
         signal_id: nodes.ui[id].click_sig,
@@ -1278,6 +1351,7 @@ fn key(k: int) -> int {
                 let signal_id = nodes.tree[i].show_sig
                 if signal_id > 0 {
                     if arena.want_show(i) != 0 {
+                        note_event("dismiss", i)
                         // An overlay with a click handler dismisses itself
                         // (the component's own state, e.g. a `Signal<bool>`);
                         // a bare one is hidden through its show signal.
@@ -1413,6 +1487,7 @@ fn key(k: int) -> int {
             }
         }
         if write != 0 {
+            note_edit(id)
             if nodes.ui[id].bind_fn > 0 {
                 arena.invoke_handler(nodes.ui[id].bind_fn, id)
             }
@@ -1449,6 +1524,7 @@ fn insert_text(s: string) -> int {
     if runtime.edit_insert(slot, s) == 0 {
         return 0
     }
+    note_edit(id)
     if nodes.ui[id].bind_fn > 0 {
         arena.invoke_handler(nodes.ui[id].bind_fn, id)
     }

@@ -1,0 +1,197 @@
+// zeus.logger's levels and the tracking a zeli app gets from `logger_mode`:
+// navigation, user events and caught traps are records, an input's text never
+// is, and nothing is recorded until the mode is set.
+import "std:fmt"
+import "std:log"
+import "std:router"
+import "std:str"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+let mut fails: int = 0
+
+fn check(what: string, ok: bool) {
+    if !ok {
+        fmt.println("FAIL", what)
+        fails += 1
+    }
+}
+
+/// A record in `scope` whose text contains `want`.
+fn seen(scope: string, want: string) -> bool {
+    let rs = log.records()
+    for i in 0..rs.len {
+        if rs[i].scope == scope && str.contains(rs[i].msg, want) {
+            return true
+        }
+    }
+    return false
+}
+
+fn anywhere(want: string) -> bool {
+    let rs = log.records()
+    for i in 0..rs.len {
+        if str.contains(rs[i].msg, want) {
+            return true
+        }
+    }
+    return false
+}
+
+let mut open: Signal<bool> = Signal { id: 0 }
+let mut secret: Signal<string> = Signal { id: 0 }
+let mut keyed: int = 0
+
+fn bad_index(n: int) -> int {
+    let a = []int { 1 }
+    return a[n]
+}
+
+fn Home(p: Params) -> Node {
+    return zeus.Box(style = Style(direction = Direction.Column)) {
+        zui.Button("Go", on_click = fn() => router.navigate("/next"))
+        zui.Button("Open", on_click = fn() => open.set(true))
+        zui.Button(
+            "Save",
+            on_click = fn() {},
+            keys = []KeyBind { zeus.key_bind_global("ctrl+s", "", fn() {
+                keyed += 1
+            }) },
+        )
+        zui.PasswordInput(secret)
+        zui.Boundary(fn() -> Node {
+            return zui.Button("Explode", on_click = fn() => bad_index(5))
+        }, fn(msg) {
+            return zeus.Text("recovered")
+        })
+        zui.Dialog(open, title = "Confirm") {
+            zeus.Text("body")
+        }
+    }
+}
+
+fn Next(p: Params) -> Node {
+    return zeus.Text("next page")
+}
+
+fn table() -> []Route {
+    return []Route {
+        Route { pattern: "/", build: Home },
+        Route { pattern: "/next", build: Next },
+    }
+}
+
+fn pump() {
+    for i in 0..4 {
+        zeus.pump_frame()
+    }
+}
+
+fn main() {
+    log.set_print(false)
+
+    // Levels, and the forms a call can take.
+    zeus.logger("plain {{1 + 2}}")
+    zeus.logger("done", Log.Success)
+    zeus.logger("careful", Log.Warn, scope = "cart")
+    zeus.logger("broke", level = Log.Error)
+    zeus.logger("hidden", Log.Debug)
+    let rs = log.records()
+    check("debug is below the default level", rs.len == 4)
+    check("info by default, in scope app", rs[0].msg == "plain 3" && rs[0].scope == "app" && rs[0].level == Log.Info)
+    check("success", log.is_success(rs[1].level) && log.level_name(rs[1].level) == "OK")
+    check("scope", rs[2].scope == "cart" && log.is_warn(rs[2].level))
+    check("error", log.is_error(rs[3].level))
+
+    // Color: a level's line is painted, anything else is left alone.
+    let esc = string_from_bytes([]int { 27 })
+    let painted = log.paint("+1.000s OK    app  saved")
+    check("level colored", str.contains(painted, "{{esc}}[1;32mOK{{esc}}[0m"))
+    check("message kept", str.contains(painted, "saved"))
+    check("error message colored", str.contains(log.paint("+1.000s ERROR app  no"), "{{esc}}[31m  no"))
+    check("other text unchanged", log.paint("+1 is not a line") == "+1 is not a line")
+    check("println unchanged", log.paint("hello") == "hello")
+
+    // Nothing is tracked before the mode is set.
+    router.navigate("/next")
+    check("untracked by default", !seen("zeus.nav", "/next"))
+    router.replace("/")
+
+    open = zeus.signal(false)
+    secret = zeus.signal("")
+    zeus.logger_mode("all")
+    check("start recorded", seen("zeus.app", "app started"))
+    zeus.snapshot(640, 480, fn() -> Node {
+        return router.Router(table(), RouterProps {})
+    })
+    pump()
+    check("first page", seen("zeus.nav", "open /"))
+
+    // User events.
+    zeus.engine_click_text("Open")
+    check("click names the button", seen("zeus.event", "click \"Open\""))
+    pump()
+    zeus.engine_key_ev(27, 0)
+    check("escape closes through the dialog's key", seen("zeus.event", "key escape") && !open.peek())
+    pump()
+    zeus.engine_key_ev(115, 2)
+    check("shortcut ran", keyed == 1)
+    check("shortcut recorded", seen("zeus.event", "key ctrl+s"))
+
+    // An input is named, its text is not, and one visit is one line.
+    let before = log.records().len
+    let mut steps = 0
+    while zeus.engine_focus_captures_text() == 0 && steps < 12 {
+        zeus.engine_focus_step(0)
+        zeus.engine_fill_focus()
+        steps += 1
+    }
+    check("focus reached the input", zeus.engine_focus_captures_text() != 0)
+    zeus.engine_insert("hunter2")
+    zeus.engine_insert("more")
+    check("edit recorded once", log.records().len == before + 1)
+    check("edit names no text", seen("zeus.event", "edit") && !anywhere("hunter2"))
+
+    // A caught trap.
+    zeus.engine_click_text("Explode")
+    pump()
+    check("trap recorded as an error", seen("zeus.app", "caught:"))
+
+    // Navigation.
+    zeus.engine_click_text("Go")
+    pump()
+    check("navigate", seen("zeus.nav", "navigate / -> /next"))
+    router.replace("/missing")
+    pump()
+    check("redirect", seen("zeus.nav", "redirect /next -> /missing"))
+    check("not found", seen("zeus.nav", "not found /missing"))
+    router.back()
+    pump()
+    router.engine_open_url("/next")
+    check("deep link", seen("zeus.nav", "-> /next"))
+    zeus.open_external("https://example.com/")
+    check("external", seen("zeus.nav", "external https://example.com/"))
+    zeus.set_appearance(1)
+    check("theme", seen("zeus.app", "theme dark"))
+
+    // An `errors` build drops all but failures, ours and the app's.
+    log.clear()
+    zeus.logger_mode("errors")
+    router.navigate("/")
+    pump()
+    zeus.logger("quiet")
+    zeus.logger("loud", Log.Error)
+    check("errors mode keeps errors", anywhere("loud"))
+    check("errors mode drops the rest", !anywhere("quiet") && !seen("zeus.nav", "navigate"))
+
+    log.clear()
+    zeus.logger_mode("off")
+    zeus.logger("gone", Log.Error)
+    check("off", log.records().len == 0)
+
+    if fails > 0 {
+        sys.exit(1)
+    }
+    fmt.println("logger ok")
+}
