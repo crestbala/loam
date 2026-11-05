@@ -16,6 +16,7 @@ import "std:async"
 import "std:fmt"
 import "std:http"
 import "std:json"
+import "std:log"
 import "std:net"
 import "std:str"
 import "std:sys"
@@ -1467,6 +1468,21 @@ fn route_dirs(routes: string, rel: string) -> []string {
     return out
 }
 
+/// What the generated app records: `zeus.toml`'s `logs` (`"all"`, `"debug"`,
+/// `"errors"`, `"off"`), else everything, in a release too. `""` after reporting
+/// a value that is none of these.
+fn logs_mode(appdir: string) -> string {
+    let set = toml_str(appdir, "logs")
+    if set == "" {
+        return "all"
+    }
+    if set == "all" || set == "debug" || set == "errors" || set == "off" {
+        return set
+    }
+    say("zeli: zeus.toml: logs = \"{{set}}\" is not all, debug, errors or off")
+    return ""
+}
+
 /// Write `<appdir>/app_routes.loam` from the `routes/` tree and return its
 /// path, or `""` after reporting why not. The worker behind both
 /// `zeli routes` and `zeli new`, which reports differently — which is why this
@@ -1475,6 +1491,10 @@ fn generate(appdir: string) -> string {
     let routes_dir = join(appdir, "routes")
     if sys.is_dir(routes_dir) == 0 {
         fmt.println("zeli: no routes/ directory in", appdir)
+        return ""
+    }
+    let mode = logs_mode(appdir)
+    if mode == "" {
         return ""
     }
     let out = join(appdir, "app_routes.loam")
@@ -1650,6 +1670,9 @@ fn generate(appdir: string) -> string {
     let router = cat(cat("router.Router(routes(),", props), ")")
     let root_lay = index_of(lay_rel, "")
     push(lines, "fn app() -> Node {")
+    /* In the one file every zeli app imports and every target compiles, so
+       navigation and user events are recorded with nothing in the app itself. */
+    push(lines, "    zeus.logger_mode(\"{{mode}}\")")
     if root_lay >= 0 {
         push(lines, cat(cat("    return ", lay_alias[root_lay]), ".Layout(fn() {"))
         push(lines, cat("        ", router))
@@ -2315,7 +2338,7 @@ fn print_tagged(tag: string, text: string) {
     let ls = split_lines(text)
     for i in 0..ls.len {
         if trim(ls[i]) != "" {
-            say("{{tag}} │ {{ls[i]}}")
+            say("{{tag}} │ {{log_paint(ls[i])}}")
         }
     }
 }
@@ -2327,13 +2350,24 @@ fn log_path() -> string {
     return "/__zeus/log"
 }
 
+/// `line` from an app's output, in its level's color on a terminal that wants
+/// color. An app writing to a file does not color its own lines.
+fn log_paint(line: string) -> string {
+    if sys.stdout_tty() == 0 || sys.env_set("NO_COLOR") != 0 {
+        return line
+    }
+    return log.paint(line)
+}
+
 /// Print what `log` gained past byte `from`; returns the new length.
-fn echo_log(log: string, from: int) -> int {
-    let body = sys.read_file(log)
+fn echo_log(logfile: string, from: int) -> int {
+    let body = sys.read_file(logfile)
     if body.len > from {
-        let fresh = trim(slice(body, from, body.len))
-        if fresh != "" {
-            say(fresh)
+        let ls = split_lines(slice(body, from, body.len))
+        for i in 0..ls.len {
+            if trim(ls[i]) != "" {
+                say(log_paint(ls[i]))
+            }
         }
     }
     return body.len
@@ -3103,12 +3137,42 @@ fn stop_device(appdir: string, target: string, stem: string) -> bool {
     return sys.exec_status() == 0
 }
 
+/// Where a device build's output is followed from: the file the Simulator writes
+/// the app's stdout to, or the file `adb logcat` appends to for Android.
+fn device_log(appdir: string, target: string, stem: string) -> string {
+    return abs_path(app_log(appdir, target, stem))
+}
+
+/// Follow Android's log, where the host sends the app's stdout, into `file`. The
+/// watchdog ends `adb` with this process.
+fn follow_logcat(file: string) {
+    let adb = "PATH=\"${ANDROID_HOME:-$HOME/Library/Android/sdk}/platform-tools:$PATH\" exec adb logcat -v raw -T 1 zeus:I '*:S'"
+    let pid = launch_app("sh -c {{shell_quote(adb)}}", file)
+    guard_app(self_pid(), pid)
+}
+
+/// Follow the device's log in this terminal. Call before the launch, so the app's
+/// first lines are not missed.
+fn device_log_follow(appdir: string, target: string, stem: string) {
+    let run_log = device_log(appdir, target, stem)
+    sys.write_file(run_log, "")
+    tail_add(run_log, target)
+    if target == "android" {
+        follow_logcat(run_log)
+    }
+}
+
 /// One device launch: `loamc --target=T --run <entry>` builds the artifact,
 /// installs it, and starts it. It is passed the same `-o` the `build` command
 /// uses so both leave the artifact in one place — which is also where
 /// `stop_device` reads the id back from.
 fn serve_device_run(appdir: string, target: string, stem: string, entry: string) -> bool {
-    return device_run(appdir, target, stem, entry, serve_build_env(appdir, target))
+    return device_run(appdir, target, stem, entry, cat(device_log_env(appdir, target, stem), serve_build_env(appdir, target)))
+}
+
+/// Tells `loamc --run` where the Simulator app's output goes.
+fn device_log_env(appdir: string, target: string, stem: string) -> string {
+    return "ZEUS_RUN_LOG={{shell_quote(device_log(appdir, target, stem))}} "
 }
 
 /// `serve_device_run` for a compile environment of `compile_env`.
@@ -3168,11 +3232,13 @@ fn serve_device(
     if !first.ok {
         return 1
     }
+    device_log_follow(appdir, target, stem)
     if !serve_device_run(appdir, target, stem, entry) {
         return 1
     }
     chat("zeli: serving {{target}}  (Ctrl-C to stop)")
     while true {
+        tail_pump()
         let batch = watch_batch(h, roots, 50)
         if batch.len > 0 {
             chat("zeli: {{batch.len}} source file(s) changed, rebuilding…")
@@ -3222,12 +3288,16 @@ fn preview(appdir: string, target: string, port: int, reuse: bool) -> int {
         if reuse {
             die("zeli: --no-build does not apply to {{target}}: installing builds it")
         }
+        device_log_follow(appdir, target, stem)
         // No `serve_build_env`: that is what asks for the dev profile.
-        if !device_run(appdir, target, stem, entry, "") {
+        if !device_run(appdir, target, stem, entry, device_log_env(appdir, target, stem)) {
             return 1
         }
-        say("zeli: release running on {{platform_name(target)}}")
-        return 0
+        say("zeli: release running on {{platform_name(target)}}  (Ctrl-C to stop)")
+        while true {
+            tail_pump()
+            async.sleep(100)
+        }
     }
     if !reuse && !preview_build(appdir, target, stem) {
         return 1

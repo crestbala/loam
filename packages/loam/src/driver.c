@@ -659,6 +659,16 @@ static int write_ios_plist(const char *path, const char *exe, const char *bid) {
 
 static int ios_sim_run(const char *app, const char *bid) {
     char cmd[4096];
+    char launch[2048];
+    /* `zeli serve` follows this file: nothing else sees the app's stdout.
+       `--console` stays attached and ends with the app, so it runs behind this
+       call. `--stdout=<path>` writes nothing on current runtimes. */
+    const char *run_log = getenv("ZEUS_RUN_LOG");
+    if (run_log && run_log[0])
+        snprintf(launch, sizeof launch,
+                 "(xcrun simctl launch --console booted %s >>\"%s\" 2>&1 </dev/null &)", bid, run_log);
+    else
+        snprintf(launch, sizeof launch, "xcrun simctl launch booted %s", bid);
     (void)system("open -a Simulator >/dev/null 2>&1");
     snprintf(cmd, sizeof cmd,
              "udid=$(xcrun simctl list devices available 2>/dev/null | "
@@ -666,8 +676,8 @@ static int ios_sim_run(const char *app, const char *bid) {
              "if [ -z \"$udid\" ]; then echo 'loam: no iPhone Simulator found' >&2; exit 1; fi; "
              "xcrun simctl boot \"$udid\" >/dev/null 2>&1 || true; "
              "xcrun simctl bootstatus \"$udid\" -b >/dev/null; "
-             "xcrun simctl install booted \"%s\" && xcrun simctl launch booted %s",
-             app, bid);
+             "xcrun simctl install booted \"%s\" && %s",
+             app, launch);
     return system(cmd) != 0;
 }
 

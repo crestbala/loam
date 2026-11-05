@@ -140,8 +140,14 @@ fn Playground() -> Node {
         err.set(r.err)
         err_line.set(r.line)
         state.set(if r.ok { 1 } else { 2 })
+        if r.ok {
+            zeus.logger("ran · {{r.out.len}} bytes of output", Log.Success, scope = "playground")
+        } else {
+            zeus.logger("line {{r.line}}: {{r.err}}", Log.Error, scope = "playground")
+        }
     }
     fn reset_output() {
+        zeus.logger("example {{pick.peek()}}", Log.Debug, scope = "playground")
         out.set("")
         err.set("")
         state.set(0)

@@ -1,0 +1,78 @@
+//! logs — what a running app does, as `std:log` records.
+//!
+//! The engine calls these from where things happen: the router for navigation,
+//! input for user events, the boundaries for caught traps. Nothing is written
+//! until `set_mode` says so. `zeli` does that from the generated
+//! `app_routes.loam`, so a zeli app is tracked on every host, and a program
+//! built without it prints only what it prints itself.
+//!
+//! A caller building a message checks `tracking()` first, so an `off` app pays
+//! one test per event and no string.
+
+import "std:log"
+
+const NAV: string = "zeus.nav"
+const EVENT: string = "zeus.event"
+const APP: string = "zeus.app"
+
+/// 0 quiet, 1 failures only, 2 everything.
+let mut level: int = 0
+
+/// `"all"`, `"debug"` (all, with `Log.Debug` lines), `"errors"` or `"off"`. Any
+/// other name changes nothing.
+fn set_mode(mode: string) {
+    if mode == "all" {
+        level = 2
+    } else if mode == "debug" {
+        level = 2
+        log.set_level("debug")
+    } else if mode == "errors" {
+        level = 1
+        log.set_level("error")
+    } else if mode == "off" {
+        level = 0
+        log.set_level("off")
+    }
+}
+
+/// True when navigation and user events are being recorded.
+fn tracking() -> bool {
+    return level == 2
+}
+
+fn nav(msg: string) {
+    if level == 2 {
+        log.info(NAV, msg)
+    }
+}
+
+fn nav_warn(msg: string) {
+    if level == 2 {
+        log.warn(NAV, msg)
+    }
+}
+
+fn event(msg: string) {
+    if level == 2 {
+        log.info(EVENT, msg)
+    }
+}
+
+fn app(msg: string) {
+    if level == 2 {
+        log.info(APP, msg)
+    }
+}
+
+fn app_ready(msg: string) {
+    if level == 2 {
+        log.success(APP, msg)
+    }
+}
+
+/// Something the app caught and recovered from. Survives an `errors` build.
+fn failure(msg: string) {
+    if level > 0 {
+        log.error(APP, msg)
+    }
+}

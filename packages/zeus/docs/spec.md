@@ -202,6 +202,53 @@ Or:
 
 Output is `examples/zeus/counter/macos/build/app`.
 
+## Logging
+
+`zeus.logger(msg, level, scope = ...)` writes one `std:log` record. A level is
+`Log.Debug`, `Log.Info` (the default), `Log.Success`, `Log.Warn` or `Log.Error`,
+and it picks the color. Interpolate to check a value:
+
+```loam
+zeus.logger("cart has {{n}} items")
+zeus.logger("order placed", Log.Success)
+zeus.logger("card declined", Log.Error, scope = "checkout")
+```
+
+A zeli app also records what happens in it, with nothing in the app's own code.
+The generated `app_routes.loam` starts `app()` with `zeus.logger_mode(...)`, so
+this reaches every target. The engine then writes:
+
+| Scope | Lines |
+|---|---|
+| `zeus.nav` | `open`, `navigate`, `redirect` (`router.replace`), `back`, `not found`, `external` |
+| `zeus.event` | `click`, `press` (Enter / Space), `key <chord>`, `context`, `change` (slider), `dismiss`, `edit` |
+| `zeus.app` | `app started`, `theme`, and `caught:` when a `Boundary` catches a trap |
+
+`edit` is written once per visit to a field and names the field, never its text.
+
+`zeus.toml`'s `logs` picks the mode. The default is `all`, in a release too.
+
+| `logs` | Records |
+|---|---|
+| `all` | Everything above and every `zeus.logger` line from `Log.Info` up |
+| `debug` | `all`, and `Log.Debug` |
+| `errors` | `Log.Error` lines and caught traps |
+| `off` | Nothing |
+
+Under `zeli serve` each line reaches the terminal, tagged by target and colored
+by level: a browser posts to `/__zeus/log`, native and server apps write to a
+followed file, the iOS Simulator is read through `simctl launch --console`, and
+Android goes through logcat tag `zeus`. `zeli preview` does the same for a
+release. A native app run from a terminal colors its own lines, and `NO_COLOR`
+turns all of it off.
+
+Logs never reach the browser console. A page relays them only on loopback, where
+a zeli terminal can be listening, so a deployed page writes them nowhere and
+sends no request.
+
+An app built without zeli has no generated file: it calls
+`zeus.logger_mode("all")` before `zeus.App`.
+
 ## Packages, inspector, animation
 
 `import "pkg:name"` resolves to `vendor/name/name.loam` (or `main.loam`),

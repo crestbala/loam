@@ -1,7 +1,8 @@
 //! `log` — leveled, scoped log lines (std:log).
 //!
 //! One line per record on stdout, which is the terminal for a server or a
-//! native app and the browser console for wasm:
+//! native app. For wasm the web host posts it to the `zeli` terminal, and it
+//! never reaches the browser console:
 //!
 //! ```
 //! +12.345s INFO  http.server  Vidget.Jobs ok · 0 B -> 312 B · 4 ms
@@ -19,12 +20,15 @@
 //! log.error("engine", "job 3 failed: {{why}}")
 //! ```
 //!
-//! The level comes from `LOAM_LOG` (`debug`, `info`, `warn`, `error`, `off`;
-//! default `info`) on hosts with an environment, or `log.set_level("debug")`
-//! from code. The last `KEEP` records stay in memory for `records()`, and
+//! The level comes from `LOAM_LOG` (`debug`, `info`, `success`, `warn`,
+//! `error`, `off`; default `info`) on hosts with an environment, or
+//! `log.set_level("debug")` from code. The last `KEEP` records stay in memory for `records()`, and
 //! `listen(cb)` sees each one as it is written (`devtools.LogPanel` does).
 //! Records are plain module state: write them from the UI / main thread, not
 //! from `std:thread` workers.
+//!
+//! A terminal gets the line in color, by level, unless `NO_COLOR` is set. A
+//! tool that reads an app's output through a pipe colors it with `paint`.
 
 import "std:async"
 import "std:fmt"
@@ -44,9 +48,10 @@ const KEEP: int = 500
 
 const L_DEBUG: int = 0
 const L_INFO: int = 1
-const L_WARN: int = 2
-const L_ERROR: int = 3
-const L_OFF: int = 4
+const L_SUCCESS: int = 2
+const L_WARN: int = 3
+const L_ERROR: int = 4
+const L_OFF: int = 5
 
 let mut threshold: int = L_INFO
 let mut configured: bool = false
@@ -55,6 +60,7 @@ let mut seq: int = 0
 let mut kept: []Record = []Record {}
 let mut sinks: []fn(Record) = []fn(Record) {}
 let mut printing: bool = true
+let mut color: bool = false
 
 /// Level number for `name` (`"debug"` … `"off"`), or -1.
 fn level_of(name: string) -> int {
@@ -63,6 +69,9 @@ fn level_of(name: string) -> int {
     }
     if fmt.eq(name, "info") {
         return L_INFO
+    }
+    if fmt.eq(name, "success") {
+        return L_SUCCESS
     }
     if fmt.eq(name, "warn") {
         return L_WARN
@@ -76,10 +85,13 @@ fn level_of(name: string) -> int {
     return -1
 }
 
-/// `"DEBUG"`, `"INFO"`, `"WARN"`, `"ERROR"` for a record's `level`.
+/// `"DEBUG"`, `"INFO"`, `"OK"`, `"WARN"`, `"ERROR"` for a record's `level`.
 fn level_name(level: int) -> string {
     if level == L_DEBUG {
         return "DEBUG"
+    }
+    if level == L_SUCCESS {
+        return "OK"
     }
     if level == L_WARN {
         return "WARN"
@@ -92,6 +104,10 @@ fn level_name(level: int) -> string {
 
 fn is_debug(level: int) -> bool {
     return level == L_DEBUG
+}
+
+fn is_success(level: int) -> bool {
+    return level == L_SUCCESS
 }
 
 fn is_warn(level: int) -> bool {
@@ -108,13 +124,15 @@ fn configure() {
     }
     configured = true
     t0 = async.now_ms()
+    color = sys.env_set("NO_COLOR") == 0
     let l = level_of(sys.env("LOAM_LOG"))
     if l >= 0 {
         threshold = l
     }
 }
 
-/// Lowest level written: `"debug"`, `"info"`, `"warn"`, `"error"` or `"off"`.
+/// Lowest level written: `"debug"`, `"info"`, `"success"`, `"warn"`, `"error"`
+/// or `"off"`.
 /// Overrides `LOAM_LOG`. An unknown name is ignored.
 fn set_level(name: string) {
     configure()
@@ -145,6 +163,10 @@ fn info(scope: string, msg: string) {
     write(L_INFO, scope, msg)
 }
 
+fn success(scope: string, msg: string) {
+    write(L_SUCCESS, scope, msg)
+}
+
 fn warn(scope: string, msg: string) {
     write(L_WARN, scope, msg)
 }
@@ -153,7 +175,7 @@ fn error(scope: string, msg: string) {
     write(L_ERROR, scope, msg)
 }
 
-/// Write one record at `level` (0 debug … 3 error).
+/// Write one record at `level` (0 debug, 1 info, 2 success, 3 warn, 4 error).
 fn write(level: int, scope: string, msg: string) {
     configure()
     if level < threshold || threshold >= L_OFF {
@@ -162,7 +184,9 @@ fn write(level: int, scope: string, msg: string) {
     seq += 1
     let r = Record { seq: seq, ms: int(async.now_ms() - t0), level: level, scope: scope, msg: msg }
     if printing {
-        fmt.write(line(r))
+        // Asked here, not once at startup: on wasm this call is a constant 0, so
+        // `paint` falls out of the download.
+        fmt.write(if sys.stdout_tty() != 0 && color { paint(line(r)) } else { line(r) })
         fmt.writeln()
     }
     push(kept, r)
@@ -187,6 +211,76 @@ fn line(r: Record) -> string {
         name = "{{name}} "
     }
     return "{{stamp(r.ms)}} {{name}} {{r.scope}}  {{r.msg}}"
+}
+
+/// The ANSI color of a level's word in a `line`, or "" when `word` is not one.
+fn level_color(word: string) -> string {
+    if fmt.eq(word, "DEBUG") {
+        return "2"
+    }
+    if fmt.eq(word, "INFO") {
+        return "36"
+    }
+    if fmt.eq(word, "OK") {
+        return "32"
+    }
+    if fmt.eq(word, "WARN") {
+        return "33"
+    }
+    if fmt.eq(word, "ERROR") {
+        return "31"
+    }
+    return ""
+}
+
+fn part(s: string, a: int, b: int) -> string {
+    let mut out = []int {}
+    for i in a..b {
+        push(out, s[i])
+    }
+    return string_from_bytes(out)
+}
+
+/// A `line` in ANSI color: the level by its color, the time and scope dim, and
+/// a warning's or error's message in its level's color. Any other text comes
+/// back unchanged, so a tool can pass an app's whole output through this.
+fn paint(text: string) -> string {
+    if text.len == 0 || text[0] != 43 /* + */ {
+        return text
+    }
+    let mut at = 0
+    while at < text.len && text[at] != 32 {
+        at += 1
+    }
+    let level_at = at + 1
+    let mut level_end = level_at
+    while level_end < text.len && text[level_end] != 32 {
+        level_end += 1
+    }
+    if level_end >= text.len {
+        return text
+    }
+    let word = part(text, level_at, level_end)
+    let color = level_color(word)
+    if color.len == 0 {
+        return text
+    }
+    let mut scope_at = level_end
+    while scope_at < text.len && text[scope_at] == 32 {
+        scope_at += 1
+    }
+    let mut scope_end = scope_at
+    while scope_end < text.len && !(text[scope_end] == 32 && scope_end + 1 < text.len && text[scope_end + 1] == 32) {
+        scope_end += 1
+    }
+    let esc = string_from_bytes([]int { 27 })
+    let stamp_part = part(text, 0, at)
+    let pad = part(text, level_end, scope_at)
+    let scope = part(text, scope_at, scope_end)
+    let msg = part(text, scope_end, text.len)
+    let loud = fmt.eq(word, "WARN") || fmt.eq(word, "ERROR")
+    let body = if loud { "{{esc}}[{{color}}m{{msg}}{{esc}}[0m" } else { msg }
+    return "{{esc}}[2m{{stamp_part}}{{esc}}[0m {{esc}}[1;{{color}}m{{word}}{{esc}}[0m{{pad}}{{esc}}[2m{{scope}}{{esc}}[0m{{body}}"
 }
 
 /// `+12.345s` for `ms` since the first record.

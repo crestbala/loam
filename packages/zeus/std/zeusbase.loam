@@ -17,6 +17,7 @@ import "structs.loam"
 import "enums.loam"
 import "zeus_constants.loam"
 import "zeuscore/geometry.loam"
+import "zeuscore/logs.loam"
 import "zeuscore/platform.loam"
 import "zeuscore/runtime.loam"
 import "zeuscore/arena.loam"
@@ -25,6 +26,7 @@ import "zeuscore/layout.loam"
 import "zeuscore/metrics.loam"
 import "zeuscore/track.loam"
 import "zeuscore/style.loam"
+import "std:log"
 import "std:result"
 
 // --- handles --------------------------------------------------------------
@@ -1311,6 +1313,14 @@ fn install_keys(node: Node, keys: []KeyBind) -> Node {
         } else {
             kfn = nodes.ui[node.id].click_fn
         }
+        if kfn > 0 && logs.tracking() {
+            let inner = kfn
+            let chord = k.chord
+            kfn = intern_fn(fn() {
+                logs.event("key {{chord}}")
+                runtime.invoke_fn(inner)
+            })
+        }
         install_key(node, k.chord, k.action, kfn, k.global)
     }
     return node
@@ -1704,12 +1714,14 @@ fn appearance() -> Signal<int> {
 /// Open a URL outside the app, in a new browser tab on the web. Call it from a
 /// click: a browser blocks a new tab that no user action asked for.
 fn open_external(url: string) {
+    logs.nav("external {{url}}")
     platform.plat_open_external(url)
 }
 
 /// The user chose light (0) or dark (1): apply it and keep it for their next
 /// visit. Code that only needs to change the look, unasked, writes `appearance()`.
 fn set_appearance(dark: int) {
+    logs.app(if dark != 0 { "theme dark" } else { "theme light" })
     appearance().set(dark)
     platform.plat_appearance_save(dark)
 }
@@ -4054,6 +4066,39 @@ fn __ui_scope(node: Node, build: fn()) -> Node {
 
 fn ui_emit(node: Node) -> Node {
     return Component(node)
+}
+
+/// Named extras for `logger`.
+struct LoggerProps {
+    msg: string = "",
+    level: int = Log.Info,
+    /// What the line is about, shown beside the level: `"cart"`, `"auth"`.
+    scope: string = "app",
+}
+
+/// Write one log line, in the level's color, with the app's navigation and
+/// user events, in the `zeli serve` or `zeli preview` terminal for every host.
+/// Interpolate to check a value.
+///
+/// ```
+/// zeus.logger("cart has {{n}} items")
+/// zeus.logger("order placed", Log.Success)
+/// zeus.logger("card declined", Log.Error, scope = "checkout")
+/// ```
+fn logger(p: LoggerProps) {
+    log.write(p.level, p.scope, p.msg)
+}
+
+/// What the app records: `"all"` (navigation, user events, every `logger`
+/// line), `"debug"` (those and `Log.Debug`), `"errors"` or `"off"`. The
+/// generated `app_routes.loam` calls this, from `zeus.toml`'s `logs` setting;
+/// an app built without `zeli` calls it once before `zeus.App` to be tracked.
+fn logger_mode(mode: string) {
+    let was = logs.tracking()
+    logs.set_mode(mode)
+    if !was {
+        logs.app_ready("app started")
+    }
 }
 
 struct TextProps {

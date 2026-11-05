@@ -26,6 +26,16 @@ enum Look {
     Success = 7,
 }
 
+/// How `zeus.logger` marks a line: the color it gets and whether it shows.
+/// Values are `std:log` levels.
+enum Log {
+    Debug = 0,
+    Info = 1,
+    Success = 2,
+    Warn = 3,
+    Error = 4,
+}
+
 /// Control sizes, by height: Sm 32px, Md 36px, Lg 44px (see `control_h`).
 enum Size {
     Sm = 0,

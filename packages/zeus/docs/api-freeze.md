@@ -602,6 +602,8 @@ heading; keep one entry per line.
 - `zeus.VirtualList`
 - `zeus.VirtualListKeyed`
 - `zeus.VirtualListVar`
+- `zeus.logger`
+- `zeus.logger_mode`
 - `zeus.visible_signal`
 - `zeus.warn_bg`
 - `zeus.warn_fill_solid`

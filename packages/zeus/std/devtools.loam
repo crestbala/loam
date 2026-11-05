@@ -15,8 +15,8 @@
 //! ```
 //!
 //! `LogPanel()` is the live `std:log` viewer: every API call `std:http`
-//! makes or serves, plus the app's own records, newest last, warnings and
-//! errors tinted.
+//! makes or serves, plus the app's own records, newest last, successes,
+//! warnings and errors tinted.
 
 import "std:async"
 import "std:log"
@@ -151,6 +151,9 @@ fn log_color(level: int) -> string {
     }
     if log.is_warn(level) {
         return zeus.warn_ink()
+    }
+    if log.is_success(level) {
+        return zeus.ok_ink()
     }
     return zeus.ink()
 }
