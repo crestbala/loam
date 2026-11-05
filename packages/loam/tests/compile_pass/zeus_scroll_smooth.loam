@@ -1,6 +1,6 @@
 // Mouse-wheel notches ease to their target (browser feel): the position moves
 // a fraction of the gap each frame and lands exactly, a second notch retargets
-// from the pending target (they add up), the ease is bounded (idle wants no
+// from the pending target (they add up, and accelerate), the ease is bounded (idle wants no
 // frames once landed), a notch at the edge clamps, and reduced motion steps.
 // Trackpad deltas keep using `scroll_step` — no engine coast at all.
 
@@ -52,7 +52,7 @@ fn main() {
     zeus.pump_frame()
     zeus.engine_scroll_smooth(100, 100, 0, 100)
     frames(30)
-    must(zeus.node_scroll_y(id) == 300, "notches retarget from the pending target")
+    must(zeus.node_scroll_y(id) == 350, "the second adds to the pending target, and reaches further")
 
     // A notch past the end clamps to the content.
     zeus.engine_scroll_smooth(100, 100, 0, 1000)

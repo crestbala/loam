@@ -1,0 +1,171 @@
+// Getting to the content quickly. A spun wheel reaches further with each notch,
+// a flick glides a long way at the speed measured from the finger, and that
+// measure survives touch running slower than the screen. A press on the
+// scrollbar's track jumps there, and the page keys work with nothing focused.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn settle() {
+    let mut i = 0
+    while i < 400 && zeus.engine_step_dt(16) != 0 {
+        zeus.pump_frame()
+        i = i + 1
+    }
+    zeus.pump_frame()
+}
+
+fn main() {
+    zeus.window("speed", 400, 400)
+    let top = zeus.signal(0)
+    let list = zui.Scroll(bind = top, style = Style(width = px(400), height = px(400))) {
+        zeus.Box(style = Style(height = px(40000)))
+    }
+    zeus.root(list)
+    zeus.pump_frame()
+    zeus.engine_step_dt(16)
+    zeus.pump_frame()
+    let id = list.id
+    let max = zeus.node_scroll_max(id)
+
+    // --- a lone notch lands quickly, on its own distance ---
+    zeus.engine_scroll_smooth(100, 100, 0, 100)
+    let mut frames = 0
+    while frames < 60 && zeus.node_scroll_y(id) != 100 {
+        zeus.engine_step_dt(16)
+        zeus.pump_frame()
+        frames = frames + 1
+    }
+    must(zeus.node_scroll_y(id) == 100, "a notch moves its own distance")
+    must(frames * 16 <= 130, "and has landed within 130 ms")
+    settle()
+
+    // --- a spin accelerates: ten quick notches go much further than ten ---
+    top.set(0)
+    zeus.pump_frame()
+    let mut n = 0
+    while n < 10 {
+        zeus.engine_scroll_smooth(100, 100, 0, 100)
+        zeus.engine_step_dt(16)
+        zeus.engine_step_dt(16)
+        zeus.pump_frame()
+        n = n + 1
+    }
+    settle()
+    must(zeus.node_scroll_y(id) >= 2500, "a spin at least 2.5x the plain distance")
+    must(zeus.node_scroll_y(id) <= 4000, "and at most 4x")
+
+    // --- a pause starts over ---
+    let before = zeus.node_scroll_y(id)
+    zeus.engine_scroll_smooth(100, 100, 0, 100)
+    settle()
+    must(zeus.node_scroll_y(id) == before + 100, "after a pause a notch is a notch")
+
+    // --- a flick at 30 px a frame glides a long way, and stops ---
+    top.set(0)
+    zeus.pump_frame()
+    n = 0
+    while n < 6 {
+        zeus.engine_scroll(100, 100, 0, 30)
+        zeus.engine_step_dt(16)
+        zeus.pump_frame()
+        n = n + 1
+    }
+    let at_lift = zeus.node_scroll_y(id)
+    zeus.engine_mouseup()
+    settle()
+    must(zeus.node_scroll_y(id) - at_lift >= 900, "the coast carries it")
+    must(zeus.engine_step_dt(16) == 0, "and it stops")
+
+    // --- touch at half the frame rate releases just as fast ---
+    top.set(0)
+    zeus.pump_frame()
+    n = 0
+    while n < 8 {
+        zeus.engine_scroll(100, 100, 0, 30)
+        zeus.engine_step_dt(8)
+        zeus.pump_frame()
+        zeus.engine_step_dt(8)
+        zeus.pump_frame()
+        n = n + 1
+    }
+    let lift_120 = zeus.node_scroll_y(id)
+    zeus.engine_mouseup()
+    settle()
+    must(zeus.node_scroll_y(id) - lift_120 >= 700, "a 120 Hz screen loses no release speed")
+
+    // --- a finger that stopped has nothing to release ---
+    top.set(0)
+    zeus.pump_frame()
+    n = 0
+    while n < 6 {
+        zeus.engine_scroll(100, 100, 0, 30)
+        zeus.engine_step_dt(16)
+        zeus.pump_frame()
+        n = n + 1
+    }
+    n = 0
+    while n < 12 {
+        zeus.engine_step_dt(16)
+        zeus.pump_frame()
+        n = n + 1
+    }
+    let rested = zeus.node_scroll_y(id)
+    zeus.engine_mouseup()
+    settle()
+    must(zeus.node_scroll_y(id) == rested, "a rested finger lifts without a glide")
+
+    // --- a press on the track goes there, and holds as a drag ---
+    top.set(0)
+    zeus.pump_frame()
+    zeus.engine_scroll_step(100, 100, 0, 10)
+    zeus.pump_frame()
+    must(zeus.engine_click(396, 300) != 0, "the track takes a press")
+    zeus.pump_frame()
+    let jumped = zeus.node_scroll_y(id)
+    must(jumped > max * 6 / 10 && jumped < max * 9 / 10, "the page jumped to the press")
+    zeus.engine_drag(396, 320)
+    zeus.pump_frame()
+    must(zeus.node_scroll_y(id) > jumped, "and the same press drags")
+    zeus.engine_mouseup()
+    zeus.pump_frame()
+
+    // --- the page keys, nothing focused ---
+    top.set(0)
+    zeus.pump_frame()
+    must(zeus.engine_key(1005) != 0, "page down")
+    settle()
+    must(zeus.node_scroll_y(id) == 360, "most of a screen")
+    zeus.engine_key(32)
+    settle()
+    must(zeus.node_scroll_y(id) == 720, "space too")
+    zeus.engine_key(1007)
+    settle()
+    must(zeus.node_scroll_y(id) == max, "end")
+    zeus.engine_key(1006)
+    settle()
+    must(zeus.node_scroll_y(id) == 0, "home")
+    zeus.engine_key(1003)
+    settle()
+    must(zeus.node_scroll_y(id) == 64, "an arrow is a few lines")
+
+    // --- reduced motion: the keys still move, at once ---
+    zeus.set_reduced_motion(true)
+    top.set(0)
+    zeus.pump_frame()
+    zeus.engine_key(1005)
+    zeus.pump_frame()
+    must(zeus.node_scroll_y(id) == 360, "reduced: a page key jumps")
+    zeus.set_reduced_motion(false)
+
+    fmt.println("scroll speed ok")
+}

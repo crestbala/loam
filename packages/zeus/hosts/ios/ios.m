@@ -108,6 +108,8 @@ static void zeus_sync_keyboard(UIView *v) {
     CGPoint last;
     int tracking;
     int scrolling;
+    CGPoint start;
+    CGFloat rem_x, rem_y;
 }
 @end
 
@@ -171,6 +173,9 @@ static void zeus_sync_keyboard(UIView *v) {
     if (!t) return;
     p = zeus_content_point(self, [t locationInView:self]);
     last = p;
+    start = p;
+    rem_x = 0;
+    rem_y = 0;
     tracking = 1;
     scrolling = 0;
     /* A finger has no hover, so the touch *is* the pointer: report the position
@@ -189,16 +194,28 @@ static void zeus_sync_keyboard(UIView *v) {
 - (void)touchesMoved:(NSSet *)touches withEvent:(UIEvent *)event {
     UITouch *t = [touches anyObject];
     CGPoint p;
+    CGFloat fx, fy;
     int64_t dx, dy;
     int dirty;
     (void)event;
     if (!t || !tracking) return;
     p = zeus_content_point(self, [t locationInView:self]);
-    dx = (int64_t)(last.x - p.x);
-    dy = (int64_t)(last.y - p.y);
+    /* The engine takes whole points. Carry the fraction, or a slow drag loses
+       a piece of every move and the content falls behind the finger. */
+    fx = last.x - p.x + rem_x;
+    fy = last.y - p.y + rem_y;
+    dx = (int64_t)fx;
+    dy = (int64_t)fy;
+    rem_x = fx - (CGFloat)dx;
+    rem_y = fy - (CGFloat)dy;
     dirty = zeus_handle_drag((int64_t)p.x, (int64_t)p.y);
     dirty |= zeus_handle_hover((int64_t)p.x, (int64_t)p.y);
-    if (!scrolling && (dx * dx + dy * dy > 64)) scrolling = 1;
+    /* Measured from the press: moves are small, so a slow start judged one
+       move at a time would never become a scroll. */
+    if (!scrolling) {
+        CGFloat sx = start.x - p.x, sy = start.y - p.y;
+        if (sx * sx + sy * sy > 64) scrolling = 1;
+    }
     if (scrolling && (dx || dy))
         dirty |= zeus_handle_scroll((int64_t)p.x, (int64_t)p.y, dx, dy);
     last = p;

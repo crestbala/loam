@@ -151,8 +151,8 @@ static void linux_run(void) {
                 linux_paint();
             } else if (ev.type == ButtonPress) {
                 int x = ev.xbutton.x, y = ev.xbutton.y;
-                if (ev.xbutton.button == Button4) zeus_handle_scroll_step(x, y, 0, -40);
-                else if (ev.xbutton.button == Button5) zeus_handle_scroll_step(x, y, 0, 40);
+                if (ev.xbutton.button == Button4) zeus_handle_scroll_smooth(x, y, 0, -100);
+                else if (ev.xbutton.button == Button5) zeus_handle_scroll_smooth(x, y, 0, 100);
                 else zeus_handle_click(x, y);
                 linux_paint();
             } else if (ev.type == MotionNotify) {

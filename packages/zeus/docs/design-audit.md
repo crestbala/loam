@@ -1431,3 +1431,25 @@ Motion is only where it explains something: a surface arriving from its
 trigger, a sheet from its edge, a value changing. Small controls respond on
 `Snap`, with no visible overshoot, and nothing in the component library
 bounces. `EASE.Bounce` stays available to apps.
+
+### Scroll speed
+
+Frame cost was not the limit (0.5-2 ms of script a scroll frame on the web
+host): getting to the content was. `zeus_scroll_speed.loam` locks the result.
+
+- A wheel notch lands in about 100 ms, and each notch that arrives while the last
+  is landing reaches further, up to four times (`arena.wheel_notch`).
+- The engine coast, which iOS and Android use, decays about 3% a frame, not 8%.
+  Velocity is 1/16 px, because whole pixels rounded every decay down, and is
+  measured over frames from what the finger moved (`acc_x` / `acc_y`). A flick
+  leaves at 1.5 times that.
+- The web fling keeps its own constants in `loader.js`: 1.35 gain, 14 px/ms
+  limit, stacking to three times that.
+- iOS and Android judge the slop from the press and carry fractions of a point:
+  one move at a time, a slow start never became a scroll.
+- A press on the scrollbar track jumps there and goes on as a drag.
+- PageUp / PageDown, Space, Home and End scroll when nothing claims them, and the
+  arrows do with nothing focused (`input.key_scroll`).
+- Scrolling stops only at a surface (`arena.floater_is_surface`): a modal, a scrim
+  or a popup. Page content with a `zIndex`, such as a Select trigger, is a
+  floater too, and used to swallow the wheel (`zeus_scroll_over_layer.loam`).

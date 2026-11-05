@@ -29,6 +29,17 @@ let mut hit_in_floater: int = 0
 /// nested scroller under a scrolled page cannot be re-tested with the window
 /// point, which is what `click` used to do (and missed by the page's offset).
 let mut hit_bar: int = 0
+/// The floater the last `scroll_target` stopped in, 0 for none.
+let mut scroll_stop: int = 0
+/// Key codes `key_scroll` answers (`KeyEvent.key`), and an arrow's distance.
+const KEY_SPACE: int = 32
+const KEY_UP: int = 1002
+const KEY_DOWN: int = 1003
+const KEY_PAGE_UP: int = 1004
+const KEY_PAGE_DOWN: int = 1005
+const KEY_HOME: int = 1006
+const KEY_END: int = 1007
+const KEY_LINE: int = 64
 
 fn hit_one_floater(id: int, sx: int, sy: int) -> int {
     if int(nodes.ui[id].ptr_pass) != 0 {
@@ -93,10 +104,11 @@ fn hit_scrollbar(id: int, px: int, py: int) -> int {
     if arena.bar_live(id) == 0 {
         return 0
     }
+    // The whole track, not just the thumb: a press off the thumb brings it there.
     let tx = arena.bar_x(id, nodes.box[id].x)
     let text_width = arena.bar_w_of(id)
-    let ty = arena.bar_thumb_y(id, nodes.box[id].y)
-    let text_height = arena.bar_thumb_h(id)
+    let ty = arena.bar_y(id, nodes.box[id].y)
+    let text_height = arena.bar_track_h(id)
     if px < tx {
         return 0
     }
@@ -119,8 +131,8 @@ fn hit_h_scrollbar(id: int, px: int, py: int) -> int {
     if arena.bar_live_x(id) == 0 {
         return 0
     }
-    let tx = arena.bar_thumb_x(id, nodes.box[id].x)
-    let text_width = arena.bar_thumb_w(id)
+    let tx = arena.bar_hx(id, nodes.box[id].x)
+    let text_width = arena.bar_track_w(id)
     let ty = arena.bar_hy(id, nodes.box[id].y)
     let text_height = arena.bar_w_of(id)
     if px < tx {
@@ -359,6 +371,7 @@ fn click(px: int, py: int) -> int {
         if hit_bar == 2 {
             // Grab the thumb where it is: the drag moves it from its current
             // scroll, so the content never jumps under the pointer.
+            arena.bar_track_press_x(id, px)
             arena.bar_on(id)
             arena.drag_id = id
             arena.drag_bar = 2
@@ -369,6 +382,7 @@ fn click(px: int, py: int) -> int {
         if hit_bar == 1 {
             // Grab the thumb where it is: the drag moves it from its current
             // scroll, so the content never jumps under the pointer.
+            arena.bar_track_press_y(id, py)
             arena.bar_on(id)
             arena.drag_id = id
             arena.drag_bar = 1
@@ -516,24 +530,40 @@ fn scroll_target(px: int, py: int, horiz: int) -> int {
     arena.ptr_x = px
     arena.ptr_y = py
     arena.update_ptr_cover()
+    scroll_stop = 0
     let f = arena.ptr_cover
     if f > 0 {
-        let was = hit_in_floater
-        hit_in_floater = 1
-        let mut s = 0
-        if nodes.is_window_floater(f) != 0 {
-            s = find_scroll_axis(f, px, py, horiz)
-        } else {
-            s = find_scroll_axis(f, px + arena.ptr_cover_sx, py + arena.ptr_cover_sy, horiz)
+        let s = scroll_in_floater(f, arena.ptr_cover_sx, arena.ptr_cover_sy, px, py, horiz)
+        if s > 0 || arena.floater_is_surface(f) != 0 {
+            scroll_stop = f
+            return s
         }
-        hit_in_floater = was
-        return s
+        // Page content in a higher layer, with nothing to scroll of its own. A
+        // surface under it (an open Select's scrim) still holds the page.
+        let under = arena.scroll_surface()
+        if under > 0 {
+            scroll_stop = under
+            return scroll_in_floater(under, arena.surface_sx, arena.surface_sy, px, py, horiz)
+        }
     }
     return find_scroll_axis(arena.root_id, px, py, horiz)
 }
 
+fn scroll_in_floater(f: int, sx: int, sy: int, px: int, py: int, horiz: int) -> int {
+    let was = hit_in_floater
+    hit_in_floater = 1
+    let mut s = 0
+    if nodes.is_window_floater(f) != 0 {
+        s = find_scroll_axis(f, px, py, horiz)
+    } else {
+        s = find_scroll_axis(f, px + sx, py + sy, horiz)
+    }
+    hit_in_floater = was
+    return s
+}
+
 /// Next overflowing scroller above `id` on the same axis (nested chaining).
-/// The chain ends at the floater `scroll_target` resolved in (`ptr_cover`): a
+/// The chain ends at the floater `scroll_target` resolved in (`scroll_stop`): a
 /// list at its bound inside a Drawer or Dialog must not slide the page behind.
 fn parent_scroll(id: int, horiz: int) -> int {
     if id <= 0 {
@@ -542,7 +572,7 @@ fn parent_scroll(id: int, horiz: int) -> int {
     if id >= nodes.tree.len {
         return 0
     }
-    if id == arena.ptr_cover {
+    if id == scroll_stop {
         return 0
     }
     let mut p = nodes.tree[id].parent
@@ -563,7 +593,7 @@ fn parent_scroll(id: int, horiz: int) -> int {
                 }
             }
         }
-        if p == arena.ptr_cover {
+        if p == scroll_stop {
             return 0
         }
         p = nodes.tree[p].parent
@@ -676,8 +706,8 @@ fn scroll(px: int, py: int, dx: int, dy: int) -> int {
 }
 
 /// Mouse-wheel notch with the browser feel: the delta moves a target and the
-/// position eases to it over ~150 ms (`physics_step`), retargeting on the
-/// next notch. Chains to the parent scroller when this one is at its edge.
+/// position eases to it (`physics_step`), retargeting on the next notch, which
+/// reaches further for coming while the last is landing. Chains to the parent scroller when this one is at its edge.
 /// Under reduced motion it is a plain step.
 fn scroll_smooth(px: int, py: int, dx: int, dy: int) -> int {
     arena.ensure()
@@ -691,6 +721,14 @@ fn scroll_smooth(px: int, py: int, dx: int, dy: int) -> int {
     if dy != 0 {
         let mut s = scroll_target(px, py, 0)
         let mut rem = dy
+        if s > 0 {
+            rem = arena.wheel_notch(
+                int(nodes.scrl[s].smooth) & 1,
+                nodes.scrl[s].scroll_y,
+                nodes.scrl[s].tgt_y,
+                dy,
+            )
+        }
         while s > 0 && rem != 0 {
             let used = arena.apply_smooth_y(s, rem)
             if used != 0 {
@@ -703,6 +741,14 @@ fn scroll_smooth(px: int, py: int, dx: int, dy: int) -> int {
     if dx != 0 {
         let mut s = scroll_target(px, py, 1)
         let mut rem = dx
+        if s > 0 {
+            rem = arena.wheel_notch(
+                int(nodes.scrl[s].smooth) & 2,
+                nodes.scrl[s].scroll_x,
+                nodes.scrl[s].tgt_x,
+                dx,
+            )
+        }
         while s > 0 && rem != 0 {
             let used = arena.apply_smooth_x(s, rem)
             if used != 0 {
@@ -813,7 +859,9 @@ fn drag(px: int, py: int) -> int {
 }
 
 fn mouseup() {
-    arena.pan_held = 0
+    if arena.pan_held != 0 {
+        arena.pan_release()
+    }
     // A released thumb lingers and fades like any scroll, instead of
     // vanishing the moment the pointer lets go.
     if arena.drag_bar != 0 && arena.drag_id > 0 {
@@ -915,6 +963,56 @@ fn key_handlers(k: int, mods: int, up: int) -> int {
         ran = 1
     }
     return ran
+}
+
+/// The scroller keys drive: the one under the pointer, or the first in the
+/// tree that has anywhere to go (a phone or a keyboard user has no pointer).
+fn key_scroller() -> int {
+    let s = scroll_target(arena.ptr_x, arena.ptr_y, 0)
+    if s > 0 {
+        return s
+    }
+    let n = nodes.tree.len
+    for i in 1..n {
+        if int(nodes.tree[i].kind) == 11 && arena.shown_in_tree(i) != 0 {
+            if arena.scroll_max(i) > 0 {
+                return i
+            }
+        }
+    }
+    return 0
+}
+
+/// The keys that move a page: PageUp / PageDown and Space (Shift+Space back) by
+/// most of a screen, Home / End to the ends, the arrows by a few lines. Unclaimed
+/// keys only: a focused control keeps what it uses, and the arrows need no focus.
+fn key_scroll(k: int) -> int {
+    let page = k == KEY_PAGE_UP || k == KEY_PAGE_DOWN || k == KEY_SPACE
+    let end = k == KEY_HOME || k == KEY_END
+    let arrow = (k == KEY_UP || k == KEY_DOWN) && arena.focus_id == 0
+    if !page && !end && !arrow {
+        return 0
+    }
+    let s = key_scroller()
+    if s <= 0 {
+        return 0
+    }
+    let shift = arena.ev_mods % 2 == 1
+    let up = k == KEY_PAGE_UP || k == KEY_HOME || k == KEY_UP || (k == KEY_SPACE && shift)
+    let mut d = KEY_LINE
+    if page {
+        d = nodes.box[s].h * 9 / 10
+    }
+    if end {
+        d = arena.scroll_max(s)
+    }
+    if up {
+        d = 0 - d
+    }
+    if arena.anim_reduced() != 0 {
+        return arena.apply_delta_y(s, d, 0)
+    }
+    return if arena.apply_smooth_y(s, d) != 0 { 1 } else { 0 }
 }
 
 /// The innermost scroller from `s` up whose live bar strip is under the
@@ -1205,7 +1303,10 @@ fn key(k: int) -> int {
         }
     }
     if arena.focus_captures_text() == 0 {
-        return handled
+        if handled != 0 {
+            return handled
+        }
+        return key_scroll(k)
     }
     let id = arena.focus_id
     if id <= 0 {

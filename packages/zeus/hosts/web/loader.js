@@ -77,11 +77,17 @@
   /* A canvas gets no OS inertia, so a released pan coasts here. Time-based, so a
      phone that drops frames travels as far as one that does not. The constant
      is iOS's normal rate (0.998 per ms). */
-  const FLING_DECAY = 0.002;
+  /* A native list's glide, a little longer: a flick should reach the content. */
+  const FLING_DECAY = 0.0016;
+  /* Released faster than measured: the window averages away a flick's last,
+     fastest moves. */
+  const FLING_GAIN = 1.35;
   const FLING_WINDOW_MS = 100;
   const FLING_REST_MS = 80;
   const FLING_MIN = 0.1;
-  const FLING_MAX = 8;
+  const FLING_MAX = 14;
+  /* Swiping again adds to what is left, up to this many times the limit. */
+  const FLING_STACK = 3;
   const FLING_STOP = 0.02;
   /* Finger velocity at lift in layout units per ms, from `samples` of
      `{t, x, y}`, oldest first. The last pair alone is noise: a real lift slows
@@ -93,7 +99,8 @@
     for (let i = samples.length - 1; i >= 0 && last.t - samples[i].t <= FLING_WINDOW_MS; i--) first = samples[i];
     const dt = last.t - first.t;
     if (dt <= 0) return { x: 0, y: 0 };
-    const clamp = (v) => (Math.abs(v) < FLING_MIN ? 0 : Math.max(-FLING_MAX, Math.min(FLING_MAX, v)));
+    const clamp = (v) =>
+      Math.abs(v) < FLING_MIN ? 0 : Math.max(-FLING_MAX, Math.min(FLING_MAX, v * FLING_GAIN));
     return { x: clamp((first.x - last.x) / dt), y: clamp((first.y - last.y) / dt) };
   }
   /* `dt` ms of coast from velocity `v`: the distance covered and what is left. */
@@ -2115,8 +2122,8 @@
           if (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) return false;
           const c = flingCarry;
           if (c && now - c.t < 400) {
-            if (c.x * v.x > 0) v.x = Math.max(-FLING_MAX * 2, Math.min(FLING_MAX * 2, v.x + c.x));
-            if (c.y * v.y > 0) v.y = Math.max(-FLING_MAX * 2, Math.min(FLING_MAX * 2, v.y + c.y));
+            if (c.x * v.x > 0) v.x = Math.max(-FLING_MAX * FLING_STACK, Math.min(FLING_MAX * FLING_STACK, v.x + c.x));
+            if (c.y * v.y > 0) v.y = Math.max(-FLING_MAX * FLING_STACK, Math.min(FLING_MAX * FLING_STACK, v.y + c.y));
           }
           fling = { vx: v.x, vy: v.y, t: now };
           return true;
