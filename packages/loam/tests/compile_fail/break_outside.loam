@@ -1,0 +1,4 @@
+// `break` needs a loop or a switch around it.
+fn main() {
+    break
+}

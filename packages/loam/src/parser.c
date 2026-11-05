@@ -119,10 +119,21 @@ static char *tok_text(Token t) { return loam_dupn(t.start, (size_t)t.len); }
 /** A `TOK_NUMBER` lexeme: decimal, or `0x`/`0X` hex (e.g. a packed RGB color).
  * Never base 0 — that would read a bare leading-zero decimal as octal. */
 static int64_t tok_int(Token t) {
+    /* Unsigned: 2^63 has to survive to reach the `-` in front of the i64
+       minimum, and a u64 literal may use the top bit. strtoll saturates. The
+       type checker rejects a wrapped value that no type can hold. */
     if (t.len > 2 && t.start[0] == '0' && (t.start[1] == 'x' || t.start[1] == 'X')) {
-        return strtoll(t.start, NULL, 16);
+        return (int64_t)strtoull(t.start, NULL, 16);
     }
-    return strtoll(t.start, NULL, 10);
+    return (int64_t)strtoull(t.start, NULL, 10);
+}
+
+/** A number token as a literal node, flagged if it took the top bit. */
+static AstNode *num_node(Token t, SourceLoc loc) {
+    int64_t v = tok_int(t);
+    AstNode *n = ast_number(v, loc);
+    if (v < 0) n->flags |= ASTF_WRAPPED_LIT;
+    return n;
 }
 
 /** Decode a quoted token into a heap string (`\n` `\t` `\r` `\"` `\\`). */
@@ -600,8 +611,7 @@ static AstNode *parse_primary(Parser *p) {
         return ast_float(v, loc);
     }
     if (match(p, TOK_NUMBER)) {
-        int64_t v = tok_int(p->previous);
-        return ast_number(v, loc);
+        return num_node(p->previous, loc);
     }
     if (match(p, TOK_STRING)) {
         char *raw = unescape_string(p->previous);
@@ -1057,17 +1067,18 @@ static int is_assign_op(TokenKind k) {
            k == TOK_SHL_EQ || k == TOK_SHR_EQ;
 }
 
-/** One case pattern: a literal or an enum constant (`LOOK.Solid`). */
+/** One case label: an integer constant, as in C. `true` / `false` label a bool
+ *  scrutinee; `Enum.Member` is the named form. */
 static AstNode *parse_case_pat(Parser *p) {
     SourceLoc loc = p->current.loc;
     if (match(p, TOK_IDENT)) {
         char *nm = tok_text(p->previous);
-        /* `Enum.Member` is a compile-time constant, so it is a legal pattern
+        /* `Enum.Member` is a compile-time constant, so it is a legal label
            and keeps the case readable — switching on raw 0/1/2 would not. */
         if (match(p, TOK_DOT)) {
             if (!match(p, TOK_IDENT)) {
                 free(nm);
-                error(p, "expected a name after `.` in a case pattern");
+                error(p, "expected a name after `.` in a case label");
                 return NULL;
             }
             char *field = tok_text(p->previous);
@@ -1078,34 +1089,30 @@ static AstNode *parse_case_pat(Parser *p) {
         }
         int under = strcmp(nm, "_") == 0;
         free(nm);
-        error(p, under ? "`_` is not a case pattern; write `default:`"
-                       : "case patterns are literals or `Enum.Member`");
+        error(p, under ? "`_` is not a case label; write `default:`"
+                       : "case labels are integer constants or `Enum.Member`");
         return NULL;
     }
-    if (match(p, TOK_NUMBER)) {
-        int64_t v = tok_int(p->previous);
-        return ast_number(v, loc);
+    if (match(p, TOK_MINUS)) {
+        /* Kept as a negated literal so the range check sees it as `-128`. */
+        if (!match(p, TOK_NUMBER)) {
+            error(p, "expected a number after `-` in a case label");
+            return NULL;
+        }
+        return ast_unary(TOK_MINUS, num_node(p->previous, loc), loc);
     }
-    if (match(p, TOK_FLOAT)) {
-        double v = strtod(p->previous.start, NULL);
-        return ast_float(v, loc);
+    if (match(p, TOK_NUMBER)) {
+        return num_node(p->previous, loc);
     }
     if (match(p, TOK_TRUE)) return ast_bool(1, loc);
     if (match(p, TOK_FALSE)) return ast_bool(0, loc);
-    if (match(p, TOK_STRING)) {
-        char *raw = unescape_string(p->previous);
-        int holes = 0;
-        AstNode *in = interp_node(raw, loc, &holes);
-        if (in) return in;
-        if (holes) { error(p, "bad {{ }} interpolation"); return NULL; }
-        return ast_string(raw, loc);
-    }
-    error(p, "expected a case pattern");
+    error(p, "case labels are integer constants or `Enum.Member`");
     return NULL;
 }
 
 /** `case A, B:` or `default:`, then its statements up to the next `case`,
- *  `default`, or the closing `}`. There is no fallthrough. */
+ *  `default`, or the closing `}`. As in C, control then falls into the next
+ *  case unless a `break` left the switch. `case A, B:` is `case A: case B:`. */
 static AstNode *parse_case(Parser *p) {
     SourceLoc loc = p->current.loc;
     AstNode **pats = NULL;
@@ -1121,7 +1128,7 @@ static AstNode *parse_case(Parser *p) {
             pats[np++] = q;
         } while (match(p, TOK_COMMA));
         if (check(p, TOK_PIPE)) {
-            error(p, "separate case patterns with `,`, not `|`");
+            error(p, "separate case labels with `,`, not `|`");
             return NULL;
         }
     } else {
@@ -1129,7 +1136,7 @@ static AstNode *parse_case(Parser *p) {
         return NULL;
     }
     if (p->had_error) return NULL;
-    consume(p, TOK_COLON, is_default ? "expected : after default" : "expected : after case pattern");
+    consume(p, TOK_COLON, is_default ? "expected : after default" : "expected : after case label");
     SourceLoc bloc = p->current.loc;
     AstNode **stmts = NULL;
     size_t count = 0;
@@ -1180,15 +1187,9 @@ static AstNode *parse_stmt(Parser *p) {
         consume(p, TOK_LBRACE, "expected { after switch");
         AstNode **cases = NULL;
         size_t nc = 0;
-        int seen_default = 0;
         while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
-            if (seen_default) {
-                error(p, "`default` must be the last case of a switch");
-                break;
-            }
             AstNode *c = parse_case(p);
             if (c) {
-                if (c->as.switch_case.is_default) seen_default = 1;
                 cases = (AstNode **)realloc(cases, (nc + 1) * sizeof(AstNode *));
                 cases[nc++] = c;
             }

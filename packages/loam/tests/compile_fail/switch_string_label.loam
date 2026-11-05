@@ -1,0 +1,8 @@
+// Case labels are integer constants.
+fn main() {
+    let x = 1
+    switch x {
+        case "a":
+            break
+    }
+}

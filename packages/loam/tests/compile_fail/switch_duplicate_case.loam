@@ -1,0 +1,10 @@
+// Two labels with one value: a jump table has one slot per value.
+fn main() {
+    let x = 1
+    switch x {
+        case 1:
+            break
+        case 0, 1:
+            break
+    }
+}

@@ -1,0 +1,8 @@
+// C's rule: a switch value is an integer, not a float.
+fn main() {
+    let f = 1.5
+    switch f {
+        default:
+            break
+    }
+}

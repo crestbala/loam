@@ -35,17 +35,23 @@ fn Language() -> Node {
         zui.Column(prose.BLOCK_GAP) {
             zui.SectionHeader(
                 "Control",
-                "switch is exhaustive",
-                "Cases are literals or enum members. There is no fallthrough. A switch needs default, or every variant, or both true and false.",
+                "switch works like C",
+                "Labels are integer constants or enum members. A case falls through unless it ends in break, and dispatch is a jump, not a series of compares.",
             )
             prose.CodeBlock([]string {
                 "switch kind {",
                 "    case Tint.Ok, Tint.Info:",
-                "        return ok()",
+                "        draw_ok()",
+                "        break",
                 "    case Tint.Danger:",
-                "        return danger()",
+                "        alarm()",
+                "        // falls through",
+                "    case Tint.Warn:",
+                "        draw_bar()",
+                "        break",
                 "    default:",
-                "        return ink()",
+                "        draw_ink()",
+                "        break",
                 "}",
             })
         }
@@ -180,7 +186,7 @@ fn Control() -> Node {
             zui.Overline("Language")
             zui.Display("Control flow")
             zui.Body(
-                "if, for, while, and switch are statements. A switch does not fall through. It needs default, or every enum variant, or both true and false when the scrutinee is a bool.",
+                "if, for, while, and switch are statements. A switch works as it does in C: a case falls through unless it ends in break, and default is optional.",
             )
         }
         zui.Column(prose.BLOCK_GAP) {
@@ -203,17 +209,23 @@ fn Control() -> Node {
         zui.Column(prose.BLOCK_GAP) {
             zui.SectionHeader(
                 "switch",
-                "Literals or enum members",
-                "A case can list several patterns. default is the rest. break and continue apply to the nearest loop.",
+                "Integer constants or enum members",
+                "A switch takes an integer, enum, or bool. A case can list several labels. break leaves the switch, and continue applies to the enclosing loop.",
             )
             prose.CodeBlock([]string {
                 "switch kind {",
                 "    case Tint.Ok, Tint.Info:",
-                "        return ok()",
+                "        draw_ok()",
+                "        break",
                 "    case Tint.Danger:",
-                "        return danger()",
+                "        alarm()",
+                "        // falls through",
+                "    case Tint.Warn:",
+                "        draw_bar()",
+                "        break",
                 "    default:",
-                "        return ink()",
+                "        draw_ink()",
+                "        break",
                 "}",
             })
             zui.Note(

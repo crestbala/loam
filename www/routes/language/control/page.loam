@@ -10,6 +10,6 @@ fn Page(p: Params) -> Node {
 fn meta(p: Params) -> Meta {
     return Meta {
         title: "Control flow — Loam",
-        description: "if, for, while, and exhaustive switch.",
+        description: "if, for, while, and C-style switch.",
     }
 }

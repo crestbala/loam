@@ -92,6 +92,7 @@ typedef enum {
     IR_TERM_RET,
     IR_TERM_JMP,
     IR_TERM_BR,
+    IR_TERM_SWITCH, /* jump table on term_val: sw_vals[i] -> sw_blocks[i], else succ[0] */
     IR_TERM_UNREACHABLE,
 } IrTermKind;
 
@@ -101,7 +102,10 @@ typedef struct {
     int ninsts, cap;
     IrTermKind term;
     int term_val;       /* return value / branch condition; -1 for none */
-    int succ[2];        /* JMP uses succ[0]; BR uses both */
+    int succ[2];        /* JMP uses succ[0]; BR uses both; SWITCH: default */
+    int64_t *sw_vals;   /* IR_TERM_SWITCH: case values, unique */
+    int *sw_blocks;     /* IR_TERM_SWITCH: target of each value */
+    int sw_n;
     SourceLoc term_loc;
 } IrBlock;
 

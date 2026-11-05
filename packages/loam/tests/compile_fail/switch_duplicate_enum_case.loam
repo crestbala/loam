@@ -1,0 +1,15 @@
+// An enum member and a literal with the same value are the same label.
+enum Tag {
+    A = 0,
+    B = 1,
+}
+
+fn main() {
+    let x = 1
+    switch x {
+        case Tag.B:
+            break
+        case 1:
+            break
+    }
+}

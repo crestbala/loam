@@ -1,44 +1,116 @@
-// `switch`: cases with alternatives, `default`, bool and string scrutinees,
-// no fallthrough, an empty case, a one-line case, `continue` in a case, and a
-// `break` that belongs to a loop inside the case.
+// `switch` is C's: integer labels, fallthrough unless `break`, `default`
+// anywhere and optional, and no requirement to cover every value.
 import "std:fmt"
+import "std:sys"
 
-fn main() {
-    let x = 3
+enum Tag {
+    A = 0,
+    B = 1,
+    C = 2,
+}
+
+fn expect(got: int, want: int) {
+    if got != want {
+        fmt.println("FAIL got", got, "want", want)
+        sys.exit(1)
+    }
+}
+
+// Falls through 2 -> 3 -> 4; `break` stops at 4.
+fn fall(x: int) -> int {
     let mut s = 0
     switch x {
-        case 0, 1:
-            s = 10
+        case 1:
+            s = s + 1
+            break
         case 2:
-            s = 20
+            s = s + 10
+        case 3:
+            s = s + 100
+        case 4:
+            s = s + 1000
+            break
+        case 5:
+            s = s + 10000
+    }
+    return s
+}
+
+// `default` in the middle: reached by no match, then falls into the next case.
+fn middle(x: int) -> int {
+    let mut s = 0
+    switch x {
+        case 1:
+            s = 1
+            break
         default:
-            s = 30
+            s = 2
+        case 3:
+            s = s + 30
+            break
+        case 4:
+            s = 4
     }
-    fmt.println(s)
-    switch true {
-        case true:
-            fmt.println(1)
-        case false:
-            fmt.println(0)
+    return s
+}
+
+// An enum needs no default and no full coverage.
+fn partial(t: Tag) -> int {
+    switch t {
+        case Tag.A:
+            return 1
+        case Tag.B:
+            return 2
     }
-    switch "ok" {
-        case "ok":
-            fmt.println(1)
+    return 3
+}
+
+// No case matched and the function has no `return` after the switch: the zero
+// value, the same as an `if` with no `else`.
+fn partial_off_end(t: Tag) -> int {
+    switch t {
+        case Tag.A:
+            return 7
+    }
+}
+
+fn negative(x: int) -> int {
+    switch x {
+        case -1:
+            return 1
+        case -2, 0:
+            return 2
         default:
-            fmt.println(0)
+            return 3
     }
-    let b: bool = false
-    switch b {
-        case true:
-            fmt.println(9)
+}
+
+// Stacked labels and the comma form are the same thing.
+fn stacked(x: int) -> int {
+    switch x {
+        case 1:
+        case 2:
+        case 3, 4:
+            return 1
         default:
-            fmt.println(8)
+            return 0
     }
-    let mut seen = 0
-    for i in 0..6 {
+}
+
+// `break` in an `if` leaves the switch, one in an inner loop leaves the loop,
+// and `continue` passes through the switch to the enclosing loop.
+fn nested(limit: int) -> int {
+    let mut s = 0
+    for i in 0..limit {
         switch i {
             case 0:
-            case 1: seen = seen + 1
+                if s == 0 {
+                    break
+                }
+                s = s + 100000
+            case 1:
+                s = s + 1
+                break
             case 2:
                 continue
             case 3:
@@ -46,11 +118,110 @@ fn main() {
                     if j == 2 {
                         break
                     }
-                    seen = seen + 10
+                    s = s + 10
                 }
             default:
-                seen = seen + 100
+                s = s + 1000
+                break
         }
+        s = s + 100
     }
-    fmt.println(seen)
+    return s
+}
+
+fn inner_switch(a: int, b: int) -> int {
+    let mut s = 0
+    switch a {
+        case 1:
+            switch b {
+                case 1:
+                    s = 1
+                    break
+                default:
+                    s = 2
+                    break
+            }
+            s = s + 10
+            break
+        default:
+            s = 3
+            break
+    }
+    return s
+}
+
+fn on_bool(b: bool) -> int {
+    switch b {
+        case true:
+            return 1
+    }
+    return 0
+}
+
+// The scrutinee runs once, whatever the number of cases.
+fn counted(c: &mut int) -> int {
+    *c = *c + 1
+    return 2
+}
+
+fn main() {
+    expect(fall(0), 0)
+    expect(fall(1), 1)
+    expect(fall(2), 1110)
+    expect(fall(3), 1100)
+    expect(fall(4), 1000)
+    expect(fall(5), 10000)
+    expect(middle(1), 1)
+    expect(middle(9), 32)
+    expect(middle(3), 30)
+    expect(middle(4), 4)
+    expect(partial(Tag.A), 1)
+    expect(partial(Tag.B), 2)
+    expect(partial(Tag.C), 3)
+    expect(partial_off_end(Tag.A), 7)
+    expect(partial_off_end(Tag.C), 0)
+    expect(negative(-1), 1)
+    expect(negative(-2), 2)
+    expect(negative(0), 2)
+    expect(negative(5), 3)
+    expect(stacked(1), 1)
+    expect(stacked(2), 1)
+    expect(stacked(4), 1)
+    expect(stacked(5), 0)
+    expect(nested(5), 2421)
+    expect(inner_switch(1, 1), 11)
+    expect(inner_switch(1, 2), 12)
+    expect(inner_switch(2, 1), 3)
+    expect(on_bool(true), 1)
+    expect(on_bool(false), 0)
+    let mut calls = 0
+    switch counted(&mut calls) {
+        case 0:
+        case 1:
+        case 2:
+        case 3:
+        case 4:
+        case 5:
+            break
+    }
+    expect(calls, 1)
+    // A switch with no cases still evaluates its scrutinee.
+    switch counted(&mut calls) {}
+    expect(calls, 2)
+    // A closure has its own `break` scope, inside a case.
+    let v = 1
+    switch v {
+        case 1:
+            let f = |x: int| -> int {
+                for i in 0..10 {
+                    if i == x {
+                        break
+                    }
+                }
+                return x
+            }
+            expect(f(3), 3)
+            break
+    }
+    fmt.println("switch ok")
 }
