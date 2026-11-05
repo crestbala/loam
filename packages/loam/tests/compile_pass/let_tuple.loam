@@ -1,0 +1,79 @@
+// `let (a, b) = (x, y)`: several bindings on one line.
+import "std:fmt"
+
+let (origin_x, origin_y) = (3, 4)
+let (mut hits, limit): (int, i64) = (0, 100)
+
+struct Point {
+    x: int,
+    y: int,
+}
+
+fn add(a: int, b: int) -> int {
+    fmt.println("add {{a}} {{b}}")
+    return a + b
+}
+
+fn takes_module_level() {
+    hits += 1
+    fmt.println("module {{origin_x}} {{origin_y}} {{hits}} {{limit}}")
+}
+
+fn main() {
+    // Standard initialization
+    let (x, y, z) = (1, 2.5, "hello")
+    fmt.println("{{x}} {{y}} {{z}}")
+
+    // With explicit type annotations
+    let (a, b): (i32, f64) = (10, 3.14)
+    let wide: f64 = b
+    fmt.println("{{a}} {{wide}}")
+
+    // Mixing mutable and immutable variables
+    let (mut count, mut name) = (0, "Alice")
+    count += 2
+    name = "Bala"
+    fmt.println("{{name}} {{count}}")
+
+    // Right side runs left to right
+    let (p, q) = (add(1, 2), add(3, 4))
+    fmt.println("{{p}} {{q}}")
+
+    // `_` skips a value but still runs it
+    let (keep, _) = (add(5, 6), add(7, 8))
+    fmt.println("{{keep}}")
+
+    // In a nested scope the right side sees the outer names
+    if x == 1 {
+        let (a, x) = (x, a)
+        fmt.println("swapped {{a}} {{x}}")
+        if a == 1 {
+            let (x, label) = (x + 1, "x={{x}}")
+            fmt.println("{{x}} {{label}}")
+        }
+    }
+
+    // A right side can read the module-level name it is shadowing
+    let (origin_x, old_x) = (30, origin_x)
+    fmt.println("{{origin_x}} {{old_x}}")
+
+    // Trailing commas and structs
+    let (pt, n,): (Point, u8,) = (Point { x: 1, y: 2 }, 200,)
+    fmt.println("{{pt.x}} {{pt.y}} {{n}}")
+
+    switch x {
+        case 1:
+            let (s, t) = ("case", "body")
+            fmt.println("{{s}} {{t}}")
+        default:
+    }
+
+    let add_two = || {
+        let (mut i, step) = (0, 2)
+        i += step
+        return i
+    }
+    fmt.println(add_two())
+
+    takes_module_level()
+}

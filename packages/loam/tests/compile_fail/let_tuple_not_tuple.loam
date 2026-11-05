@@ -1,0 +1,8 @@
+// Loam has no tuple values: the right side must be a tuple literal.
+fn pair() -> int {
+    return 1
+}
+
+fn main() {
+    let (a, b) = pair()
+}

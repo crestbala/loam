@@ -10,6 +10,7 @@
 #include "ext.h"
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 
 static void advance(Parser *p) {
     p->previous = p->current;
@@ -162,6 +163,9 @@ void parser_init(Parser *p, Lexer *l) {
     p->lex = l;
     p->had_error = 0;
     p->allow_struct_lit = 1;
+    p->spill = NULL;
+    p->spill_n = 0;
+    p->hidden_id = 0;
     p->current = lexer_next(l);
     p->peek = lexer_next(l);
 }
@@ -677,11 +681,16 @@ static AstNode *parse_primary(Parser *p) {
     return NULL;
 }
 
+/** Is the current token on the line the previous one ended on? A newline ends
+ *  a statement, so `(`, `[`, `++`, `--`, and a `{` block on the next line start
+ *  a new one rather than continuing the expression. */
+static int same_line(Parser *p) { return p->current.loc.line == p->previous.loc.end_line; }
+
 /** Calls, `.field`, `::path`, and `[index]` after a primary. */
 static AstNode *parse_postfix(Parser *p, AstNode *left) {
     for (;;) {
         SourceLoc loc = p->current.loc;
-        if (match(p, TOK_LPAREN)) {
+        if (same_line(p) && match(p, TOK_LPAREN)) {
             AstNode **args = NULL;
             size_t ac = 0;
             FieldInit *props = NULL;
@@ -729,8 +738,7 @@ static AstNode *parse_postfix(Parser *p, AstNode *left) {
             /* Trailing block: `C(...) { ... }` is the UI hierarchy. The `{`
                must open on the line the `)` closed on, so a following
                standalone block stays its own statement. */
-            if (p->allow_struct_lit && check(p, TOK_LBRACE) &&
-                p->current.loc.line == p->previous.loc.end_line) {
+            if (p->allow_struct_lit && check(p, TOK_LBRACE) && same_line(p)) {
                 SourceLoc bloc = p->current.loc;
                 AstNode *body = parse_block(p);
                 AstNode *clos = ast_fn(NULL, NULL, 0, NULL, body, bloc);
@@ -767,7 +775,7 @@ static AstNode *parse_postfix(Parser *p, AstNode *left) {
             left = ast_field(left, tok_text(p->previous), 1, p->previous.loc);
             continue;
         }
-        if (match(p, TOK_LBRACKET)) {
+        if (same_line(p) && match(p, TOK_LBRACKET)) {
             AstNode *idx = parse_expr(p);
             consume(p, TOK_RBRACKET, "expected ]");
             left = ast_index(left, idx, loc);
@@ -779,7 +787,7 @@ static AstNode *parse_postfix(Parser *p, AstNode *left) {
             continue;
         }
         /* Postfix ++/--: `i++` / `i--`. */
-        if (match(p, TOK_PLUS_PLUS) || match(p, TOK_MINUS_MINUS)) {
+        if (same_line(p) && (match(p, TOK_PLUS_PLUS) || match(p, TOK_MINUS_MINUS))) {
             int dec = p->previous.kind == TOK_MINUS_MINUS;
             left = ast_incdec(left, dec, 1, loc);
             continue;
@@ -877,6 +885,141 @@ static AstNode *parse_cond_expr(Parser *p) {
     return e;
 }
 
+static void spill_stmt(Parser *p, AstNode *s) {
+    p->spill = (AstNode **)realloc(p->spill, (p->spill_n + 1) * sizeof(AstNode *));
+    p->spill[p->spill_n++] = s;
+}
+
+/** Append `s` to a statement list, then whatever it left in `p->spill`. */
+static void push_stmt(Parser *p, AstNode ***list, size_t *n, AstNode *s) {
+    if (s) {
+        *list = (AstNode **)realloc(*list, (*n + 1 + p->spill_n) * sizeof(AstNode *));
+        (*list)[(*n)++] = s;
+        for (size_t i = 0; i < p->spill_n; i++) (*list)[(*n)++] = p->spill[i];
+    }
+    p->spill_n = 0;
+}
+
+/** Does `name` appear as a whole word in source text `s`? Reads raw text, not
+ *  tokens, so a `{{name}}` hole in a string counts too. */
+static int text_mentions(const char *s, const char *end, const char *name) {
+    size_t len = strlen(name);
+    for (const char *q = s; q + len <= end; q++) {
+        if (memcmp(q, name, len) != 0) continue;
+        int word_l = q > s && (isalnum((unsigned char)q[-1]) || q[-1] == '_');
+        int word_r = q + len < end && (isalnum((unsigned char)q[len]) || q[len] == '_');
+        if (!word_l && !word_r) return 1;
+    }
+    return 0;
+}
+
+/** `let (a, mut b): (T, U) = (x, y)` — one `let` per name. Loam has no tuple
+ *  value, so this is sugar: the right side must be a tuple literal, and the
+ *  first decl is returned with the rest left in `p->spill` for the enclosing
+ *  list. `(` is the current token.
+ *
+ *  Every right side runs before any name binds, so in a nested scope
+ *  `let (x, y) = (y, x)` swaps the outer pair. A plain split would read the
+ *  new `x`; when the right side mentions a pattern name, each value goes
+ *  through a hidden local first. */
+static AstNode *parse_let_tuple(Parser *p, SourceLoc loc, int is_const) {
+    advance(p); /* '(' */
+    const char **names = NULL;
+    int *muts = NULL;
+    SourceLoc *locs = NULL;
+    size_t n = 0;
+    do {
+        if (check(p, TOK_RPAREN)) break; /* trailing comma */
+        int m = match(p, TOK_MUT);
+        if (m && is_const) {
+            error(p, "a `const` cannot be `mut`");
+            return NULL;
+        }
+        if (!match(p, TOK_IDENT)) {
+            error(p, "expected a name in the `let` tuple");
+            return NULL;
+        }
+        names = (const char **)realloc(names, (n + 1) * sizeof(char *));
+        muts = (int *)realloc(muts, (n + 1) * sizeof(int));
+        locs = (SourceLoc *)realloc(locs, (n + 1) * sizeof(SourceLoc));
+        names[n] = tok_text(p->previous);
+        muts[n] = m;
+        locs[n] = p->previous.loc;
+        n++;
+    } while (match(p, TOK_COMMA));
+    consume(p, TOK_RPAREN, "expected ) after the `let` names");
+    if (p->had_error) return NULL;
+    if (n == 0) {
+        error(p, "a `let` tuple needs at least one name");
+        return NULL;
+    }
+
+    AstNode **types = (AstNode **)calloc(n, sizeof(AstNode *));
+    if (match(p, TOK_COLON)) {
+        consume(p, TOK_LPAREN, "expected ( before the `let` tuple types");
+        size_t nt = 0;
+        do {
+            if (check(p, TOK_RPAREN)) break;
+            AstNode *t = parse_type(p);
+            if (p->had_error) return NULL;
+            if (nt < n) types[nt] = t;
+            nt++;
+        } while (match(p, TOK_COMMA));
+        consume(p, TOK_RPAREN, "expected ) after the `let` tuple types");
+        if (p->had_error) return NULL;
+        if (nt != n) {
+            loam_error(loc, "`let` tuple has %zu name(s) but %zu type(s)", n, nt);
+            p->had_error = 1;
+            return NULL;
+        }
+    }
+
+    consume(p, TOK_EQ, "expected =");
+    if (p->had_error) return NULL;
+    const char *rhs_start = p->current.start;
+    SourceLoc rhs_loc = p->current.loc;
+    AstNode *rhs = parse_expr(p);
+    if (p->had_error || !rhs) return NULL;
+    const char *rhs_end = p->previous.start + p->previous.len;
+    optional_semi(p);
+    if (rhs->kind != AST_TUPLE) {
+        loam_error(rhs_loc, "a `let` tuple takes a tuple of values on the right, "
+                            "like `let (a, b) = (1, 2)`");
+        p->had_error = 1;
+        return NULL;
+    }
+    size_t nv = rhs->as.array_lit.count;
+    if (nv != n) {
+        loam_error(rhs_loc, "`let` tuple has %zu name(s) but %zu value(s)", n, nv);
+        p->had_error = 1;
+        return NULL;
+    }
+    AstNode **vals = rhs->as.array_lit.elems;
+
+    int hide = 0;
+    for (size_t i = 0; i < n && !hide; i++) {
+        if (strcmp(names[i], "_") != 0) hide = text_mentions(rhs_start, rhs_end, names[i]);
+    }
+    for (size_t i = 0; hide && i < n; i++) {
+        char hidden[32];
+        int len = snprintf(hidden, sizeof hidden, "__let%d", p->hidden_id++);
+        SourceLoc vloc = vals[i]->loc;
+        spill_stmt(p, ast_var(loam_dupn(hidden, (size_t)len), types[i], vals[i], 0, vloc));
+        vals[i] = ast_ident(loam_dupn(hidden, (size_t)len), vloc);
+        types[i] = NULL;
+    }
+    for (size_t i = 0; i < n; i++) spill_stmt(p, ast_var(names[i], types[i], vals[i], muts[i], locs[i]));
+    free(types);
+    free(muts);
+    free(locs);
+    free(names);
+
+    AstNode *head = p->spill[0];
+    p->spill_n--;
+    memmove(p->spill, p->spill + 1, p->spill_n * sizeof(AstNode *));
+    return head;
+}
+
 /** `let` / `let mut` / `const` binding. A `const` is an immutable binding
  *  whose initializer is a constant expression — the spelling props use. */
 static AstNode *parse_let(Parser *p) {
@@ -886,7 +1029,12 @@ static AstNode *parse_let(Parser *p) {
         error(p, "a `const` cannot be `mut`");
         return NULL;
     }
+    if (check(p, TOK_LPAREN)) return parse_let_tuple(p, loc, is_const);
     int is_mut = match(p, TOK_MUT);
+    if (is_mut && check(p, TOK_LPAREN)) {
+        error(p, "write `mut` on each name: `let (mut a, mut b) = ...`");
+        return NULL;
+    }
     if (!match(p, TOK_IDENT)) {
         error(p, "expected identifier after let");
         return NULL;
@@ -987,11 +1135,7 @@ static AstNode *parse_case(Parser *p) {
     size_t count = 0;
     while (!check(p, TOK_CASE) && !check(p, TOK_DEFAULT) && !check(p, TOK_RBRACE) &&
            !check(p, TOK_EOF)) {
-        AstNode *st = parse_stmt(p);
-        if (st) {
-            stmts = (AstNode **)realloc(stmts, (count + 1) * sizeof(AstNode *));
-            stmts[count++] = st;
-        }
+        push_stmt(p, &stmts, &count, parse_stmt(p));
         if (p->had_error) break;
     }
     return ast_case(pats, np, is_default, ast_block(stmts, count, bloc), loc);
@@ -1134,11 +1278,7 @@ static AstNode *parse_block(Parser *p) {
     AstNode **stmts = NULL;
     size_t count = 0;
     while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
-        AstNode *s = parse_stmt(p);
-        if (s) {
-            stmts = (AstNode **)realloc(stmts, (count + 1) * sizeof(AstNode *));
-            stmts[count++] = s;
-        }
+        push_stmt(p, &stmts, &count, parse_stmt(p));
         if (p->had_error) break;
         match(p, TOK_COMMA);
     }
@@ -1681,13 +1821,9 @@ AstNode *parser_parse(Parser *p) {
         }
         if (match(p, TOK_LET) || match(p, TOK_CONST)) {
             AstNode *v = parse_let(p);
-            if (v) {
-                v->doc = doc;
-                decls = (AstNode **)realloc(decls, (nd + 1) * sizeof(AstNode *));
-                decls[nd++] = v;
-            } else {
-                free(doc);
-            }
+            if (v) v->doc = doc;
+            else free(doc);
+            push_stmt(p, &decls, &nd, v);
             continue;
         }
         free(doc);

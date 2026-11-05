@@ -1,0 +1,38 @@
+// A newline ends a statement: `(`, `[`, or `++` on the next line starts a new
+// one and does not call, index, or increment what came before.
+import "std:fmt"
+
+fn one() -> int {
+    return 1
+}
+
+fn main() {
+    let (x, y) = (1, 2)
+    (x)
+
+    let f = one
+    (y)
+    fmt.println(f() + x + y)
+
+    let v = [2]int { 7, 8 }
+    let w = v
+    [2]int { 9, 9 }
+    fmt.println(w[0] + w[1])
+
+    let mut a = 1
+    let mut b = 2
+    let c = a
+    ++b
+    fmt.println("{{a}} {{b}} {{c}}")
+
+    // Inside brackets a newline does not end anything.
+    let z = add(
+        1,
+        2,
+    )
+    fmt.println(z)
+}
+
+fn add(a: int, b: int) -> int {
+    return a + b
+}

@@ -1,0 +1,6 @@
+// Only the names marked `mut` are mutable.
+fn main() {
+    let (mut a, b) = (1, 2)
+    a = 2
+    b = 3
+}

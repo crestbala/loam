@@ -260,6 +260,21 @@ let p = &mut x
 x = 3            // legal: p is dead after `*p = 2`
 ```
 
+Several names can be bound on one line. Each takes the value in its position,
+and `mut` goes on the names that need it:
+
+```loam
+let (x, y, z) = (1, 2.5, "hello")
+let (a, b): (i32, f64) = (10, 3.14)
+let (mut count, name) = (0, "Alice")
+let (keep, _) = (first(), second())
+```
+
+This is one `let` per name, not a tuple value: the right side must be a
+parenthesized list with one value per name, so `let (a, b) = pair()` is an
+error. Values run left to right, before any name binds, so in a nested scope
+`let (x, y) = (y, x)` swaps the outer pair. `let mut (a, b)` is an error.
+
 ### 2b. Error handling: `Result<T>` and `Option<T>`
 
 `std:result` has two checked containers, both `#[must_check]`:
