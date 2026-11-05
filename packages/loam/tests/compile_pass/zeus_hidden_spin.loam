@@ -1,0 +1,36 @@
+// A spinner or skeleton that is built but hidden keeps no frames alive: a
+// non-lazy `Show` builds its children up front, and a live spin repaints the
+// whole window every frame.
+
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, msg: string) {
+    if !ok {
+        panic(msg)
+    }
+}
+
+fn main() {
+    let on = zeus.signal(false)
+    zeus.window("hidden spin", 400, 300)
+    zeus.root(zui.Column(8) {
+        zui.Show(when = on.get()) {
+            zui.Spinner(label = "Loading")
+            zui.Skeleton(40, 12, 4)
+        }
+    })
+    zeus.pump_frame()
+    must(zeus.proof_spin_live() == 0, "a hidden spinner idles")
+    must(zeus.engine_step() == 0, "hidden: the frame loop stops")
+
+    on.set(true)
+    zeus.pump_frame()
+    must(zeus.proof_spin_live() == 1, "a shown spinner runs")
+    must(zeus.engine_step() == 1, "shown: frames keep coming")
+
+    on.set(false)
+    zeus.pump_frame()
+    must(zeus.proof_spin_live() == 0, "hiding it again stops it")
+    must(zeus.engine_step() == 0, "hidden again: the frame loop stops")
+}

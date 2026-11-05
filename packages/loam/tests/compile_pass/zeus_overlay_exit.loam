@@ -70,8 +70,10 @@ fn main() {
     must(zeus.draw_count() == open_draws, "closed panel still painted this frame")
     must(zeus.proof_anim_live() > 0, "an exit track is live")
 
-    run_ms(48)
-    must(zeus.draw_count() == open_draws + moving, "still painting mid-fade")
+    run_ms(16)
+    must(zeus.draw_count() == open_draws + moving, "moving on the next frame")
+    run_ms(32)
+    must(zeus.draw_count() > closed_draws, "still painting mid-fade")
     run_ms(200)
     must(zeus.draw_count() == closed_draws, "panel gone once the fade lands")
     must(zeus.proof_anim_live() == 0, "exit track returned to the pool")
