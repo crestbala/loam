@@ -1,0 +1,108 @@
+// Hovering a node with `href` asks the router to preload that route. The page
+// stays put. The wasm fetch itself runs only on the web host; here we lock
+// the ask, which desktop and mobile record and then drop.
+//
+//     ZEUS_HEADLESS=1 MAYA_HEADLESS=1 ./bin/loamc packages/loam/tests/compile_pass/zeus_router_preload.loam -o packages/loam/tests/tmp/zeus_router_preload && ZEUS_HEADLESS=1 MAYA_HEADLESS=1 packages/loam/tests/tmp/zeus_router_preload
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:router"
+
+fn Home(p: Params) -> Node {
+    return zeus.Text("home")
+}
+
+fn Other(p: Params) -> Node {
+    return zeus.Text("other page")
+}
+
+fn More(p: Params) -> Node {
+    return zeus.Text("more page")
+}
+
+fn fail(what: string) {
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn at(label: string) -> int {
+    let id = zeus.engine_find_text(label)
+    if id == 0 {
+        fail("missing {{label}}")
+    }
+    return id
+}
+
+fn hover_label(label: string) {
+    let id = at(label)
+    zeus.engine_hover(zeus.node_x(id) + 2, zeus.node_y(id) + 2)
+}
+
+fn main() {
+    zeus.snapshot(240, 200, fn() -> Node {
+        return zeus.Box(style = Style(direction = Direction.Column)) {
+            zeus.Box(style = Style(width = px(120), height = px(32)), href = "/other") {
+                zeus.Text("Other")
+            }
+            zeus.Box(style = Style(width = px(120), height = px(32)), href = "/more") {
+                zeus.Text("More")
+            }
+            zeus.Box(style = Style(width = px(120), height = px(32))) {
+                zeus.Text("Plain")
+            }
+            router.Router([]Route {
+                Route { pattern: "/", build: Home },
+                Route { pattern: "/other", build: Other },
+                Route { pattern: "/more", build: More },
+            }, RouterProps {})
+        }
+    })
+    zeus.engine_layout(240, 200)
+    if router.current() != "/" {
+        fail("start path")
+    }
+    if router.preload_count() != 0 {
+        fail("preload before hover")
+    }
+    hover_label("Other")
+    if router.preloaded() != "/other" {
+        fail("hover did not preload /other")
+    }
+    if router.preload_count() != 1 {
+        fail("hover should ask once")
+    }
+    if router.current() != "/" {
+        fail("preload moved the page")
+    }
+    if zeus.engine_find_text("home") == 0 {
+        fail("page changed on hover")
+    }
+    // Resting on the same link must not ask again.
+    hover_label("Other")
+    if router.preload_count() != 1 {
+        fail("resting on a link asked again")
+    }
+    hover_label("More")
+    if router.preloaded() != "/more" || router.preload_count() != 2 {
+        fail("second link")
+    }
+    hover_label("Plain")
+    if router.preload_count() != 2 {
+        fail("a node with no href preloaded")
+    }
+    // Leaving and coming back asks again. The web host replaces the previous wait.
+    hover_label("More")
+    if router.preload_count() != 3 || router.preloaded() != "/more" {
+        fail("re-enter")
+    }
+    if router.current() != "/" {
+        fail("still on home")
+    }
+    // An unknown path is a no-op, same as a direct call.
+    router.preload("/nope")
+    if router.preload_count() != 3 || router.current() != "/" {
+        fail("unknown path")
+    }
+    fmt.println("router preload ok")
+}

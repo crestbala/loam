@@ -35,16 +35,6 @@ fn go(href: string) {
     router.navigate(href)
 }
 
-/// Fetch a link's page while the pointer rests on it, so the click has nothing to
-/// wait for.
-fn on_link_hover(href: string) -> fn(bool) {
-    return fn(on: bool) {
-        if on {
-            router.preload(href)
-        }
-    }
-}
-
 /// Width left for a page's content: the column, less the sidebar and its gap
 /// when the sidebar shows.
 fn content_w() -> int {
@@ -93,7 +83,6 @@ fn NavLink(label: string, href: string) -> Node {
             return Style(background = colors.raised())
         },
         on_click = fn() => go(href),
-        on_hover = on_link_hover(href),
         href = href,
         role = "link",
         label = label,
@@ -118,6 +107,7 @@ fn Brand() -> Node {
             cursor = "pointer",
         ),
         on_click = fn() => go("/"),
+        href = "/",
         role = "link",
         label = "Loam home",
     ) {
@@ -206,7 +196,6 @@ fn SideLink(label: string, href: string) -> Node {
             return Style(background = colors.raised())
         },
         on_click = fn() => go(href),
-        on_hover = on_link_hover(href),
         href = href,
         role = "link",
         label = label,
@@ -244,7 +233,6 @@ fn Group(title: string, href: string) -> Node {
             return Style(background = colors.raised())
         },
         on_click = fn() => go(href),
-        on_hover = on_link_hover(href),
         href = href,
         role = "link",
         label = title,
