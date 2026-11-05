@@ -703,7 +703,7 @@ fn drawer_dock(side: int) -> Style {
         direction = if across { Direction.Row } else { Direction.Column },
         justify = if at_start { Align.Start } else { Align.End },
         align = Align.Stretch,
-        opacity = 80,
+        opacity = SCRIM_DIM,
         background = scrim(),
     )
 }
@@ -964,7 +964,7 @@ fn DialogShell(open: Signal<bool>, close_x: bool, title: string, children: fn())
     // clicks so a press inside does not reach the scrim. Tab stays inside
     // the card while it is open.
     return Overlay(
-        style = Style(opacity = 80, background = scrim()),
+        style = Style(opacity = SCRIM_DIM, background = scrim()),
         visible = open.get(),
         on_click = fn() => open.set(false),
     ) {
@@ -2691,7 +2691,7 @@ fn CommandPalette(open: Signal<bool>, items: []CommandItem, p: CommandPalettePro
         }
     }
     return Overlay(
-        style = Style(opacity = 80, background = scrim()),
+        style = Style(opacity = SCRIM_DIM, background = scrim()),
         visible = open.get(),
         on_click = fn() { open.set(false) },
     ) {

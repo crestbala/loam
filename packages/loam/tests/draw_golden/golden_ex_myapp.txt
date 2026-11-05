@@ -3,46 +3,46 @@ fill 0 0 640 480 16777215 0
 save
 clip 0 0 640 480
 fill 0 0 640 986 16777215 0
-text 32 32 4012339 14 myapp
-svg 78 34 14 14 4012339
-text 98 32 4012339 14 Examples
-svg 168 34 14 14 4012339
+text 32 32 3685702 14 myapp
+svg 78 34 14 14 3685702
+text 98 32 3685702 14 Examples
+svg 168 34 14 14 3685702
 text 188 32 1119000 14 Foundations
 text 32 74 1119000 32 Build interfaces with Zeus
-text 32 118 4012339 14 One entry, every host. Dark inverts every token that reads appearance.
-fill 32 160 72 27 15855593 4
-stroke 32 160 72 27 15000284 4 1 255
+text 32 118 3685702 14 One entry, every host. Dark inverts every token that reads appearance.
+fill 32 160 72 27 15725044 4
+stroke 32 160 72 27 14738408 4 1 255
 fill 43 170 6 6 1336106 3
 text 57 166 1336106 11 Stable
-fill 120 160 84 27 15855593 4
-stroke 120 160 84 27 15000284 4 1 255
+fill 120 160 84 27 15725044 4
+stroke 120 160 84 27 14738408 4 1 255
 fill 131 170 6 6 1119000 3
 text 145 166 1119000 11 Canvas2D
-fill 220 163 44 20 15855593 4
+fill 220 163 44 20 15725044 4
 text 230 165 1119000 11 zeus
-fill 280 163 38 20 15855593 4
-stroke 280 163 38 20 15000284 4 1 255
-text 287 166 4012339 10 ⌘K
+fill 280 163 38 20 15725044 4
+stroke 280 163 38 20 14738408 4 1 255
+text 287 166 3685702 10 ⌘K
 fill 32 211 576 64 16777215 6
 stroke 32 211 576 64 12967149 6 1 255
 svg 49 224 16 16 1005184
 text 77 224 1005184 14 Heads up
-text 77 246 4012339 12 Signals update on click. Hover and press are engine fades — no DOM.
+text 77 246 3685702 12 Signals update on click. Hover and press are engine fades — no DOM.
 fill 32 299 576 64 16777215 6
 stroke 32 299 576 64 15779014 6 1 255
 svg 49 312 16 16 10165284
 text 77 312 10165284 14 Session expired
 text 77 334 10165284 12 Sign back in to keep syncing. Your drafts are saved locally.
 fill 32 387 576 151 16777215 8
-stroke 32 387 576 151 15000284 8 1 255
+stroke 32 387 576 151 14738408 8 1 255
 text 53 404 1119000 17 Project card
 fill 501 404 86 20 1866292 4
 text 511 406 16777215 11 In progress
 text_wrap 53 437 534 A card with a title, supporting copy, and a footer of actions. Rounded-xl, hairline border, paper surface.
 fill 53 485 82 36 16777215 4
-stroke 53 485 82 36 15000284 4 1 255
+stroke 53 485 82 36 14738408 4 1 255
 text 70 494 1119000 14 Cancel
 fill 151 485 64 36 2450411 4
 text 167 494 16777215 14 Save
-text 581 495 4012339 11 0
+text 581 495 3685702 11 0
 restore

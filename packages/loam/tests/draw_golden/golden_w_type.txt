@@ -1,34 +1,34 @@
 DRAW 33
-fill 0 0 560 740 16250611 0
-text 32 32 6051663 10 Overline
-text 32 70 2039066 32 Display
-text 32 130 2039066 22 Heading
-text 32 180 2039066 17 Title
+fill 0 0 560 740 16185337 0
+text 32 32 5528165 10 Overline
+text 32 70 1382429 32 Display
+text 32 130 1382429 22 Heading
+text 32 180 1382429 17 Title
 text_wrap 32 225 496 Body copy that is long enough to wrap onto a second line at this width, which the golden records.
-text 32 285 6051663 11 Note
-text 32 324 6051663 10 Section
-text 32 342 2039066 22 Header
-text 32 372 4012339 14 A section header with a description.
-text 32 414 6051663 10 Section
-text 32 432 2039066 22 Title
-text 32 482 2039066 14 Label
-fill 32 524 496 1 15000284 0
+text 32 285 5528165 11 Note
+text 32 324 5528165 10 Section
+text 32 342 1382429 22 Header
+text 32 372 3685702 14 A section header with a description.
+text 32 414 5528165 10 Section
+text 32 432 1382429 22 Title
+text 32 482 1382429 14 Label
+fill 32 524 496 1 14738408 0
 text 32 549 1513239 14 Read the docs
 fill_a 32 567 104 1 1513239 0
 svg 138 552 12 12 1513239
-fill 166 550 71 18 15855593 4
-text 170 551 2039066 12 make test
-fill 253 549 32 20 15855593 4
-stroke 253 549 32 20 15000284 4 1 255
-text 260 552 4012339 10 Esc
-fill 301 549 56 20 15855593 4
-stroke 301 549 56 20 15000284 4 1 255
-text 308 552 4012339 10 ⌘⇧P
-fill 32 593 496 1 15000284 0
+fill 166 550 71 18 15725044 4
+text 170 551 1382429 12 make test
+fill 253 549 32 20 15725044 4
+stroke 253 549 32 20 14738408 4 1 255
+text 260 552 3685702 10 Esc
+fill 301 549 56 20 15725044 4
+stroke 301 549 56 20 14738408 4 1 255
+text 308 552 3685702 10 ⌘⇧P
+fill 32 593 496 1 14738408 0
 fill 32 624 8 8 1513239 4
-svg 56 620 16 16 2039066
+svg 56 620 16 16 1382429
 svg 88 618 20 20 0
-text 510 620 6051663 11 end
-fill 32 662 3 0 11051668 2
-text 47 662 4012339 14 The engine weaves algebraic patterns.
-text 47 686 4012339 11 — Ada Lovelace
+text 510 620 5528165 11 end
+fill 32 662 3 0 10397104 2
+text 47 662 3685702 14 The engine weaves algebraic patterns.
+text 47 686 3685702 11 — Ada Lovelace
