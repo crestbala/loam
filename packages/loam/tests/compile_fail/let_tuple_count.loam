@@ -1,0 +1,4 @@
+// A `let` tuple needs one value per name.
+fn main() {
+    let (a, b) = (1, 2, 3)
+}

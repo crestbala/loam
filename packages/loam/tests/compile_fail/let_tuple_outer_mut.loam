@@ -1,0 +1,4 @@
+// `mut` goes on each name, not on the tuple.
+fn main() {
+    let mut (a, b) = (1, 2)
+}

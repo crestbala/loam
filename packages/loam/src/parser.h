@@ -18,6 +18,9 @@ typedef struct {
     Token previous;
     int had_error;
     int allow_struct_lit;
+    AstNode **spill;     /* statements a `let` tuple split off, for push_stmt */
+    size_t spill_n;
+    int hidden_id;       /* numbers the hidden locals of `let` tuples */
 } Parser;
 
 /** Bind `p` to lexer `l` and prime current/peek. */
