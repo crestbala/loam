@@ -32,7 +32,9 @@ function compileWasm() {
   if (!existsSync(loam)) {
     throw new Error("missing " + loam + " — run `make` in the loam repo first");
   }
-  const r = spawnSync(loam, ["build", "--target=wasm32", app], { cwd: repo, encoding: "utf8" });
+  /* `zeli preview` sets this: the size and code a visitor would get. */
+  const release = process.env.ZELI_RELEASE ? ["--wasm-release"] : [];
+  const r = spawnSync(loam, ["build", "--target=wasm32", ...release, app], { cwd: repo, encoding: "utf8" });
   if (r.stdout) process.stdout.write(r.stdout);
   if (r.stderr) process.stderr.write(r.stderr);
   if (r.status !== 0) {

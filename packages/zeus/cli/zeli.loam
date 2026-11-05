@@ -1925,7 +1925,9 @@ fn serve_build(appdir: string, target: string) -> BuildStep {
     let report = ui_report_file(appdir, target)
     ui_add("App", report, 0, true, "Starting")
     let mut cmds = []string { loam_cmd(ui_env(serve_build_env(appdir, target), report), args) }
-    if target == "web" {
+    // The metadata dump reads the route table, so an app with no routes has none.
+    let routed = sys.exists(join(appdir, "routes")) == 1
+    if target == "web" && routed {
         push(cmds, meta_compile_cmd(appdir))
         ui_bundle = ui_add("Bundle", "", 1, false, "Reading route metadata")
         ui_step(ui_bundle, 0, 20, "Reading route metadata")
@@ -1937,17 +1939,23 @@ fn serve_build(appdir: string, target: string) -> BuildStep {
         say(trim(jobs[0].log))
         return BuildStep { ok: false, routes_changed: step.routes_changed }
     }
-    if target == "web" {
+    if target == "web" && routed {
         require_meta(jobs[1])
     }
     if split {
         // Hashes change with every edit, so clear the last build's files.
         let assets = join(dir, "_zeus")
         sys.exec("rm -rf {{shell_quote(assets)}}")
-        emit_web_shell(appdir, split_web(appdir, dir, stem, ""), "")
-        report_web_sizes(dir)
-    } else if target == "web" {
+        let web_assets = split_web(appdir, dir, stem, "")
+        emit_web_shell(appdir, web_assets, "")
+        compress_web(dir, BR_DEV)
+        report_web_sizes(dir, web_assets)
+    } else if target == "web" && routed {
         emit_web_shell(appdir, plain_assets(stem), "")
+        compress_web(dir, BR_DEV)
+    } else if target == "web" {
+        sys.write_file(join(dir, "index.html"), plain_page(stem, plain_assets(stem)))
+        compress_web(dir, BR_DEV)
     }
     ui_bar_end(ui_bundle, UI_OK)
     return BuildStep { ok: true, routes_changed: step.routes_changed }
@@ -2196,17 +2204,26 @@ fn vite_host(appdir: string) -> string {
     return ""
 }
 
+/// Run `npm install` in `webdir` when `node_modules` is missing.
+fn vite_install(webdir: string) -> bool {
+    if sys.exists(join(webdir, "node_modules")) == 1 {
+        return true
+    }
+    say("zeli: npm install (vite) in {{rel_to(repo_root(), webdir)}}…")
+    let out = sys.exec("cd {{shell_quote(webdir)}} && npm install 2>&1")
+    if sys.exec_status() != 0 {
+        say(trim(out))
+        say("zeli: npm install failed")
+        return false
+    }
+    return true
+}
+
 /// Run the app's Vite server on `port` until it exits or `serve` does, echoing
 /// its output. `npm install` runs first when `node_modules` is missing.
 fn serve_vite(appdir: string, webdir: string, port: int) -> int {
-    if sys.exists(join(webdir, "node_modules")) == 0 {
-        say("zeli: npm install (vite) in {{rel_to(repo_root(), webdir)}}…")
-        let out = sys.exec("cd {{shell_quote(webdir)}} && npm install 2>&1")
-        if sys.exec_status() != 0 {
-            say(trim(out))
-            say("zeli: npm install failed")
-            return 1
-        }
+    if !vite_install(webdir) {
+        return 1
     }
     let log = app_log(appdir, "web", "vite")
     sys.mkdir(dir_of(log))
@@ -2498,6 +2515,8 @@ fn serve_roots(appdir: string) -> []string {
 struct HttpReply {
     status: int,
     content_type: string,
+    /// The `Content-Encoding` of `body`, or "" for none.
+    encoding: string,
     body: string,
 }
 
@@ -2511,6 +2530,15 @@ fn serve_content_type(file: string) -> string {
     if ends_with(file, ".js") {
         return "text/javascript"
     }
+    if ends_with(file, ".html") {
+        return "text/html; charset=utf-8"
+    }
+    if ends_with(file, ".txt") {
+        return "text/plain; charset=utf-8"
+    }
+    if ends_with(file, ".xml") {
+        return "application/xml"
+    }
     return "application/octet-stream"
 }
 
@@ -2521,6 +2549,13 @@ fn serve_content_type(file: string) -> string {
 /// to the root shell (SPA-style), HTML gets the live-reload snippet, and the
 /// module and script types are the ones a browser insists on.
 fn serve_reply(web: string, pathname: string, snippet: string) -> HttpReply {
+    return serve_reply_for(web, pathname, snippet, "")
+}
+
+/// `serve_reply` for a client sending `accept`, its `Accept-Encoding`: an asset
+/// with a compressed copy beside it is answered with that copy, so a throttled
+/// Network tab shows the bytes a visitor is sent.
+fn serve_reply_for(web: string, pathname: string, snippet: string, accept: string) -> HttpReply {
     let mut rel = strip_lead_slash(pathname)
     if rel == "" || ends_with(rel, "/") {
         rel = cat(rel, "index.html")
@@ -2537,17 +2572,64 @@ fn serve_reply(web: string, pathname: string, snippet: string) -> HttpReply {
         file = join(web, "index.html")
     }
     if sys.exists(file) == 0 {
-        return HttpReply { status: 404, content_type: "text/plain", body: "not found" }
+        return HttpReply { status: 404, content_type: "text/plain", encoding: "", body: "not found" }
     }
     let text = sys.read_file(file)
-    if ends_with(file, ".html") {
+    if ends_with(file, ".html") && snippet != "" {
         return HttpReply {
             status: 200,
             content_type: "text/html; charset=utf-8",
+            encoding: "",
             body: replace_all(text, "</body>", cat(snippet, "</body>")),
         }
     }
-    return HttpReply { status: 200, content_type: serve_content_type(file), body: text }
+    let ctype = serve_content_type(file)
+    if accepts_coding(accept, "br") && sys.exists(cat(file, ".br")) == 1 {
+        let body = sys.read_file(cat(file, ".br"))
+        return HttpReply { status: 200, content_type: ctype, encoding: "br", body: body }
+    }
+    if accepts_coding(accept, "gzip") && sys.exists(cat(file, ".gz")) == 1 {
+        let body = sys.read_file(cat(file, ".gz"))
+        return HttpReply { status: 200, content_type: ctype, encoding: "gzip", body: body }
+    }
+    return HttpReply { status: 200, content_type: ctype, encoding: "", body: text }
+}
+
+/// Whether an `Accept-Encoding` value allows `coding`. Only `q=0` refuses one.
+fn accepts_coding(accept: string, coding: string) -> bool {
+    let items = split_on(accept, 44 /* , */ )
+    for i in 0..items.len {
+        let parts = split_on(items[i], 59 /* ; */ )
+        if parts.len == 0 || trim(parts[0]) != coding {
+            continue
+        }
+        if parts.len == 1 {
+            return true
+        }
+        let q = trim(parts[1])
+        let mut zero = starts_with(q, "q=")
+        for j in 2..q.len {
+            if q[j] != 48 /* 0 */ && q[j] != 46 /* . */ {
+                zero = false
+            }
+        }
+        return !zero
+    }
+    return false
+}
+
+/// The `Accept-Encoding` value in `hdrs`, a parsed request's lowercased
+/// `name\\0value\\0` pairs, or "".
+fn accept_encoding(hdrs: string) -> string {
+    let pairs = split_on(hdrs, 0)
+    let mut i = 0
+    while i + 1 < pairs.len {
+        if pairs[i] == "accept-encoding" {
+            return pairs[i + 1]
+        }
+        i += 2
+    }
+    return ""
 }
 
 /// Read one request off `fd`: up to the end of the headers, then however many
@@ -2629,13 +2711,29 @@ fn request_body_len(s: string, head: int) -> int {
 /// is the other thing a server wants — a cached `app.wasm` is a rebuild the
 /// browser never sees.
 fn serve_http_reply(status: int, ctype: string, body: string) -> string {
-    let head = "HTTP/1.1 {{status}} {{http.reason_phrase(status)}}\r\nContent-Type: {{ctype}}\r\nContent-Length: {{body.len}}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
+    return serve_http_encoded(status, ctype, "", "no-store", body)
+}
+
+/// `serve_http_reply` for a body in `encoding`, which "" leaves out, and a
+/// `Cache-Control` of `cache`.
+fn serve_http_encoded(
+    status: int,
+    ctype: string,
+    encoding: string,
+    cache: string,
+    body: string
+) -> string {
+    let coded = if encoding == "" { "" } else { "Content-Encoding: {{encoding}}\r\nVary: Accept-Encoding\r\n" }
+    let head = "HTTP/1.1 {{status}} {{http.reason_phrase(status)}}\r\nContent-Type: {{ctype}}\r\n{{coded}}Content-Length: {{body.len}}\r\nCache-Control: {{cache}}\r\nConnection: close\r\n\r\n"
     return cat(head, body)
 }
 
 /// Answer one connection and hang up. A server has no keep-alive to hold,
 /// and a page's own requests are separate connections anyway — *except* a live
 /// channel subscription, which is the one reply that is deliberately left open.
+///
+/// `snippet` goes in every page, and is "" for `preview`, which is also what asks
+/// for a host's caching in place of `no-store`.
 fn serve_http_one(fd: int, web: string, snippet: string, rev: int) {
     let raw = read_request(fd)
     if raw.len == 0 {
@@ -2666,8 +2764,12 @@ fn serve_http_one(fd: int, web: string, snippet: string, rev: int) {
         net.tcp_close(fd)
         return
     }
-    let reply = serve_reply(web, req.path, snippet)
-    net.tcp_write(fd, serve_http_reply(reply.status, reply.content_type, reply.body))
+    let reply = serve_reply_for(web, req.path, snippet, accept_encoding(req.hdrs))
+    let cache = if snippet == "" { preview_cache(req.path) } else { "no-store" }
+    net.tcp_write(
+        fd,
+        serve_http_encoded(reply.status, reply.content_type, reply.encoding, cache, reply.body),
+    )
     net.tcp_close(fd)
 }
 
@@ -3006,6 +3108,17 @@ fn stop_device(appdir: string, target: string, stem: string) -> bool {
 /// uses so both leave the artifact in one place — which is also where
 /// `stop_device` reads the id back from.
 fn serve_device_run(appdir: string, target: string, stem: string, entry: string) -> bool {
+    return device_run(appdir, target, stem, entry, serve_build_env(appdir, target))
+}
+
+/// `serve_device_run` for a compile environment of `compile_env`.
+fn device_run(
+    appdir: string,
+    target: string,
+    stem: string,
+    entry: string,
+    compile_env: string
+) -> bool {
     stop_device(appdir, target, stem)
     let out = join(join(join(appdir, "build"), target), stem)
     let mut args = cat(cat(cat(cat("--target=", target), " --run "), shell_quote(entry)), " -o ")
@@ -3013,7 +3126,7 @@ fn serve_device_run(appdir: string, target: string, stem: string, entry: string)
     ui_build_begin()
     let report = ui_report_file(appdir, target)
     ui_add("App", report, 0, true, "Starting")
-    let env = ui_env(serve_build_env(appdir, target), report)
+    let env = ui_env(compile_env, report)
     let jobs = run_jobs(join(appdir, ".zeus"), []string { loam_cmd(env, args) })
     if !jobs[0].ok {
         ui_set_status("Build failed", true, ui_build_ms())
@@ -3078,6 +3191,159 @@ fn serve_device(
             }
         }
     }
+    return 0
+}
+
+// --- preview: the release build, run the way a visitor gets it ---
+//
+// `serve` is for working on an app: it builds fast, watches, and injects its
+// reload script, so what it shows is not what ships. `preview` runs what `zeli
+// build --release` makes, once. There is no watcher, and on the web nothing is
+// added to a page, so a throttled Network tab reads the same as production.
+
+/// `zeli preview <appdir> [--target T] [--port N] [--no-build]`.
+///
+///   web      serves the release from `build/web`, with a host's compression and
+///            caching. An app with a Vite host gets `vite build` first, and is
+///            served the same way, because `vite preview` cannot compress.
+///   macos    runs the release binary
+///   server   the same, for a service entry
+///   ios      installs and launches on the booted simulator
+///   android  installs and launches on the attached device
+///
+/// `reuse` skips the build and runs what is already in `build/<target>`.
+fn preview(appdir: string, target: string, port: int, reuse: bool) -> int {
+    if sys.exists(loam_path()) == 0 {
+        die("zeli: missing {{loam_path()}} — run `make` in {{repo_root()}} first")
+    }
+    let entry = find_entry(appdir)
+    let stem = drop_suffix(base_name(entry), ".loam")
+    if target == "ios" || target == "android" {
+        if reuse {
+            die("zeli: --no-build does not apply to {{target}}: installing builds it")
+        }
+        // No `serve_build_env`: that is what asks for the dev profile.
+        if !device_run(appdir, target, stem, entry, "") {
+            return 1
+        }
+        say("zeli: release running on {{platform_name(target)}}")
+        return 0
+    }
+    if !reuse && !preview_build(appdir, target, stem) {
+        return 1
+    }
+    if ensure_backend(appdir) < 0 {
+        return 1
+    }
+    if target == "web" {
+        return preview_web(appdir, port)
+    }
+    return preview_native(appdir, target, stem)
+}
+
+/// Make the release `preview` runs. `build` leaves an app with no routes without a
+/// page, and a Vite app's web build belongs to its own config.
+fn preview_build(appdir: string, target: string, stem: string) -> bool {
+    if target != "web" {
+        return build(appdir, []string { target }, "", true) == 0
+    }
+    let web = join(join(appdir, "build"), "web")
+    let vite = vite_host(appdir)
+    if vite != "" {
+        return preview_vite_build(web, vite)
+    }
+    if build(appdir, []string { "web" }, "", true) != 0 {
+        return false
+    }
+    if sys.exists(join(appdir, "routes")) == 1 {
+        return true
+    }
+    sys.write_file(join(web, "index.html"), plain_page(stem, plain_assets(stem)))
+    preview_finish(web, plain_assets(stem))
+    return true
+}
+
+/// `vite build` into `web`. `ZELI_RELEASE` tells the app's config to compile with
+/// `--wasm-release`.
+fn preview_vite_build(web: string, webdir: string) -> bool {
+    if !vite_install(webdir) {
+        return false
+    }
+    chat("zeli: vite build…")
+    let out = sys.exec(
+        "cd {{shell_quote(webdir)}} && ZELI_RELEASE=1 ./node_modules/.bin/vite build --outDir {{shell_quote(web)}} --emptyOutDir 2>&1",
+    )
+    if sys.exec_status() != 0 {
+        say(trim(out))
+        say("zeli: vite build failed")
+        return false
+    }
+    preview_finish(web, plain_assets("app"))
+    return true
+}
+
+/// What `build` does to a split release, for a web build it did not split.
+fn preview_finish(web: string, assets: WebAssets) {
+    let loader_js = join(web, strip_lead_slash(assets.loader))
+    minify_js(loader_js)
+    compress_web(web, BR_RELEASE)
+    report_web_sizes(web, assets)
+}
+
+/// The `Cache-Control` a host sends for `path`, as `web_headers` asks: hashed
+/// assets for a year, and everything else checked on each visit.
+fn preview_cache(path: string) -> string {
+    if starts_with(path, "/_zeus/") {
+        return "public, max-age=31536000, immutable"
+    }
+    return "no-cache"
+}
+
+/// Serve `build/web` until interrupted. RPC is forwarded as in `serve`.
+fn preview_web(appdir: string, port: int) -> int {
+    let web = join(join(appdir, "build"), "web")
+    if sys.exists(join(web, "index.html")) == 0 {
+        die("zeli: nothing to preview in {{rel_to(repo_root(), web)}}: drop --no-build")
+    }
+    let listener = net.tcp_listen(port)
+    if listener < 0 {
+        die("zeli: cannot bind 127.0.0.1:{{port}}")
+    }
+    say("zeli: preview on http://127.0.0.1:{{port}}  (Ctrl-C to stop)")
+    while true {
+        tail_pump()
+        if net.tcp_poll(listener, 1, 100) == 1 {
+            let fd = net.tcp_accept(listener)
+            if fd > 0 {
+                serve_http_one(fd, web, "", 0)
+            }
+        }
+    }
+    return 0
+}
+
+/// Run the release binary until it exits or this process does.
+fn preview_native(appdir: string, target: string, stem: string) -> int {
+    let bin = join(join(join(appdir, "build"), target), stem)
+    if sys.exists(bin) == 0 {
+        die("zeli: nothing to preview at {{rel_to(repo_root(), bin)}}: drop --no-build")
+    }
+    let log = app_log(appdir, target, stem)
+    sys.write_file(log, "")
+    let self = self_pid()
+    let pid = launch_app(shell_quote(bin), log)
+    if pid <= 0 {
+        return 1
+    }
+    guard_app(self, pid)
+    tail_add(log, target)
+    say("zeli: preview on {{platform_name(target)}} (pid {{pid}})  (Ctrl-C to stop)")
+    while pid_alive(pid) {
+        tail_pump()
+        async.sleep(250)
+    }
+    tail_pump()
+    say("zeli: app exited (pid {{pid}})")
     return 0
 }
 
@@ -3909,8 +4175,13 @@ fn build(appdir: string, targets: []string, base: string, full: bool) -> int {
             if t == "web" && routed {
                 require_meta(jobs[meta_job])
                 let web = join(join(appdir, "build"), "web")
-                emit_web_shell(appdir, split_web(appdir, web, stem, release_opt(full)), base)
-                report_web_sizes(web)
+                let web_assets = split_web(appdir, web, stem, release_opt(full))
+                emit_web_shell(appdir, web_assets, base)
+                compress_web(web, if full { BR_RELEASE } else { BR_DEV })
+                report_web_sizes(web, web_assets)
+                if !full {
+                    chat("zeli: for the smallest download, deploy a `zeli build --release`")
+                }
                 ui_bar_end(ui_bundle, UI_OK)
             }
             if t == "macos" && sys.target() == "native" && sys.exists("/usr/bin/codesign") == 1 {
@@ -4316,7 +4587,9 @@ fn shell_html(r: MetaRec, canonical: string, assets: WebAssets) -> string {
     push(lines, "<title>{{title}}</title>")
     // Starts the download now, not after `loader.js` has arrived and run. The
     // loader's own `fetch` picks up this response; `crossorigin` is what makes
-    // the two requests match.
+    // the two requests match. A long page puts the loader's own tag far down
+    // the document, so it is named here too.
+    push(lines, "<link rel=\"preload\" href=\"{{assets.loader}}\" as=\"script\" />")
     push(lines, preload_link(assets.wasm))
     let boot = boot_chunks(r, assets)
     for i in 0..boot.len {
@@ -4415,6 +4688,30 @@ fn plain_assets(stem: string) -> WebAssets {
     }
 }
 
+/// The page for an app with no routes, which has no metadata to build one from.
+fn plain_page(title: string, assets: WebAssets) -> string {
+    let mut lines = []string {}
+    push(lines, "<!DOCTYPE html>")
+    push(lines, "<html lang=\"en\">")
+    push(lines, "<head>")
+    push(lines, "<meta charset=\"utf-8\" />")
+    push(lines, "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />")
+    push(lines, "<title>{{esc(title)}}</title>")
+    push(lines, "<link rel=\"preload\" href=\"{{assets.loader}}\" as=\"script\" />")
+    push(lines, preload_link(assets.wasm))
+    push(
+        lines,
+        "<style>html,body{margin:0;height:100%}canvas#zeus{display:block;position:fixed;inset:0;width:100%;height:100%;touch-action:none}</style>",
+    )
+    push(lines, "</head>")
+    push(lines, "<body>")
+    push(lines, "<canvas id=\"zeus\" data-wasm=\"{{assets.wasm}}\"></canvas>")
+    push(lines, "<script src=\"{{assets.loader}}\"></script>")
+    push(lines, "</body>")
+    push(lines, "</html>")
+    return join_lines(lines)
+}
+
 fn has_tool(name: string) -> bool {
     sys.exec("command -v {{shell_quote(name)}} >/dev/null 2>&1")
     return sys.exec_status() == 0
@@ -4471,6 +4768,13 @@ fn web_headers() -> string {
     push(lines, "/*")
     push(lines, "  X-Content-Type-Options: nosniff")
     return join_lines(lines)
+}
+
+/// `web_headers` for Vercel, which ignores that file.
+fn vercel_config() -> string {
+    let cache = "{\"key\":\"Cache-Control\",\"value\":\"public, max-age=31536000, immutable\"}"
+    let sniff = "{\"key\":\"X-Content-Type-Options\",\"value\":\"nosniff\"}"
+    return "{\"headers\":[{\"source\":\"/_zeus/(.*)\",\"headers\":[{{cache}}]},{\"source\":\"/(.*)\",\"headers\":[{{sniff}}]}]}\n"
 }
 
 fn preload_link(url: string) -> string {
@@ -4674,7 +4978,7 @@ fn split_web(appdir: string, web: string, stem: string, opt_flag: string) -> Web
         push(idle_touch, plan.chunks[extra[i]].name)
     }
     sys.exec("rm -rf {{shell_quote(tmp)}} {{shell_quote(raw)}} {{shell_quote(csrc)}}")
-    return finish_web(web, primary, files, routes, idle, idle_touch)
+    return finish_web(web, primary, files, routes, idle, idle_touch, opt_flag != "")
 }
 
 /// Fingerprint the loader and write the files a static host reads.
@@ -4684,10 +4988,17 @@ fn finish_web(
     files: []ChunkFile,
     routes: [][]string,
     idle: []string,
-    idle_touch: []string
+    idle_touch: []string,
+    strip: bool
 ) -> WebAssets {
-    let loader = fingerprint_file(join(web, "loader.js"), join(web, "_zeus"), "loader", "js")
+    let loader_js = join(web, "loader.js")
+    // `serve` keeps the comments and the line numbers a stack trace points at.
+    if strip {
+        minify_js(loader_js)
+    }
+    let loader = fingerprint_file(loader_js, join(web, "_zeus"), "loader", "js")
     sys.write_file(join(web, "_headers"), web_headers())
+    sys.write_file(join(web, "vercel.json"), vercel_config())
     // GitHub Pages hides `_` directories unless this file exists.
     sys.write_file(join(web, ".nojekyll"), "")
     return WebAssets {
@@ -4699,6 +5010,11 @@ fn finish_web(
         idle_touch: idle_touch,
     }
 }
+
+/// Brotli quality for a dev or quick build, cheap enough to run on every edit.
+const BR_DEV: int = 5
+/// Brotli quality for `--release`: slower, and about 13% smaller than `BR_DEV`.
+const BR_RELEASE: int = 11
 
 /// `wasm-opt`'s level for `zeli build`. Most of what `-Oz` removes is gone at `-O1`
 /// for a third of the time; `--release` asks for the rest.
@@ -4715,14 +5031,226 @@ fn kb_of(file: string) -> string {
     return "{{(n + 512) / 1024}} KB"
 }
 
-/// What a visitor actually downloads, per file.
-fn report_web_sizes(web: string) {
+/// The size in bytes of what a host that serves `file` compressed sends.
+fn wire_size(file: string) -> int {
+    let compressed = []string { cat(file, ".br"), cat(file, ".gz") }
+    for i in 0..compressed.len {
+        if sys.exists(compressed[i]) == 1 {
+            return sys.read_file(compressed[i]).len
+        }
+    }
+    return sys.read_file(file).len
+}
+
+/// `n` bytes in KB, rounded, for the build report.
+fn kb_text(n: int) -> string {
+    return "{{(n + 512) / 1024}} KB"
+}
+
+/// What a visitor actually downloads: each file, raw and on the wire, then the
+/// range of first loads. All of a first load arrives before the first frame.
+fn report_web_sizes(web: string, assets: WebAssets) {
     let dir = join(web, "_zeus")
     let names = sys.list_dir(dir)
-    chat("zeli: web assets")
+    chat("zeli: web assets, raw and compressed")
     for i in 0..names.len {
-        chat("  {{names[i]}}  {{kb_of(join(dir, names[i]))}}")
+        if ends_with(names[i], ".br") || ends_with(names[i], ".gz") {
+            continue
+        }
+        let file = join(dir, names[i])
+        chat("  {{names[i]}}  {{kb_of(file)}}  {{kb_text(wire_size(file))}}")
     }
+    let base = wire_size(join(web, strip_lead_slash(assets.wasm))) +
+        wire_size(join(web, strip_lead_slash(assets.loader)))
+    let mut least = -1
+    let mut most = 0
+    for r in 0..assets.routes.len {
+        let mut total = base
+        let mine = assets.routes[r]
+        for i in 0..mine.len {
+            total += wire_size(join(web, strip_lead_slash(chunk_url(assets, mine[i]))))
+        }
+        if least < 0 || total < least {
+            least = total
+        }
+        if total > most {
+            most = total
+        }
+    }
+    if least < 0 {
+        chat("zeli: first load {{kb_text(base)}} compressed")
+    } else {
+        chat("zeli: first load {{kb_text(least)}} to {{kb_text(most)}} compressed")
+    }
+}
+
+/// Write a compressed copy beside every file a browser downloads, as `<file>.br`,
+/// or `<file>.gz` without `brotli`. `serve` and `preview` answer with them, and so
+/// do `nginx` (`brotli_static`) and Caddy (`precompressed`). Most of a first load's
+/// time on a slow connection is these bytes, and a host's own compression is rarely
+/// this thorough: quality 11 is about a quarter smaller than the level Vercel uses.
+fn compress_web(web: string, quality: int) {
+    let one = if has_tool("brotli") {
+        "brotli -f -q {{quality}} -w 24 -o \"$f.br\" \"$f\""
+    } else {
+        "gzip -9 -c \"$f\" > \"$f.gz\""
+    }
+    let files = "find . -type f \\( -name '*.wasm' -o -name '*.js' -o -name '*.html' \\)"
+    sys.exec("cd {{shell_quote(web)}} && {{files}} | { while read -r f; do {{one}} & done; wait; }")
+}
+
+/// Minify the script `file` in place, with the esbuild in Zeus's own Vite install.
+/// Without Node, or if that fails, `strip_js` does most of the job with no tools.
+fn minify_js(file: string) {
+    let pkg = join(repo_root(), "packages/zeus")
+    if has_tool("node") && has_tool("npm") && vite_install(pkg) {
+        let script = join(pkg, "hosts/web/minify.mjs")
+        let log = sys.exec("node {{shell_quote(script)}} {{shell_quote(file)}} 2>&1")
+        if sys.exec_status() == 0 {
+            return
+        }
+        say(trim(log))
+    }
+    say("zeli: could not minify {{base_name(file)}}, stripping its comments instead")
+    sys.write_file(file, strip_js(sys.read_file(file)))
+}
+
+/// Whether a `/` after `out` opens a regular expression, not a division.
+fn regex_may_start(out: []int) -> bool {
+    let mut end = out.len
+    while end > 0 && out[end - 1] == 32 {
+        end -= 1
+    }
+    if end == 0 {
+        return true
+    }
+    let c = out[end - 1]
+    let is_word = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95 || c == 36
+    if is_word {
+        let mut at = end
+        while at > 0 {
+            let w = out[at - 1]
+            let more = (w >= 48 && w <= 57) || (w >= 65 && w <= 90) || (w >= 97 && w <= 122) || w == 95 || w == 36
+            if !more {
+                break
+            }
+            at -= 1
+        }
+        let mut word = []int {}
+        for i in at..end {
+            push(word, out[i])
+        }
+        let w = string_from_bytes(word)
+        return w == "return" || w == "typeof" || w == "case" || w == "of" || w == "in"
+    }
+    return c != 41 /* ) */ && c != 93 /* ] */ && c != 125 /* } */
+}
+
+/// The index just past a string or regular expression that opens at `at` and
+/// closes with `quote`, copying it to `out`. A `/` inside a regular expression's
+/// `[...]` does not close it.
+fn copy_literal(s: string, at: int, quote: int, out: &mut []int) -> int {
+    let mut i = at
+    let mut in_class = false
+    push(out, s[i])
+    i += 1
+    while i < s.len {
+        let c = s[i]
+        push(out, c)
+        i += 1
+        if c == 92 /* \\ */ && i < s.len {
+            push(out, s[i])
+            i += 1
+        } else if quote == 47 && c == 91 /* [ */ {
+            in_class = true
+        } else if quote == 47 && c == 93 /* ] */ {
+            in_class = false
+        } else if c == quote && !in_class {
+            break
+        }
+    }
+    return i
+}
+
+/// JavaScript without its comments, indentation and blank lines. Line breaks stay,
+/// because a statement can end at one. This is `minify_js`'s fallback: it takes
+/// `loader.js` from 26 KB to 15 KB compressed, where a minifier reaches 13 KB.
+fn strip_js(s: string) -> string {
+    let mut out = []int {}
+    /* The `{` depth at which each open `${` of a template literal closes. */
+    let mut open_subs = []int {}
+    let mut depth = 0
+    let mut in_template = false
+    let mut i = 0
+    while i < s.len {
+        let c = s[i]
+        let next = if i + 1 < s.len { s[i + 1] } else { 0 }
+        if in_template {
+            push(out, c)
+            i += 1
+            if c == 92 /* \\ */ && i < s.len {
+                push(out, s[i])
+                i += 1
+            } else if c == 96 /* ` */ {
+                in_template = false
+            } else if c == 36 /* $ */ && next == 123 /* { */ {
+                push(out, next)
+                i += 1
+                push(open_subs, depth)
+                depth += 1
+                in_template = false
+            }
+        } else if c == 47 && next == 47 /* // */ {
+            while i < s.len && s[i] != 10 {
+                i += 1
+            }
+        } else if c == 47 && next == 42 /* block comment */ {
+            let mut broke = false
+            i += 2
+            while i < s.len && !(s[i] == 42 && i + 1 < s.len && s[i + 1] == 47) {
+                if s[i] == 10 {
+                    broke = true
+                }
+                i += 1
+            }
+            i += 2
+            if broke {
+                push(out, 10)
+            }
+        } else if c == 34 || c == 39 /* quotes */ {
+            i = copy_literal(s, i, c, &mut out)
+        } else if c == 47 && regex_may_start(out) {
+            i = copy_literal(s, i, 47, &mut out)
+        } else if c == 96 /* ` */ {
+            push(out, c)
+            i += 1
+            in_template = true
+        } else if c == 10 || c == 13 {
+            while out.len > 0 && (out[out.len - 1] == 32 || out[out.len - 1] == 9) {
+                pop(out)
+            }
+            if out.len > 0 && out[out.len - 1] != 10 {
+                push(out, 10)
+            }
+            i += 1
+            while i < s.len && (s[i] == 32 || s[i] == 9) {
+                i += 1
+            }
+        } else {
+            if c == 123 /* { */ {
+                depth += 1
+            } else if c == 125 /* } */ {
+                depth -= 1
+                if open_subs.len > 0 && open_subs[open_subs.len - 1] == depth {
+                    pop(open_subs)
+                    in_template = true
+                }
+            }
+            push(out, c)
+            i += 1
+        }
+    }
+    return string_from_bytes(out)
 }
 
 /// The panel's name for a set of targets.
@@ -4785,7 +5313,7 @@ fn emit_web_shell(appdir: string, assets: WebAssets, base: string) {
 
 fn usage() {
     say(
-        "usage: zeli new <name> [dir] | zeli routes <appdir> | zeli build <appdir> [--targets a,b | --target a] [--base https://host] [--release] | zeli serve <appdir> [--target {{target_list()}}] [--port N] [--build-only] | zeli fmt [dir] | zeli pkg sync <appdir>",
+        "usage: zeli new <name> [dir] | zeli routes <appdir> | zeli build <appdir> [--targets a,b | --target a] [--base https://host] [--release] | zeli serve <appdir> [--target {{target_list()}}] [--port N] [--build-only] | zeli preview <appdir> [--target {{target_list()}}] [--port N] [--no-build] | zeli fmt [dir] | zeli pkg sync <appdir>",
     )
 }
 
@@ -4850,6 +5378,41 @@ fn main() {
             dir = rest[0]
         }
         sys.exit(serve(abs_path(dir), target, port, build_only))
+    }
+    if cmd == "preview" {
+        let mut port = 4173
+        let mut reuse = false
+        let mut target = "web"
+        let mut rest = []string {}
+        let mut i = 2
+        while i < argv.len {
+            let a = argv[i]
+            if a == "--port" {
+                if i + 1 >= argv.len {
+                    die("zeli: --port needs a number")
+                }
+                i += 1
+                port = int_of(argv[i])
+                if port < 0 {
+                    die("zeli: --port wants a number, got '{{argv[i]}}'")
+                }
+            } else if a == "--target" {
+                if i + 1 >= argv.len {
+                    die("zeli: --target needs a name (want {{target_list()}})")
+                }
+                i += 1
+                target = argv[i]
+                if !known_target(target) {
+                    die("zeli: unknown target '{{target}}' (want {{target_list()}})")
+                }
+            } else if a == "--no-build" {
+                reuse = true
+            } else {
+                push(rest, a)
+            }
+            i += 1
+        }
+        sys.exit(preview(abs_path(if rest.len > 0 { rest[0] } else { "." }), target, port, reuse))
     }
     if cmd == "fmt" {
         let mut dir = "."

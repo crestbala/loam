@@ -528,6 +528,30 @@ directory by default, skipping output and cache directories) and writes the
 result back in place: one command, no flags. Files the build generates are left
 alone, since formatting one would only be undone by the next build.
 
+## Preview
+
+`zeli preview <appdir> [--target T] [--port N] [--no-build]` makes a release and
+runs it once, with no watcher. Use it to see what ships, because `zeli serve` builds
+fast, skips the final optimizer, and adds its reload script. `T` is the same list as
+`serve`, `web` by default, and `N` defaults to 4173.
+
+`web` runs `zeli build --release`, then serves `build/web` the way a host would:
+compressed copies for a client that accepts them, `immutable` on `/_zeus/*`,
+`no-cache` on everything else, and nothing added to a page. A throttled Network tab
+shows what a visitor gets. RPC is forwarded and the backend started, as in `serve`.
+
+An app with `web/vite.config.js` runs `vite build` into `build/web` instead, with
+`ZELI_RELEASE=1` in the environment, and its config passes `--wasm-release` to the
+compiler when that is set. The same server then hosts the result, since `vite
+preview` does not send compressed files.
+
+`macos` and `server` run the release binary and follow its log. `ios` and `android`
+install and launch without the dev profile, then return, since the platform owns the
+app from there.
+
+`--no-build` runs what is already in `build/<target>`. It does not apply to `ios` or
+`android`, where installing builds.
+
 ## Serve
 
 `zeli serve <appdir> [--target T] [--port N]` builds one target and watches the

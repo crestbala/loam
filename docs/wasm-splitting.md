@@ -5,8 +5,10 @@ Goal: a visitor downloads only the code for the page they asked for, and moves b
 This is a Zeus and `zeli` feature, not a `www` feature. Any web app with routes
 gets it. `www` is the first user and the test bed.
 
-Status: Phases 1 to 4 done, Phase 5 changed (see there), and Phase 6 in part: the primary is 561 KB against a 550 KB goal. Sizes under "What we measured" are from `feat/www` at `e981527`. Compression is deferred (see [Later](#later-compression)), so goals
-are in raw bytes.
+Status: Phases 1 to 4 done, Phase 5 changed (see there), Phase 6 in part, Phase 7 done.
+Sizes under "What we measured" are from `feat/www` at `e981527`. Goals are in raw
+bytes, and the [first-load table](#phase-7-compressed-first-loads-done) has what is
+sent. To check any of this, use `zeli preview`, not `zeli serve`.
 
 ## What we measured
 
@@ -301,6 +303,53 @@ Left to try:
 - Optional `zui.Lazy(...)` for a heavy widget inside a page, such as the
   playground's editor, loaded when it is needed.
 
+### Phase 7: compressed first loads (done)
+
+All of a first load arrives before the first frame, so on a slow connection the
+time to first draw is two round trips plus the bytes. Preload was already right:
+every file starts within 30 ms of the others, at High priority, with one request
+each and no warnings. What was slow was the bytes.
+
+Measured in Chromium with DevTools' Slow 4G settings, first draw on `/`:
+
+| Build | Sent | First draw |
+|---|---|---|
+| `zeli serve` before this phase | 1,005 KB | 6.9 s |
+| `--release`, not compressed | 761 KB | 5.5 s |
+| `zeli preview` | 202 KB | 2.3 s |
+
+| Route, `zeli preview` | Sent | First draw |
+|---|---|---|
+| `/language` | 178 KB | 2.2 s |
+| `/` | 202 KB | 2.3 s |
+| `/components` | 234 KB | 2.5 s |
+| `/playground` | 294 KB | 2.9 s |
+| `/` on Fast 4G | 202 KB | 0.6 s |
+| `/` with CPU throttled 4× | 202 KB | 2.5 s |
+| `/`, repeat visit | 2 KB | 0.6 s |
+
+About 1.2 s of each Slow 4G time is the two round trips, which no build can change.
+
+- Every build writes a compressed copy beside each `.wasm`, `.js` and `.html`:
+  Brotli 5 for `serve` and a quick build, 11 for `--release`, gzip without `brotli`.
+- `zeli serve` and `zeli preview` answer with those copies. nginx and Caddy can too.
+- Builds minify `loader.js` with the esbuild in Vite, 26 KB to 13 KB compressed.
+  `hosts/web/minify.mjs` does it, and `zeli serve` keeps the file readable. Without
+  Node, comments and indentation are stripped instead, which reaches 15 KB.
+- The loader is preloaded in `<head>`, since a long page puts its tag far down.
+- Builds write `vercel.json`, because Vercel ignores `_headers`.
+- The build report gives each file's compressed size and the first-load range.
+
+Vercel compresses by itself, at a low level: 227 KB for a primary Brotli 11 takes to
+174 KB. A static upload there does not use the `.br` files.
+
+Tried, and not worth doing:
+
+- More `wasm-opt` passes (`--converge`, `--gufa-optimizing`, reordering) save under 1%.
+- Deferring code until after the first frame. About 75% of the primary's code runs
+  before it on every route. The rest is 30 KB compressed, and it includes all input
+  handling, so a click could block on a download to save 0.17 s.
+
 ## Testing
 
 - **Headless:** chunk assignment tests on a small route fixture, including merging,
@@ -309,8 +358,8 @@ Left to try:
   - Every route on a cold load, with no placeholder warnings.
   - Every route reached by navigation, back and forward.
   - A chunk that cannot be fetched reloads once and does not loop.
-- **Budgets:** `nob` fails if a route's first-load total passes its budget, so size
-  cannot creep back up unnoticed.
+- **Budgets:** not built. `zeli build` reports the first-load range, and nothing
+  fails when it grows.
 - **Unsplit parity:** the full suite still runs on unsplit builds, and draw goldens
   do not change.
 
@@ -334,18 +383,7 @@ routes. The parser had missed `main`, which opens behind an `#if`, so the layout
 code looked like route code. Nothing broke, which is what the safety net is for,
 and the browser check caught it. Keep that check.
 
-## Later: compression
-
-Deferred on purpose. Splitting comes first, and we will check this afterwards.
-
-- Brotli takes `app.wasm` from 1,650 KB to 368 KB, and today's 561 KB primary to
-  about 160 KB, so this is worth doing next.
-- Needs a decision on the host. There is no deploy config in the repo, so we do not
-  yet know whether it compresses `.wasm` itself or needs `.br` files from the build.
-
 ## Open questions
 
-- **Where will this be hosted?** `_headers` covers Netlify and Cloudflare Pages;
-  other hosts need their own config, and this decides the compression work.
 - **Does the home page keep its live demos?** Each extra component it uses moves
   code into its first load.
