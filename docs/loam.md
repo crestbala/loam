@@ -200,7 +200,9 @@ What `loam` does about that:
 - GUI builds use `-O1` on generated C, not `-O2` (same overflow checks,
   much less optimizer work).
 
-Set `LOAM_TIME=1` to print `check` / `codegen` / `cc` timings on stderr.
+Set `LOAM_TIME=1` to print `check` / `codegen` / `cc` timings on stderr. Set `LOAM_PROGRESS=<file>`
+to have each step appended to that file as it starts, for a tool drawing progress; this
+is what the `zeli` build panel reads.
 
 `--target wasm` emits a Canvas2D `.wasm` (no WebGPU). Apple `/usr/bin/clang`
 has no `wasm32` target; use Homebrew LLVM and `LOAM_WASM_CC`. See

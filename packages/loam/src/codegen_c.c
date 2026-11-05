@@ -150,6 +150,18 @@ void codegen_set_server_split(int on) {
     server_split = on;
 }
 
+static int shard_mode;
+
+void codegen_set_shard(int on) {
+    shard_mode = on;
+}
+
+/* One definition starts here, for the driver to cut on. The newline keeps the
+   marker at the start of a line, where a string literal cannot put one. */
+static void shard_mark(FILE *o, const char *name) {
+    if (shard_mode) fprintf(o, "\n/*@S %s*/\n", name ? name : "");
+}
+
 void codegen_set_path_strip(const char *prefix) {
     path_strip = (prefix && prefix[0]) ? prefix : NULL;
 }
@@ -3437,6 +3449,7 @@ static void emit_fn(FILE *o, AstNode *fn, int is_main) {
     const char *cn = cname_override ? cname_override
                                     : (fn->as.fn.cname ? fn->as.fn.cname : fn->as.fn.name);
     IrFn *irf = find_ir_fn(cn);
+    shard_mark(o, cn);
     emit_line_directive(o, fn->loc);
     emit_fn_sig(o, fn, is_main);
     if (irf && irf->lowered) {
@@ -3461,8 +3474,11 @@ static void copy_runtime(FILE *out, const char *rt_path) {
     /* The pasted runtime defines its own state in this TU: the recoverable-trap
        target, and the allocation counter the proof harness reads. Exactly one
        translation unit may define either, and it is the generated program. */
+    /* Exactly one unit owns the runtime's storage. */
+    if (shard_mode) fputs("#ifdef LOAM_SHARD_DEFS\n", out);
     fputs("#define LOAM_RT_DEFINE_JMP 1\n", out);
     fputs("#define LOAM_RT_DEFINE_ALLOC 1\n", out);
+    if (shard_mode) fputs("#endif\n", out);
     FILE *f = rt_path ? fopen(rt_path, "r") : NULL;
     if (f) {
         char buf[4096];
@@ -3753,7 +3769,8 @@ static void emit_lit_template_decls(FILE *o) {
                 type_c_name(in->ty, cn, sizeof cn);
                 if (lit_tmpl_find(cn) >= 0) continue;
                 lit_tmpl_add(in->ty, cn);
-                fprintf(o, "__attribute__((unused)) static const %s loam_dflt_%s;\n", cn, cn);
+                fprintf(o, "__attribute__((unused)) %s const %s loam_dflt_%s;\n",
+                        shard_mode ? "extern" : "static", cn, cn);
             }
     }
     if (lit_tmpl_n) fprintf(o, "\n");
@@ -3762,8 +3779,11 @@ static void emit_lit_template_decls(FILE *o) {
 static void emit_lit_template_defs(FILE *o) {
     for (int j = 0; j < lit_tmpl_n; j++) {
         LitTmpl *lt = &lit_tmpls[j];
-        if (!lt->d) continue; /* no emitted site: the tentative zero stands */
-        fprintf(o, "static const %s loam_dflt_%s = { ", lt->cn, lt->cn);
+        if (!lt->d) { /* no emitted site: the tentative zero stands */
+            if (shard_mode) fprintf(o, "const %s loam_dflt_%s = {};\n", lt->cn, lt->cn);
+            continue;
+        }
+        fprintf(o, "%sconst %s loam_dflt_%s = { ", shard_mode ? "" : "static ", lt->cn, lt->cn);
         int first = 1;
         for (size_t k = 0; k < lt->t->field_count; k++) {
             if (!lt->d[k]) continue;
@@ -3877,16 +3897,21 @@ static void emit_closure_fn(FILE *o, AstNode *fn) {
 }
 
 /** Adapter so a named Loam fn can be stored in a loam_fn (env unused). */
-static void emit_as_fn_tramp(FILE *o, AstNode *fn) {
+static void emit_as_fn_tramp(FILE *o, AstNode *fn, int proto) {
     Type *ft = fn->ty;
     Type *ret = (ft && ft->ret) ? ft->ret : ty_void();
     const char *cn = fn->as.fn.cname ? fn->as.fn.cname : fn->as.fn.name;
+    if (!proto) shard_mark(o, cn);
     emit_ctype(o, ret);
     fprintf(o, " %s__as_fn(void *_env", cn);
     for (size_t i = 0; i < fn->as.fn.param_count; i++) {
         fprintf(o, ", ");
         Type *pt = (ft && i < ft->param_count) ? ft->params[i] : ty_int();
         emit_var_decl_type(o, pt, fn->as.fn.params[i].name);
+    }
+    if (proto) {
+        fprintf(o, ");\n");
+        return;
     }
     fprintf(o, ") {\n    (void)_env;\n    ");
     if (ret->kind != TY_VOID) fprintf(o, "return ");
@@ -3992,8 +4017,9 @@ void codegen_emit_c(FILE *out, LoamModule *mods, int nmods, const char *rt_path)
        element type (e.g. a `[]Member` instantiated inside a generic) after this
        point, and its call sites still need the declaration. */
     for (int i = 1; i <= ELEM_HOOK_MAX; i++)
-        fprintf(out, "static void loam_elem_retain_%d(void *p);\n"
-                     "static void loam_elem_release_%d(void *p);\n", i, i);
+        fprintf(out, "%svoid loam_elem_retain_%d(void *p);\n"
+                     "%svoid loam_elem_release_%d(void *p);\n",
+                shard_mode ? "" : "static ", i, shard_mode ? "" : "static ", i);
     fprintf(out, "\n");
     emit_own_helpers(out);
 
@@ -4001,12 +4027,18 @@ void codegen_emit_c(FILE *out, LoamModule *mods, int nmods, const char *rt_path)
         AstNode *gv = typecheck_global_var(i);
         const char *cn = typecheck_global_cname(i);
         if (!gv || !cn) continue;
+        if (shard_mode) {
+            fprintf(out, "extern ");
+            emit_var_decl_type(out, gv->ty, cn);
+            fprintf(out, ";\n#ifdef LOAM_SHARD_DEFS\n");
+        }
         emit_var_decl_type(out, gv->ty, cn);
         if (ir_static_data(gv->as.var.init)) {
             fprintf(out, " = ");
             emit_const_init(out, gv->as.var.init);
         }
         fprintf(out, ";\n");
+        if (shard_mode) fprintf(out, "#endif\n");
     }
     if (typecheck_global_count()) fprintf(out, "\n");
     for (int i = 0; i < emit_ir_mod->nfns; i++) {
@@ -4064,6 +4096,12 @@ void codegen_emit_c(FILE *out, LoamModule *mods, int nmods, const char *rt_path)
     }
     fprintf(out, "\n");
 
+    /* The trampolines are the first definitions, so a shard build has to finish
+       the header before them: the literal templates, and their own prototypes,
+       since one unit's trampoline is what another unit stores. */
+    if (shard_mode) emit_lit_template_decls(out);
+
+    for (int proto = shard_mode ? 1 : 0; proto >= 0; proto--)
     for (int m = 0; m < nmods; m++) {
         AstNode *p = mods[m].ast;
         if (!p) continue;
@@ -4074,18 +4112,24 @@ void codegen_emit_c(FILE *out, LoamModule *mods, int nmods, const char *rt_path)
             if (d->kind == AST_FN_DECL && d->as.fn.used_as_value &&
                 (!d->as.fn.is_intrinsic || !loam_is_std_path(mods[m].path)) &&
                 !d->as.fn.tparam_count && loam_dce_keep(d))
-                emit_as_fn_tramp(out, d);
+                emit_as_fn_tramp(out, d, proto);
         }
     }
 
-    emit_lit_template_decls(out);
+    if (!shard_mode) emit_lit_template_decls(out);
 
     cur_is_main_mod = 1;
-    for (int i = 0; i < nclos_nodes; i++) emit_closure_fn(out, clos_nodes[i]);
+    for (int i = 0; i < nclos_nodes; i++) {
+        char cname[32];
+        snprintf(cname, sizeof cname, "loam_clos_%d", clos_nodes[i]->as.fn.clos_id);
+        shard_mark(out, cname);
+        emit_closure_fn(out, clos_nodes[i]);
+    }
     if (emit_ir_mod) {
         for (int i = 0; i < emit_ir_mod->nfns; i++) {
             IrFn *cf = &emit_ir_mod->fns[i];
             if (!is_mono_clos(cf) || !cf->lowered) continue;
+            shard_mark(out, cf->cname);
             emit_mono_clos_sig(out, cf, 0);
             emit_ir_fn_body(out, cf, 0);
         }
@@ -4102,6 +4146,7 @@ void codegen_emit_c(FILE *out, LoamModule *mods, int nmods, const char *rt_path)
     for (int i = 0; i < emit_ir_mod->nfns; i++) {
         IrFn *g = &emit_ir_mod->fns[i];
         if (!g->name || strcmp(g->name, "__init") != 0 || !g->lowered) continue;
+        shard_mark(out, g->cname);
         fprintf(out, "void %s(void)", g->cname);
         emit_ir_fn_body(out, g, 0);
     }
@@ -4121,6 +4166,7 @@ void codegen_emit_c(FILE *out, LoamModule *mods, int nmods, const char *rt_path)
             if (d->as.fn.is_server && server_split) {
                 /* Client build: emit the signature with a trap body. The real
                    body is never emitted, so its literals are provably absent. */
+                shard_mark(out, d->as.fn.cname);
                 emit_fn_sig(out, d, 0);
                 fprintf(out,
                         " { loam_panic(\"<server>\", 0, \"server function excluded "
@@ -4137,16 +4183,21 @@ void codegen_emit_c(FILE *out, LoamModule *mods, int nmods, const char *rt_path)
         Type *ht = elem_hook_types[i];
         char hcn[256];
         format_ctype(hcn, sizeof hcn, ht);
-        fprintf(out, "static void loam_elem_retain_%d(void *p) {\n", i + 1);
+        char hook[40];
+        snprintf(hook, sizeof hook, "loam_elem_%d", i + 1);
+        shard_mark(out, hook);
+        fprintf(out, "%svoid loam_elem_retain_%d(void *p) {\n", shard_mode ? "" : "static ", i + 1);
         fprintf(out, "    %s *_e = (%s *)p;\n", hcn, hcn);
         emit_nested_keeps(out, "(*_e)", ht, 1);
         fprintf(out, "}\n");
-        fprintf(out, "static void loam_elem_release_%d(void *p) {\n", i + 1);
+        fprintf(out, "%svoid loam_elem_release_%d(void *p) {\n", shard_mode ? "" : "static ", i + 1);
         fprintf(out, "    %s *_e = (%s *)p;\n", hcn, hcn);
         emit_drop_place(out, "(*_e)", ht, 1);
         fprintf(out, "}\n");
     }
+    if (shard_mode) fprintf(out, "\n/*@D*/\n#ifdef LOAM_SHARD_DEFS\n");
     emit_lit_template_defs(out);
+    if (shard_mode) fprintf(out, "#endif\n");
 
     if (test_mode) {
         /* The runner is thin: it names each test through `test.begin`, calls

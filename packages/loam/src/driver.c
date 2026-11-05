@@ -6,6 +6,7 @@
  * ~800KB of generated C plus Cocoa. Runtime .c/.m files compile once into
  * `runtime/.obj/` and are reused. `ZEUS_HEADLESS=1` skips Cocoa entirely.
  * Set `LOAM_TIME=1` to print check / codegen / cc timings on stderr.
+ * Set `LOAM_PROGRESS=<file>` to have each step reported to that file.
  *
  * zeus links runtime/zeus_plat.c + zeus_key.c and a host:
  *   zeus/desktop/mac.m     Cocoa
@@ -19,12 +20,17 @@
 #include "ext.h"
 #include "ir.h"
 #include "diagnostics.h"
+#include <dirent.h>
+#include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <errno.h>
 #include <unistd.h>
+#include <sys/time.h>
 #include <time.h>
 
 #ifndef LOAM_RT_PATH
@@ -154,6 +160,38 @@ static int any_src_newer(const char *dst, const char **srcs, int n) {
     return 0;
 }
 
+/** `LOAM_PROGRESS=<file>`: append one line per step of the build to that file, for
+    a tool drawing progress while this process runs. The lines are `check`,
+    `modules <n>`, `codegen`, `pch`, `units <done> <total>`, then `link` after a
+    shard build or `cc` for the single compile of any other. */
+static void progress(const char *format, ...) {
+    const char *path = getenv("LOAM_PROGRESS");
+    if (!path || !path[0]) return;
+    FILE *f = fopen(path, "a");
+    if (!f) return;
+    va_list ap;
+    va_start(ap, format);
+    vfprintf(f, format, ap);
+    va_end(ap);
+    fclose(f);
+}
+
+/** Run `cc` (a compiler and its flags) on `src`, producing `obj`. The object is
+    written beside its final name and renamed into place: `zeli build` compiles
+    its targets at once, and the objects are shared, so a concurrent compile must
+    see the old object or the new one and never half of one. */
+static int compile_obj(const char *cc, const char *src, const char *obj) {
+    char tmp[1024], cmd[8192];
+    snprintf(tmp, sizeof tmp, "%s.%ld.tmp", obj, (long)getpid());
+    snprintf(cmd, sizeof cmd, "%s \"%s\" -c -o \"%s\"", cc, src, tmp);
+    if (env_on("LOAM_TIME")) fprintf(stderr, "loam: cc %s\n", src);
+    if (system(cmd) != 0 || rename(tmp, obj) != 0) {
+        unlink(tmp);
+        return 1;
+    }
+    return 0;
+}
+
 /** Compile `src` to `obj` if it is stale. `extra` is extra cc flags (may be ""). */
 static int ensure_obj(const char *src, const char *obj, const char *extra,
                       const char **deps, int ndeps) {
@@ -162,11 +200,328 @@ static int ensure_obj(const char *src, const char *obj, const char *extra,
        objects are names nothing has made yet (zeus_plat.host.o). */
     if (access(obj, F_OK) == 0 && !any_src_newer(obj, deps, ndeps)) return 0;
     if (ensure_parent_dir(obj) != 0) return 1;
-    char cmd[2048];
-    snprintf(cmd, sizeof cmd, "cc -std=gnu99 -O1 -c -I\"%s\" %s \"%s\" -o \"%s\"",
-             LOAM_RUNTIME_DIR, extra ? extra : "", src, obj);
-    if (env_on("LOAM_TIME")) fprintf(stderr, "loam: cc %s\n", src);
-    return system(cmd) != 0;
+    char cmd[4096];
+    snprintf(cmd, sizeof cmd, "cc -std=gnu99 -O1 -I\"%s\" %s", LOAM_RUNTIME_DIR,
+             extra ? extra : "");
+    return compile_obj(cmd, src, obj);
+}
+
+/** `ensure_obj` for the iOS objects, which share one list of headers and whose
+    compiler and flags are whole strings rather than the native `cc`. */
+static int ios_obj(const char *cc, const char *src, const char *obj) {
+    char rt[512], loam[512], key[512], net[512], apple[512];
+    snprintf(rt, sizeof rt, "%s/zeus_rt.h", LOAM_RUNTIME_DIR);
+    snprintf(loam, sizeof loam, "%s/loam_rt.h", LOAM_RUNTIME_DIR);
+    snprintf(key, sizeof key, "%s/zeus_key.h", LOAM_RUNTIME_DIR);
+    snprintf(net, sizeof net, "%s/net_rt.h", LOAM_RUNTIME_DIR);
+    snprintf(apple, sizeof apple, "%s/hosts/apple/zeus_apple.h", LOAM_ZEUS_DIR);
+    const char *deps[] = {src, rt, loam, key, net, apple};
+    if (access(obj, F_OK) == 0 && !any_src_newer(obj, deps, 6)) return 0;
+    if (ensure_parent_dir(obj) != 0) return 1;
+    return compile_obj(cc, src, obj);
+}
+
+/* --- shard builds -------------------------------------------------------
+
+   A development build has one job, which is to be fast the second time. The
+   generated program is one large C file, so one clang on one core, and the same
+   work again after an edit that changed two lines of it. `LOAM_SHARD=<dir>` cuts
+   it along the markers codegen left (codegen_c.h) into units that compile in
+   parallel and are kept in <dir> under a hash of their text, so an edit compiles
+   only what it changed. The shared header goes through a precompiled header,
+   which is what keeps each unit's cost close to the size of its own code.
+
+   Units are cut where a function's name hashes a certain way, not every N bytes:
+   a fixed size would move every later boundary when one function grows, and
+   every unit after the edit would miss. */
+
+#define SHARD_MIN 96000
+#define SHARD_MAX 384000
+#define SHARD_CUT 8
+#define SHARD_KEEP_SECS (24 * 60 * 60)
+
+static uint64_t fnv(const void *data, size_t n, uint64_t h) {
+    const unsigned char *p = (const unsigned char *)data;
+    for (size_t i = 0; i < n; i++) {
+        h ^= p[i];
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
+static uint64_t fnv_str(const char *s, uint64_t h) {
+    return fnv(s, strlen(s), h);
+}
+
+/* A file's own text says nothing about the headers it includes, and neither does
+   a generated file's `#include "zeus_rt.h"`, so every key covers them. */
+static uint64_t fnv_dir(const char *dir, uint64_t h) {
+    DIR *d = opendir(dir);
+    if (!d) return h;
+    /* Sum, not chain: directory order is not stable. */
+    uint64_t sum = 0;
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        char path[1536];
+        struct stat st;
+        snprintf(path, sizeof path, "%s/%s", dir, e->d_name);
+        if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) continue;
+        uint64_t one = fnv_str(e->d_name, 14695981039346656037ULL);
+        one = fnv(&st.st_mtime, sizeof st.st_mtime, one);
+        one = fnv(&st.st_size, sizeof st.st_size, one);
+        sum += one;
+    }
+    closedir(d);
+    return fnv(&sum, sizeof sum, h);
+}
+
+static char *read_all(const char *path, size_t *len) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END);
+    long n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char *buf = (char *)malloc((size_t)n + 1);
+    if (buf && fread(buf, 1, (size_t)n, f) != (size_t)n) {
+        free(buf);
+        buf = NULL;
+    }
+    fclose(f);
+    if (!buf) return NULL;
+    buf[n] = 0;
+    *len = (size_t)n;
+    return buf;
+}
+
+static int write_parts(const char *path, const char *a, size_t an, const char *b, size_t bn) {
+    FILE *f = fopen(path, "wb");
+    if (!f) return 1;
+    int bad = fwrite(a, 1, an, f) != an || fwrite(b, 1, bn, f) != bn;
+    return fclose(f) != 0 || bad;
+}
+
+/* Run shell commands, as many at a time as there are cores. 0 if all exited 0.
+   `total` is the whole build's unit count, of which these are the last `n`. */
+static int run_parallel(char **cmds, int n, int total) {
+    long cores = sysconf(_SC_NPROCESSORS_ONLN);
+    int running = 0, failed = 0, done = total - n;
+    if (cores < 1) cores = 1;
+    fflush(NULL);
+    progress("units %d %d\n", done, total);
+    for (int i = 0; i < n || running > 0;) {
+        if (i < n && running < cores) {
+            pid_t pid = fork();
+            if (pid < 0) return 1;
+            if (pid == 0) {
+                execl("/bin/sh", "sh", "-c", cmds[i], (char *)NULL);
+                _exit(127);
+            }
+            running++;
+            i++;
+            continue;
+        }
+        int st = 0;
+        if (wait(&st) < 0) break;
+        running--;
+        if (!WIFEXITED(st) || WEXITSTATUS(st) != 0) failed = 1;
+        progress("units %d %d\n", ++done, total);
+    }
+    return failed;
+}
+
+/* Keep what a recent build used. Hits refresh an entry's time (`utimes`), so a
+   cache only outlives its files by a day. A header goes when its PCH has. */
+static void shard_prune(const char *dir) {
+    DIR *d = opendir(dir);
+    if (!d) return;
+    time_t now = time(NULL);
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        char path[1536], pch[1600];
+        struct stat st;
+        size_t n = strlen(e->d_name);
+        snprintf(path, sizeof path, "%s/%s", dir, e->d_name);
+        if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) continue;
+        if (n > 2 && strcmp(e->d_name + n - 2, ".h") == 0) {
+            snprintf(pch, sizeof pch, "%s.pch", path);
+            if (access(pch, F_OK) != 0) unlink(path);
+        } else if (now - st.st_mtime > SHARD_KEEP_SECS) {
+            unlink(path);
+        }
+    }
+    closedir(d);
+}
+
+/* The objects of one shard build, and the compiles still needed to have them. */
+typedef struct {
+    char **objs;
+    char **cmds;
+    int nobjs, ncmds, cap;
+} ShardList;
+
+/* Add one unit. Its object is reused if `key` has been built; otherwise its text,
+   `pre` then `data`, is written out and a compile queued. `cc` is the whole
+   compile command up to the input. 0 on success. */
+static int shard_unit(ShardList *l, const char *cc, const char *dir, uint64_t key, const char *pre,
+                      size_t pre_n, const char *data, size_t data_n) {
+    char obj[1100], cfile[1100], line[8192];
+    if (l->nobjs == l->cap) {
+        l->cap = l->cap ? l->cap * 2 : 64;
+        l->objs = (char **)realloc(l->objs, sizeof(char *) * (size_t)l->cap);
+        l->cmds = (char **)realloc(l->cmds, sizeof(char *) * (size_t)l->cap);
+    }
+    snprintf(obj, sizeof obj, "%s/%016llx.o", dir, (unsigned long long)key);
+    l->objs[l->nobjs++] = strdup(obj);
+    if (access(obj, F_OK) == 0) {
+        utimes(obj, NULL);
+        return 0;
+    }
+    snprintf(cfile, sizeof cfile, "%s/%016llx.c", dir, (unsigned long long)key);
+    if (write_parts(cfile, pre, pre_n, data, data_n) != 0) return 1;
+    /* Renamed into place, as in `compile_obj`; a unit that exists is whole. */
+    snprintf(line, sizeof line,
+             "%s -x c \"%s\" -c -o \"%s.%ld\" && mv -f \"%s.%ld\" \"%s\"; r=$?; rm -f \"%s\"; exit $r",
+             cc, cfile, obj, (long)getpid(), obj, (long)getpid(), obj, cfile);
+    l->cmds[l->ncmds++] = strdup(line);
+    return 0;
+}
+
+static void shard_list_free(ShardList *l) {
+    for (int i = 0; i < l->nobjs; i++) free(l->objs[i]);
+    for (int i = 0; i < l->ncmds; i++) free(l->cmds[i]);
+    free(l->objs);
+    free(l->cmds);
+}
+
+/* Cut the bodies between `first` and `end` into units and add each to `l`. */
+static int shard_bodies(ShardList *l, const char *cc, const char *dir, uint64_t seed, char *first,
+                        char *end) {
+    char *start = first, *p = first;
+    while (p < end) {
+        char *next = strstr(p + 1, "\n/*@S ");
+        if (!next || next > end) next = end;
+        const char *name = p + 6;
+        const char *close = strstr(name, "*/");
+        size_t name_n = close ? (size_t)(close - name) : 0;
+        size_t size = (size_t)(next - start);
+        if (next == end || size >= SHARD_MAX ||
+            (size >= SHARD_MIN &&
+             fnv(name, name_n, 14695981039346656037ULL) % SHARD_CUT == 0)) {
+            if (shard_unit(l, cc, dir, fnv(start, size, seed), "", 0, start, size) != 0) return 1;
+            start = next;
+        }
+        p = next;
+    }
+    return 0;
+}
+
+/* Compile `cpath` as units under `dir`, and every file in `extra` as itself, and
+   leave the object list in `rsp`, for the link to read as `@rsp`. `cc` is the
+   compiler and its flags. 0 on success; on failure the caller still has the whole
+   program in `cpath`. */
+static int shard_compile(const char *cpath, const char *cc, const char *dir,
+                         const char **extra, int nextra, char *rsp, size_t rsp_n) {
+    size_t len = 0;
+    char *src = read_all(cpath, &len);
+    int rc = 1;
+    ShardList l = {0};
+    if (!src) return 1;
+    char *first = strstr(src, "\n/*@S ");
+    char *defs = strstr(src, "\n/*@D*/\n");
+    if (!first || !defs || mkdir_p(dir) != 0) goto done;
+
+    size_t head_n = (size_t)(first - src);
+    uint64_t base = fnv_str(cc, 14695981039346656037ULL);
+    char wasm_inc[1024];
+    snprintf(wasm_inc, sizeof wasm_inc, "%s/wasm_inc", LOAM_RUNTIME_DIR);
+    base = fnv_dir(LOAM_RUNTIME_DIR, base);
+    base = fnv_dir(wasm_inc, base);
+    uint64_t hkey = fnv(src, head_n, base);
+
+    /* The precompiled header. Its .h is never touched once written: clang checks
+       that file's time against the PCH. */
+    char hpath[1100], pch[1200], cmd[8192];
+    snprintf(hpath, sizeof hpath, "%s/%016llx.h", dir, (unsigned long long)hkey);
+    snprintf(pch, sizeof pch, "%s.pch", hpath);
+    if (access(pch, F_OK) != 0) {
+        progress("pch\n");
+        if (write_parts(hpath, src, head_n, "\n", 1) != 0) goto done;
+        snprintf(cmd, sizeof cmd, "%s -x c-header \"%s\" -o \"%s.%ld\" && mv -f \"%s.%ld\" \"%s\"",
+                 cc, hpath, pch, (long)getpid(), pch, (long)getpid(), pch);
+        if (system(cmd) != 0) goto done;
+    } else {
+        utimes(pch, NULL);
+    }
+
+    snprintf(cmd, sizeof cmd, "%s -include-pch \"%s\"", cc, pch);
+    if (shard_bodies(&l, cmd, dir, hkey, first, defs) != 0) goto done;
+
+    /* The one unit that owns the program's storage: the header, then the data. */
+    {
+        const char *tag = "#define LOAM_SHARD_DEFS 1\n";
+        size_t tag_n = strlen(tag), whole_n = tag_n + head_n;
+        size_t defs_n = len - (size_t)(defs - src);
+        char *whole = (char *)malloc(whole_n);
+        memcpy(whole, tag, tag_n);
+        memcpy(whole + tag_n, src, head_n);
+        int bad = shard_unit(&l, cc, dir, fnv(defs, defs_n, fnv(whole, whole_n, base)), whole,
+                             whole_n, defs, defs_n);
+        free(whole);
+        if (bad) goto done;
+    }
+    for (int i = 0; i < nextra; i++) {
+        size_t text_n = 0;
+        char *text = read_all(extra[i], &text_n);
+        if (!text) goto done;
+        /* Compiled from the cache, so it needs its own directory on the path. */
+        const char *slash = strrchr(extra[i], '/');
+        char inc[1100], ecc[8192];
+        snprintf(inc, sizeof inc, "#line 1 \"%s\"\n", extra[i]);
+        snprintf(ecc, sizeof ecc, "%s -I\"%.*s\"", cc, slash ? (int)(slash - extra[i]) : 1,
+                 slash ? extra[i] : ".");
+        int bad = shard_unit(&l, ecc, dir, fnv(text, text_n, base), inc, strlen(inc), text, text_n);
+        free(text);
+        if (bad) goto done;
+    }
+
+    if (env_on("LOAM_TIME")) fprintf(stderr, "loam: units %d, compiling %d\n", l.nobjs, l.ncmds);
+    if (run_parallel(l.cmds, l.ncmds, l.nobjs) != 0) goto done;
+
+    snprintf(rsp, rsp_n, "%s/%016llx.rsp", dir, (unsigned long long)hkey);
+    {
+        FILE *f = fopen(rsp, "w");
+        if (!f) goto done;
+        for (int i = 0; i < l.nobjs; i++) fprintf(f, "\"%s\"\n", l.objs[i]);
+        if (fclose(f) != 0) goto done;
+    }
+    shard_prune(dir);
+    rc = 0;
+done:
+    shard_list_free(&l);
+    free(src);
+    return rc;
+}
+
+/* Whether `app_input` left only a link to do. */
+static int shard_linked = 0;
+
+/* The app's C as link inputs: the cached objects of a shard build, or the file
+   itself. A shard build that failed falls back to the file, which is still one
+   whole program given the macro that turns its definitions back on. */
+static void app_input(const char *dir, const char *cpath, const char *cc, const char **extra,
+                      int nextra, char *out, size_t n) {
+    char rsp[1200];
+    if (dir && dir[0]) {
+        if (shard_compile(cpath, cc, dir, extra, nextra, rsp, sizeof rsp) == 0) {
+            snprintf(out, n, "-x none @\"%s\"", rsp);
+            shard_linked = 1;
+            return;
+        }
+        fprintf(stderr, "loam: shard build failed; compiling the whole program\n");
+        snprintf(out, n, "-DLOAM_SHARD_DEFS -x c \"%s\"", cpath);
+        return;
+    }
+    snprintf(out, n, "-x c \"%s\"", cpath);
 }
 
 static int copy_file(const char *src, const char *dst) {
@@ -397,7 +752,7 @@ static void android_app_id(const char *stem, char *out, size_t n) {
     snprintf(out, n, "com.loam.%s", suf);
 }
 
-static int android_write_cmake(const char *path, int uses_http, int string_owns) {
+static int android_write_cmake(const char *path, int uses_http, int string_owns, int dev) {
     FILE *f;
     if (ensure_parent_dir(path) != 0) return 1;
     f = fopen(path, "w");
@@ -419,8 +774,12 @@ static int android_write_cmake(const char *path, int uses_http, int string_owns)
             "target_compile_definitions(zeus PRIVATE LOAM_ANDROID LOAM_ALLOC_TRACE%s)\n"
             "target_compile_options(zeus PRIVATE -std=gnu99 -O1 -ffp-contract=off "
             "-fno-asynchronous-unwind-tables)\n"
+            "%s"
             "target_link_libraries(zeus android log)\n",
-            LOAM_RUNTIME_DIR, string_owns ? " LOAM_STRING_OWNS" : "");
+            LOAM_RUNTIME_DIR, string_owns ? " LOAM_STRING_OWNS" : "",
+            /* A dev build leaves only the app's code unoptimized, as on the
+               native targets: it is what an edit recompiles. */
+            dev ? "set_source_files_properties(app.c PROPERTIES COMPILE_OPTIONS -O0)\n" : "");
     fclose(f);
     return 0;
 }
@@ -501,7 +860,7 @@ static int android_emit_project(const char *proj, const char *cpath, const char 
     snprintf(dst, sizeof dst, "%s/app/src/main/cpp/app.c", proj);
     if (android_copy(cpath, dst) != 0) return 1;
     snprintf(dst, sizeof dst, "%s/app/src/main/cpp/CMakeLists.txt", proj);
-    if (android_write_cmake(dst, uses_http, string_owns) != 0) return 1;
+    if (android_write_cmake(dst, uses_http, string_owns, want_dev()) != 0) return 1;
     snprintf(dst, sizeof dst, "%s/app/build.gradle", proj);
     if (android_write_app_gradle(dst, app_id) != 0) return 1;
     if (find_android_sdk(sdk, sizeof sdk) == 0) {
@@ -791,6 +1150,7 @@ int main(int argc, char **argv) {
     double t0 = now_sec();
     LoamSession sess;
     loam_session_init(&sess);
+    progress("check\n");
     int check_rc = loam_session_check(&sess, in_path, NULL);
     print_warns(&sess);
     if (check_rc != 0) {
@@ -799,6 +1159,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     if (show_time) fprintf(stderr, "loam: check %.3fs\n", now_sec() - t0);
+    progress("modules %d\n", sess.nmods);
 
     if (cost) {
         /* Same reachability pruning a real build does, so the report counts
@@ -949,7 +1310,21 @@ int main(int argc, char **argv) {
         loam_session_free(&sess);
         return 1;
     }
+    /* `LOAM_SHARD=<cache dir>`: a development build in units. Only the hosts that
+       link through `app_input` below can take it. */
+    const char *shard_dir = getenv("LOAM_SHARD");
+    {
+        size_t bn = strlen(binpath);
+        int zeus_mod = env_on("LOAM_HOST");
+        for (int i = 0; i < sess.nmods; i++)
+            if (sess.mods[i].name && strcmp(sess.mods[i].name, "zeus") == 0) zeus_mod = 1;
+        if (!zeus_mod || emit_c || test_mode || target_android ||
+            (bn > 6 && strcmp(binpath + bn - 6, ".dylib") == 0))
+            shard_dir = NULL;
+    }
+    codegen_set_shard(shard_dir && shard_dir[0]);
     t0 = now_sec();
+    progress("codegen\n");
     codegen_set_test_mode(test_mode);
     /* `#[server]` bodies are excluded from client targets (wasm here; the other
        client hosts join when their targets are split out). `LOAM_SERVER_SPLIT`
@@ -1064,6 +1439,32 @@ int main(int argc, char **argv) {
             if (uses_http || uses_net)
                 snprintf(http_w, sizeof http_w, " \"%s/net.c\"", LOAM_RUNTIME_DIR);
             if (uses_zeus) {
+                /* The runtime and the web host never change between edits, so a
+                   shard build keeps them as objects too. */
+                char wasm_in[1400], wcc[3072], rt_in[2048] = "";
+                char w_libc[768], w_host[768], w_plat[768], w_key[768], w_net[768];
+                snprintf(wasm_in, sizeof wasm_in, "-x c \"%s\"", cpath);
+                snprintf(w_libc, sizeof w_libc, "%s/zeus_wasm_libc.c", LOAM_RUNTIME_DIR);
+                snprintf(w_host, sizeof w_host, "%s/hosts/web/wasm.c", LOAM_ZEUS_DIR);
+                snprintf(w_plat, sizeof w_plat, "%s/zeus_plat.c", LOAM_RUNTIME_DIR);
+                snprintf(w_key, sizeof w_key, "%s/zeus_key.c", LOAM_RUNTIME_DIR);
+                snprintf(w_net, sizeof w_net, "%s/net.c", LOAM_RUNTIME_DIR);
+                if (shard_dir && shard_dir[0]) {
+                    const char *extra[5] = {w_libc, w_host, w_plat, w_key, w_net};
+                    snprintf(wcc, sizeof wcc,
+                             "\"%s\"%s --target=wasm32 -nostdlib -ffreestanding "
+                             "-fno-stack-protector -Oz -ffp-contract=off%s%s -I\"%s/wasm_inc\" "
+                             "-I\"%s\"",
+                             cc, maps,
+                             wasm_release ? " -DLOAM_NO_TRAP_LOC -DLOAM_WEB_RELEASE"
+                                          : " -DLOAM_ALLOC_TRACE",
+                             owns_def, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR);
+                    app_input(shard_dir, cpath, wcc, extra, http_w[0] ? 5 : 4, wasm_in,
+                              sizeof wasm_in);
+                }
+                if (strncmp(wasm_in, "-x none", 7) != 0)
+                    snprintf(rt_in, sizeof rt_in, "-x none \"%s\" \"%s\" \"%s\" \"%s\"%s", w_libc, w_host,
+                             w_plat, w_key, http_w);
                 snprintf(cmdw, sizeof cmdw,
                          "\"%s\"%s --target=wasm32 -nostdlib -ffreestanding "
                          "-fno-stack-protector %s -ffp-contract=off%s%s -I\"%s/wasm_inc\" -I\"%s\" "
@@ -1077,9 +1478,7 @@ int main(int argc, char **argv) {
                             stack first: an overflow then runs below address 0
                             and traps cleanly. */
                          "-Wl,-z,stack-size=4194304 -Wl,--stack-first "
-                         "-x c \"%s\" -x none "
-                         "\"%s/zeus_wasm_libc.c\" \"%s/hosts/web/wasm.c\" "
-                         "\"%s/zeus_plat.c\" \"%s/zeus_key.c\"%s -o \"%s\"",
+                         "%s %s -o \"%s\"",
                          cc, maps,
                          /* clang runs wasm-opt after any link it sees -O for,
                             which strips the names the splitter needs. Giving
@@ -1090,8 +1489,7 @@ int main(int argc, char **argv) {
                             release is what visitors download. */
                          wasm_release ? " -DLOAM_NO_TRAP_LOC -DLOAM_WEB_RELEASE"
                                       : " -DLOAM_ALLOC_TRACE",
-                         owns_def, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR, cpath, LOAM_RUNTIME_DIR,
-                         LOAM_ZEUS_DIR, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR, http_w, binpath);
+                         owns_def, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR, wasm_in, rt_in, binpath);
             } else {
                 snprintf(cmdw, sizeof cmdw,
                          "\"%s\"%s --target=wasm32 -nostdlib -ffreestanding "
@@ -1105,6 +1503,7 @@ int main(int argc, char **argv) {
         }
         t0 = now_sec();
         if (env_on("LOAM_TIME")) fprintf(stderr, "loam: cc %s\n", cc);
+        progress(shard_linked ? "link\n" : "cc\n");
         if (system(cmdw) != 0) {
             fprintf(stderr, "loam: wasm compile failed (C: %s)\n", cpath);
             free(outdir);
@@ -1133,7 +1532,6 @@ int main(int argc, char **argv) {
         char plist[1024];
         char bid[256];
         char cmdios[8192];
-        char http_ios[768] = "";
         const char *arch =
 #if defined(__aarch64__) || defined(__arm64__)
             "arm64";
@@ -1180,23 +1578,69 @@ int main(int argc, char **argv) {
             loam_session_free(&sess);
             return 1;
         }
-        if (uses_http)
-            snprintf(http_ios, sizeof http_ios, " \"%s/net.c\"", LOAM_RUNTIME_DIR);
+        /* The runtime and the host are the same five files on every build, and
+           compiling them is most of what a build costs next to the app's own C.
+           They keep -O1 in a dev build for the same reason the native objects do:
+           only the app's code is what an edit recompiles. */
+        char ios_flags[2048], ios_cc[2560], ios_mcc[3072], ios_objs[4096] = "";
+        snprintf(ios_flags, sizeof ios_flags,
+                 "-isysroot \"%s\" -target %s-apple-ios16.0-simulator -std=gnu99 "
+                 "-ffp-contract=off -DLOAM_ALLOC_TRACE -fno-asynchronous-unwind-tables "
+                 "-DLOAM_IOS%s -I\"%s\"",
+                 sdk, arch, owns_def, LOAM_RUNTIME_DIR);
+        snprintf(ios_cc, sizeof ios_cc, "xcrun clang -O1 %s", ios_flags);
+        snprintf(ios_mcc, sizeof ios_mcc, "%s -x objective-c -fno-objc-arc -I\"%s/hosts/apple\"",
+                 ios_cc, LOAM_ZEUS_DIR);
+        {
+            const char *sdk_name = strrchr(sdk, '/');
+            char src[4][512], name[4][32];
+            int nc = 2;
+            snprintf(src[0], sizeof src[0], "%s/zeus_plat.c", LOAM_RUNTIME_DIR);
+            snprintf(src[1], sizeof src[1], "%s/zeus_key.c", LOAM_RUNTIME_DIR);
+            snprintf(name[0], sizeof name[0], "zeus_plat");
+            snprintf(name[1], sizeof name[1], "zeus_key");
+            if (uses_http) {
+                snprintf(src[nc], sizeof src[nc], "%s/net.c", LOAM_RUNTIME_DIR);
+                snprintf(name[nc++], sizeof name[0], "net");
+            }
+            char msrc[3][512];
+            const char *mname[3] = {"ios", "apple_draw", "apple_media"};
+            snprintf(msrc[0], sizeof msrc[0], "%s/hosts/ios/ios.m", LOAM_ZEUS_DIR);
+            snprintf(msrc[1], sizeof msrc[1], "%s/hosts/apple/apple_draw.m", LOAM_ZEUS_DIR);
+            snprintf(msrc[2], sizeof msrc[2], "%s/hosts/apple/apple_media.m", LOAM_ZEUS_DIR);
+            char dir[1024];
+            snprintf(dir, sizeof dir, "%s/.obj/ios-%s-%s%s", LOAM_RUNTIME_DIR,
+                     sdk_name ? sdk_name + 1 : sdk, arch, string_owns ? "" : ".noowns");
+            for (int i = 0; i < nc + 3; i++) {
+                const char *s = i < nc ? src[i] : msrc[i - nc];
+                const char *nm = i < nc ? name[i] : mname[i - nc];
+                char o[1536];
+                snprintf(o, sizeof o, "%s/%s.o", dir, nm);
+                if (ios_obj(i < nc ? ios_cc : ios_mcc, s, o) != 0) {
+                    fprintf(stderr, "loam: iOS compile failed (%s)\n", s);
+                    if (cpath_is_temp) unlink(cpath);
+                    free(stem);
+                    loam_session_free(&sess);
+                    return 1;
+                }
+                size_t used = strlen(ios_objs);
+                snprintf(ios_objs + used, sizeof ios_objs - used, " \"%s\"", o);
+            }
+        }
+        char ios_app[1400], ios_acc[2560];
+        snprintf(ios_acc, sizeof ios_acc, "xcrun clang %s %s", want_dev() ? "-O0" : "-O1", ios_flags);
+        app_input(shard_dir, cpath, ios_acc, NULL, 0, ios_app, sizeof ios_app);
         snprintf(cmdios, sizeof cmdios,
-                 "xcrun clang -isysroot \"%s\" -target %s-apple-ios16.0-simulator "
-                 "-O1 -ffp-contract=off -DLOAM_ALLOC_TRACE -fno-asynchronous-unwind-tables -DLOAM_IOS%s -I\"%s\" "
-                 "-x c -std=gnu99 \"%s\" \"%s/zeus_plat.c\" \"%s/zeus_key.c\"%s "
-                 "-x objective-c -fno-objc-arc -I\"%s/hosts/apple\" \"%s/hosts/ios/ios.m\" "
-                 "\"%s/hosts/apple/apple_draw.m\" \"%s/hosts/apple/apple_media.m\" "
+                 "%s %s -x none%s "
                  "-framework UIKit -framework Foundation -framework CoreGraphics "
                  "-framework CoreText -framework QuartzCore -framework ImageIO "
                  "-framework AVFoundation -framework CoreMedia -framework CoreVideo "
                  "-framework VideoToolbox "
                  "-framework Security -framework CoreFoundation -o \"%s\"",
-                 sdk, arch, owns_def, LOAM_RUNTIME_DIR, cpath, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR,
-                 http_ios, LOAM_ZEUS_DIR, LOAM_ZEUS_DIR, LOAM_ZEUS_DIR, LOAM_ZEUS_DIR, exe);
+                 ios_acc, ios_app, ios_objs, exe);
         t0 = now_sec();
         if (env_on("LOAM_TIME")) fprintf(stderr, "loam: cc ios\n");
+        progress(shard_linked ? "link\n" : "cc\n");
         if (system(cmdios) != 0) {
             fprintf(stderr, "loam: iOS compile failed (C: %s)\n", cpath);
             if (cpath_is_temp) unlink(cpath);
@@ -1300,6 +1744,7 @@ int main(int argc, char **argv) {
 #endif
 
     char cmd[4096];
+    char app_in[1400];
     char plat_c[512], key_c[512], mac_m[512], rt_h[512], key_h[512];
     char plat_o[512], key_o[512], mac_o[512];
     snprintf(plat_c, sizeof plat_c, "%s/zeus_plat.c", LOAM_RUNTIME_DIR);
@@ -1363,6 +1808,11 @@ int main(int argc, char **argv) {
     }
 
     t0 = now_sec();
+    {
+        char ncc[1024];
+        snprintf(ncc, sizeof ncc, "cc %s -I\"%s\"", copt, LOAM_RUNTIME_DIR);
+        app_input(shard_dir, cpath, ncc, NULL, 0, app_in, sizeof app_in);
+    }
     if (uses_zeus) {
         const char *plat_deps[] = {plat_c, rt_h, key_h};
         const char *key_deps[] = {key_c, key_h};
@@ -1402,20 +1852,20 @@ int main(int argc, char **argv) {
                 return 1;
             }
             snprintf(cmd, sizeof cmd,
-                     "cc %s %s -o \"%s\" -I\"%s\" -x c \"%s\" -x none \"%s\" \"%s\" \"%s\" "
+                     "cc %s %s -o \"%s\" -I\"%s\" %s -x none \"%s\" \"%s\" \"%s\" "
                      "\"%s\" \"%s\"%s%s "
                      "-framework Cocoa -framework QuartzCore -framework IOSurface -framework Security "
                      "-framework CoreText -framework ImageIO "
                      "-framework AVFoundation -framework CoreMedia -framework CoreVideo "
                      "-framework VideoToolbox -framework AudioToolbox -weak_framework SoundAnalysis "
                      "-framework CoreFoundation -lm",
-                     copt, ld, binpath, LOAM_RUNTIME_DIR, cpath, plat_o, key_o, mac_o, draw_o,
+                     copt, ld, binpath, LOAM_RUNTIME_DIR, app_in, plat_o, key_o, mac_o, draw_o,
                      media_o, http_link, extra_link);
         } else {
             snprintf(cmd, sizeof cmd,
-                     "cc %s -o \"%s\" -I\"%s\" -x c \"%s\" -x none \"%s\" \"%s\"%s%s "
+                     "cc %s -o \"%s\" -I\"%s\" %s -x none \"%s\" \"%s\"%s%s "
                      "-framework Security -framework CoreFoundation -lm",
-                     copt, binpath, LOAM_RUNTIME_DIR, cpath, plat_o, key_o, http_link, extra_link);
+                     copt, binpath, LOAM_RUNTIME_DIR, app_in, plat_o, key_o, http_link, extra_link);
         }
 #else
         if (!headless) {
@@ -1433,14 +1883,14 @@ int main(int argc, char **argv) {
                 }
             }
             snprintf(cmd, sizeof cmd,
-                     "cc %s -o \"%s\" -I\"%s\" -x c \"%s\" -x none \"%s\" \"%s\" \"%s\"%s%s "
+                     "cc %s -o \"%s\" -I\"%s\" %s -x none \"%s\" \"%s\" \"%s\"%s%s "
                      "-lX11 -lm",
-                     copt, binpath, LOAM_RUNTIME_DIR, cpath, plat_o, key_o, linux_o, http_link,
+                     copt, binpath, LOAM_RUNTIME_DIR, app_in, plat_o, key_o, linux_o, http_link,
                      extra_link);
         } else {
             snprintf(cmd, sizeof cmd,
-                     "cc %s -o \"%s\" -I\"%s\" -x c \"%s\" -x none \"%s\" \"%s\"%s%s -lm",
-                     copt, binpath, LOAM_RUNTIME_DIR, cpath, plat_o, key_o, http_link, extra_link);
+                     "cc %s -o \"%s\" -I\"%s\" %s -x none \"%s\" \"%s\"%s%s -lm",
+                     copt, binpath, LOAM_RUNTIME_DIR, app_in, plat_o, key_o, http_link, extra_link);
         }
         (void)mac_m;
         (void)mac_o;
@@ -1495,6 +1945,7 @@ int main(int argc, char **argv) {
         snprintf(cmd, sizeof cmd, "cc %s %s -x c \"%s\" -o \"%s\"%s", copt, ld, cpath,
                  binpath, extra_link);
     }
+    progress(shard_linked ? "link\n" : "cc\n");
     int rc = system(cmd);
     if (show_time) fprintf(stderr, "loam: cc %.3fs\n", now_sec() - t0);
     if (rc != 0) {

@@ -432,7 +432,7 @@ static int module_imported(AstNode *prog, const char *name) {
    module the *current* module imported under that alias: file stems name the
    entry module (e.g. `raygui.loam`), so a global scan would otherwise return a
    file that happens to share the alias instead of the imported module. */
-static LoamModule *find_mod(const char *name) {
+static LoamModule *find_mod_scan(const char *name) {
     AstNode *prog = Gcur >= 0 && Gcur < Gn ? Gmods[Gcur].ast : NULL;
     if (prog) {
         for (size_t i = 0; i < prog->as.program.import_count; i++) {
@@ -451,6 +451,132 @@ static LoamModule *find_mod(const char *name) {
     return NULL;
 }
 
+/* --- name lookup ---------------------------------------------------------
+
+   Every identifier a module uses is looked up in each module it imports, so on a
+   large program these lookups, one `strcmp` per declaration, are most of the
+   checker's time. Each answer below is what a scan would return, the first
+   match in declaration order, kept in a table per module. A table is rebuilt if
+   its module's declarations have grown (`prog->decl_count` moves in sema). */
+
+typedef struct {
+    AstKind kind;
+    const char *name;
+    AstNode *decl;
+} DeclSlot;
+
+typedef struct {
+    DeclSlot *slots;
+    size_t cap;
+    size_t built_for;
+} DeclTable;
+
+static DeclTable *decl_tables;
+static int decl_table_count;
+
+static size_t name_hash(const char *s) {
+    size_t h = 5381;
+    while (*s) h = h * 33 + (unsigned char)*s++;
+    return h;
+}
+
+static const char *lookup_name(AstNode *d) {
+    if (d->kind == AST_FN_DECL) return d->as.fn.name;
+    if (d->kind == AST_STRUCT_DECL) return d->as.strct.name;
+    if (d->kind == AST_ENUM_DECL) return d->as.enm.name;
+    return NULL;
+}
+
+static void decl_table_build(DeclTable *t, AstNode *prog) {
+    size_t n = prog->as.program.decl_count;
+    size_t cap = 16;
+    while (cap < n * 2) cap *= 2;
+    free(t->slots);
+    t->slots = (DeclSlot *)calloc(cap, sizeof(DeclSlot));
+    t->cap = cap;
+    t->built_for = n;
+    for (size_t i = 0; i < n; i++) {
+        AstNode *d = prog->as.program.decls[i];
+        const char *name = lookup_name(d);
+        if (!name) continue;
+        size_t at = (name_hash(name) + (size_t)d->kind) & (cap - 1);
+        int dup = 0;
+        while (t->slots[at].name) {
+            if (t->slots[at].kind == d->kind && strcmp(t->slots[at].name, name) == 0) dup = 1;
+            if (dup) break;
+            at = (at + 1) & (cap - 1);
+        }
+        if (dup) continue;
+        t->slots[at].kind = d->kind;
+        t->slots[at].name = name;
+        t->slots[at].decl = d;
+    }
+}
+
+static AstNode *find_decl(LoamModule *m, AstKind kind, const char *name) {
+    if (!m || !m->ast || !name) return NULL;
+    DeclTable *t = &decl_tables[m - Gmods];
+    if (!t->slots || t->built_for != m->ast->as.program.decl_count) decl_table_build(t, m->ast);
+    size_t at = (name_hash(name) + (size_t)kind) & (t->cap - 1);
+    while (t->slots[at].name) {
+        if (t->slots[at].kind == kind && strcmp(t->slots[at].name, name) == 0)
+            return t->slots[at].decl;
+        at = (at + 1) & (t->cap - 1);
+    }
+    return NULL;
+}
+
+/* What `find_mod_scan` said for an alias from a module. Imports do not change
+   while checking, and an alias that resolves nowhere is asked about as often. */
+typedef struct {
+    int cur;
+    char *name;
+    LoamModule *mod;
+} ModSlot;
+
+static ModSlot *mod_slots;
+static size_t mod_cap, mod_used;
+
+static LoamModule *find_mod(const char *name) {
+    if (mod_used * 2 >= mod_cap) {
+        size_t cap = mod_cap ? mod_cap * 2 : 256;
+        ModSlot *grown = (ModSlot *)calloc(cap, sizeof(ModSlot));
+        for (size_t i = 0; i < mod_cap; i++) {
+            if (!mod_slots[i].name) continue;
+            size_t at = (name_hash(mod_slots[i].name) + (size_t)mod_slots[i].cur) & (cap - 1);
+            while (grown[at].name) at = (at + 1) & (cap - 1);
+            grown[at] = mod_slots[i];
+        }
+        free(mod_slots);
+        mod_slots = grown;
+        mod_cap = cap;
+    }
+    size_t at = (name_hash(name) + (size_t)Gcur) & (mod_cap - 1);
+    while (mod_slots[at].name) {
+        if (mod_slots[at].cur == Gcur && strcmp(mod_slots[at].name, name) == 0)
+            return mod_slots[at].mod;
+        at = (at + 1) & (mod_cap - 1);
+    }
+    LoamModule *m = find_mod_scan(name);
+    mod_slots[at].cur = Gcur;
+    mod_slots[at].name = strdup(name);
+    mod_slots[at].mod = m;
+    mod_used++;
+    return m;
+}
+
+/* Forget the tables of the last check: the LSP checks again in one process. */
+static void lookup_reset(int nmods) {
+    for (int i = 0; i < decl_table_count; i++) free(decl_tables[i].slots);
+    free(decl_tables);
+    decl_tables = (DeclTable *)calloc(nmods > 0 ? (size_t)nmods : 1, sizeof(DeclTable));
+    decl_table_count = nmods;
+    for (size_t i = 0; i < mod_cap; i++) free(mod_slots[i].name);
+    free(mod_slots);
+    mod_slots = NULL;
+    mod_cap = mod_used = 0;
+}
+
 /** Point `mod.fn` / `mod.global` prefixes at the module file for hover/def. */
 static void mark_module_ident(AstNode *id, const char *name) {
     if (!id || id->kind != AST_IDENT || !name) return;
@@ -466,35 +592,15 @@ static void mark_module_ident(AstNode *id, const char *name) {
 }
 
 static AstNode *find_fn_in(LoamModule *m, const char *name) {
-    if (!m || !m->ast) return NULL;
-    AstNode *p = m->ast;
-    for (size_t i = 0; i < p->as.program.decl_count; i++) {
-        AstNode *d = p->as.program.decls[i];
-        if (d->kind == AST_FN_DECL && strcmp(d->as.fn.name, name) == 0) return d;
-    }
-    return NULL;
+    return find_decl(m, AST_FN_DECL, name);
 }
 
 static AstNode *find_enum_in(LoamModule *m, const char *name) {
-    if (!m || !m->ast || !name) return NULL;
-    AstNode *p = m->ast;
-    for (size_t i = 0; i < p->as.program.decl_count; i++) {
-        AstNode *d = p->as.program.decls[i];
-        if (d->kind == AST_ENUM_DECL && d->as.enm.name && strcmp(d->as.enm.name, name) == 0)
-            return d;
-    }
-    return NULL;
+    return find_decl(m, AST_ENUM_DECL, name);
 }
 
 static AstNode *find_struct_in(LoamModule *m, const char *name) {
-    if (!m || !m->ast || !name) return NULL;
-    AstNode *p = m->ast;
-    for (size_t i = 0; i < p->as.program.decl_count; i++) {
-        AstNode *d = p->as.program.decls[i];
-        if (d->kind == AST_STRUCT_DECL && d->as.strct.name && strcmp(d->as.strct.name, name) == 0)
-            return d;
-    }
-    return NULL;
+    return find_decl(m, AST_STRUCT_DECL, name);
 }
 
 /** Resolve `name` against this module's *selective* imports: `import { A as X }`
@@ -4704,6 +4810,7 @@ static void dedupe_fn_cnames(LoamModule *mods, int nmods, CnameSet *set) {
 int typecheck_modules(LoamModule *mods, int nmods) {
     Gmods = mods;
     Gn = nmods;
+    lookup_reset(nmods);
     Gerr = 0;
     scope = NULL;
     nmono = 0;

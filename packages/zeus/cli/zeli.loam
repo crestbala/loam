@@ -602,7 +602,7 @@ fn loam_path() -> string {
 /// here rather than stderr — `std:fmt` has no stderr writer, and the suite
 /// normalises the two streams when it diffs the CLIs.
 fn die(msg: string) {
-    fmt.println(msg)
+    say(msg)
     sys.exit(2)
 }
 
@@ -611,7 +611,7 @@ fn die_extra(head: string, body: string) {
     if body == "" {
         die(head)
     }
-    fmt.println(cat(cat(head, "\n"), indent_lines(body, "  ")))
+    say(cat(cat(head, "\n"), indent_lines(body, "  ")))
     sys.exit(2)
 }
 
@@ -628,18 +628,570 @@ fn die_extra(head: string, body: string) {
 /// runs without it — which for `LOAM_NO_DCE` means DCE silently returns and the
 /// metadata dump fails to compile.
 fn run_loam(env: string, args: string) -> string {
+    return sys.exec(loam_cmd(env, args))
+}
+
+/// The shell command `run_loam` runs, for a caller running several at once.
+fn loam_cmd(env: string, args: string) -> string {
     let mut envs = ""
     if env != "" {
         envs = cat(env, " ")
     }
-    return sys.exec(
-        "unset ZEUS_HEADLESS LOAM_HEADLESS MAYA_HEADLESS; cd {{shell_quote(repo_root())}} && {{envs}}{{shell_quote(loam_path())}} {{args}} 2>&1",
-    )
+    return "unset ZEUS_HEADLESS LOAM_HEADLESS MAYA_HEADLESS; cd {{shell_quote(repo_root())}} && {{envs}}{{shell_quote(loam_path())}} {{args}} 2>&1"
+}
+
+/// What one command in `run_jobs` did: whether it exited 0, and its output.
+struct JobResult {
+    ok: bool,
+    log: string,
+}
+
+/// Run shell commands side by side and return when all have finished, in the
+/// order given. `dir` holds each one's output and exit status until they are
+/// read back; a single command runs inline and leaves nothing there.
+///
+/// A compile is one clang on one core, so a build made of several gets the
+/// machine's other cores this way, and it costs as long as its slowest command
+/// rather than the sum of them.
+fn run_jobs(dir: string, cmds: []string) -> []JobResult {
+    let mut out = []JobResult {}
+    if cmds.len == 1 && !ui_on {
+        let log = sys.exec(cat(cat("( ", cmds[0]), " ) 2>&1"))
+        push(out, JobResult { ok: sys.exec_status() == 0, log: log })
+        return out
+    }
+    sys.mkdir(dir)
+    let mut script = ""
+    for i in 0..cmds.len {
+        sys.remove_path(join(dir, "job{{i}}.rc"))
+        let base = shell_quote(join(dir, "job{{i}}"))
+        // Renamed into place: `wait_jobs` takes an .rc that exists to be whole.
+        script = cat(
+            script,
+            "( ( {{cmds[i]}} ) >{{base}}.log 2>&1; echo $? >{{base}}.tmp; mv -f {{base}}.tmp {{base}}.rc ) &\n",
+        )
+    }
+    // From a file: `sys.exec` refuses a command over 8 KB, and a web build's
+    // chunks reach that.
+    let file = join(dir, "jobs.sh")
+    sys.write_file(file, cat(script, "wait\n"))
+    if ui_on {
+        sys.exec("sh {{shell_quote(file)}} >/dev/null 2>&1 &")
+        wait_jobs(dir, cmds.len)
+    } else {
+        sys.exec("sh {{shell_quote(file)}}")
+    }
+    for i in 0..cmds.len {
+        let base = join(dir, "job{{i}}")
+        let rc = trim(read_text_if_present(cat(base, ".rc")))
+        push(out, JobResult { ok: rc == "0", log: read_text_if_present(cat(base, ".log")) })
+    }
+    return out
+}
+
+/// Keep the panel moving until all `n` jobs under `dir` have an exit status.
+fn wait_jobs(dir: string, n: int) {
+    while true {
+        let mut done = 0
+        for i in 0..n {
+            done += sys.exists(join(dir, "job{{i}}.rc"))
+        }
+        ui_poll(dir, done, n)
+        if done == n {
+            return
+        }
+        async.sleep(15)
+    }
 }
 
 /// Run `cmd` from the repo root, stderr merged into stdout.
 fn run_here(cmd: string) -> string {
     return sys.exec("cd {{shell_quote(repo_root())}} && {{cmd}} 2>&1")
+}
+
+// --- the build panel ---
+//
+// In a terminal a build draws a live box: a bar per thing being built, with its
+// percent and the time it took, a status line, and what is being served. It stays
+// at the bottom of the terminal: `say` puts a log line above it, so a running
+// app's output scrolls past without tearing it. Anywhere else (a pipe, a log file,
+// the test suite) `ui_on` stays false and `say` is `fmt.println`.
+//
+// The bars read two sources while `run_jobs` polls: `loamc` reports each step to
+// a `LOAM_PROGRESS` file (driver.c), and the steps zeli runs itself are `ui_step`s.
+// A compile that is not cut into units reports nothing between its start and its
+// end, so its bar runs on how long the last such compile took.
+
+let UI_RUN: int = 0
+let UI_OK: int = 1
+let UI_FAILED: int = 2
+/// How long a single compile is assumed to take before one has been timed.
+let UI_FIRST_GUESS_MS: int = 15000
+let UI_MAX_WIDTH: int = 86
+/// Where the right column starts, counted from the right border.
+let UI_RIGHT_ROOM: int = 28
+/// Below this the right column is dropped; below `UI_MIN_WIDTH`, the panel.
+let UI_WIDE: int = 72
+let UI_MIN_WIDTH: int = 44
+let UI_LABEL_COL: int = 12
+
+/// One line of the panel.
+struct Bar {
+    label: string,
+    /// The file `loamc` reports to; empty for a bar zeli moves itself.
+    progress: string,
+    /// Bytes of `progress` already applied.
+    read: int,
+    /// The `run_jobs` index this bar waits on, or -1.
+    job: int,
+    /// Whether that job is the end of the bar, or only of its first step.
+    job_ends: bool,
+    /// Percent now, and where the current step began and ends.
+    pct: int,
+    lo: int,
+    hi: int,
+    note: string,
+    state: int,
+    started: i64,
+    ms: int,
+    /// Set during a compile that reports nothing: `pct` follows the clock.
+    timed_from: i64,
+    guess_ms: int,
+}
+
+let mut ui_on: bool = false
+let mut ui_serving_mode: bool = false
+let mut ui_esc: string = ""
+let mut ui_color: bool = true
+let mut ui_width: int = 0
+let mut ui_bars: []Bar = []Bar {}
+/// The bar for what follows the compile, or -1.
+let mut ui_bundle: int = -1
+/// What the running jobs are, when each finished job moves `ui_bundle` along.
+let mut ui_counting: string = ""
+let mut ui_drawn: int = 0
+let mut ui_frame_last: string = ""
+let mut ui_platform: string = ""
+let mut ui_url: string = ""
+let mut ui_modules: int = 0
+let mut ui_units: int = 0
+let mut ui_t0: i64 = 0
+/// The status once nothing is running: its text, and what makes it a failure.
+let mut ui_status: string = ""
+let mut ui_status_bad: bool = false
+let mut ui_status_ms: int = -1
+
+/// Turn the panel on, if stdout can show one and is wide enough.
+fn ui_open(platform: string, serving: bool) {
+    if sys.stdout_tty() == 0 {
+        return
+    }
+    let size = split_on(trim(sys.exec("stty size </dev/tty 2>/dev/null")), 32)
+    let mut cols = 80
+    if size.len == 2 && int_of(size[1]) > 0 {
+        cols = int_of(size[1])
+    }
+    if cols - 1 < UI_MIN_WIDTH {
+        return
+    }
+    // The language has no escape for ESC.
+    let mut esc = []int {}
+    push(esc, 27)
+    ui_esc = string_from_bytes(esc)
+    ui_color = sys.env_set("NO_COLOR") == 0
+    ui_width = if cols - 1 < UI_MAX_WIDTH { cols - 1 } else { UI_MAX_WIDTH }
+    ui_platform = platform
+    ui_serving_mode = serving
+    ui_on = true
+}
+
+/// Leave the panel where it is and go back to plain output.
+fn ui_close() {
+    ui_draw()
+    ui_on = false
+    ui_drawn = 0
+}
+
+/// Start a fresh set of bars.
+fn ui_build_begin() {
+    if ui_on {
+        ui_bars = []Bar {}
+        ui_bundle = -1
+        ui_t0 = async.now_ms()
+        ui_status = ""
+        ui_status_bad = false
+        ui_status_ms = -1
+    }
+}
+
+/// Add a bar and return its index. An empty `report` is a bar zeli moves itself.
+fn ui_add(label: string, report: string, job: int, job_ends: bool, note: string) -> int {
+    if !ui_on {
+        return -1
+    }
+    let mut guess = UI_FIRST_GUESS_MS
+    if report != "" {
+        let last = int_of(trim(read_text_if_present(cat(report, ".ms"))))
+        if last > 0 {
+            guess = last
+        }
+    }
+    let now = async.now_ms()
+    push(ui_bars, Bar {
+        label: label,
+        progress: report,
+        read: 0,
+        job: job,
+        job_ends: job_ends,
+        pct: 0,
+        lo: 0,
+        hi: 0,
+        note: note,
+        state: UI_RUN,
+        started: now,
+        ms: 0,
+        timed_from: 0,
+        guess_ms: guess,
+    })
+    return ui_bars.len - 1
+}
+
+/// The `LOAM_PROGRESS` file for `name`, emptied, or `""` with the panel off.
+fn ui_report_file(appdir: string, name: string) -> string {
+    if !ui_on {
+        return ""
+    }
+    let zdir = join(appdir, ".zeus")
+    sys.mkdir(zdir)
+    let file = join(zdir, "progress.{{name}}")
+    sys.remove_path(file)
+    return file
+}
+
+/// `file` as an assignment for `loam_cmd`, after any assignments in `env`.
+fn ui_env(env: string, file: string) -> string {
+    if file == "" {
+        return env
+    }
+    let set = cat("LOAM_PROGRESS=", shell_quote(file))
+    if env == "" {
+        return set
+    }
+    return cat(cat(env, " "), set)
+}
+
+/// Move bar `i` to `pct`, with the next step ending at `hi`.
+fn ui_step(i: int, pct: int, hi: int, note: string) {
+    if ui_on && i >= 0 {
+        ui_bars[i].pct = pct
+        ui_bars[i].lo = pct
+        ui_bars[i].hi = hi
+        ui_bars[i].note = note
+        ui_draw()
+    }
+}
+
+fn ui_bar_end(i: int, state: int) {
+    if ui_on && i >= 0 && ui_bars[i].state == UI_RUN {
+        ui_bars[i].state = state
+        ui_bars[i].job = -1
+        ui_bars[i].ms = int(async.now_ms() - ui_bars[i].started)
+        if state == UI_OK {
+            ui_bars[i].pct = 100
+            if ui_bars[i].timed_from != 0 {
+                let took = int(async.now_ms() - ui_bars[i].timed_from)
+                sys.write_file(cat(ui_bars[i].progress, ".ms"), "{{took}}\n")
+            }
+        }
+        ui_draw()
+    }
+}
+
+/// End every bar still running as failed, for a build that is over.
+fn ui_stop_bars() {
+    for i in 0..ui_bars.len {
+        ui_bar_end(i, UI_FAILED)
+    }
+}
+
+/// Set the line under the bars.
+fn ui_set_status(text: string, bad: bool, ms: int) {
+    if ui_on {
+        ui_status = text
+        ui_status_bad = bad
+        ui_status_ms = ms
+        ui_draw()
+    }
+}
+
+/// How long the build since `ui_build_begin` took.
+fn ui_build_ms() -> int {
+    return int(async.now_ms() - ui_t0)
+}
+
+/// Apply one line of a `LOAM_PROGRESS` file to bar `i`.
+fn ui_apply(i: int, line: string) {
+    let w = split_on(line, 32)
+    let stage = w[0]
+    if stage == "check" {
+        ui_step(i, 2, 2, "Checking")
+    } else if stage == "modules" && w.len == 2 {
+        ui_modules = int_of(w[1])
+        ui_step(i, 6, 6, "Checked {{ui_modules}} modules")
+    } else if stage == "codegen" {
+        ui_step(i, 8, 8, "Generating C")
+    } else if stage == "pch" {
+        ui_step(i, 12, 12, "Compiling headers")
+    } else if stage == "units" && w.len == 3 {
+        let done = int_of(w[1])
+        let total = int_of(w[2])
+        ui_units = total
+        if total > 0 {
+            ui_step(i, 15 + 75 * done / total, 90, "Compiling {{done}}/{{total}} units")
+        }
+    } else if stage == "link" {
+        ui_step(i, 92, 92, "Linking")
+    } else if stage == "cc" {
+        ui_bars[i].timed_from = async.now_ms()
+        ui_step(i, 15, 97, "Compiling")
+    }
+}
+
+/// Bring every bar up to date, given that `done` of `total` jobs under `dir` have
+/// finished, and redraw.
+fn ui_poll(dir: string, done: int, total: int) {
+    for i in 0..ui_bars.len {
+        if ui_bars[i].state != UI_RUN {
+            continue
+        }
+        if ui_bars[i].progress != "" {
+            let body = read_text_if_present(ui_bars[i].progress)
+            let mut end = body.len
+            while end > ui_bars[i].read && body[end - 1] != 10 {
+                end -= 1
+            }
+            if end > ui_bars[i].read {
+                let ls = split_lines(slice(body, ui_bars[i].read, end))
+                for k in 0..ls.len {
+                    if ls[k] != "" {
+                        ui_apply(i, ls[k])
+                    }
+                }
+                ui_bars[i].read = end
+            }
+        }
+        if ui_bars[i].timed_from != 0 {
+            let spent = int(async.now_ms() - ui_bars[i].timed_from)
+            // Stops short of the end: the guess may be low, and only the job finishes it.
+            let share = 95 * spent / ui_bars[i].guess_ms
+            let capped = if share > 95 { 95 } else { share }
+            ui_bars[i].pct = 15 + (ui_bars[i].hi - 15) * capped / 100
+        }
+        let job = ui_bars[i].job
+        if job >= 0 {
+            let rc = join(dir, "job{{job}}.rc")
+            if sys.exists(rc) == 1 {
+                if !ui_bars[i].job_ends {
+                    ui_bars[i].job = -1
+                    ui_bars[i].pct = ui_bars[i].hi
+                } else if trim(read_text_if_present(rc)) == "0" {
+                    ui_bar_end(i, UI_OK)
+                } else {
+                    ui_bar_end(i, UI_FAILED)
+                }
+            }
+        } else if i == ui_bundle && ui_counting != "" {
+            ui_bars[i].note = "{{ui_counting}} {{done}}/{{total}}"
+            ui_bars[i].pct = ui_bars[i].lo + (ui_bars[i].hi - ui_bars[i].lo) * done / total
+        }
+    }
+    ui_draw()
+}
+
+fn ui_paint(code: string, text: string) -> string {
+    if !ui_color {
+        return text
+    }
+    return "{{ui_esc}}[{{code}}m{{text}}{{ui_esc}}[0m"
+}
+
+fn ui_dim(text: string) -> string {
+    return ui_paint("2", text)
+}
+
+fn ui_amber(text: string) -> string {
+    return ui_paint("33", text)
+}
+
+/// `text`, cut to `n` bytes. It is ASCII: target names.
+fn ui_clip(text: string, n: int) -> string {
+    if text.len <= n {
+        return text
+    }
+    return cat(slice(text, 0, n - 3), "...")
+}
+
+fn ui_repeat(text: string, n: int) -> string {
+    let mut out = ""
+    for i in 0..n {
+        out = cat(out, text)
+    }
+    return out
+}
+
+/// Move to column `col` of this line. Emoji are not the same width on every
+/// terminal, so nothing to the right of one is placed by counting.
+fn ui_col(col: int) -> string {
+    return "{{ui_esc}}[{{col}}G"
+}
+
+/// `ms` as `2.1s`.
+fn ui_time(ms: int) -> string {
+    return "{{ms / 1000}}.{{ms % 1000 / 100}}s"
+}
+
+/// `done`, `failed` or `running`, by a bar's state.
+fn ui_tone(state: int, done: string, failed: string, running: string) -> string {
+    if state == UI_OK {
+        return done
+    }
+    return if state == UI_FAILED { failed } else { running }
+}
+
+/// The bar's cells, then its percent and time.
+fn ui_cells(b: Bar, width: int) -> string {
+    let fill = width * b.pct / 100
+    let color = ui_tone(b.state, "32", "31", "36")
+    let cells = cat(
+        ui_paint(color, ui_repeat("━", fill)),
+        ui_paint("2", ui_repeat("─", width - fill)),
+    )
+    let mark = ui_tone(b.state, "✓", "✗", "")
+    let ms = if b.state == UI_RUN { int(async.now_ms() - b.started) } else { b.ms }
+    let digits = "{{b.pct}}"
+    return "{{cells}} {{ui_pad_left(digits, 3)}}% {{mark}} {{ui_dim(ui_time(ms))}}"
+}
+
+fn ui_pad_left(text: string, n: int) -> string {
+    return cat(ui_repeat(" ", n - text.len), text)
+}
+
+/// The status row, from the first bar still running or else what was last set.
+fn ui_status_row() -> string {
+    for i in 0..ui_bars.len {
+        if ui_bars[i].state == UI_RUN {
+            let note = if ui_bars[i].note == "" { "Starting" } else { ui_bars[i].note }
+            return "{{ui_amber(note)}} {{ui_dim(ui_time(ui_build_ms()))}}"
+        }
+    }
+    let color = if ui_status_bad { "31" } else { "33" }
+    let text = ui_paint(color, if ui_status == "" { "Finishing" } else { ui_status })
+    if ui_status_ms < 0 {
+        return text
+    }
+    return "{{text}} {{ui_dim(ui_time(ui_status_ms))}}"
+}
+
+/// The right column, one entry per row.
+fn ui_facts() -> []string {
+    let mut out = []string {}
+    if ui_width < UI_WIDE {
+        return out
+    }
+    push(out, "Platform: {{ui_amber(ui_clip(ui_platform, UI_RIGHT_ROOM - 12))}}")
+    if ui_modules > 0 {
+        let units = if ui_units > 0 { " ({{ui_units}} units)" } else { "" }
+        let count = "{{ui_modules}}{{units}}"
+        push(out, "Modules: {{ui_amber(count)}}")
+    }
+    if ui_url != "" {
+        push(out, "Open: {{ui_amber(ui_url)}}")
+    }
+    return out
+}
+
+fn ui_line(left: string, fact: string) -> string {
+    let side = ui_paint("2", "│")
+    let mut out = "{{side}} {{left}}"
+    if fact != "" {
+        out = cat(out, cat(ui_col(ui_width - UI_RIGHT_ROOM), fact))
+    }
+    return cat(cat(out, ui_col(ui_width)), "{{side}}\n")
+}
+
+/// The whole panel, one string so it reaches the terminal in one write.
+fn ui_frame() -> string {
+    let hint = if ui_serving_mode { " Ctrl-C to stop ─" } else { "" }
+    let hint_cells = if ui_serving_mode { 17 } else { 0 }
+    let width = ui_width - 2
+    let rule = ui_repeat("─", width - 7 - hint_cells)
+    let mut out = ui_paint("2", "╭─ zeli {{rule}}{{hint}}╮\n")
+    let facts = ui_facts()
+    let room = if ui_width < UI_WIDE { ui_width } else { ui_width - UI_RIGHT_ROOM }
+    let cells = room - UI_LABEL_COL - 16
+    let mut rows = ui_bars.len + 1
+    if facts.len > rows {
+        rows = facts.len
+    }
+    for r in 0..rows {
+        let fact = if r < facts.len { facts[r] } else { "" }
+        let mut left = ""
+        if r < ui_bars.len {
+            let label = cat(ui_bars[r].label, ":")
+            left = cat(cat(label, ui_col(UI_LABEL_COL)), ui_cells(ui_bars[r], cells))
+        } else if r == ui_bars.len {
+            left = cat(cat("Status:", ui_col(UI_LABEL_COL)), ui_status_row())
+        }
+        out = cat(out, ui_line(left, fact))
+    }
+    return cat(out, ui_dim(cat(cat("╰", ui_repeat("─", width)), "╯\n")))
+}
+
+/// Clear the panel and leave the cursor where it began.
+fn ui_erase() {
+    if ui_drawn > 0 {
+        fmt.write("\r{{ui_esc}}[{{ui_drawn}}A{{ui_esc}}[J")
+    }
+}
+
+fn ui_write_frame(frame: string) {
+    fmt.write(frame)
+    ui_frame_last = frame
+    ui_drawn = 0
+    for i in 0..frame.len {
+        if frame[i] == 10 {
+            ui_drawn += 1
+        }
+    }
+}
+
+/// Redraw if anything on the panel changed.
+fn ui_draw() {
+    if ui_on {
+        let frame = ui_frame()
+        if frame != ui_frame_last {
+            ui_erase()
+            ui_write_frame(frame)
+        }
+    }
+}
+
+/// A line of output: above the panel when there is one.
+fn say(msg: string) {
+    if ui_drawn == 0 {
+        fmt.println(msg)
+        return
+    }
+    ui_erase()
+    fmt.println(msg)
+    ui_write_frame(ui_frame())
+}
+
+/// A line the panel already shows while serving.
+fn chat(msg: string) {
+    if !ui_on || !ui_serving_mode {
+        say(msg)
+    }
 }
 
 // --- routes ---
@@ -1297,29 +1849,44 @@ struct BuildStep {
 /// skips the optimizer and dead-strip. Those exist for the shipped binary, and in
 /// a loop that recompiles on every edit they are most of the edit's cost. Only
 /// `serve` asks for it, so nothing built by `zeli build` changes.
-fn serve_build_env(target: string) -> string {
+///
+/// Web stays at `-Oz`, which here is faster than the lower levels; the post-link
+/// optimizer is what `split_web` skips.
+///
+/// Every serve build also compiles in units cached under `.zeus/cc`
+/// (`LOAM_SHARD`, see driver.c), so an edit recompiles the code it changed.
+fn serve_build_env(appdir: string, target: string) -> string {
+    let shards = shard_env(appdir)
     if target == "web" {
-        return ""
+        return shards
     }
-    return "LOAM_DEV=1"
+    return "LOAM_DEV=1 {{shards}}"
+}
+
+/// Where this app's compiled units live: under `.zeus`, because a build clears
+/// `build/` and the point is for them to outlast one.
+fn shard_env(appdir: string) -> string {
+    return cat("LOAM_SHARD=", shell_quote(join(join(appdir, ".zeus"), "cc")))
 }
 
 /// Regenerate the route table and typecheck the entry: the part of a build that
 /// is not the compiler, and the part every target needs before it can be built
 /// or launched.
 fn serve_prepare(appdir: string) -> BuildStep {
-    let mut routes_changed = false
-    if sys.exists(join(appdir, "routes")) == 1 {
-        let r = generate_tracked(appdir)
-        routes_changed = r.changed
-        if !r.ok {
-            return BuildStep { ok: false, routes_changed: routes_changed }
-        }
+    let step = serve_routes(appdir)
+    if !step.ok || check_entry(find_entry(appdir)) {
+        return step
     }
-    if !check_entry(find_entry(appdir)) {
-        return BuildStep { ok: false, routes_changed: routes_changed }
+    return BuildStep { ok: false, routes_changed: step.routes_changed }
+}
+
+/// Regenerate the route table, when the app has one.
+fn serve_routes(appdir: string) -> BuildStep {
+    if sys.exists(join(appdir, "routes")) == 0 {
+        return BuildStep { ok: true, routes_changed: false }
     }
-    return BuildStep { ok: true, routes_changed: routes_changed }
+    let r = generate_tracked(appdir)
+    return BuildStep { ok: r.ok, routes_changed: r.changed }
 }
 
 /// Build one target into `build/<target>/` and, for web, refresh the HTML shell.
@@ -1329,9 +1896,14 @@ fn serve_prepare(appdir: string) -> BuildStep {
 /// so the error is on the terminal while the thing you were looking at stays
 /// where it was. Only the route table failing to generate stops the build here,
 /// because the entry imports it and nothing downstream can name it.
+///
+/// There is no separate check here: the compile below runs the same frontend and
+/// reports the same errors, so a check first would only pay for it twice.
 fn serve_build(appdir: string, target: string) -> BuildStep {
-    let step = serve_prepare(appdir)
+    ui_build_begin()
+    let step = serve_routes(appdir)
     if !step.ok {
+        ui_set_status("Route table failed", true, -1)
         return step
     }
     let entry = find_entry(appdir)
@@ -1350,20 +1922,34 @@ fn serve_build(appdir: string, target: string) -> BuildStep {
         args = cat(flags, " ")
     }
     args = cat(cat(cat(args, shell_quote(entry)), " -o "), shell_quote(out))
-    let log = run_loam(serve_build_env(target), args)
-    if sys.exec_status() != 0 {
-        fmt.println(trim(log))
+    let report = ui_report_file(appdir, target)
+    ui_add("App", report, 0, true, "Starting")
+    let mut cmds = []string { loam_cmd(ui_env(serve_build_env(appdir, target), report), args) }
+    if target == "web" {
+        push(cmds, meta_compile_cmd(appdir))
+        ui_bundle = ui_add("Bundle", "", 1, false, "Reading route metadata")
+        ui_step(ui_bundle, 0, 20, "Reading route metadata")
+    }
+    let jobs = run_jobs(join(appdir, ".zeus"), cmds)
+    if !jobs[0].ok {
+        ui_stop_bars()
+        ui_set_status("Build failed", true, ui_build_ms())
+        say(trim(jobs[0].log))
         return BuildStep { ok: false, routes_changed: step.routes_changed }
+    }
+    if target == "web" {
+        require_meta(jobs[1])
     }
     if split {
         // Hashes change with every edit, so clear the last build's files.
         let assets = join(dir, "_zeus")
         sys.exec("rm -rf {{shell_quote(assets)}}")
-        emit_web_shell(appdir, split_web(appdir, dir, stem), "")
+        emit_web_shell(appdir, split_web(appdir, dir, stem, ""), "")
         report_web_sizes(dir)
     } else if target == "web" {
         emit_web_shell(appdir, plain_assets(stem), "")
     }
+    ui_bar_end(ui_bundle, UI_OK)
     return BuildStep { ok: true, routes_changed: step.routes_changed }
 }
 
@@ -1417,7 +2003,7 @@ fn launch_app(cmd: string, log: string) -> int {
     let out = sys.exec(cat(cat(cat(cat(cmd, " >> "), shell_quote(log)), " 2>&1 & echo $!"), ""))
     let pid = int_of(trim(out))
     if pid <= 0 {
-        fmt.println("zeli: cannot start {{cmd}}")
+        say("zeli: cannot start {{cmd}}")
     }
     return pid
 }
@@ -1484,21 +2070,21 @@ fn ensure_backend(appdir: string) -> int {
     }
     let addr = serve_rpc_addr()
     if backend_listening(addr) {
-        fmt.println("zeli: rpc backend {{addr}} already listening")
+        say("zeli: rpc backend {{addr}} already listening")
         return 0
     }
     let dir = join(join(appdir, "build"), "server")
     sys.mkdir(dir)
     let bin = join(dir, "main")
     let log = app_log(appdir, "server", "main")
-    fmt.println("zeli: building rpc backend…")
+    chat("zeli: building rpc backend…")
     let built = run_loam(
-        serve_build_env("macos"),
+        serve_build_env(appdir, "macos"),
         cat(cat(shell_quote(entry), " -o "), shell_quote(bin)),
     )
     if sys.exec_status() != 0 {
-        fmt.println(trim(built))
-        fmt.println("zeli: rpc backend failed to build")
+        say(trim(built))
+        say("zeli: rpc backend failed to build")
         return -1
     }
     let pid = launch_app(shell_quote(bin), log)
@@ -1508,8 +2094,8 @@ fn ensure_backend(appdir: string) -> int {
     let mut waited = 0
     while waited < 50 && !backend_listening(addr) {
         if !pid_alive(pid) {
-            fmt.println(trim(sys.read_file(log)))
-            fmt.println("zeli: rpc backend exited before it listened on {{addr}}")
+            say(trim(sys.read_file(log)))
+            say("zeli: rpc backend exited before it listened on {{addr}}")
             return -1
         }
         async.sleep(100)
@@ -1517,11 +2103,11 @@ fn ensure_backend(appdir: string) -> int {
     }
     if !backend_listening(addr) {
         stop_pid(pid)
-        fmt.println("zeli: rpc backend did not listen on {{addr}}")
+        say("zeli: rpc backend did not listen on {{addr}}")
         return -1
     }
     guard_app(self_pid(), pid)
-    fmt.println("zeli: rpc backend {{addr}} (pid {{pid}})")
+    chat("zeli: rpc backend {{addr}} (pid {{pid}})")
     tail_add(log, "server")
     return pid
 }
@@ -1552,27 +2138,37 @@ fn serve(appdir: string, target: string, port: int, build_only: bool) -> int {
     }
     let entry = find_entry(appdir)
     let stem = drop_suffix(base_name(entry), ".loam")
+    ui_open(platform_name(target), !build_only)
+    if target == "web" && !build_only {
+        ui_url = "http://127.0.0.1:{{port}}"
+    }
     // Start from an empty `build/<target>`; the watch rebuilds that follow
     // write over it in place, so the running app and its log stay put.
     fresh_target_dir(appdir, target)
-    fmt.println("zeli: initial build…")
+    chat("zeli: initial build…")
     if target == "ios" || target == "android" {
         return serve_device(appdir, target, stem, entry, build_only)
     }
     let first = serve_build(appdir, target)
     if first.routes_changed {
-        fmt.println("zeli: routes -> app_routes.loam")
+        chat("zeli: routes -> app_routes.loam")
     }
     if !first.ok {
         return 1
     }
     if build_only {
-        fmt.println("zeli: serve build ok (--build-only)")
+        chat("zeli: serve build ok (--build-only)")
+        ui_set_status("Built {{stem}} ✓", false, ui_build_ms())
+        ui_close()
         return 0
     }
+    let built_ms = ui_build_ms()
+    ui_set_status("Starting backend", false, -1)
     if ensure_backend(appdir) < 0 {
+        ui_set_status("Backend failed", true, -1)
         return 1
     }
+    ui_set_status("Serving {{stem}} 🚀", false, built_ms)
     if target == "web" {
         let vite = vite_host(appdir)
         if vite != "" {
@@ -1604,11 +2200,11 @@ fn vite_host(appdir: string) -> string {
 /// its output. `npm install` runs first when `node_modules` is missing.
 fn serve_vite(appdir: string, webdir: string, port: int) -> int {
     if sys.exists(join(webdir, "node_modules")) == 0 {
-        fmt.println("zeli: npm install (vite) in {{rel_to(repo_root(), webdir)}}…")
+        say("zeli: npm install (vite) in {{rel_to(repo_root(), webdir)}}…")
         let out = sys.exec("cd {{shell_quote(webdir)}} && npm install 2>&1")
         if sys.exec_status() != 0 {
-            fmt.println(trim(out))
-            fmt.println("zeli: npm install failed")
+            say(trim(out))
+            say("zeli: npm install failed")
             return 1
         }
     }
@@ -1630,20 +2226,20 @@ fn serve_vite(appdir: string, webdir: string, port: int) -> int {
     while waited < 600 && !backend_listening(addr) {
         shown = echo_log(log, shown)
         if !pid_alive(pid) {
-            fmt.println("zeli: vite exited before it listened on {{addr}}")
+            say("zeli: vite exited before it listened on {{addr}}")
             return 1
         }
         async.sleep(100)
         waited += 1
     }
-    fmt.println("zeli: serve on http://{{addr}} (Vite, pid {{pid}})  (Ctrl-C to stop)")
+    chat("zeli: serve on http://{{addr}} (Vite, pid {{pid}})  (Ctrl-C to stop)")
     while pid_alive(pid) {
         shown = echo_log(log, shown)
         tail_pump()
         async.sleep(250)
     }
     echo_log(log, shown)
-    fmt.println("zeli: vite exited (pid {{pid}})")
+    say("zeli: vite exited (pid {{pid}})")
     return 1
 }
 
@@ -1702,7 +2298,7 @@ fn print_tagged(tag: string, text: string) {
     let ls = split_lines(text)
     for i in 0..ls.len {
         if trim(ls[i]) != "" {
-            fmt.println("{{tag}} │ {{ls[i]}}")
+            say("{{tag}} │ {{ls[i]}}")
         }
     }
 }
@@ -1720,7 +2316,7 @@ fn echo_log(log: string, from: int) -> int {
     if body.len > from {
         let fresh = trim(slice(body, from, body.len))
         if fresh != "" {
-            fmt.println(fresh)
+            say(fresh)
         }
     }
     return body.len
@@ -2193,7 +2789,7 @@ fn serve_proxy_rpc(
 /// The reply for a backend that is not there. Named rather than inlined because
 /// both the connect and the send can be the thing that fails.
 fn serve_rpc_unreachable(fd: int, addr: string) {
-    fmt.println("zeli: rpc backend {{addr}} unreachable")
+    say("zeli: rpc backend {{addr}} unreachable")
     net.tcp_write(
         fd,
         serve_http_reply(502, "text/plain; charset=utf-8", "rpc backend {{addr}} unreachable\n"),
@@ -2216,21 +2812,22 @@ fn serve_web(appdir: string, port: int) -> int {
     let web = join(join(appdir, "build"), "web")
     let snippet = live_snippet()
     let mut rev = 1
-    fmt.println("zeli: serve on http://127.0.0.1:{{port}}  (Ctrl-C to stop)")
+    chat("zeli: serve on http://127.0.0.1:{{port}}  (Ctrl-C to stop)")
     while true {
         tail_pump()
         let batch = watch_batch(h, roots, 50)
         if batch.len > 0 {
-            fmt.println("zeli: {{batch.len}} source file(s) changed, rebuilding…")
+            chat("zeli: {{batch.len}} source file(s) changed, rebuilding…")
             let r = serve_build(appdir, "web")
             if r.routes_changed {
-                fmt.println("zeli: routes -> app_routes.loam")
+                chat("zeli: routes -> app_routes.loam")
             }
             if !r.ok {
-                fmt.println("zeli: build failed — still serving rev {{rev}}")
+                say("zeli: build failed — still serving rev {{rev}}")
             } else {
                 rev += 1
-                fmt.println("zeli: rebuilt (rev {{rev}})")
+                chat("zeli: rebuilt (rev {{rev}})")
+                ui_set_status("Serving rev {{rev}} 🚀", false, ui_build_ms())
                 live_push(rev)
             }
         }
@@ -2268,6 +2865,26 @@ fn serve_watch(appdir: string) -> int {
     return h
 }
 
+/// The name the panel gives a target.
+fn platform_name(target: string) -> string {
+    if target == "web" {
+        return "Web"
+    }
+    if target == "macos" {
+        return "macOS"
+    }
+    if target == "ios" {
+        return "iOS"
+    }
+    if target == "android" {
+        return "Android"
+    }
+    if target == "server" {
+        return "Server"
+    }
+    return target
+}
+
 /// `serve` for a native target: one process, started again on every rebuild.
 ///
 /// The app is checked on as well as the sources — a native app that traps leaves
@@ -2285,7 +2902,7 @@ fn serve_native(appdir: string, target: string, stem: string) -> int {
     }
     guard_app(self, pid)
     tail_add(log, target)
-    fmt.println(
+    chat(
         "zeli: serve on {{target}} (pid {{pid}}) — logs below, also in {{rel_to(repo_root(), log)}}  (Ctrl-C to stop)",
     )
     let mut said_exited = false
@@ -2294,17 +2911,17 @@ fn serve_native(appdir: string, target: string, stem: string) -> int {
         tail_pump()
         let batch = watch_batch(h, roots, 50)
         if batch.len > 0 {
-            fmt.println("zeli: {{batch.len}} source file(s) changed, rebuilding…")
+            chat("zeli: {{batch.len}} source file(s) changed, rebuilding…")
             said_exited = false
             let r = serve_build(appdir, target)
             if r.routes_changed {
-                fmt.println("zeli: routes -> app_routes.loam")
+                chat("zeli: routes -> app_routes.loam")
             }
             if !r.ok {
                 if pid_alive(pid) {
-                    fmt.println("zeli: build failed — pid {{pid}} still up")
+                    say("zeli: build failed — pid {{pid}} still up")
                 } else {
-                    fmt.println("zeli: build failed — pid {{pid}} is gone")
+                    say("zeli: build failed — pid {{pid}} is gone")
                 }
             } else {
                 let gone = stop_pid(pid)
@@ -2313,10 +2930,11 @@ fn serve_native(appdir: string, target: string, stem: string) -> int {
                     return 1
                 }
                 guard_app(self, pid)
+                ui_set_status("Running pid {{pid}} 🚀", false, ui_build_ms())
                 if gone {
-                    fmt.println("zeli: restarted (pid {{pid}})")
+                    chat("zeli: restarted (pid {{pid}})")
                 } else {
-                    fmt.println("zeli: restarted (pid {{pid}}) — the old process would not stop")
+                    say("zeli: restarted (pid {{pid}}) — the old process would not stop")
                 }
             }
         }
@@ -2325,7 +2943,8 @@ fn serve_native(appdir: string, target: string, stem: string) -> int {
            would turn a crash into a spin. */
         tick += 1
         if tick % 20 == 0 && !pid_alive(pid) && !said_exited {
-            fmt.println("zeli: app exited (pid {{pid}})")
+            say("zeli: app exited (pid {{pid}})")
+            ui_set_status("App exited", true, -1)
             said_exited = true
         }
     }
@@ -2391,12 +3010,18 @@ fn serve_device_run(appdir: string, target: string, stem: string, entry: string)
     let out = join(join(join(appdir, "build"), target), stem)
     let mut args = cat(cat(cat(cat("--target=", target), " --run "), shell_quote(entry)), " -o ")
     args = cat(args, shell_quote(out))
-    let log = run_loam("", args)
-    if sys.exec_status() != 0 {
-        fmt.println(trim(log))
+    ui_build_begin()
+    let report = ui_report_file(appdir, target)
+    ui_add("App", report, 0, true, "Starting")
+    let env = ui_env(serve_build_env(appdir, target), report)
+    let jobs = run_jobs(join(appdir, ".zeus"), []string { loam_cmd(env, args) })
+    if !jobs[0].ok {
+        ui_set_status("Build failed", true, ui_build_ms())
+        say(trim(jobs[0].log))
         return false
     }
-    fmt.println("zeli: {{target}} -> {{rel_to(repo_root(), out)}}")
+    chat("zeli: {{target}} -> {{rel_to(repo_root(), out)}}")
+    ui_set_status("Running on {{target}} 🚀", false, ui_build_ms())
     return true
 }
 
@@ -2413,19 +3038,19 @@ fn serve_device(
     if build_only {
         let r = serve_build(appdir, target)
         if r.routes_changed {
-            fmt.println("zeli: routes -> app_routes.loam")
+            chat("zeli: routes -> app_routes.loam")
         }
         if !r.ok {
             return 1
         }
-        fmt.println("zeli: serve build ok (--build-only)")
+        chat("zeli: serve build ok (--build-only)")
         return 0
     }
     let roots = serve_roots(appdir)
     let h = serve_watch(appdir)
     let first = serve_prepare(appdir)
     if first.routes_changed {
-        fmt.println("zeli: routes -> app_routes.loam")
+        chat("zeli: routes -> app_routes.loam")
     }
     if !first.ok {
         return 1
@@ -2433,22 +3058,22 @@ fn serve_device(
     if !serve_device_run(appdir, target, stem, entry) {
         return 1
     }
-    fmt.println("zeli: serving {{target}}  (Ctrl-C to stop)")
+    chat("zeli: serving {{target}}  (Ctrl-C to stop)")
     while true {
         let batch = watch_batch(h, roots, 50)
         if batch.len > 0 {
-            fmt.println("zeli: {{batch.len}} source file(s) changed, rebuilding…")
+            chat("zeli: {{batch.len}} source file(s) changed, rebuilding…")
             let r = serve_prepare(appdir)
             if r.routes_changed {
-                fmt.println("zeli: routes -> app_routes.loam")
+                chat("zeli: routes -> app_routes.loam")
             }
             if !r.ok {
-                fmt.println("zeli: build failed — the last install is still on the device")
+                say("zeli: build failed — the last install is still on the device")
             } else {
                 if serve_device_run(appdir, target, stem, entry) {
-                    fmt.println("zeli: reinstalled")
+                    chat("zeli: reinstalled")
                 } else {
-                    fmt.println("zeli: build failed — the last install is still on the device")
+                    say("zeli: build failed — the last install is still on the device")
                 }
             }
         }
@@ -2614,21 +3239,21 @@ fn pkg_sync(appdir: string) -> int {
         push(names, d.name)
         let dest = join(vendor, d.name)
         if d.source == "" {
-            fmt.println("zeli: {{d.name}}: missing source")
+            say("zeli: {{d.name}}: missing source")
             ok = false
             continue
         }
         if starts_with(d.source, "path:") {
             let src = abs_path(join(appdir, slice(d.source, 5, d.source.len)))
             if sys.exists(src) == 0 {
-                fmt.println("zeli: {{d.name}}: missing {{src}}")
+                say("zeli: {{d.name}}: missing {{src}}")
                 ok = false
                 continue
             }
             sys.remove_path(dest)
             copy_tree(src, dest)
             push(lock, "{{d.name}}\t{{d.source}}\tlocal")
-            fmt.println("zeli: {{d.name}} <- {{rel_to(repo_root(), src)}} (local)")
+            say("zeli: {{d.name}} <- {{rel_to(repo_root(), src)}} (local)")
         } else {
             sys.remove_path(dest)
             let mut clone = "clone --quiet "
@@ -2636,7 +3261,7 @@ fn pkg_sync(appdir: string) -> int {
             clone = cat(clone, shell_quote(dest))
             let log = run_git(clone)
             if sys.exec_status() != 0 {
-                fmt.println(cat(
+                say(cat(
                     cat(cat("zeli: ", d.name), ": git clone failed\n"),
                     indent_lines(trim(log), "  "),
                 ))
@@ -2648,7 +3273,7 @@ fn pkg_sync(appdir: string) -> int {
                 co = cat(cat(cat(co, " checkout --quiet "), shell_quote(d.rev)), "")
                 run_git(co)
                 if sys.exec_status() != 0 {
-                    fmt.println("zeli: {{d.name}}: cannot checkout '{{d.rev}}'")
+                    say("zeli: {{d.name}}: cannot checkout '{{d.rev}}'")
                     ok = false
                 }
             }
@@ -2656,7 +3281,7 @@ fn pkg_sync(appdir: string) -> int {
             head = cat(head, " rev-parse HEAD")
             let sha = trim(run_git(head))
             push(lock, "{{d.name}}\t{{d.source}}\t{{sha}}")
-            fmt.println("zeli: {{d.name}} <- {{d.source}}@{{short_sha(sha)}}")
+            say("zeli: {{d.name}} <- {{d.source}}@{{short_sha(sha)}}")
         }
     }
     sys.write_file(join(appdir, "loam.lock"), join_lines(lock))
@@ -2833,12 +3458,12 @@ fn scaffold_files(name: string) -> []ScaffoldFile {
 /// into an app it did not write.
 fn scaffold(appdir: string, name: string) -> int {
     if !valid_name(name) {
-        fmt.println("zeli: bad app name '{{name}}'")
+        say("zeli: bad app name '{{name}}'")
         return 2
     }
     if sys.exists(appdir) == 1 {
         if sys.dir_count(appdir) > 0 {
-            fmt.println("zeli: {{appdir}} already exists and is not empty")
+            say("zeli: {{appdir}} already exists and is not empty")
             return 2
         }
     }
@@ -2855,8 +3480,8 @@ fn scaffold(appdir: string, name: string) -> int {
         return 2
     }
     let n = files.len + 1
-    fmt.println("zeli: created {{name}} ({{n}} files)")
-    fmt.println("  cd {{rel_to(sys.cwd(), appdir)}} && zeli serve")
+    say("zeli: created {{name}} ({{n}} files)")
+    say("  cd {{rel_to(sys.cwd(), appdir)}} && zeli serve")
     return 0
 }
 
@@ -3101,7 +3726,7 @@ fn macos_bundle(appdir: string, bin: string) -> string {
     if sys.exists(given) == 1 {
         sys.exec("cp {{shell_quote(given)}} {{shell_quote(icns)}}")
     } else if sys.exists(svg) == 1 && !render_icns(svg, icns) {
-        fmt.println("zeli: macos: could not render assets/icon.svg; the app has no icon")
+        say("zeli: macos: could not render assets/icon.svg; the app has no icon")
     }
     if sys.exists(icns) == 1 {
         icon_key = "    <key>CFBundleIconFile</key><string>{{title}}</string>\n"
@@ -3120,7 +3745,7 @@ fn macos_bundle(appdir: string, bin: string) -> string {
     sys.write_file(info, plist)
     sys.exec("plutil -lint -s {{shell_quote(info)}}")
     if sys.exec_status() != 0 {
-        fmt.println("zeli: macos: Info.plist is not valid (check macos/Info.plist.part)")
+        say("zeli: macos: Info.plist is not valid (check macos/Info.plist.part)")
         return ""
     }
     // Ad-hoc: lets Gatekeeper and Apple silicon run the locally built bundle.
@@ -3157,10 +3782,10 @@ fn check_entry(entry: string) -> bool {
     if sys.exec_status() == 0 {
         return true
     }
-    fmt.println("zeli: {{rel_to(repo_root(), entry)}} failed the compiler check")
+    say("zeli: {{rel_to(repo_root(), entry)}} failed the compiler check")
     let body = trim(out)
     if body != "" {
-        fmt.println(indent_lines(body, "  "))
+        say(indent_lines(body, "  "))
     }
     return false
 }
@@ -3172,16 +3797,16 @@ fn fresh_target_dir(appdir: string, target: string) -> string {
     let dir = join(join(appdir, "build"), target)
     if target != "" && sys.exists(dir) == 1 {
         if sys.remove_path(dir) != 0 {
-            fmt.println("zeli: could not remove {{rel_to(repo_root(), dir)}}")
+            say("zeli: could not remove {{rel_to(repo_root(), dir)}}")
         } else {
-            fmt.println("zeli: removed previous {{rel_to(repo_root(), dir)}}")
+            chat("zeli: removed previous {{rel_to(repo_root(), dir)}}")
         }
     }
     sys.mkdir(dir)
     return dir
 }
 
-/// `zeli build <appdir> [--targets web,macos,...] [--base https://host]`
+/// `zeli build <appdir> [--targets web,macos,...] [--base https://host] [--release]`
 ///
 /// Generates the route table when `routes/` exists, then compiles the app for
 /// each target into `<appdir>/build/<target>/`, which is removed first when a
@@ -3191,7 +3816,11 @@ fn fresh_target_dir(appdir: string, target: string) -> string {
 /// Targets whose host toolchain is missing (iOS/Android SDKs) fail individually
 /// and the rest still build, so one missing SDK does not cost you the others.
 /// The exit code is 1 only when nothing built.
-fn build(appdir: string, targets: []string, base: string) -> int {
+///
+/// A routed web build reuses `serve`'s cached units and a lighter `wasm-opt`, so a
+/// rebuild takes about a second or two. `--release` (`full`) is the smallest output
+/// instead: one whole-program compile and `-Oz`, several times slower.
+fn build(appdir: string, targets: []string, base: string, full: bool) -> int {
     if sys.exists(loam_path()) == 0 {
         die("zeli: missing {{loam_path()}} — run `make` in {{repo_root()}} first")
     }
@@ -3205,51 +3834,106 @@ fn build(appdir: string, targets: []string, base: string) -> int {
         return 1
     }
     let stem = drop_suffix(base_name(entry), ".loam")
-    let mut built = 0
+    let routed = sys.exists(join(appdir, "routes")) == 1
+    ui_open(platform_list(targets), false)
+    ui_build_begin()
+
+    // Every compile runs at once, after which each target finishes in the order
+    // it was asked for, so the report reads the same as a build done one by one.
+    // Native targets with the same flags are one program: it is compiled once.
+    let mut cmds = []string {}
+    let mut job_of = []int {}
+    let mut outs = []string {}
+    let mut native = -1
+    let mut native_report = ""
+    let mut wants_web = false
     for i in 0..targets.len {
         let t = targets[i]
         let dir = fresh_target_dir(appdir, t)
         let out = join(dir, out_name(t, stem))
-        let mut args = cat(cat(shell_quote(entry), " -o "), shell_quote(out))
+        push(outs, out)
         let mut flags = target_flags(t)
+        let report = ui_report_file(appdir, t)
+        if flags == "" && native >= 0 {
+            let shared = job_of[native]
+            push(job_of, shared)
+            ui_add(t, native_report, shared, true, "Starting")
+            continue
+        }
+        if flags == "" {
+            native = i
+            native_report = report
+        }
         if t == "web" {
+            wants_web = true
             flags = cat(flags, " --wasm-release")
+            if routed {
+                flags = cat(flags, " --wasm-split-input")
+            }
+            if !has_tool("wasm-opt") || !has_tool("wasm-split") {
+                die("zeli: wasm-opt and wasm-split are needed for a web release: install binaryen.")
+            }
         }
-        if t == "web" && sys.exists(join(appdir, "routes")) == 1 {
-            flags = cat(flags, " --wasm-split-input")
-        }
+        let mut args = cat(cat(shell_quote(entry), " -o "), shell_quote(out))
         if flags != "" {
             args = cat(cat(flags, " "), args)
         }
-        if t == "web" && (!has_tool("wasm-opt") || !has_tool("wasm-split")) {
-            die("zeli: wasm-opt and wasm-split are needed for a web release: install binaryen.")
+        ui_add(t, report, cmds.len, true, "Starting")
+        push(job_of, cmds.len)
+        // A routed web build is optimized again after the split, so its compile
+        // can come from cached units, as in `serve`. `--release` and anything else
+        // ship what one whole-program compile leaves, which is smaller and slower.
+        let compile_env = if t == "web" && routed && !full { shard_env(appdir) } else { "" }
+        push(cmds, loam_cmd(ui_env(compile_env, report), args))
+    }
+    let meta_job = cmds.len
+    if wants_web && routed {
+        push(cmds, meta_compile_cmd(appdir))
+        ui_bundle = ui_add("Bundle", "", meta_job, false, "Reading route metadata")
+        ui_step(ui_bundle, 0, 20, "Reading route metadata")
+    }
+    let jobs = run_jobs(join(appdir, ".zeus"), cmds)
+
+    let mut built = 0
+    for i in 0..targets.len {
+        let t = targets[i]
+        let out = outs[i]
+        let mut ok = jobs[job_of[i]].ok
+        if ok && i != native && target_flags(t) == "" {
+            sys.exec("cp {{shell_quote(outs[native])}} {{shell_quote(out)}}")
+            ok = sys.exec_status() == 0
         }
-        let log = run_loam("", args)
-        if sys.exec_status() == 0 {
-            fmt.println("zeli: {{t}} ok -> {{rel_to(repo_root(), out)}}")
+        if ok {
+            say("zeli: {{t}} ok -> {{rel_to(repo_root(), out)}}")
             built += 1
-            if t == "web" && sys.exists(join(appdir, "routes")) == 1 {
+            if t == "web" && routed {
+                require_meta(jobs[meta_job])
                 let web = join(join(appdir, "build"), "web")
-                emit_web_shell(appdir, split_web(appdir, web, stem), base)
+                emit_web_shell(appdir, split_web(appdir, web, stem, release_opt(full)), base)
                 report_web_sizes(web)
+                ui_bar_end(ui_bundle, UI_OK)
             }
             if t == "macos" && sys.target() == "native" && sys.exists("/usr/bin/codesign") == 1 {
                 let bundle = macos_bundle(appdir, out)
                 if bundle != "" {
-                    fmt.println("zeli: macos app -> {{rel_to(repo_root(), bundle)}}")
+                    say("zeli: macos app -> {{rel_to(repo_root(), bundle)}}")
                 }
             }
         } else {
-            let body = trim(log)
+            let body = trim(jobs[job_of[i]].log)
             if body == "" {
-                fmt.println("zeli: {{t}} failed")
+                say("zeli: {{t}} failed")
             } else {
-                fmt.println(cat("zeli: {{t}} failed\n", indent_lines(body, "  ")))
+                say(cat("zeli: {{t}} failed\n", indent_lines(body, "  ")))
             }
         }
     }
     let n = targets.len
-    fmt.println("zeli: built {{built}}/{{n}} target(s)")
+    say("zeli: built {{built}}/{{n}} target(s)")
+    ui_stop_bars()
+    let cheer = if built == n { " ✓" } else { " ✗" }
+    ui_set_status("Built {{built}}/{{n}} targets{{cheer}}", built == 0, ui_build_ms())
+    ui_close()
     if built > 0 {
         return 0
     }
@@ -3403,10 +4087,13 @@ fn fld(doc: JsonDoc, key: string) -> string {
     return s.s
 }
 
-/// Compile and run the dump and return the records it printed. Aborts the
-/// command on a compile or run failure, exactly where the TypeScript CLI's
-/// `die` would.
-fn collect_meta(appdir: string) -> []MetaRec {
+/// Write the dump's source and return the command that compiles it, to run
+/// alongside the web build it describes.
+///
+/// The dump runs once on this machine and is thrown away, so it gets the
+/// development profile even in a release: optimizing it costs more than the
+/// wasm that ships.
+fn meta_compile_cmd(appdir: string) -> string {
     let zdir = join(appdir, ".zeus")
     let src = join(zdir, "meta_dump.loam")
     sys.mkdir(zdir)
@@ -3414,13 +4101,41 @@ fn collect_meta(appdir: string) -> []MetaRec {
     let bin = join(zdir, "meta_dump")
     /* The dump only *calls* meta()/paths(); a DCE edge case can drop a needed
        std:zeus helper while keeping its call, so compile it with DCE off. */
-    let cc = run_loam("LOAM_NO_DCE=1", cat(cat(shell_quote(src), " -o "), shell_quote(bin)))
-    if sys.exec_status() != 0 {
-        die_extra("zeli: metadata dump failed to compile", trim(cc))
+    return loam_cmd(
+        "LOAM_DEV=1 LOAM_NO_DCE=1 {{shard_env(appdir)}}",
+        cat(cat(shell_quote(src), " -o "), shell_quote(bin)),
+    )
+}
+
+/// Abort the command if the dump did not compile.
+fn require_meta(job: JobResult) {
+    if !job.ok {
+        die_extra("zeli: metadata dump failed to compile", trim(job.log))
     }
-    let log = run_here(cat("ZEUS_HEADLESS=1 ", shell_quote(bin)))
-    if sys.exec_status() != 0 {
-        die_extra("zeli: metadata dump failed to run", trim(log))
+}
+
+/// What the compiled dump printed, when it ran beside something else.
+let mut meta_output: string = ""
+
+/// The program `short_hash` runs, once it has looked.
+let mut hash_tool: string = ""
+
+/// The shell command that runs the compiled dump.
+fn meta_run_cmd(appdir: string) -> string {
+    let bin = join(join(appdir, ".zeus"), "meta_dump")
+    return "cd {{shell_quote(repo_root())}} && ZEUS_HEADLESS=1 {{shell_quote(bin)}} 2>&1"
+}
+
+/// Run the compiled dump and return the records it printed. Aborts the command
+/// on a run failure, exactly where the TypeScript CLI's `die` would.
+fn collect_meta(appdir: string) -> []MetaRec {
+    let mut log = meta_output
+    meta_output = ""
+    if log == "" {
+        log = sys.exec(meta_run_cmd(appdir))
+        if sys.exec_status() != 0 {
+            die_extra("zeli: metadata dump failed to run", trim(log))
+        }
     }
     let mut recs = []MetaRec {}
     let lines = split_lines(log)
@@ -3431,7 +4146,7 @@ fn collect_meta(appdir: string) -> []MetaRec {
         }
         let doc = json.parse(t)
         if doc.ok == 0 {
-            fmt.println("zeli: skipping malformed metadata record: {{t}}")
+            say("zeli: skipping malformed metadata record: {{t}}")
             continue
         }
         push(recs, MetaRec {
@@ -3557,7 +4272,11 @@ fn prepaint_html(outline: string) -> string {
             push(out, text)
         } else {
             let tag = prepaint_tag(first.px)
-            let inner = if first.href != "" { "<a href=\"{{esc(first.href)}}\">{{text}}</a>" } else { text }
+            let inner = if first.href != "" {
+                "<a href=\"{{esc(first.href)}}\">{{text}}</a>"
+            } else {
+                text
+            }
             push(out, "<{{tag}}>{{inner}}</{{tag}}>")
         }
     }
@@ -3673,7 +4392,9 @@ fn css_hex(rgb: string) -> string {
 /// A routed web app with binaryen installed. Without it `zeli serve` still works,
 /// as one module, and only a release insists.
 fn can_split(appdir: string) -> bool {
-    return sys.exists(join(appdir, "routes")) == 1 && has_tool("wasm-opt") && has_tool("wasm-split")
+    return sys.exists(join(appdir, "routes")) == 1 &&
+        has_tool("wasm-opt") &&
+        has_tool("wasm-split")
 }
 
 /// Paint a visitor's saved appearance before anything draws. Inline and ahead of
@@ -3701,10 +4422,26 @@ fn has_tool(name: string) -> bool {
 
 /// First 12 hex digits of a file's SHA-256.
 fn short_hash(file: string) -> string {
-    let tool = if has_tool("sha256sum") { "sha256sum" } else { "shasum -a 256" }
-    let out = trim(sys.exec("{{tool}} {{shell_quote(file)}} | cut -c1-12"))
-    if out == "" || sys.exec_status() != 0 {
-        die("zeli: could not hash {{file}}")
+    return short_hashes(dir_of(file), []string { base_name(file) })[0]
+}
+
+/// `short_hash` of each of `names` under `dir`, in one process however many there
+/// are. Relative, so a build's chunks fit in what `sys.exec` accepts.
+fn short_hashes(dir: string, names: []string) -> []string {
+    if hash_tool == "" {
+        hash_tool = if has_tool("sha256sum") { "sha256sum" } else { "shasum -a 256" }
+    }
+    let mut args = ""
+    for i in 0..names.len {
+        args = cat(cat(args, " "), shell_quote(names[i]))
+    }
+    let ls = split_lines(trim(sys.exec("cd {{shell_quote(dir)}} && {{hash_tool}}{{args}}")))
+    if sys.exec_status() != 0 || ls.len != names.len {
+        die("zeli: could not hash the files in {{dir}}")
+    }
+    let mut out = []string {}
+    for i in 0..ls.len {
+        push(out, slice(ls[i], 0, 12))
     }
     return out
 }
@@ -3712,10 +4449,14 @@ fn short_hash(file: string) -> string {
 /// Move one build output into `dir` under its content hash and return its
 /// final name.
 fn fingerprint_file(src: string, dir: string, stem: string, ext: string) -> string {
-    let name = "{{stem}}.{{short_hash(src)}}.{{ext}}"
+    return fingerprint_as(src, dir, stem, short_hash(src), ext)
+}
+
+/// `fingerprint_file` for a hash already known.
+fn fingerprint_as(src: string, dir: string, stem: string, hash: string, ext: string) -> string {
+    let name = "{{stem}}.{{hash}}.{{ext}}"
     let dst = join(dir, name)
-    sys.exec("mv {{shell_quote(src)}} {{shell_quote(dst)}}")
-    if sys.exec_status() != 0 {
+    if sys.rename(src, dst) != 0 {
         die("zeli: could not write {{dst}}")
     }
     return name
@@ -3783,7 +4524,10 @@ fn chunk_table_json(assets: WebAssets, boot: []string) -> string {
     let bootj = json_names(boot)
     let idlej = json_names(assets.idle)
     let touchj = json_names(assets.idle_touch)
-    return cat(cat("{\"chunks\":{", urls), "},\"routes\":[{{routes}}],\"boot\":{{bootj}},\"idle\":{{idlej}},\"idleTouch\":{{touchj}}}")
+    return cat(
+        cat("{\"chunks\":{", urls),
+        "},\"routes\":[{{routes}}],\"boot\":{{bootj}},\"idle\":{{idlej}},\"idleTouch\":{{touchj}}}",
+    )
 }
 
 /// The generated route table's builders, in route order (`b_root_page`, ...).
@@ -3827,7 +4571,10 @@ fn runtime_sources() -> string {
 /// Split a `--wasm-split-input` build into a primary and route chunks, optimise
 /// each, and fingerprint them all. Optimising after the split matters: run first,
 /// `wasm-opt` merges identical functions, which ties routes to each other.
-fn split_web(appdir: string, web: string, stem: string) -> WebAssets {
+///
+/// `dev` keeps the split and drops `-Oz`: the chunks and the Network tab match a
+/// release, a little larger, for a tenth of the time.
+fn split_web(appdir: string, web: string, stem: string, opt_flag: string) -> WebAssets {
     let raw = join(web, "{{stem}}.wasm")
     let csrc = cat(raw, ".c")
     let dir = join(web, "_zeus")
@@ -3835,6 +4582,7 @@ fn split_web(appdir: string, web: string, stem: string) -> WebAssets {
     sys.mkdir(dir)
     sys.mkdir(tmp)
 
+    ui_step(ui_bundle, 20, 25, "Planning route chunks")
     let mut g = chunks.parse_c(sys.read_file(csrc))
     let roots = chunks.roots_of(&mut g, runtime_sources())
     let builders = route_builders(appdir)
@@ -3853,35 +4601,56 @@ fn split_web(appdir: string, web: string, stem: string) -> WebAssets {
     let features = "--enable-bulk-memory --enable-mutable-globals --enable-sign-ext --enable-nontrapping-float-to-int --enable-reference-types --enable-multivalue"
     let prim = join(tmp, "primary.wasm")
     let prefix = shell_quote(cat(tmp, "/"))
-    let log = sys.exec(
+    ui_step(ui_bundle, 25, 40, "Splitting wasm")
+    // The page dump depends on none of this, and `wasm-opt` wants every core.
+    let split = run_jobs(tmp, []string {
+        meta_run_cmd(appdir),
         "wasm-split --multi-split {{features}} --manifest {{shell_quote(man)}} --out-prefix {{prefix}} --export-prefix=% --placeholder-namespace-prefix=p. -g -o {{shell_quote(prim)}} {{shell_quote(raw)}} 2>&1",
-    )
-    if sys.exec_status() != 0 {
-        die_extra("zeli: wasm-split failed", trim(log))
+    })
+    if !split[0].ok {
+        die_extra("zeli: metadata dump failed to run", trim(split[0].log))
     }
+    if !split[1].ok {
+        die_extra("zeli: wasm-split failed", trim(split[1].log))
+    }
+    meta_output = split[0].log
 
     let mut files = []ChunkFile {}
     let mut names = []string { "primary" }
     for i in 0..plan.chunks.len {
         push(names, plan.chunks[i].name)
     }
-    let mut primary = ""
-    let mut sizes = []int {}
+    let mut opts = []string {}
     for i in 0..names.len {
         let src = join(tmp, "{{names[i]}}.wasm")
         let opt = cat(src, ".opt")
-        let out = sys.exec(
-            "wasm-opt -Oz --strip-debug --strip-producers {{features}} {{shell_quote(src)}} -o {{shell_quote(opt)}} 2>&1",
+        push(
+            opts,
+            "wasm-opt {{opt_flag}}--strip-debug --strip-producers {{features}} {{shell_quote(src)}} -o {{shell_quote(opt)}} 2>&1",
         )
-        if sys.exec_status() != 0 {
-            die_extra("zeli: wasm-opt failed on {{names[i]}}", trim(out))
+    }
+    ui_step(ui_bundle, 40, 92, "Optimizing wasm")
+    ui_counting = "Optimizing wasm"
+    let optimised = run_jobs(tmp, opts)
+    ui_counting = ""
+    let mut primary = ""
+    let mut sizes = []int {}
+    let mut outputs = []string {}
+    for i in 0..names.len {
+        if !optimised[i].ok {
+            die_extra("zeli: wasm-opt failed on {{names[i]}}", trim(optimised[i].log))
         }
-        let file = fingerprint_file(opt, dir, if i == 0 { stem } else { names[i] }, "wasm")
+        push(outputs, "{{names[i]}}.wasm.opt")
+    }
+    let hashes = short_hashes(tmp, outputs)
+    for i in 0..names.len {
+        let opt = join(tmp, outputs[i])
+        let file = fingerprint_as(opt, dir, if i == 0 { stem } else { names[i] }, hashes[i], "wasm")
         if i == 0 {
             primary = "/_zeus/{{file}}"
         } else {
             push(files, ChunkFile { name: names[i], url: "/_zeus/{{file}}" })
-            push(sizes, int_of(trim(sys.exec("wc -c < {{shell_quote(join(dir, file))}}"))))
+            push(sizes, sys.read_file(join(dir, file)).len)
         }
     }
 
@@ -3931,31 +4700,48 @@ fn finish_web(
     }
 }
 
+/// `wasm-opt`'s level for `zeli build`. Most of what `-Oz` removes is gone at `-O1`
+/// for a third of the time; `--release` asks for the rest.
+fn release_opt(full: bool) -> string {
+    return if full { "-Oz " } else { "-O1 " }
+}
+
 /// One size in KB, for the build report.
 fn kb_of(file: string) -> string {
     if sys.exists(file) == 0 {
         return "-"
     }
-    let n = int_of(trim(sys.exec("wc -c < {{shell_quote(file)}}")))
+    let n = sys.read_file(file).len
     return "{{(n + 512) / 1024}} KB"
 }
 
 /// What a visitor actually downloads, per file.
 fn report_web_sizes(web: string) {
     let dir = join(web, "_zeus")
-    let names = split_lines(trim(sys.exec("ls {{shell_quote(dir)}}")))
-    fmt.println("zeli: web assets")
+    let names = sys.list_dir(dir)
+    chat("zeli: web assets")
     for i in 0..names.len {
-        fmt.println("  {{names[i]}}  {{kb_of(join(dir, names[i]))}}")
+        chat("  {{names[i]}}  {{kb_of(join(dir, names[i]))}}")
     }
+}
+
+/// The panel's name for a set of targets.
+fn platform_list(targets: []string) -> string {
+    let mut out = ""
+    for i in 0..targets.len {
+        out = cat(out, cat(if i > 0 { ", " } else { "" }, platform_name(targets[i])))
+    }
+    return out
 }
 
 /// One HTML file per route, plus `sitemap.xml` and `robots.txt`.
 ///
 /// The route table is the source of the URLs: a static route contributes its
 /// pattern, and a dynamic one contributes each entry of its `paths()`. A route
-/// with no `meta()` still gets a shell, from the empty record.
+/// with no `meta()` still gets a shell, from the empty record. The metadata dump
+/// must already be compiled (`meta_compile_cmd`).
 fn emit_web_shell(appdir: string, assets: WebAssets, base: string) {
+    ui_step(ui_bundle, 92, 100, "Writing HTML shells")
     let web = join(join(appdir, "build"), "web")
     sys.mkdir(web)
     let recs = collect_meta(appdir)
@@ -3992,14 +4778,14 @@ fn emit_web_shell(appdir: string, assets: WebAssets, base: string) {
     }
     sys.write_file(join(web, "robots.txt"), join_lines(robots))
     let n = recs.len
-    fmt.println(
+    chat(
         "zeli: wrote {{n}} HTML shell(s) + sitemap.xml + robots.txt -> {{rel_to(repo_root(), web)}}",
     )
 }
 
 fn usage() {
-    fmt.println(
-        "usage: zeli new <name> [dir] | zeli routes <appdir> | zeli build <appdir> [--targets a,b | --target a] [--base https://host] | zeli serve <appdir> [--target {{target_list()}}] [--port N] [--build-only] | zeli fmt [dir] | zeli pkg sync <appdir>",
+    say(
+        "usage: zeli new <name> [dir] | zeli routes <appdir> | zeli build <appdir> [--targets a,b | --target a] [--base https://host] [--release] | zeli serve <appdir> [--target {{target_list()}}] [--port N] [--build-only] | zeli fmt [dir] | zeli pkg sync <appdir>",
     )
 }
 
@@ -4083,11 +4869,14 @@ fn main() {
         let mut targets = all_targets()
         let mut given = false
         let mut base = ""
+        let mut full = false
         let mut rest = []string {}
         let mut i = 2
         while i < argv.len {
             let a = argv[i]
-            if a == "--targets" || a == "--target" {
+            if a == "--release" {
+                full = true
+            } else if a == "--targets" || a == "--target" {
                 if i + 1 < argv.len {
                     i += 1
                     targets = parse_targets(argv[i], true)
@@ -4108,13 +4897,15 @@ fn main() {
             i += 1
         }
         if rest.len < 1 {
-            die("usage: zeli build <appdir> [--targets a,b | --target a] [--base https://host]")
+            die(
+                "usage: zeli build <appdir> [--targets a,b | --target a] [--base https://host] [--release]",
+            )
         }
         let appdir = abs_path(rest[0])
         if !given {
             targets = app_targets(appdir)
         }
-        sys.exit(build(appdir, targets, base))
+        sys.exit(build(appdir, targets, base, full))
     }
     if cmd == "pkg" {
         if argv.len < 3 || argv[2] != "sync" {
