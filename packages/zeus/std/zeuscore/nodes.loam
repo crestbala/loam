@@ -291,18 +291,31 @@ struct AnimRec {
     exit_fx: int,
     exit_ms: int,
     exit_arg: int,
-    /// Animated paint transform: scale percent (100 = identity), translate in
-    /// dp, and rotation in degrees. Written only by paint-only tracks; the
-    /// layout pass never reads them, so a transform never forces a layout.
+    /// Animated paint transform: scale permille (1000 = identity), translate
+    /// in 1/16 dp, and rotation in degrees. Finer than the API's percent and
+    /// dp, so slow motion glides instead of stepping. Written only by
+    /// paint-only tracks; the layout pass never reads them, so a transform
+    /// never forces a layout.
     an_scale: u16,
-    an_tx: i16,
-    an_ty: i16,
+    an_tx: i32,
+    an_ty: i32,
     an_rot: u16,
     /// 0..100 ease of the press overlay. Rest is 0, so DRAW goldens hold.
     press_amt: u8,
     hover_amt: u8,
     show_amt: u8,
     enter_fade: u8,
+    /// What moves with the fade, `arena.ENTER_*` flags (the `Enter` enum).
+    enter_fx: u8,
+    /// `slide_indicator`: 1 pill behind the selected child, 2 line under it,
+    /// 0 none. `ind_sig` is the selection and `ind_at` the one last seen (-1
+    /// before any); `ind_x` / `ind_w` are where it paints, in 1/16 dp from
+    /// this node's box.
+    ind_kind: u8,
+    ind_sig: int,
+    ind_at: int,
+    ind_x: int,
+    ind_w: int,
     /// Paint-only reveal: 1 opts in (`enter_reveal`), `an_reveal` is the share
     /// of the laid-out height paint shows, 0..100, clipped from the top with
     /// the content slid up by the hidden part. Layout sees the full box at
@@ -427,8 +440,9 @@ fn blank_scrl() -> ScrlRec {
 
 fn blank_anim() -> AnimRec {
     return AnimRec {
-        tween: -1, press_amt: 0, hover_amt: 0, show_amt: 0, enter_fade: 0,
-        an_scale: 100, an_tx: 0, an_ty: 0, an_rot: 0, reveal: 0, an_reveal: 100,
+        tween: -1, press_amt: 0, hover_amt: 0, show_amt: 0, enter_fade: 0, enter_fx: 0,
+        ind_kind: 0, ind_sig: 0, ind_at: -1, ind_x: 0, ind_w: 0,
+        an_scale: 1000, an_tx: 0, an_ty: 0, an_rot: 0, reveal: 0, an_reveal: 100,
         exit_fx: 0, exit_ms: 0, exit_arg: 0, press: 0, press_scale: 0, hover_fade: 0,
     }
 }

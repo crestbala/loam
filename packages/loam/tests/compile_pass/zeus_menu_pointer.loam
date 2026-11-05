@@ -1,0 +1,89 @@
+// Menus and the pointer. A closed menu's rows keep the box they last laid out
+// in, and hovering that empty space used to reopen the menu. A secondary click
+// on a scrolled page used to open the context menu off by the scroll, often off
+// screen. And a secondary click over an open menu's scrim closes it, then opens
+// where it landed.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn pump(n: int) {
+    let mut i = 0
+    while i < n {
+        zeus.engine_step_dt(16)
+        zeus.pump_frame()
+        i = i + 1
+    }
+}
+
+fn main() {
+    zeus.window("menu pointer", 500, 400)
+    let rows = []MenuRow { MenuRow(label = "Rename"), MenuRow(label = "Delete") }
+    let top = zeus.signal(0)
+    zeus.root(zui.Scroll(bind = top, style = Style(width = px(500), height = px(400))) {
+        zeus.Box(style = Style(height = px(60), padding = 12)) {
+            zui.DropdownMenu("Actions", items = rows)
+        }
+        zeus.Box(style = Style(height = px(300)))
+        zui.ContextMenu(items = rows) {
+            zeus.Box(style = Style(width = px(300), height = px(200), background = "#dddddd"))
+        }
+        zeus.Box(style = Style(height = px(600)))
+    })
+    pump(3)
+
+    // --- a closed menu does not hear the pointer ---
+    must(zeus.engine_click_text("Actions") != 0, "trigger")
+    zeus.engine_mouseup()
+    pump(30)
+    must(zeus.text_visible("Rename"), "opened")
+    zeus.engine_click(450, 390)
+    zeus.engine_mouseup()
+    must(!zeus.text_visible("Rename"), "closed by the scrim")
+    let mut y = 40
+    while y < 200 {
+        let mut x = 20
+        while x < 300 {
+            zeus.engine_hover(x, y)
+            zeus.pump_frame()
+            must(!zeus.text_visible("Rename"), "hovering a closed menu leaves it closed")
+            x = x + 12
+        }
+        y = y + 6
+    }
+    pump(30)
+    must(zeus.proof_anim_live() == 0, "nothing playing")
+
+    // --- the context menu opens at the pointer, wherever the page has scrolled ---
+    top.set(280)
+    pump(30)
+    must(zeus.engine_context_click(100, 150) != 0, "region answers")
+    pump(30)
+    must(zeus.text_visible("Rename"), "context menu open")
+    let panel = zeus.engine_find_role("menu")
+    must(panel != 0, "a menu panel")
+    must(zeus.screen_y(panel) >= 150 && zeus.screen_y(panel) <= 152, "opens at the pointer's y")
+    must(zeus.screen_x(panel) >= 100 && zeus.screen_x(panel) <= 102, "opens at the pointer's x")
+
+    // --- a second one moves it ---
+    must(zeus.engine_context_click(200, 170) != 0, "over the scrim, the region still answers")
+    pump(30)
+    must(zeus.text_visible("Rename"), "open at the new point")
+    must(zeus.screen_y(zeus.engine_find_role("menu")) >= 170, "moved with the click")
+
+    // --- and a secondary click off the region just closes it ---
+    must(zeus.engine_context_click(450, 390) == 0, "nothing there answers")
+    pump(30)
+    must(!zeus.text_visible("Rename"), "closed")
+
+    fmt.println("menu pointer ok")
+}

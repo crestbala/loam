@@ -47,7 +47,7 @@ fn main() {
     must(zeus.text_visible("alpha"), "open for the tree the same frame")
     let opening = zeus.draw_count()
     must(zeus.proof_anim_live() > 0, "a reveal track is live")
-    run_ms(400)
+    run_ms(600)
     let settled = zeus.draw_count()
     must(zeus.proof_anim_live() == 0, "reveal landed")
     // Settled: the body text and the chevron's rotated xform (save / xform /
@@ -65,7 +65,7 @@ fn main() {
     zeus.pump_frame()
     must(!zeus.text_visible("alpha"), "closed")
     must(zeus.draw_count() == closed + 3, "close: body gone at once, only the chevron in flight")
-    run_ms(200)
+    run_ms(600)
     must(zeus.draw_count() == closed, "chevron landed")
     must(zeus.proof_anim_live() == 0, "nothing in flight after close")
 

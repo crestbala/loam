@@ -44,10 +44,9 @@ fn main() {
     must(zeus.engine_click_text("Save") != 0, "hit")
     must(clicks.get() == 1, "idle click fires")
 
-    // Press darkens on a track and does not scale. Release returns to rest.
+    // Press darkens and sinks on tracks. Release springs back to rest.
     zeus.engine_layout(400, 200)
     must(zeus.proof_anim_live() > 0, "press started a track")
-    must(zeus.motion_scale(save) == 100, "press does not scale")
     let c0 = zeus.proof_components()
     let mut i = 0
     while i < 12 {
@@ -56,18 +55,18 @@ fn main() {
         zeus.engine_paint()
         i = i + 1
     }
-    must(zeus.motion_scale(save) == 100, "held press stays at 100%")
+    must(zeus.motion_scale(save) == 97, "a held press sinks to 97%")
     must(zeus.proof_components() == c0, "press ran no component")
     zeus.engine_mouseup()
     zeus.engine_layout(400, 200)
     i = 0
-    while i < 20 {
+    while i < 30 {
         zeus.engine_layout(400, 200)
         zeus.engine_step_dt(16)
         zeus.engine_paint()
         i = i + 1
     }
-    must(zeus.motion_scale(save) == 100, "released scale stays at 100")
+    must(zeus.motion_scale(save) == 100, "released: back at rest")
 
     // Loading: the spinner shows, the overlay reports loading, the click
     // is swallowed, and Enter on the focused button is too.

@@ -9,6 +9,6 @@ fill 32 207 120 55 16777215 8
 stroke 32 207 120 55 15000284 8 1 255
 text_wrap 53 224 78 Elevated
 save
-xform 0 0 192 234 50 0
+xform 0 0 192 234 500 0
 fill 172 214 40 40 1513239 8
 restore

@@ -16,7 +16,7 @@ text 137 41 2039066 14 Profile
 fill 9 74 110 27 2039066 2
 text 19 80 16777215 11 Saves the draft
 save
-xform 0 0 64 101 100 45
+xform 0 0 64 101 1000 45
 fill 60 97 8 8 2039066 0
 restore
 DRAW 13

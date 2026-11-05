@@ -1,6 +1,7 @@
-// Tabs selection is a fill on the selected trigger. Nothing is measured and
-// nothing slides: a click moves the plate from one trigger to the next in
-// the same frame, with no component re-run.
+// Tabs selection is one indicator on the tray. A click sends it to the new
+// trigger on a spring, changing width on the way; the triggers carry no fill.
+// It is paint-only: no layout pass, no component re-run. A resize follows at
+// once, and reduced motion jumps.
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
@@ -13,6 +14,15 @@ fn must(ok: bool, what: string) {
     }
 }
 
+fn run_ms(ms: int) {
+    let mut t = 0
+    while t < ms {
+        zeus.engine_step_dt(16)
+        zeus.pump_frame()
+        t = t + 16
+    }
+}
+
 fn main() {
     zeus.window("tabs", 400, 200)
     let sel = zeus.signal(0)
@@ -20,27 +30,50 @@ fn main() {
         zui.Tabs(sel, []string { "Overview", "Metrics", "Logs" })
     })
     zeus.pump_frame()
-    zeus.engine_layout(400, 200)
+    run_ms(32)
     let a = zeus.engine_find_text("Overview")
     let b = zeus.engine_find_text("Metrics")
     must(a != 0 && b != 0, "tab triggers")
-    let on = zeus.node_background_rgb(a)
-    let off = zeus.node_background_rgb(b)
-    must(on != off, "selected trigger is filled")
-    must(on != 0, "selected fill is the plate")
+    must(zeus.node_background_rgb(a) == zeus.node_background_rgb(b), "triggers carry no fill")
+    let t = zeus.node_parent(a)
+    let tray = zeus.node_handle(t)
+    must(zeus.proof_anim_live() == 0, "the first frame settles, nothing slides in")
+    must(zeus.indicator_x(tray) == zeus.node_x(a) - zeus.node_x(t), "starts on the selection")
+    must(zeus.indicator_w(tray) == zeus.node_width(a), "at its width")
 
+    // A pick travels and lands, with no layout or component work.
     let c0 = zeus.proof_components()
+    let from = zeus.indicator_x(tray)
+    let to = zeus.node_x(b) - zeus.node_x(t)
     must(zeus.engine_click_text("Metrics") != 0, "click Metrics")
-    zeus.engine_layout(400, 200)
-    must(zeus.node_background_rgb(b) == on, "fill moved to Metrics")
-    must(zeus.node_background_rgb(a) == off, "Overview lost the fill")
+    zeus.engine_mouseup()
     must(sel.get() == 1, "selection followed the click")
+    zeus.pump_frame()
+    run_ms(48)
+    must(zeus.proof_anim_live() > 0, "on a track")
+    let mid = zeus.indicator_x(tray)
+    must(mid > from && mid < to + 2, "between the two, heading for the new one")
+    run_ms(400)
+    must(zeus.indicator_x(tray) == to, "landed on Metrics")
+    must(zeus.indicator_w(tray) == zeus.node_width(b), "at its width")
     must(zeus.proof_components() == c0, "no component re-run")
+    must(zeus.proof_anim_live() == 0, "at rest")
 
+    // The arrow moves it the same way.
     zeus.engine_key_ev(1001, 0)
-    zeus.engine_layout(400, 200)
-    let logs = zeus.engine_find_text("Logs")
+    zeus.pump_frame()
     must(sel.get() == 2, "arrow moved selection")
-    must(zeus.node_background_rgb(logs) == on, "fill followed the arrow")
+    run_ms(400)
+    let logs = zeus.engine_find_text("Logs")
+    must(zeus.indicator_x(tray) == zeus.node_x(logs) - zeus.node_x(t), "followed the arrow")
+
+    // Reduced motion: it is simply there.
+    zeus.set_reduced_motion(true)
+    sel.set(0)
+    zeus.pump_frame()
+    must(zeus.proof_anim_live() == 0, "reduced: no track")
+    must(zeus.indicator_x(tray) == from, "reduced: jumped")
+    zeus.set_reduced_motion(false)
+
     fmt.println("tabs indicator ok")
 }

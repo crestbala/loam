@@ -2217,11 +2217,11 @@ fn exit_start(id: int, hide: int, save: []int) {
         track.free_nodes_effects(ids)
     }
     let ms = nodes.anim[id].exit_ms
-    anim_opacity(id, 0, ms, 1)
+    anim_opacity(id, 0, ms, ease_exit())
     if fx == 2 {
-        anim_translate_y(id, nodes.anim[id].exit_arg, ms, 1)
+        anim_translate_y(id, nodes.anim[id].exit_arg, ms, ease_exit())
     } else if fx == 3 {
-        anim_scale(id, nodes.anim[id].exit_arg, ms, 1)
+        anim_scale(id, nodes.anim[id].exit_arg, ms, ease_exit())
     }
     push(exit_nodes, id)
     push(exit_until, now_ms + ms)
@@ -2239,7 +2239,8 @@ fn exit_snapshot(id: int) -> []int {
         i32(nodes.pin[id].pos), nodes.pin[id].pin_l, nodes.pin[id].pin_t, nodes.pin[id].pin_r,
         nodes.pin[id].pin_b,
         nodes.lay[id].explicit_width, nodes.lay[id].explicit_height,
-        int(nodes.look[id].opacity), int(nodes.anim[id].an_scale), int(nodes.anim[id].an_ty),
+        int(nodes.look[id].opacity), int(nodes.anim[id].an_scale) / prop_unit(APROP.ScalePct),
+        int(nodes.anim[id].an_ty) / prop_unit(APROP.XlateY),
     }
 }
 
@@ -2915,6 +2916,9 @@ enum APROP {
     RadiusPx = 12,
     // Reveal share 0..100 (anim.an_reveal).
     RevealAmt = 13,
+    // Selection indicator offset and width, in 1/16 dp.
+    IndX = 14,
+    IndW = 15,
 }
 
 let TRACK_CAP = 512
@@ -2929,6 +2933,11 @@ struct Track {
     dur: int,
     easing: int,
     state: int,
+    /// Spring state, used when `easing` names a spring (`spring_of`): position
+    /// and velocity in 1/256 of the track's unit, per second for the velocity.
+    /// Kept apart from `current_value` so a retarget inherits the speed.
+    pos: int,
+    vel: int,
 }
 
 let mut tracks: []Track = []Track {}
@@ -2977,6 +2986,8 @@ fn anim_ensure() {
             dur: 0,
             easing: 0,
             state: 0,
+            pos: 0,
+            vel: 0,
         })
     }
     let mut i = 0
@@ -2986,6 +2997,14 @@ fn anim_ensure() {
     }
 }
 
+// `enter_fx` flags: the motion a surface adds to its fade. Values of the
+// `Enter` enum divided by 4 (Fade and Reveal have their own fields).
+/// `anim.tween` before a switch's first observation.
+const TWEEN_UNSET: int = -1
+const ENTER_POP: int = 1
+const ENTER_RISE: int = 2
+const ENTER_DROP: int = 4
+
 // Easing codes, kept in step with `zeus.EASE`. arena cannot import zeus (the
 // dependency runs the other way), so the values are repeated here as the
 // numbers the shaper matches on.
@@ -2993,10 +3012,83 @@ fn ease_linear() -> int { return 0 }
 fn ease_standard() -> int { return 1 }
 fn ease_emphasized() -> int { return 2 }
 fn ease_spring() -> int { return 3 }
+// The physical springs and the exit curve, in step with `zeus.EASE`.
+fn ease_snap() -> int { return 4 }
+fn ease_pop() -> int { return 5 }
+fn ease_bounce() -> int { return 6 }
+fn ease_glide() -> int { return 7 }
+fn ease_exit() -> int { return 8 }
 // Durations in ms, in step with `zeus.Motion`.
 fn motion_fast() -> int { return 100 }
 fn motion_base() -> int { return 170 }
 fn motion_slow() -> int { return 270 }
+
+/// `Style.transition` value naming an easing instead of a time: this plus an
+/// `EASE` code (`Motion.Pop`, ...).
+const MOTION_EASED: int = 100000
+/// The time a `Motion.Fall` exit takes: the scrim's own exit, so a sheet
+/// leaving on it is still painted when it lands.
+const FALL_MS: int = 170
+
+/// How long a surface takes to go: shorter than it took to arrive, because
+/// what leaves has already been read.
+const ENTER_FADE_MS: int = 120
+const EXIT_FADE_MS: int = 130
+/// The scrim outlasts the panel it hosts: paint stops at a hidden scrim, so a
+/// shorter fade would cut the panel's exit off.
+const SCRIM_FADE_MS: int = 170
+/// Where a `Enter.Pop` surface starts and leaves from (percent).
+const POP_FROM: int = 96
+const POP_TO: int = 98
+/// How far `Enter.Rise` / `Enter.Drop` travel on the way in, and on the way out.
+const RISE_DP: int = 12
+const SINK_DP: int = 6
+
+// Spring constants for unit mass: stiffness in 1/s², damping in 1/s. A
+// spring has no duration: it stops when it has stopped, and `dur` is ignored.
+fn spring_k(easing: int) -> int {
+    if easing == ease_snap() { return 900 }
+    if easing == ease_pop() { return 520 }
+    if easing == ease_bounce() { return 600 }
+    return 380
+}
+fn spring_c(easing: int) -> int {
+    if easing == ease_snap() { return 54 }
+    if easing == ease_pop() { return 30 }
+    if easing == ease_bounce() { return 26 }
+    return 34
+}
+fn is_spring(easing: int) -> bool {
+    return easing >= ease_snap() && easing <= ease_glide()
+}
+
+/// Integration step in ms. Small against the stiffest spring (k 900, period
+/// about 200 ms), and whole frames of 60 and 120 Hz divide it evenly.
+const SPRING_STEP: int = 4
+/// At rest, in 1/256 of a track's unit: closer than the eye can tell (half a
+/// percent or degree, 1/8 dp, 0.1% of a scale), and all but stopped.
+fn spring_near(prop: int) -> int {
+    if prop == APROP.ScalePct {
+        return 256
+    }
+    if prop == APROP.XlateX || prop == APROP.XlateY || prop == APROP.IndX || prop == APROP.IndW {
+        return 512
+    }
+    return 128
+}
+const SPRING_SLOW: int = 16
+
+/// Sub-units a track runs in, for paint values that would stair-step in
+/// whole units: a percent of a 440dp panel is more than 4dp a step.
+fn prop_unit(prop: int) -> int {
+    if prop == APROP.ScalePct {
+        return 10
+    }
+    if prop == APROP.XlateX || prop == APROP.XlateY || prop == APROP.IndX || prop == APROP.IndW {
+        return 16
+    }
+    return 1
+}
 
 /// Cubic Bézier component at parameter `u` (0..1000): P0 = 0, P3 = 1000,
 /// P1 = `c1`, P2 = `c2` (all permille; `c1`/`c2` may exceed 1000 for Spring).
@@ -3029,9 +3121,33 @@ fn bezier_at(t: int, x1: int, y1: int, x2: int, y2: int) -> int {
     return bezier_comp(hi, y1, y2)
 }
 
+/// One integration step of `dt` ms (semi-implicit Euler, stable at these
+/// stiffnesses). i64: k × 1000dp in 1/256 overflows i32.
+fn spring_accel(easing: int, x: int, v: int, to: int) -> i64 {
+    let k = i64(spring_k(easing))
+    let c = i64(spring_c(easing))
+    return (i64(to) - i64(x)) * k - i64(v) * c
+}
+
+/// A spring's response at permille `t` of a nominal 500 ms, for `anim_ease`
+/// callers that drive a value themselves. Tracks integrate directly.
+fn spring_shape(easing: int, t: int) -> int {
+    let mut x = 0
+    let mut v = 0
+    let goal = 256000
+    let steps = t * 500 / 1000 / SPRING_STEP
+    let mut i = 0
+    while i < steps {
+        v = v + i32(spring_accel(easing, x, v, goal) * i64(SPRING_STEP) / i64(1000))
+        x = x + v * SPRING_STEP / 1000
+        i = i + 1
+    }
+    return x / 256
+}
+
 /// Shape a linear 0..1000 progress into an eased 0..1000 (Spring may overshoot
-/// mid-curve; the settled frame is always 1000). The four `EASE` tokens are
-/// CSS cubic-béziers of the named curves they stood for as polynomials.
+/// mid-curve; the settled frame is always 1000). The first four `EASE` tokens
+/// are CSS cubic-béziers of the named curves they stood for as polynomials.
 fn anim_ease(easing: int, t: int) -> int {
     if t <= 0 {
         return 0
@@ -3041,6 +3157,13 @@ fn anim_ease(easing: int, t: int) -> int {
     }
     if easing == ease_linear() {
         return t
+    }
+    if easing == ease_exit() {
+        // cubic-bezier(0.40, 0.00, 1.00, 0.60) — ease-in: it speeds up as it goes
+        return bezier_at(t, 400, 0, 1000, 600)
+    }
+    if is_spring(easing) {
+        return spring_shape(easing, t)
     }
     if easing == ease_emphasized() {
         // cubic-bezier(0.23, 1.00, 0.32, 1.00) — ease-out quint
@@ -3164,7 +3287,7 @@ fn anim_read(node: int, prop: int) -> int {
         return int(nodes.anim[node].press_amt)
     }
     if prop == APROP.SwitchTween {
-        if nodes.anim[node].tween < 0 {
+        if nodes.anim[node].tween == TWEEN_UNSET {
             return 0
         }
         return nodes.anim[node].tween
@@ -3199,6 +3322,12 @@ fn anim_read(node: int, prop: int) -> int {
     if prop == APROP.RevealAmt {
         return int(nodes.anim[node].an_reveal)
     }
+    if prop == APROP.IndX {
+        return nodes.anim[node].ind_x
+    }
+    if prop == APROP.IndW {
+        return nodes.anim[node].ind_w
+    }
     return 0
 }
 
@@ -3209,7 +3338,8 @@ fn anim_store(node: int, prop: int, v: int) {
     } else if prop == APROP.PressAmt {
         nodes.anim[node].press_amt = u8(anim_clamp100(v))
     } else if prop == APROP.SwitchTween {
-        nodes.anim[node].tween = v
+        // A spring dips below 0 on the way back; -1 stays the "unset" mark.
+        nodes.anim[node].tween = if v == TWEEN_UNSET { 0 } else { v }
     } else if prop == APROP.EnterFade {
         nodes.anim[node].show_amt = u8(anim_clamp100(v))
     } else if prop == APROP.SigVal {
@@ -3225,18 +3355,19 @@ fn anim_store(node: int, prop: int, v: int) {
             }
         }
     } else if prop == APROP.ScalePct {
+        // Permille. A track passes through here at sub-unit precision.
         let mut s = v
         if s < 1 {
             s = 1
         }
-        if s > 1000 {
-            s = 1000
+        if s > 10000 {
+            s = 10000
         }
         nodes.anim[node].an_scale = u16(s)
     } else if prop == APROP.XlateX {
-        nodes.anim[node].an_tx = i16(v)
+        nodes.anim[node].an_tx = v
     } else if prop == APROP.XlateY {
-        nodes.anim[node].an_ty = i16(v)
+        nodes.anim[node].an_ty = v
     } else if prop == APROP.RotDeg {
         let mut r = v % 360
         if r < 0 {
@@ -3253,6 +3384,10 @@ fn anim_store(node: int, prop: int, v: int) {
         nodes.look[node].radius = u16(r)
     } else if prop == APROP.RevealAmt {
         nodes.anim[node].an_reveal = u8(anim_clamp100(v))
+    } else if prop == APROP.IndX {
+        nodes.anim[node].ind_x = v
+    } else if prop == APROP.IndW {
+        nodes.anim[node].ind_w = v
     }
 }
 
@@ -3271,12 +3406,17 @@ fn anim_reduced() -> int {
 /// as the new `from`, so an interrupted transition never pops or restarts.
 /// Before the first frame, and under reduced motion, the final value is written
 /// once instead.
-fn anim_schedule(node: int, prop: int, to: int, dur: int, easing: int) {
+///
+/// A spring retarget keeps its velocity too: reversed mid-flight, the value
+/// carries on, slows and comes back, like anything with mass. `dur` is ignored
+/// for a spring, except that zero still jumps.
+fn anim_schedule(node: int, prop: int, to_units: int, dur: int, easing: int) {
     // An empty ref (an effect's first run, before its element mounts).
     if node <= 0 {
         return
     }
     anim_ensure()
+    let to = to_units * prop_unit(prop)
     let current_value = anim_read(node, prop)
     let i = anim_find(node, prop)
     // Jump instead of animating before the first frame completes (cold boot),
@@ -3311,6 +3451,12 @@ fn anim_schedule(node: int, prop: int, to: int, dur: int, easing: int) {
         if tracks[i].to == to {
             return
         }
+        // A track already on a spring keeps its exact place and speed; anything
+        // else starts the spring from where it was painted, at rest.
+        if !is_spring(tracks[i].easing) || !is_spring(easing) {
+            tracks[i].pos = current_value * 256
+            tracks[i].vel = 0
+        }
         tracks[i].from = current_value
         tracks[i].current_value = current_value
         tracks[i].to = to
@@ -3337,6 +3483,8 @@ fn anim_schedule(node: int, prop: int, to: int, dur: int, easing: int) {
     tracks[slot].dur = dur
     tracks[slot].easing = easing
     tracks[slot].state = 1
+    tracks[slot].pos = current_value * 256
+    tracks[slot].vel = 0
     anim_active = anim_active + 1
     trk_inc(node, prop)
 }
@@ -3354,8 +3502,8 @@ fn anim_translate_y(node: int, to: int, ms: int, easing: int = 1) {
     anim_schedule(node, APROP.XlateY, to, ms, easing)
 }
 
-fn anim_rotate(node: int, to: int, ms: int) {
-    anim_schedule(node, APROP.RotDeg, to, ms, ease_standard())
+fn anim_rotate(node: int, to: int, ms: int, easing: int = 1) {
+    anim_schedule(node, APROP.RotDeg, to, ms, easing)
 }
 
 fn anim_opacity(node: int, to: int, ms: int, easing: int = 1) {
@@ -3564,7 +3712,9 @@ fn anim_tick(delta_ms: int) -> int {
             }
             let e = a.elapsed + delta_ms
             let is_sig = a.prop == APROP.SigVal
-            if e >= dur {
+            if is_spring(a.easing) {
+                spring_tick(i, a, delta_ms, is_sig)
+            } else if e >= dur {
                 tracks[i].current_value = a.to
                 tracks[i].elapsed = dur
                 tracks[i].state = 0
@@ -3594,6 +3744,57 @@ fn anim_tick(delta_ms: int) -> int {
     }
     in_anim_tick = 0
     return 1
+}
+
+/// Advance spring track `i` by `delta_ms`. `elapsed` carries the part of a
+/// frame too short for a step, so 7 ms and 16 ms frames trace the same curve.
+fn spring_tick(i: int, a: Track, delta_ms: int, is_sig: bool) {
+    let goal = a.to * 256
+    let mut x = a.pos
+    let mut v = a.vel
+    let mut budget = a.elapsed + delta_ms
+    let near = spring_near(a.prop)
+    let mut done = 0
+    while done == 0 && budget >= SPRING_STEP {
+        budget = budget - SPRING_STEP
+        v = v + i32(spring_accel(a.easing, x, v, goal) * i64(SPRING_STEP) / i64(1000))
+        x = x + v * SPRING_STEP / 1000
+        let d = if x > goal { x - goal } else { goal - x }
+        let sp = if v > 0 { v } else { 0 - v }
+        if d < near && sp < near * SPRING_SLOW {
+            done = 1
+        }
+    }
+    if done != 0 {
+        tracks[i].current_value = a.to
+        tracks[i].pos = goal
+        tracks[i].vel = 0
+        tracks[i].state = 0
+        anim_active = anim_active - 1
+        trk_dec(a.node, a.prop)
+        push(track_free, i)
+        anim_store(a.node, a.prop, a.to)
+        if is_sig {
+            layout_anim_advance(a.node, 1000)
+        }
+        return
+    }
+    tracks[i].elapsed = budget
+    tracks[i].pos = x
+    tracks[i].vel = v
+    let cur = if x >= 0 { (x + 128) / 256 } else { 0 - (128 - x) / 256 }
+    tracks[i].current_value = cur
+    anim_store(a.node, a.prop, cur)
+    if is_sig {
+        let span = a.to - a.from
+        let shaped = if span != 0 {
+            i32(i64(cur - a.from) * i64(1000) / i64(span))
+        } else {
+            1000
+        }
+        // Overshoot stays on the paint overlay: a layout prop never over-reaches.
+        layout_anim_advance(a.node, if shaped >= 1000 { 999 } else { shaped })
+    }
 }
 
 /// Drop tracks owned by a batched set of freed nodes (one sweep per subtree).
@@ -3706,6 +3907,96 @@ fn anim_reset() {
     in_anim_tick = 0
 }
 
+/// The child of `id` a selection of `index` lands on, or 0. An `Each` puts its
+/// rows here too, after its hidden marker, so the marker does not count.
+fn ind_target(id: int, index: int) -> int {
+    if index < 0 {
+        return 0
+    }
+    let mut at = 0
+    let n = nodes.tree[id].kids.len
+    for i in 0..n {
+        let c = nodes.tree[id].kids[i]
+        if nodes.tree[c].frag_of != -1 && nodes.tree[c].exiting == 0 {
+            if at == index {
+                return c
+            }
+            at = at + 1
+        }
+    }
+    return 0
+}
+
+/// Point the indicator at the selected child. A new selection travels on a
+/// spring; a resize or a reflow follows at once, because nothing was chosen.
+fn indicator_sync(id: int) {
+    let sel = sig_val(nodes.anim[id].ind_sig)
+    let t = ind_target(id, sel)
+    if t <= 0 || nodes.box[t].w <= 0 {
+        return
+    }
+    let x = nodes.box[t].x - nodes.box[id].x
+    let w = nodes.box[t].w
+    let seen = nodes.anim[id].ind_at
+    let travel = (seen >= 0 && seen != sel) || anim_find(id, APROP.IndX) >= 0
+    nodes.anim[id].ind_at = sel
+    let ms = if travel { motion_fast() } else { 0 }
+    anim_schedule(id, APROP.IndX, x, ms, ease_snap())
+    anim_schedule(id, APROP.IndW, w, ms, ease_snap())
+}
+
+/// A surface with entrance motion is about to appear from nothing: put it
+/// where it starts. Jumped, because it is not on screen yet.
+fn enter_motion_begin(id: int) {
+    let fx = int(nodes.anim[id].enter_fx)
+    if fx == 0 || anim_reduced() != 0 {
+        return
+    }
+    if (fx & ENTER_POP) != 0 {
+        anim_schedule(id, APROP.ScalePct, POP_FROM, 0, 0)
+    }
+    if (fx & ENTER_RISE) != 0 {
+        anim_schedule(id, APROP.XlateY, RISE_DP, 0, 0)
+    }
+    if (fx & ENTER_DROP) != 0 {
+        anim_schedule(id, APROP.XlateY, 0 - RISE_DP, 0, 0)
+    }
+}
+
+/// Spring to rest. From a closing surface this reverses with whatever speed
+/// it had.
+fn enter_motion_settle(id: int) {
+    let fx = int(nodes.anim[id].enter_fx)
+    if fx == 0 {
+        return
+    }
+    if (fx & ENTER_POP) != 0 {
+        anim_schedule(id, APROP.ScalePct, 100, motion_base(), ease_pop())
+    }
+    if (fx & (ENTER_RISE | ENTER_DROP)) != 0 {
+        anim_schedule(id, APROP.XlateY, 0, motion_base(), ease_pop())
+    }
+}
+
+/// Fall away while the fade runs, speeding up. A short way: it is already
+/// going, and the eye has moved on.
+fn enter_motion_leave(id: int) {
+    let fx = int(nodes.anim[id].enter_fx)
+    // A surface that never came, or is already gone, has nowhere to leave from.
+    if fx == 0 || int(nodes.anim[id].show_amt) == 0 {
+        return
+    }
+    if (fx & ENTER_POP) != 0 {
+        anim_schedule(id, APROP.ScalePct, POP_TO, EXIT_FADE_MS, ease_exit())
+    }
+    if (fx & ENTER_RISE) != 0 {
+        anim_schedule(id, APROP.XlateY, SINK_DP, EXIT_FADE_MS, ease_exit())
+    }
+    if (fx & ENTER_DROP) != 0 {
+        anim_schedule(id, APROP.XlateY, 0 - SINK_DP, EXIT_FADE_MS, ease_exit())
+    }
+}
+
 // Reused across passes so a full chrome pass writes into a buffer that keeps
 // its capacity instead of allocating an id vector every frame.
 let mut chrome_scan: []int = []int {}
@@ -3760,21 +4051,35 @@ fn sync_chrome_scan() {
             if ptr_in(i) != 0 {
                 over = 100
             }
-            anim_schedule(i, APROP.HoverAmt, over, motion_fast(), ease_standard())
+            // Arrives at once, lingers on the way out: a surface warms under
+            // the pointer and cools after it.
+            anim_schedule(
+                i,
+                APROP.HoverAmt,
+                over,
+                if over != 0 { motion_fast() } else { motion_slow() },
+                ease_standard(),
+            )
         }
         if int(nodes.anim[i].press) != 0 {
             let mut target_value = 0
             if down_id == i {
                 target_value = 100
             }
-            anim_schedule(i, APROP.PressAmt, target_value, motion_fast(), ease_standard())
+            anim_schedule(
+                i,
+                APROP.PressAmt,
+                target_value,
+                if target_value != 0 { motion_fast() } else { motion_base() },
+                ease_standard(),
+            )
             if int(nodes.anim[i].press_scale) != 0 {
-                // Opt-in only. Down and release share one short standard
-                // curve, so a press never overshoots.
+                // Opt-in only. Feedback, not a flourish: down and back on one
+                // firm spring, with no rebound.
                 if down_id == i {
-                    anim_schedule(i, APROP.ScalePct, PRESS_SCALE, motion_fast(), ease_standard())
+                    anim_schedule(i, APROP.ScalePct, PRESS_SCALE, motion_fast(), ease_snap())
                 } else {
-                    anim_schedule(i, APROP.ScalePct, 100, motion_fast(), ease_standard())
+                    anim_schedule(i, APROP.ScalePct, 100, motion_fast(), ease_snap())
                 }
             }
         }
@@ -3784,10 +4089,10 @@ fn sync_chrome_scan() {
             if bind_pct(i) > 0 {
                 target_value = 100
             }
-            if nodes.anim[i].tween < 0 {
+            if nodes.anim[i].tween == TWEEN_UNSET {
                 nodes.anim[i].tween = target_value
             } else {
-                anim_schedule(i, APROP.SwitchTween, target_value, motion_fast(), ease_standard())
+                anim_schedule(i, APROP.SwitchTween, target_value, motion_fast(), ease_snap())
             }
         }
         if k == 8 {
@@ -3800,6 +4105,9 @@ fn sync_chrome_scan() {
             } else {
                 anim_schedule(i, APROP.SwitchTween, target_value, motion_fast(), ease_standard())
             }
+        }
+        if int(nodes.anim[i].ind_kind) != 0 {
+            indicator_sync(i)
         }
         if int(nodes.anim[i].enter_fade) != 0 {
             // Shown means shown on screen: a Dialog panel is hidden by its
@@ -3816,14 +4124,33 @@ fn sync_chrome_scan() {
                 }
                 nodes.anim[i].enter_fade = u8(2)
             } else if w != 0 {
-                anim_schedule(i, APROP.EnterFade, 100, motion_fast(), ease_standard())
+                let scrim = int(nodes.tree[i].kind) == 9
+                if int(nodes.anim[i].show_amt) == 0 {
+                    enter_motion_begin(i)
+                }
+                enter_motion_settle(i)
+                anim_schedule(
+                    i,
+                    APROP.EnterFade,
+                    100,
+                    if scrim { SCRIM_FADE_MS } else { ENTER_FADE_MS },
+                    ease_standard(),
+                )
             } else if nodes.is_floater(i) != 0 || want_show(i) != 0 {
                 // Exit: fade out. Paint keeps the node while `show_amt` > 0
                 // (`want_paint`); the tree predicates already say hidden, so it
                 // is inert. An in-flow node hidden by its *own* signal snaps
                 // instead: layout collapsed it this frame, and a fade painted
                 // over the neighbour that moved into its rect would look wrong.
-                anim_schedule(i, APROP.EnterFade, 0, motion_fast(), ease_standard())
+                let scrim = int(nodes.tree[i].kind) == 9
+                enter_motion_leave(i)
+                anim_schedule(
+                    i,
+                    APROP.EnterFade,
+                    0,
+                    if scrim { SCRIM_FADE_MS } else { EXIT_FADE_MS },
+                    ease_exit(),
+                )
             } else {
                 nodes.anim[i].show_amt = u8(0)
             }
@@ -3842,7 +4169,7 @@ fn sync_chrome_scan() {
                 }
                 nodes.anim[i].reveal = u8(2)
             } else if w != 0 {
-                anim_schedule(i, APROP.RevealAmt, 100, motion_fast(), ease_standard())
+                anim_schedule(i, APROP.RevealAmt, 100, motion_fast(), ease_glide())
             } else {
                 nodes.anim[i].an_reveal = u8(0)
             }
@@ -3976,23 +4303,25 @@ fn damage_node_pad(id: int) -> int {
     if e > 0 {
         p = p + elev_reach(elev_now(e))
     }
+    // Sub-dp units; rounded out, and one more for the part of a dp painted.
     let tx = int(nodes.anim[id].an_tx)
     let ty = int(nodes.anim[id].an_ty)
     if tx < 0 {
-        p = p - tx
+        p = p + (15 - tx) / 16
     } else {
-        p = p + tx
+        p = p + (tx + 15) / 16
     }
     if ty < 0 {
-        p = p - ty
+        p = p + (15 - ty) / 16
     } else {
-        p = p + ty
+        p = p + (ty + 15) / 16
     }
-    // A scale above 100% grows the box from its center, half the growth a side.
+    // A scale above 100% grows the box. Measured whole, because the origin
+    // may sit on an edge rather than at the centre.
     let sc = int(nodes.anim[id].an_scale)
-    if sc > 100 {
-        let gx = nodes.box[id].w * (sc - 100) / 200
-        let gy = nodes.box[id].h * (sc - 100) / 200
+    if sc > 1000 {
+        let gx = nodes.box[id].w * (sc - 1000) / 1000 + 1
+        let gy = nodes.box[id].h * (sc - 1000) / 1000 + 1
         if gx > p {
             p = gx
         }
@@ -4152,7 +4481,7 @@ fn anim_paint_from(signal_id: int, from: int, ms: int) {
     }
     sig_paint[signal_id] = f
     sig_anim[signal_id] = 1
-    anim_schedule(signal_id, APROP.SigVal, to, ms, ease_standard())
+    anim_schedule(signal_id, APROP.SigVal, to, ms, ease_glide())
 }
 
 fn spin_live() -> int {
@@ -5454,7 +5783,7 @@ fn hover_rgb() -> int {
 }
 
 /// Scale a pressed `press_scale` node settles at (percent).
-const PRESS_SCALE: int = 96
+const PRESS_SCALE: int = 97
 
 /// 1 when the shared overlay says the node takes no activation: disabled or
 /// loading. Pointer clicks and Enter / Space consult this, so a component
@@ -5545,7 +5874,12 @@ fn ptr_in(id: int) -> int {
             return 0
         }
     }
-    return ptr_in_box(id)
+    // A row of a closed menu keeps the box it last laid out in. Under a hidden
+    // ancestor it is not there to hover: its `on_hover` reopened the menu.
+    if ptr_in_box(id) == 0 {
+        return 0
+    }
+    return shown_in_tree(id)
 }
 
 /// 1 when the pointer is inside `id`'s box and inside every clip above it
@@ -5700,6 +6034,36 @@ fn paint_alpha(id: int) -> int {
         a = 100
     }
     return a * 255 / 100
+}
+
+/// `an_scale` at rest (permille).
+const SCALE_ONE: int = 1000
+let mut origin_x: int = 0
+let mut origin_y: int = 0
+
+/// Where `id` scales and rotates about, in `origin_x` / `origin_y`: its centre,
+/// or for a panel anchored to a trigger the edge facing it, level with the
+/// trigger, so it grows out of what opened it. Read from the boxes, so a
+/// panel that flipped to fit grows the right way.
+fn paint_origin(id: int) {
+    let w = nodes.box[id].w
+    let h = nodes.box[id].h
+    let x = draw_x(id)
+    let y = draw_y(id)
+    origin_x = x + w / 2
+    origin_y = y + h / 2
+    let a = nodes.pin[id].anchor
+    if a <= 0 || a >= nodes.tree.len {
+        return
+    }
+    let ax = nodes.box[a].x + nodes.box[a].w / 2 - paint_sx
+    let ay = nodes.box[a].y + nodes.box[a].h / 2 - paint_sy
+    origin_x = geometry.min2(geometry.max2(ax, x), x + w)
+    if ay < y {
+        origin_y = y
+    } else if ay > y + h {
+        origin_y = y + h
+    }
 }
 
 fn draw_x(id: int) -> int {

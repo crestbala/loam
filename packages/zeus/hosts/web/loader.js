@@ -10,6 +10,9 @@
      The guards match `zeus_replay` in zeus_plat.c. Returns the op count, or -1
      for a version this decoder does not know. */
   const FRAME_VERSION = 1;
+  /* On a Mac, ctrl-click is the secondary click. */
+  const MAC_CTRL_CLICK =
+    typeof navigator !== "undefined" && /Mac/.test(navigator.platform || navigator.userAgent);
   const FRAME_STRIDE = 11;
   const utf8 = new TextDecoder();
   function decodeFrame(buffer, head, paint) {
@@ -683,9 +686,10 @@
          from its box) and swung the rotation about a pivot that no longer
          coincided with the node's centre (so it "rotates differently").
          Translate in user space and let the CTM do the device mapping. */
-      ctx.translate(ox + dx, oy + dy);
+      /* `dx`, `dy` are 1/16 dp and `scale` permille. */
+      ctx.translate(ox + dx / 16, oy + dy / 16);
       if (rot) ctx.rotate((rot * Math.PI) / 180);
-      if (scale !== 100) ctx.scale(scale / 100, scale / 100);
+      if (scale !== 1000) ctx.scale(scale / 1000, scale / 1000);
       ctx.translate(-ox, -oy);
     },
     text: (x, y, s, color, font) => {
@@ -2259,6 +2263,10 @@
                 }
               }
             } else {
+              /* Only the primary button presses. A right-click (or a Mac's
+                 ctrl-click, which is one) is `contextmenu`'s, and pressing as
+                 well would fire the control under it. */
+              if (e.button !== 0 || (e.ctrlKey && MAC_CTRL_CLICK)) return;
               const p = layoutPoint(e.clientX, e.clientY);
               exp.zeus_pointer_down(p.x, p.y);
             }

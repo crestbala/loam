@@ -1433,6 +1433,35 @@ fn exit_scale(node: Node, to: int = 95, ms: int = 160) -> Node {
     return node
 }
 
+/// Mark the child picked by `selected` (its index among `node`'s children) with
+/// one indicator that travels between them: a pill in `color` behind it, or
+/// with `line` a 2dp rule along its foot. `node`'s `color` is the indicator's.
+/// Paint-only: choosing never runs layout, and the children stay plain.
+fn slide_indicator(node: Node, selected: Signal<int>, line: bool = false) -> Node {
+    nodes.anim[node.id].ind_kind = if line { u8(2) } else { u8(1) }
+    nodes.anim[node.id].ind_sig = selected.id
+    node_effect(node, || {
+        selected.get()
+        arena.mark_chrome()
+    })
+    return node
+}
+
+/// Where a `slide_indicator` paints right now, from `node`'s left edge (dp).
+fn indicator_x(node: Node) -> int {
+    return nodes.anim[node.id].ind_x / 16
+}
+fn indicator_w(node: Node) -> int {
+    return nodes.anim[node.id].ind_w / 16
+}
+
+/// Entrance motion added to a fade (`arena.ENTER_*` flags): it plays on each
+/// show, and runs back on each hide.
+fn enter_motion(node: Node, fx: int) -> Node {
+    nodes.anim[node.id].enter_fx = u8(fx)
+    return node
+}
+
 fn enter_fade(node: Node) -> Node {
     nodes.anim[node.id].enter_fade = 1
     arena.mark_chrome()
@@ -1514,7 +1543,8 @@ fn state_selected(node: Node) -> bool {
 // written into paint state only — no layout pass reads them, so an animation
 // never re-runs a component or a signal effect. Retargeting keeps the current
 // value as the new `from`. `ease` is an `EASE` curve (`EASE.Standard` when
-// omitted). `EASE.Spring` overshoots; the component library does not use it.
+// omitted) or spring (`EASE.Pop`, ...; a spring keeps its velocity through a
+// retarget too, and ignores `ms`).
 
 /// Animate `node`'s scale to `to` percent (100 = identity) over `ms`.
 fn animate_scale(node: Node, to: int, ms: int, ease: int = 1) -> Node {
@@ -1535,8 +1565,8 @@ fn animate_y(node: Node, to: int, ms: int, ease: int = 1) -> Node {
 }
 
 /// Animate a clockwise rotation in degrees about the node's centre.
-fn animate_rotate(node: Node, to: int, ms: int) -> Node {
-    arena.anim_rotate(node.id, to, ms)
+fn animate_rotate(node: Node, to: int, ms: int, ease: int = 1) -> Node {
+    arena.anim_rotate(node.id, to, ms, ease)
     return node
 }
 
@@ -1563,13 +1593,13 @@ fn spin(node: Node, period: int) -> Node {
 /// Current animated paint values (tests / the inspector). Layout never reads
 /// these, so reading one cannot cause a layout change.
 fn motion_scale(node: Node) -> int {
-    return int(nodes.anim[node.id].an_scale)
+    return (int(nodes.anim[node.id].an_scale) + 5) / 10
 }
 fn motion_x(node: Node) -> int {
-    return int(nodes.anim[node.id].an_tx)
+    return int(nodes.anim[node.id].an_tx) / 16
 }
 fn motion_y(node: Node) -> int {
-    return int(nodes.anim[node.id].an_ty)
+    return int(nodes.anim[node.id].an_ty) / 16
 }
 fn motion_rot(node: Node) -> int {
     return int(nodes.anim[node.id].an_rot)
@@ -2408,7 +2438,7 @@ struct BoxProps {
     lift: int = -1,
     press: bool = false,
     /// Entrance motion when the element appears: `Enter.Fade`,
-    /// `Enter.Fade + Enter.Reveal`.
+    /// `Enter.Fade + Enter.Reveal`, `Enter.Fade + Enter.Pop + Enter.Rise`.
     enter: int = 0,
     /// Shown while true; the subtree is kept, and `enter` motion plays on
     /// each show. A thunk, so `visible = open.get()` follows `open`.
@@ -2623,11 +2653,19 @@ fn on_mount(body: fn()) {
 }
 
 /// Entrance motion for the `enter` prop.
-/// Flags; add them: `enter = Enter.Fade + Enter.Reveal`.
+/// Flags; add them: `enter = Enter.Fade + Enter.Reveal`. `Pop`, `Rise` and
+/// `Drop` go with `Fade`: the surface springs into place, and falls away when
+/// it hides. Scale grows from the anchored trigger, if there is one.
 enum Enter {
     None = 0,
     Fade = 1,
     Reveal = 2,
+    // Grow from just under full size, a little past it, and back.
+    Pop = 4,
+    // Come up from below.
+    Rise = 8,
+    // Come down from above.
+    Drop = 16,
 }
 
 /// The empty `Signal<int>`: the placeholder of optional signal props.
@@ -2880,6 +2918,9 @@ fn install_behaviour(node: Node, p: BoxProps) {
     if (p.enter / 2) % 2 == 1 {
         enter_reveal(node)
     }
+    if p.enter >= Enter.Pop {
+        enter_motion(node, p.enter / Enter.Pop)
+    }
     if result.is_some(p.label) {
         let l = p.label.val
         node_effect(node, || { apply_str(node_id, SET.A11yLabel, l()) })
@@ -2961,7 +3002,22 @@ struct Rect {
     h: int = 0,
 }
 
-/// `r`'s box from the last layout (all zero before the first).
+/// `r`'s box where it is on screen: `rect` less the scroll above it. The space
+/// `current_mouse()` is in, so a pointer position can be made relative to `r`.
+fn screen_rect(r: Ref) -> Rect {
+    let id = ref_id(r)
+    if id <= 0 {
+        return Rect {}
+    }
+    let sy = arena.screen_scroll_of(id)
+    return Rect {
+        x: nodes.box[id].x - arena.scroll_sx, y: nodes.box[id].y - sy,
+        w: nodes.box[id].w, h: nodes.box[id].h
+    }
+}
+
+/// `r`'s box from the last layout (all zero before the first), in layout space:
+/// a scroller's offset is not in it (`screen_rect` for that).
 fn rect(r: Ref) -> Rect {
     let id = ref_id(r)
     if id <= 0 {
@@ -3388,6 +3444,7 @@ fn style_apply(id: int, a: Style, b: Style) {
     st_motion(id, APROP_ROTATE, a.rotate, b.rotate, ms)
     st_motion(id, APROP_SHIFT_X, a.shiftX, b.shiftX, ms)
     st_motion(id, APROP_SHIFT_Y, a.shiftY, b.shiftY, ms)
+    st_motion(id, APROP_SCALE, a.scale, b.scale, ms)
     // An image keeps its fit in the font slot.
     if kind != 14 {
         st_int(id, SET.Font, a.font, b.font)
@@ -3402,6 +3459,7 @@ const APROP_OPACITY: int = 0
 const APROP_ROTATE: int = 1
 const APROP_SHIFT_X: int = 2
 const APROP_SHIFT_Y: int = 3
+const APROP_SCALE: int = 4
 
 /// Ease a paint track to `b` over `ms`. The first value (no `a`) lands at
 /// once, so an element never animates in from the track's default.
@@ -3412,15 +3470,21 @@ fn st_motion(id: int, track: int, a: Option<int>, b: Option<int>, ms: int) {
     if result.is_some(a) && a.val == b.val {
         return
     }
-    let dur = if result.is_some(a) { ms } else { 0 }
+    // `Motion.Pop` and its kind name an easing; a plain number is a time.
+    let named = ms >= arena.MOTION_EASED
+    let ease = if named { ms - arena.MOTION_EASED } else { EASE.Standard }
+    let time = if named { arena.FALL_MS } else { ms }
+    let dur = if result.is_some(a) { time } else { 0 }
     if track == APROP_OPACITY {
-        arena.anim_opacity(id, b.val, dur)
+        arena.anim_opacity(id, b.val, dur, ease)
     } else if track == APROP_ROTATE {
-        arena.anim_rotate(id, b.val, dur)
+        arena.anim_rotate(id, b.val, dur, ease)
     } else if track == APROP_SHIFT_X {
-        arena.anim_translate_x(id, b.val, dur)
+        arena.anim_translate_x(id, b.val, dur, ease)
+    } else if track == APROP_SCALE {
+        arena.anim_scale(id, b.val, dur, ease)
     } else {
-        arena.anim_translate_y(id, b.val, dur)
+        arena.anim_translate_y(id, b.val, dur, ease)
     }
 }
 
@@ -3945,15 +4009,24 @@ fn elev_now(level: int) -> Elev {
 }
 
 // --- motion ---------------------------------------------------------------
-/// Transition durations in milliseconds. Anything that moves uses one of
-/// these three; a bespoke duration is a bug, not a refinement.
+/// What `Style.transition` can name. The times are for what only changes
+/// (colour, opacity); what moves uses a spring, which has mass instead of a
+/// duration, and what leaves uses `Fall`. A bespoke value is a bug, not a
+/// refinement.
 enum Motion {
-    // Hover, press, fades, reveals, switches, and short slides.
+    // Fades and hover.
     Fast = 100,
-    // Value changes and sliding indicators.
+    // Slower fades.
     Base = 170,
-    // A long duration, kept for callers. The component library does not use it.
+    // The tail of a hover or a highlight as it cools.
     Slow = 270,
+    // The springs, `arena.MOTION_EASED` + the `EASE` code.
+    Snap = 100004,
+    Pop = 100005,
+    Bounce = 100006,
+    Glide = 100007,
+    // Speeds up as it goes: something leaving (170 ms).
+    Fall = 100008,
 }
 
 /// Easing curves. Integer ids — the curve itself lives in the animation
@@ -3965,12 +4038,26 @@ enum EASE {
     // The workhorse: fast out, slow in. cubic-bezier(0.215, 0.61, 0.355, 1)
     // (ease-out cubic). Everything unspecified uses it.
     Standard = 1,
-    // More pronounced deceleration. Available; components use Standard.
+    // More pronounced deceleration.
     // cubic-bezier(0.23, 1, 0.32, 1) (ease-out quint).
     Emphasized = 2,
-    // Overshoots and settles. Available; components do not use it.
+    // A curve shaped like an overshoot, for a fixed time. To move something,
+    // prefer a real spring below.
     // cubic-bezier(0.34, 1.56, 0.64, 1) (ease-out-back).
     Spring = 3,
+    // Physical springs: mass, stiffness and damping, not a duration. They run
+    // until they stop, and an interrupted one keeps its speed.
+    // Firm and quick, no visible overshoot: presses, small controls.
+    Snap = 4,
+    // Settles with a barely-there overshoot: surfaces appearing.
+    Pop = 5,
+    // A lively overshoot. For apps; the component library stays calm.
+    Bounce = 6,
+    // Long and heavy, barely overshoots: sheets, pages, values.
+    Glide = 7,
+    // Not a spring: it speeds up as it goes, for what is leaving.
+    // cubic-bezier(0.4, 0, 1, 0.6).
+    Exit = 8,
 }
 
 /// Line box for `font` px at a `LEAD_*` percentage.

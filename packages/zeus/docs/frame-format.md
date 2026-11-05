@@ -73,7 +73,7 @@ names its own `[start, start + len)`.
 | 12 | shadow | x y w h radius rgb alpha, font = blur, value = dx + 128 + 256 × (dy + 128) | skip when alpha, w or h ≤ 0 |
 | 13 | stroke | x y w h rgb radius alpha, font = width | drawn inside the rect; skip when width, w or h ≤ 0 |
 | 14 | fill4 | x y w h rgb alpha, radius = tl + 65536 × tr, value = br + 65536 × bl | per-corner radii |
-| 15 | xform | x y = translate, radius = scale %, font = degrees, w h = origin | applies to the current save level |
+| 15 | xform | x y = translate in 1/16 dp, radius = scale permille (1000 = none), font = degrees, w h = origin | applies to the current save level |
 | 16 | path fill | rgb alpha, value = start, w = length | non-zero winding |
 | 17 | path stroke | as 16, font = width (1/64 pt), radius = cap + 4 × join | caps 0 butt / 1 round / 2 square; joins 0 miter / 1 round / 2 bevel; skip when width ≤ 0 |
 | 18 | alpha | alpha | save, then multiply opacity; closed by a `restore` |

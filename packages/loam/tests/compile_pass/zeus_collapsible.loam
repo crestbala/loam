@@ -51,7 +51,7 @@ fn main() {
     let c0 = zeus.proof_components()
     let e0 = zeus.proof_effects()
     let mut i = 0
-    while i < 24 {
+    while i < 40 {
         zeus.engine_layout(360, 260)
         zeus.engine_step_dt(16)
         zeus.engine_paint()
