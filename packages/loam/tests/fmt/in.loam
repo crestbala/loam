@@ -90,3 +90,9 @@ let x = 3
 return x
 }
 }
+
+// A `let` tuple spaces like a call, and keeps a comma it was written with.
+fn pair() {
+let  (mut a,b ) : ( i32,f64 )=(1,2.0)
+let (c, d,) = (1, 2,)
+}
