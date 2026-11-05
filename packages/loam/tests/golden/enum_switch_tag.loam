@@ -1,5 +1,4 @@
-// Phase 4: a `switch` whose cases name every variant of an enum is
-// exhaustive with no `default`. The payload of a tagged `Result<T>` is still read per-branch.
+// A `switch` over the tag of a `Result<T>`: the payload is read per case.
 
 import "std:fmt"
 import "std:result"

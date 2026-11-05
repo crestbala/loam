@@ -414,6 +414,32 @@ static void join_moved(BSnap *s, int n) {
         if (s[i].own == ST_MOVED) s[i].b->own = ST_MOVED;
 }
 
+/** 1 unless `n` always leaves its block. Conservative: a `panic` call counts
+ *  as continuing, which can only report a move, never hide one. */
+static int stmt_continues(const AstNode *n) {
+    if (!n) return 1;
+    switch (n->kind) {
+        case AST_RETURN:
+        case AST_BREAK:
+        case AST_CONTINUE:
+            return 0;
+        case AST_BLOCK:
+            for (size_t i = 0; i < n->as.block.stmt_count; i++)
+                if (!stmt_continues(n->as.block.stmts[i])) return 0;
+            return 1;
+        case AST_IF:
+            return !n->as.if_stmt.else_block || stmt_continues(n->as.if_stmt.then_block) ||
+                   stmt_continues(n->as.if_stmt.else_block);
+        default:
+            return 1;
+    }
+}
+
+/** 1 if running case `cs` can reach the next case. */
+static int case_falls_through(const AstNode *cs) {
+    return !cs || cs->kind != AST_CASE || stmt_continues(cs->as.switch_case.body);
+}
+
 /** Walk an expression. `as_move` if this use consumes a non-Copy value. */
 static int check_expr(AstNode *n, int as_move) {
     if (!n) return 0;
@@ -708,17 +734,19 @@ static int check_stmt(AstNode *n) {
                 nsn = (int *)calloc(na, sizeof(int));
             }
             for (size_t i = 0; i < na; i++) {
+                /* A case is entered from the dispatch, and by falling out of
+                   the case above: what that one moved is moved here too. */
                 restore(pre, npre);
+                if (i && case_falls_through(n->as.switch_stmt.cases[i - 1]))
+                    join_moved(snaps[i - 1], nsn[i - 1]);
                 AstNode *cs = n->as.switch_stmt.cases[i];
                 if (cs && cs->kind == AST_CASE)
                     rc = check_stmt(cs->as.switch_case.body);
                 if (rc) break;
-                if (snaps) nsn[i] = snapshot(&snaps[i]);
+                nsn[i] = snapshot(&snaps[i]);
             }
-            if (!rc && na > 0) {
-                for (size_t i = 0; i + 1 < na; i++)
-                    if (snaps) join_moved(snaps[i], nsn[i]);
-            }
+            if (!rc)
+                for (size_t i = 0; i < na; i++) join_moved(snaps[i], nsn[i]);
             for (size_t i = 0; i < na; i++)
                 if (snaps) free(snaps[i]);
             free(snaps);

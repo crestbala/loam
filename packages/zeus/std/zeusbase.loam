@@ -1239,9 +1239,11 @@ fn install_key(node: Node, spec: string, action: string, handler_fn: int, is_glo
             // ctx 0 = matches whatever holds focus.
             runtime.map_key(spec, act, 0)
             on_action_global(act, signal_handle(0), 5, handler_fn)
+            break
         default:
             key(node, spec, act)
             on_action(node, act, signal_handle(0), 5, handler_fn)
+            break
     }
     return node
 }
@@ -1821,25 +1823,36 @@ fn apply_int_px(node_id: int, setter: int, v: int) {
     switch setter {
         case SET.Width:
             set_width(n, v)
+            break
         case SET.Height:
             set_height(n, v)
+            break
         case SET.MinWidth:
             set_min_width(n, v)
+            break
         case SET.MaxWidth:
             set_max_width(n, v)
+            break
         case SET.MinHeight:
             set_min_height(n, v)
+            break
         case SET.MaxHeight:
             set_max_height(n, v)
+            break
         case SET.Left:
             nodes.pin[node_id].pin_l = v
+            break
         case SET.Top:
             nodes.pin[node_id].pin_t = v
+            break
         case SET.Right:
             nodes.pin[node_id].pin_r = v
+            break
         case SET.Bottom:
             nodes.pin[node_id].pin_b = v
+            break
         default:
+            break
     }
 }
 
@@ -1912,174 +1925,256 @@ fn apply_int_value(node_id: int, setter: int, v: int) {
     switch setter {
         case SET.Width:
             set_width(n, scaled(v))
+            break
         case SET.Height:
             set_height(n, scaled(v))
+            break
         case SET.Padding:
             set_padding(n, scaled(v))
+            break
         case SET.PaddingX:
             set_padding_x(n, scaled(v))
+            break
         case SET.PaddingY:
             set_padding_y(n, scaled(v))
+            break
         case SET.PaddingTop:
             set_padding_top(n, scaled(v))
+            break
         case SET.PaddingRight:
             set_padding_right(n, scaled(v))
+            break
         case SET.PaddingBottom:
             set_padding_bottom(n, scaled(v))
+            break
         case SET.PaddingLeft:
             set_padding_left(n, scaled(v))
+            break
         case SET.Margin:
             margin(n, scaled(v))
+            break
         case SET.MarginX:
             marginX(n, scaled(v))
+            break
         case SET.MarginY:
             marginY(n, scaled(v))
+            break
         case SET.MarginTop:
             marginTop(n, scaled(v))
+            break
         case SET.MarginRight:
             marginRight(n, scaled(v))
+            break
         case SET.MarginBottom:
             marginBottom(n, scaled(v))
+            break
         case SET.MarginLeft:
             marginLeft(n, scaled(v))
+            break
         case SET.Spacing:
             set_spacing(n, scaled(v))
+            break
         case SET.GapRow:
             set_spacing_row(n, scaled(v))
+            break
         case SET.GapCol:
             set_spacing_col(n, scaled(v))
+            break
         case SET.Radius:
             radius(n, scaled(v))
+            break
         case SET.RadiusTop:
             radius_top(n, scaled(v))
+            break
         case SET.RadiusBottom:
             radius_bottom(n, scaled(v))
+            break
         case SET.Border:
             nodes.lay[node_id].border_w = u16(v)
+            break
         case SET.Grow:
             grow(n, v)
+            break
         case SET.AlignItems:
             align(n, v)
+            break
         case SET.Justify:
             justify(n, v)
+            break
         case SET.Font:
             font(n, scaled(v))
+            break
         case SET.Opacity:
             opacity(n, v)
+            break
         case SET.Direction:
             switch v {
                 case 1:
                     flex_col(n)
+                    break
                 default:
                     flex_row(n)
+                    break
             }
+            break
         case SET.Background:
             set_background(n, v)
+            break
         case SET.Color:
             set_color(n, v)
+            break
         case SET.BorderColor:
             border_color(n, v)
+            break
         case SET.MinWidth:
             set_min_width(n, scaled(v))
+            break
         case SET.MaxWidth:
             set_max_width(n, scaled(v))
+            break
         case SET.MinHeight:
             set_min_height(n, scaled(v))
+            break
         case SET.MaxHeight:
             set_max_height(n, scaled(v))
+            break
         case SET.Wrap:
             switch v {
                 case 0:
+                    break
                 default:
                     flex_wrap(n)
+                    break
             }
+            break
         case SET.Safe:
             switch v {
                 case 0:
                     nodes.pin[node_id].safe = u8(0)
+                    break
                 default:
                     nodes.pin[node_id].safe = u8(1)
+                    break
             }
+            break
         case SET.Position:
             nodes.pin[node_id].pos = u8(v)
+            break
         case SET.Left:
             nodes.pin[node_id].pin_l = scaled(v)
+            break
         case SET.Top:
             nodes.pin[node_id].pin_t = scaled(v)
+            break
         case SET.Right:
             nodes.pin[node_id].pin_r = scaled(v)
+            break
         case SET.Bottom:
             nodes.pin[node_id].pin_b = scaled(v)
+            break
         case SET.ZIndex:
             nodes.pin[node_id].z_index = i16(v)
+            break
         case SET.Shrink:
             shrink(n, v)
+            break
         case SET.ShowOn:
             switch v {
                 case 0, 1:
                     nodes.tree[node_id].show_on = u8(v)
+                    break
                 default:
+                    break
             }
+            break
         case SET.AlignSelf:
             align_self(n, v)
+            break
         case SET.Span:
             span(n, v)
+            break
         case SET.Overflow:
             overflow(n, v)
+            break
         case SET.WidthPct:
             width_pct(n, v)
+            break
         case SET.HeightPct:
             nodes.lay[node_id].explicit_height = -1
             height_pct(n, v)
+            break
         case SET.Ellipsis:
             nodes.look[node_id].ellipsis = u8(v)
+            break
         case SET.CornerTL:
             nodes.set_corner(node_id, 0, scaled(v))
+            break
         case SET.CornerTR:
             nodes.set_corner(node_id, 1, scaled(v))
+            break
         case SET.CornerBR:
             nodes.set_corner(node_id, 2, scaled(v))
+            break
         case SET.CornerBL:
             nodes.set_corner(node_id, 3, scaled(v))
+            break
         case SET.WrapFlag:
             nodes.lay[node_id].wrap = u8(v)
+            break
         case SET.FloatTo:
             // A floating box is out of flow: the solver sizes it as an
             // absolute child, then `place_float` moves it to its target.
             nodes.pin[node_id].fl_to = u8(v)
             nodes.pin[node_id].pos = u8(if v != 0 { 1 } else { 0 })
+            break
         case SET.FloatPoints:
             nodes.pin[node_id].fl_pts = u8(v)
+            break
         case SET.FloatX:
             nodes.pin[node_id].fl_x = i16(scaled(v))
+            break
         case SET.FloatY:
             nodes.pin[node_id].fl_y = i16(scaled(v))
+            break
         case SET.FloatExpandW:
             nodes.pin[node_id].fl_ew = i16(scaled(v))
+            break
         case SET.FloatExpandH:
             nodes.pin[node_id].fl_eh = i16(scaled(v))
+            break
         case SET.FloatClip:
             nodes.pin[node_id].fl_clip = u8(v)
+            break
         case SET.PointerPass:
             nodes.ui[node_id].ptr_pass = u8(v)
+            break
         case SET.Flip:
             nodes.pin[node_id].flip = u8(v)
+            break
         case SET.TextAlign:
             nodes.look[node_id].t_align = u8(v)
+            break
         case SET.BorderTop:
             nodes.look[node_id].bd_t = u8(scaled(v))
+            break
         case SET.BorderRight:
             nodes.look[node_id].bd_r = u8(scaled(v))
+            break
         case SET.BorderBottom:
             nodes.look[node_id].bd_b = u8(scaled(v))
+            break
         case SET.BorderLeft:
             nodes.look[node_id].bd_l = u8(scaled(v))
+            break
         case SET.BorderBetween:
             nodes.look[node_id].bd_between = u8(scaled(v))
+            break
         case SET.SvgFit:
             nodes.look[node_id].font = u16(v)
+            break
         case SET.SvgLazy:
             nodes.lay[node_id].wrap = u8(v)
+            break
         case SET.Elevation:
             if v <= 0 {
                 nodes.look[node_id].elev = u8(0)
@@ -2091,7 +2186,9 @@ fn apply_int_value(node_id: int, setter: int, v: int) {
                 nodes.look[node_id].elev = u8(lv)
                 nodes.look[node_id].elev_c = role_color(ROLE.Shadow)
             }
+            break
         default:
+            break
     }
     apply_depth = apply_depth - 1
     // Report the write so the frame marks this node (a paint-only property) or
@@ -2158,20 +2255,25 @@ fn apply_str(node_id: int, setter: int, v: string) {
             }
             nodes.look[node_id].text = v
             arena.note_prop_write(node_id, 1)
+            break
             // The semantic tree is re-dumped when layout ran (`engine_layout_gen`),
             // so a label or role reports as a layout write: its boundary re-solves
             // and the mirror sees the change.
         case SET.A11yLabel:
             nodes.ui[node_id].a11y_label = v
             arena.note_prop_write(node_id, 1)
+            break
         case SET.A11yRole:
             nodes.ui[node_id].a11y_role = v
             arena.note_prop_write(node_id, 1)
+            break
             // Read under the pointer, never painted: nothing to mark.
         case SET.Cursor:
             nodes.look[node_id].cursor = v
+            break
         default:
             apply_int(node_id, setter, parse_hex_color(v))
+            break
     }
 }
 
@@ -3528,8 +3630,10 @@ fn st_str(id: int, setter: int, a: Option<string>, b: Option<string>) {
     switch setter {
         case SET.Background, SET.Color, SET.BorderColor:
             apply_int_value(id, setter, parse_hex_color(b.val))
+            break
         default:
             apply_str(id, setter, b.val)
+            break
     }
 }
 

@@ -455,12 +455,16 @@ fn alert_icon(kind: int) {
     switch kind {
         case Tint.Danger:
             Icon(IC_ALERT_CIRCLE, 16, danger())
+            break
         case Tint.Warn:
             Icon(IC_ALERT_CIRCLE, 16, warn())
+            break
         case Tint.Ok:
             Icon(IC_CHECK, 16, ok())
+            break
         default:
             Icon(IC_INFO, 16, info_ink())
+            break
     }
 }
 

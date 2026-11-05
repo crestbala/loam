@@ -120,9 +120,7 @@ static int scope_find(const char *name, Type **ty, int *is_mut) {
 
 static Type *cur_ret;
 static int loop_depth;
-/* `loop_depth` at the innermost switch case being checked, or -1. A `break`
-   at that depth would leave the loop around the switch, not the case. */
-static int case_floor = -1;
+static int switch_depth; /* a `break` leaves a loop or a switch */
 static int cur_async; /* 1 inside an `async fn` body: `await` is legal */
 static const char *cur_mod_name;
 static const char **cur_tparams;
@@ -788,6 +786,16 @@ static Type *lit_with_expect(AstNode *n, Type *expect) {
         n->ty = expect;
         return n->ty;
     }
+    /* Only a u64 can hold a literal that took the top bit. */
+    if (n->flags & ASTF_WRAPPED_LIT) {
+        if (expect && expect->kind == TY_INT && expect->is_unsigned && expect->bits == 64) {
+            n->ty = expect;
+            return n->ty;
+        }
+        err(n->loc, "integer literal is too large");
+        n->ty = expect && expect->kind == TY_INT ? expect : ty_int();
+        return n->ty;
+    }
     if (expect && expect->kind == TY_INT) {
         int64_t v = n->as.lit.value;
         if (!int_lit_fits(v, expect))
@@ -1271,7 +1279,11 @@ static int module_of_decl(AstNode *d) {
 static AstNode *clone_const(AstNode *e) {
     if (!e) return NULL;
     switch (e->kind) {
-        case AST_NUMBER: return ast_number(e->as.lit.value, e->loc);
+        case AST_NUMBER: {
+            AstNode *c = ast_number(e->as.lit.value, e->loc);
+            c->flags |= e->flags & ASTF_WRAPPED_LIT;
+            return c;
+        }
         case AST_FLOAT: return ast_float(e->as.lit.f, e->loc);
         case AST_BOOL: return ast_bool(e->as.lit.b, e->loc);
         case AST_STRING: return ast_string(loam_dup(e->as.lit.str ? e->as.lit.str : ""), e->loc);
@@ -2926,6 +2938,10 @@ static Type *check_closure(AstNode *n, Type *expect) {
     AstNode *saved_clos = cur_clos;
     Scope *saved_cs = clos_scope;
     int saved_async = cur_async;
+    /* A closure body is its own function: `break` cannot reach out of it. */
+    int saved_loop = loop_depth, saved_switch = switch_depth;
+    loop_depth = 0;
+    switch_depth = 0;
     cur_clos = n;
     cur_async = 0; /* closures cannot be async: `await` inside one is an error */
     scope_push();
@@ -2968,6 +2984,8 @@ static Type *check_closure(AstNode *n, Type *expect) {
     clos_infer = saved_infer;
     clos_infer_ty = saved_infer_ty;
     cur_async = saved_async;
+    loop_depth = saved_loop;
+    switch_depth = saved_switch;
     n->place_mut = 0;
     return n->ty;
 }
@@ -3210,7 +3228,9 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
                 expect && type_is_numeric(expect)) {
                 AstNode *op0 = n->as.unary.operand;
                 if (op0->kind == AST_NUMBER) {
-                    int64_t v = -op0->as.lit.value;
+                    int64_t v = (int64_t)(0 - (uint64_t)op0->as.lit.value);
+                    if ((op0->flags & ASTF_WRAPPED_LIT) && op0->as.lit.value != INT64_MIN)
+                        err(n->loc, "integer literal is too large");
                     if (expect->kind == TY_FLOAT) {
                         n->kind = AST_FLOAT;
                         n->as.lit.f = -(double)op0->as.lit.value;
@@ -3653,20 +3673,6 @@ static Type *check_expr(AstNode *n) { return check_expr_ty(n, NULL); }
 
 static void check_stmt(AstNode *n);
 
-/** 1 if every variant of enum `en` appears in the captured `covered` names —
- *  a complete, `default`-free `switch` over the enum. */
-static int enum_variants_covered(AstNode *en, const char **covered, int n) {
-    if (!en) return 0;
-    for (size_t i = 0; i < en->as.enm.count; i++) {
-        const char *v = en->as.enm.vnames[i];
-        int seen = 0;
-        for (int c = 0; c < n; c++)
-            if (covered[c] && strcmp(covered[c], v) == 0) { seen = 1; break; }
-        if (!seen) return 0;
-    }
-    return 1;
-}
-
 /** Statements of `n` in the caller's scope — used for a function or closure
  *  body, so that a `let` shadowing a parameter is a same-scope collision. */
 static void check_block_in_scope(AstNode *n) {
@@ -3786,81 +3792,52 @@ static void check_stmt(AstNode *n) {
             loop_depth--;
             break;
         case AST_BREAK:
-            if (loop_depth <= 0) err(n->loc, "`break` outside of a loop");
-            else if (loop_depth == case_floor)
-                err(n->loc, "`break` in a switch case would leave the enclosing loop; a case "
-                            "ends on its own (use `return`, or move the loop exit out of the switch)");
+            if (loop_depth <= 0 && switch_depth <= 0)
+                err(n->loc, "`break` outside of a loop or switch");
             break;
         case AST_CONTINUE:
             if (loop_depth <= 0) err(n->loc, "`continue` outside of a loop");
             break;
         case AST_SWITCH: {
             Type *st = check_expr(n->as.switch_stmt.scrut);
-            if (st && st->kind != TY_INT && st->kind != TY_FLOAT && st->kind != TY_BOOL &&
-                st->kind != TY_STRING)
-                err(n->loc, "switch requires int, float, bool, or string");
-            int saw_wild = 0;
-            int save_floor = case_floor;
-            case_floor = loop_depth;
-            int saw_true = 0, saw_false = 0;
-            /* If the arms name enum variants (`Tag.Ok`), the set of covered
-               variants can be checked against the enum: all of them, with no
-               `default`, is exhaustive. The names are captured here because
-               `check_expr_ty` below lowers `Tag.Ok` to an int literal. */
-            AstNode *pat_enum = NULL;
-            const char *cov_variants[128];
-            int cov_n = 0;
-            if (n->as.switch_stmt.case_count == 0)
-                err(n->loc, "switch needs at least one case");
+            if (st && st->kind != TY_INT && st->kind != TY_BOOL)
+                err(n->loc, "switch requires an integer, enum, or bool value, not %s",
+                    type_name(st));
+            int saw_default = 0;
+            int64_t *seen = NULL;
+            size_t nseen = 0;
+            switch_depth++;
             for (size_t i = 0; i < n->as.switch_stmt.case_count; i++) {
                 AstNode *cs = n->as.switch_stmt.cases[i];
                 if (!cs || cs->kind != AST_CASE) continue;
-                if (saw_wild)
-                    err(cs->loc, "unreachable case after `default`");
                 if (cs->as.switch_case.is_default) {
-                    saw_wild = 1;
-                    check_block(cs->as.switch_case.body);
-                    continue;
+                    if (saw_default) err(cs->loc, "a switch can have only one `default`");
+                    saw_default = 1;
                 }
                 for (size_t p = 0; p < cs->as.switch_case.pat_count; p++) {
                     AstNode *pat = cs->as.switch_case.pats[p];
-                    /* `Enum.Member` pattern: remember the enum so completeness
-                       can be judged against its variant set. Detected *before*
-                       `check_expr_ty`, which lowers the enum constant to an int
-                       literal and would erase the variant name. */
-                    if (pat && pat->kind == AST_FIELD && pat->as.access.target &&
-                        pat->as.access.target->kind == AST_IDENT) {
-                        AstNode *en = find_enum(pat->as.access.target->as.ident.name);
-                        if (!en) {
-                            LoamModule *em2 = find_mod(pat->as.access.target->as.ident.name);
-                            if (em2)
-                                en = lookup_through(em2, pat->as.access.field, find_enum_in);
-                        }
-                        if (en) {
-                            pat_enum = en;
-                            if (cov_n < 128)
-                                cov_variants[cov_n++] = loam_dup(pat->as.access.field);
-                        }
-                    }
-                    Type *pt = check_expr_ty(pat, type_is_numeric(st) ? st : NULL);
+                    Type *pt = check_expr_ty(pat, st && st->kind == TY_INT ? st : NULL);
                     if (st && pt && !type_eq(st, pt))
-                        err(pat->loc, "pattern type %s does not match %s",
+                        err(pat->loc, "case label type %s does not match %s",
                             type_name(pt), type_name(st));
-                    if (pat && pat->kind == AST_BOOL) {
-                        if (pat->as.lit.b) saw_true = 1;
-                        else saw_false = 1;
+                    int64_t v = 0;
+                    if (!ast_case_value(pat, &v)) {
+                        err(pat->loc, "case label must be an integer constant");
+                        continue;
                     }
+                    for (size_t s = 0; s < nseen; s++)
+                        if (seen[s] == v) {
+                            err(pat->loc, "duplicate case value %lld", (long long)v);
+                            break;
+                        }
+                    seen = (int64_t *)realloc(seen, (nseen + 1) * sizeof(int64_t));
+                    if (!seen) loam_fatal("out of memory");
+                    seen[nseen++] = v;
                 }
                 check_block(cs->as.switch_case.body);
             }
-            if (st && st->kind == TY_BOOL) {
-                if (!saw_wild && !(saw_true && saw_false))
-                    err(n->loc, "switch on bool is not exhaustive (add `default:` or both true and false)");
-            } else if (!saw_wild && !(pat_enum && enum_variants_covered(pat_enum, cov_variants, cov_n))) {
-                err(n->loc, "switch must be exhaustive (add `default:`)");
-            }
-            case_floor = save_floor;
-            for (int ci = 0; ci < cov_n; ci++) free((void *)cov_variants[ci]);
+            switch_depth--;
+            free(seen);
             break;
         }
         case AST_BLOCK:
@@ -3880,6 +3857,7 @@ static void check_fn(AstNode *fn) {
     cur_ntparams = fn->as.fn.tparam_count;
     cur_ret = ft->ret ? ft->ret : ty_void();
     loop_depth = 0;
+    switch_depth = 0;
     int saved_async = cur_async;
     cur_async = fn->as.fn.is_async;
     /* Parameter defaults (`name: T = expr`) must trail the list, be

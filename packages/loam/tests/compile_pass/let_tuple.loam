@@ -65,7 +65,9 @@ fn main() {
         case 1:
             let (s, t) = ("case", "body")
             fmt.println("{{s}} {{t}}")
+            break
         default:
+            break
     }
 
     let add_two = || {

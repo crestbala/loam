@@ -28,6 +28,7 @@
 #define ASTF_STATE      16
 #define ASTF_AWAIT      32 /* `await` sugar call: only valid inside `async fn` */
 #define ASTF_DEFAULT    64 /* struct-literal field init cloned from the decl's default */
+#define ASTF_WRAPPED_LIT 128 /* number literal above INT64_MAX, stored as its bits */
 
 typedef enum {
     AST_PROGRAM,
@@ -315,6 +316,8 @@ AstNode *ast_if(AstNode *cond, AstNode *thenb, AstNode *elseb, SourceLoc loc);
 AstNode *ast_for(const char *var, AstNode *iter, AstNode *body, SourceLoc loc);
 AstNode *ast_while(AstNode *cond, AstNode *body, SourceLoc loc);
 AstNode *ast_switch(AstNode *scrut, AstNode **cases, size_t n, SourceLoc loc);
+/** The value of a checked case label. 1 if `pat` is an integer constant. */
+int ast_case_value(const AstNode *pat, int64_t *out);
 AstNode *ast_case(AstNode **pats, size_t np, int is_default, AstNode *body, SourceLoc loc);
 AstNode *ast_return(AstNode *expr, SourceLoc loc);
 AstNode *ast_break(SourceLoc loc);

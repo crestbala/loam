@@ -1,0 +1,5 @@
+// 2^63 fits no signed type without its minus sign.
+fn main() {
+    let x: i64 = 9223372036854775808
+    let _ = x
+}

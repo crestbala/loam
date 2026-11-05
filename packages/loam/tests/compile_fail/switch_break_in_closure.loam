@@ -1,0 +1,12 @@
+// A closure's body cannot `break` out of the switch around it.
+fn main() {
+    let x = 1
+    switch x {
+        case 1:
+            let f = || {
+                break
+            }
+            f()
+            break
+    }
+}

@@ -24,7 +24,7 @@ over a new keyword.
 | Keep | Do not add |
 |---|---|
 | `int` / `float` / `bool` / `string` / `[]T` / `[N]T` / `Box<T>` / `&T` / `&mut T` / `fn` | Width integers, `&str` vs `String`, trait objects |
-| Structs, C-style `enum` as named ints, `switch` that checks enum cases are exhaustive | Algebraic enums (per-variant payloads in the enum itself; no trait system) |
+| Structs, C-style `enum` as named ints, `switch` with C semantics (no exhaustiveness check) | Algebraic enums (per-variant payloads in the enum itself; no trait system) |
 | Quoted `import "std:foo"`, `mod.name` | Glob, `use`, `pub`, re-exports |
 | Ownership + exclusive vs shared, auto-borrow | Lifetime parameters, NLL, `unsafe` |
 | Monomorphized generics, UFCS | `impl`, traits, operator overloading |

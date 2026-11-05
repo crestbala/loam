@@ -1,0 +1,23 @@
+// The largest literals: 2^63 reaches the `-` of the i64 minimum intact, and a
+// u64 can use its top bit.
+import "std:fmt"
+import "std:sys"
+
+fn expect(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    let lo: i64 = -9223372036854775808
+    let hi: i64 = 9223372036854775807
+    expect(lo == -9223372036854775807 - 1, "i64 min")
+    expect(lo < hi, "i64 order")
+    let m: u64 = 18446744073709551615
+    let h: u64 = 0xFFFFFFFFFFFFFFFF
+    expect(m == h, "u64 max")
+    expect(m > 9223372036854775807, "u64 top bit")
+    fmt.println("literals ok")
+}

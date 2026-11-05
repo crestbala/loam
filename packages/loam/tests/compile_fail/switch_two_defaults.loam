@@ -1,0 +1,12 @@
+// A switch has at most one `default`.
+fn main() {
+    let x = 1
+    switch x {
+        default:
+            break
+        case 1:
+            break
+        default:
+            break
+    }
+}

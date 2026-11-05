@@ -174,6 +174,7 @@ static int CUR; /* block being appended to */
 static int *loop_cont;
 static int *loop_brk;
 static int *loop_base;
+static int *loop_is_switch; /* a switch takes `break`; `continue` goes past it */
 static int nloop, loop_cap;
 
 static void loop_push(int cont, int brk, int base) {
@@ -182,11 +183,14 @@ static void loop_push(int cont, int brk, int base) {
         loop_cont = (int *)realloc(loop_cont, (size_t)loop_cap * sizeof(int));
         loop_brk = (int *)realloc(loop_brk, (size_t)loop_cap * sizeof(int));
         loop_base = (int *)realloc(loop_base, (size_t)loop_cap * sizeof(int));
-        if (!loop_cont || !loop_brk || !loop_base) loam_fatal("out of memory");
+        loop_is_switch = (int *)realloc(loop_is_switch, (size_t)loop_cap * sizeof(int));
+        if (!loop_cont || !loop_brk || !loop_base || !loop_is_switch)
+            loam_fatal("out of memory");
     }
     loop_cont[nloop] = cont;
     loop_brk[nloop] = brk;
     loop_base[nloop] = base;
+    loop_is_switch[nloop] = 0;
     nloop++;
 }
 
@@ -226,6 +230,18 @@ static void term_br(int cond, int t, int f) {
     b->term_val = cond;
     b->succ[0] = t;
     b->succ[1] = f;
+}
+
+/** Dispatch on `val`. Takes ownership of `vals` and `blocks`. */
+static void term_switch(int val, int64_t *vals, int *blocks, int n, int dflt) {
+    IrBlock *b = &F->blocks[CUR];
+    if (b->term != IR_TERM_UNREACHABLE) return;
+    b->term = IR_TERM_SWITCH;
+    b->term_val = val;
+    b->sw_vals = vals;
+    b->sw_blocks = blocks;
+    b->sw_n = n;
+    b->succ[0] = dflt;
 }
 
 static void emit_drops_from(int lo, SourceLoc loc) {
@@ -1604,61 +1620,64 @@ static void lower_stmt(AstNode *n) {
                 F->lowered = 0;
                 return;
             }
-            emit_drops_from(loop_base[nloop - 1], n->loc);
+            /* Leaving a switch needs no drops: what a case owns lives until the
+               enclosing pass or the function ends, as it does when a case runs
+               off its end. */
+            if (!loop_is_switch[nloop - 1]) emit_drops_from(loop_base[nloop - 1], n->loc);
             term_jmp(loop_brk[nloop - 1]);
             return;
-        case AST_CONTINUE:
-            if (nloop <= 0) {
+        case AST_CONTINUE: {
+            int li = nloop - 1;
+            while (li >= 0 && loop_is_switch[li]) li--;
+            if (li < 0) {
                 F->lowered = 0;
                 return;
             }
-            emit_drops_from(loop_base[nloop - 1], n->loc);
-            term_jmp(loop_cont[nloop - 1]);
+            emit_drops_from(loop_base[li], n->loc);
+            term_jmp(loop_cont[li]);
             return;
+        }
         case AST_SWITCH: {
+            /* A single indirect dispatch, not a chain of compares: the labels
+               are constants, so the backend can build a jump table. */
             int scrut = lower_expr(n->as.switch_stmt.scrut);
+            size_t nc = n->as.switch_stmt.case_count;
             int join = new_block();
-            Type *st = n->as.switch_stmt.scrut ? n->as.switch_stmt.scrut->ty : NULL;
-            for (size_t i = 0; i < n->as.switch_stmt.case_count; i++) {
+            int *bodies = (int *)malloc((nc ? nc : 1) * sizeof(int));
+            if (!bodies) loam_fatal("out of memory");
+            int dflt = join, nvals = 0;
+            int64_t *vals = NULL;
+            int *targets = NULL;
+            for (size_t i = 0; i < nc; i++) {
                 AstNode *cs = n->as.switch_stmt.cases[i];
+                bodies[i] = new_block();
                 if (!cs || cs->kind != AST_CASE) continue;
-                int body = new_block();
-                int next = new_block();
-                if (cs->as.switch_case.is_default) {
-                    term_jmp(body);
-                } else {
-                    int acc = -1;
-                    for (size_t p = 0; p < cs->as.switch_case.pat_count; p++) {
-                        int pv = lower_expr(cs->as.switch_case.pats[p]);
-                        int eq = new_local(ty_bool(), NULL, 0);
-                        IrInst *cmp = emit(IR_BIN, cs->loc);
-                        cmp->dst = eq;
-                        cmp->a = scrut;
-                        cmp->b = pv;
-                        cmp->binop = (int)TOK_EQ_EQ;
-                        cmp->ty = ty_bool();
-                        if (st && st->kind == TY_STRING) cmp->checked = 0;
-                        if (acc < 0) acc = eq;
-                        else {
-                            int o = new_local(ty_bool(), NULL, 0);
-                            IrInst *orv = emit(IR_BIN, cs->loc);
-                            orv->dst = o;
-                            orv->a = acc;
-                            orv->b = eq;
-                            orv->binop = (int)TOK_PIPE_PIPE;
-                            orv->ty = ty_bool();
-                            acc = o;
-                        }
+                if (cs->as.switch_case.is_default) dflt = bodies[i];
+                for (size_t p = 0; p < cs->as.switch_case.pat_count; p++) {
+                    int64_t v = 0;
+                    if (!ast_case_value(cs->as.switch_case.pats[p], &v)) {
+                        F->lowered = 0;
+                        continue;
                     }
-                    if (acc >= 0) term_br(acc, body, next);
-                    else term_jmp(next);
+                    vals = (int64_t *)realloc(vals, (size_t)(nvals + 1) * sizeof(int64_t));
+                    targets = (int *)realloc(targets, (size_t)(nvals + 1) * sizeof(int));
+                    if (!vals || !targets) loam_fatal("out of memory");
+                    vals[nvals] = v;
+                    targets[nvals++] = bodies[i];
                 }
-                CUR = body;
-                lower_stmt(cs->as.switch_case.body);
-                term_jmp(join);
-                CUR = next;
             }
-            term_jmp(join);
+            term_switch(scrut, vals, targets, nvals, dflt);
+            loop_push(-1, join, 0);
+            loop_is_switch[nloop - 1] = 1;
+            for (size_t i = 0; i < nc; i++) {
+                AstNode *cs = n->as.switch_stmt.cases[i];
+                CUR = bodies[i];
+                if (cs && cs->kind == AST_CASE) lower_stmt(cs->as.switch_case.body);
+                /* Running off a case's end falls into the next one. */
+                term_jmp(i + 1 < nc ? bodies[i + 1] : join);
+            }
+            if (nloop > 0) nloop--;
+            free(bodies);
             CUR = join;
             return;
         }
@@ -2259,6 +2278,13 @@ void ir_print(FILE *o, const IrModule *m) {
                     fprintf(o, "    br %%%d, bb%d, bb%d\n", bb->term_val, bb->succ[0],
                             bb->succ[1]);
                     break;
+                case IR_TERM_SWITCH:
+                    fprintf(o, "    switch %%%d [", bb->term_val);
+                    for (int c = 0; c < bb->sw_n; c++)
+                        fprintf(o, "%s%lld: bb%d", c ? ", " : "", (long long)bb->sw_vals[c],
+                                bb->sw_blocks[c]);
+                    fprintf(o, "], default bb%d\n", bb->succ[0]);
+                    break;
                 case IR_TERM_UNREACHABLE: fprintf(o, "    unreachable\n"); break;
             }
         }
@@ -2288,6 +2314,13 @@ static int verify_fn(const IrFn *fn) {
             if (t >= 0 && (t >= fn->nblocks)) {
                 fprintf(stderr, "ir: %s bb%d successor %d out of range\n", fn->cname,
                         bb->id, t);
+                bad = 1;
+            }
+        }
+        for (int c = 0; c < bb->sw_n; c++) {
+            if (bb->sw_blocks[c] < 0 || bb->sw_blocks[c] >= fn->nblocks) {
+                fprintf(stderr, "ir: %s bb%d switch target %d out of range\n", fn->cname,
+                        bb->id, bb->sw_blocks[c]);
                 bad = 1;
             }
         }
@@ -2332,6 +2365,8 @@ void ir_free(IrModule *m) {
                 free(fn->blocks[b].insts[i].args);
             }
             free(fn->blocks[b].insts);
+            free(fn->blocks[b].sw_vals);
+            free(fn->blocks[b].sw_blocks);
         }
         free(fn->blocks);
         free(fn->locals);

@@ -1,0 +1,16 @@
+// Case 1 falls into case 2, so `b` would be consumed twice.
+fn take(b: Box<int>) {
+    let _ = b
+}
+
+fn main() {
+    let b = Box::new(1)
+    let x = 1
+    switch x {
+        case 1:
+            take(b)
+        case 2:
+            take(b)
+            break
+    }
+}

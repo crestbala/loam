@@ -1,0 +1,8 @@
+// A label has to fit the scrutinee's type.
+fn main() {
+    let x: u8 = 1
+    switch x {
+        case -1:
+            break
+    }
+}

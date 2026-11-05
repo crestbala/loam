@@ -296,6 +296,24 @@ AstNode *ast_while(AstNode *cond, AstNode *body, SourceLoc loc) {
     return n;
 }
 
+int ast_case_value(const AstNode *pat, int64_t *out) {
+    if (!pat) return 0;
+    if (pat->kind == AST_NUMBER) {
+        *out = pat->as.lit.value;
+        return 1;
+    }
+    if (pat->kind == AST_BOOL) {
+        *out = pat->as.lit.b ? 1 : 0;
+        return 1;
+    }
+    if (pat->kind == AST_UNARY && pat->as.unary.op == TOK_MINUS &&
+        ast_case_value(pat->as.unary.operand, out)) {
+        *out = (int64_t)(0 - (uint64_t)*out);
+        return 1;
+    }
+    return 0;
+}
+
 AstNode *ast_switch(AstNode *scrut, AstNode **cases, size_t n, SourceLoc loc) {
     AstNode *node = ast_new(AST_SWITCH, loc);
     node->as.switch_stmt.scrut = scrut;

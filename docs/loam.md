@@ -307,41 +307,61 @@ return the same `Result<T>` / `Option<T>` type; there are no exceptions and no
 unwinding. Helpers: `result.is_ok` / `is_err` / `is_some`, `result.unwrap` /
 `unwrap_or` / `unwrap_some` / `some_or`.
 
-A `switch` over the tag is exhaustive when it names every variant, no
-`default` needed:
+A `switch` over the tag reads each case's payload:
 
 ```loam
 switch r.tag {
     case ResultTag.Ok:
         use(r.val)
+        break
     case ResultTag.Err:
         log(r.err)
+        break
 }
 ```
 
 ### 2c. `switch`
 
-`switch` picks one case by value: an `int`, `float`, `bool`, or `string`.
-Patterns are literals or `Enum.Member` constants, several to a case
-separated by commas, and `default:` (last) catches the rest. A case runs the
-statements up to the next `case`, `default`, or `}` — there is no
-fallthrough, so an empty case simply does nothing.
+`switch` is C's `switch`: it jumps to the case whose label equals an integer,
+enum, or `bool` value. Labels are integer constants, negatives included:
+literals, `Enum.Member`, or `true` / `false`. A value may label only one case.
+`case A, B:` is shorthand for `case A: case B:`.
 
 ```loam
 switch kind {
     case Tint.Ok, Tint.Info:
-        return ok()
+        draw_ok()
+        break
     case Tint.Danger:
-        return danger()
+        alarm()
+        // falls through: danger also draws the bar
+    case Tint.Warn:
+        draw_bar()
+        break
     default:
-        return ink()
+        draw_ink()
+        break
 }
 ```
 
-A `switch` must be exhaustive: either `default:`, every variant of the enum
-its patterns name, or both `true` and `false`. `continue` and `return` work
-in a case as anywhere else; a bare `break` in a case is an error, because it
-would leave the loop around the switch rather than the case.
+As in C:
+
+- A case runs on into the next one unless it ends in `break`, `return`, or
+  `continue`.
+- `break` leaves the switch. `continue` applies to the enclosing loop.
+- `default:` is optional and can sit anywhere. If no label matches and there is
+  no `default`, the whole switch is skipped.
+- A switch need not cover every value, and an enum need not list every member.
+  A non-`void` function that runs off its end returns the zero value, as it
+  does after an `if` with no `else`.
+
+Dispatch is one indirect jump rather than a series of compares: the switch
+reaches the C compiler as a C `switch`, which picks a jump table when the labels
+are dense enough (`br_table` on wasm) and a compare tree when they are not.
+Compare strings and floats with `if`.
+
+The borrow checker follows fallthrough, so moving a value in a case and again
+in the case it falls into is an error.
 
 `http.call` returns `Res<string>` — the older `{ ok, val, err }` shape kept for
 that edge; new code should prefer `Result<T>`.

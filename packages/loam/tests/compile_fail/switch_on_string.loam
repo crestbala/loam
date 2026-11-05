@@ -1,0 +1,8 @@
+// A jump table needs integers: compare strings with `if`.
+fn main() {
+    let s = "a"
+    switch s {
+        default:
+            break
+    }
+}

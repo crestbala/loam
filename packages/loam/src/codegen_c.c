@@ -219,6 +219,19 @@ static void emit_line_directive(FILE *o, SourceLoc loc) {
 static void emit_expr(FILE *o, AstNode *n);
 static void emit_cond(FILE *o, AstNode *n);
 static void emit_stmt(FILE *o, AstNode *n, int ind);
+
+/** An integer literal. The most negative value has no C spelling of its own. */
+static void emit_int_lit(FILE *o, int64_t v) {
+    if (v == INT64_MIN) fprintf(o, "INT64_MIN");
+    else fprintf(o, "%lld", (long long)v);
+}
+
+/** `case V:`. */
+static void emit_case_label(FILE *o, int64_t v) {
+    fprintf(o, "case ");
+    emit_int_lit(o, v);
+    fprintf(o, ": ");
+}
 static void emit_block_body(FILE *o, AstNode *b, int ind, int is_main);
 static IrFn *find_ir_fn(const char *cname);
 static void lit_template_use(const IrInst *in, const char *cn);
@@ -1107,7 +1120,7 @@ static void emit_expr(FILE *o, AstNode *n) {
         }
 
         case AST_NUMBER:
-            fprintf(o, "%lld", (long long)n->as.lit.value);
+            emit_int_lit(o, n->as.lit.value);
             break;
         case AST_FLOAT:
             emit_float_lit(o, n->as.lit.f, n->ty && n->ty->kind == TY_FLOAT && n->ty->bits == 32);
@@ -1730,6 +1743,7 @@ static void emit_assign(FILE *o, AstNode *n, int ind) {
 }
 
 /** Statement: let (including stack closure env), assign, if, for, return, … */
+
 static void emit_stmt(FILE *o, AstNode *n, int ind) {
     if (!n) return;
     emit_line_directive(o, n->loc);
@@ -1891,38 +1905,27 @@ static void emit_stmt(FILE *o, AstNode *n, int ind) {
             fprintf(o, "continue;\n");
             break;
         case AST_SWITCH: {
+            Type *st = n->as.switch_stmt.scrut->ty;
             indent(o, ind);
-            fprintf(o, "{\n");
-            indent(o, ind + 1);
-            emit_var_decl_type(o, n->as.switch_stmt.scrut->ty, "_m");
-            fprintf(o, " = ");
+            fprintf(o, "switch (%s", st && st->kind == TY_BOOL ? "(int)" : "");
             emit_expr(o, n->as.switch_stmt.scrut);
-            fprintf(o, ";\n");
+            fprintf(o, ") {\n");
             for (size_t i = 0; i < n->as.switch_stmt.case_count; i++) {
                 AstNode *cs = n->as.switch_stmt.cases[i];
+                if (!cs) continue;
                 indent(o, ind + 1);
-                if (i) fprintf(o, "else ");
-                if (cs && cs->as.switch_case.is_default) {
-                    fprintf(o, "{\n");
-                } else {
-                    fprintf(o, "if (");
-                    Type *st = n->as.switch_stmt.scrut->ty;
-                    for (size_t p = 0; p < (cs ? cs->as.switch_case.pat_count : 0); p++) {
-                        if (p) fprintf(o, " || ");
-                        if (st && st->kind == TY_STRING) {
-                            fprintf(o, "loam_fmt_eq(_m, ");
-                            emit_expr(o, cs->as.switch_case.pats[p]);
-                            fprintf(o, ")");
-                        } else {
-                            fprintf(o, "_m == ");
-                            emit_expr(o, cs->as.switch_case.pats[p]);
-                        }
-                    }
-                    fprintf(o, ") {\n");
+                for (size_t p = 0; p < cs->as.switch_case.pat_count; p++) {
+                    int64_t v = 0;
+                    (void)ast_case_value(cs->as.switch_case.pats[p], &v);
+                    emit_case_label(o, v);
                 }
+                if (cs->as.switch_case.is_default) fprintf(o, "default: ");
+                /* Each case is a C block, so a jump into a later case does not
+                   cross a declaration; falling off the end enters the next. */
+                fprintf(o, "{\n");
                 drop_sp++;
                 drop_n[drop_sp] = 0;
-                if (cs && cs->as.switch_case.body && cs->as.switch_case.body->kind == AST_BLOCK)
+                if (cs->as.switch_case.body && cs->as.switch_case.body->kind == AST_BLOCK)
                     emit_block_body(o, cs->as.switch_case.body, ind + 2, 0);
                 emit_drops_scope(o, ind + 2, drop_sp);
                 drop_sp--;
@@ -2524,7 +2527,9 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
     indent(o, 1);
     switch (in->op) {
         case IR_CONST_INT:
-            fprintf(o, "%s = %lld;\n", lv(in->dst), (long long)in->imm);
+            fprintf(o, "%s = ", lv(in->dst));
+            emit_int_lit(o, in->imm);
+            fprintf(o, ";\n");
             break;
         case IR_CONST_FLOAT:
             fprintf(o, "%s = ", lv(in->dst));
@@ -3374,6 +3379,23 @@ static void emit_ir_term(FILE *o, const IrBlock *bb, int is_main) {
             fprintf(o, "if (%s) goto bb%d; else goto bb%d;\n", lv(bb->term_val), bb->succ[0],
                     bb->succ[1]);
             break;
+        case IR_TERM_SWITCH: {
+            /* A C `switch` of gotos: the C compiler picks the jump table. The
+               cast is for a bool scrutinee, which C warns about. */
+            Type *st = CF->locals[bb->term_val].ty;
+            fprintf(o, "switch (%s%s) {\n", st && st->kind == TY_BOOL ? "(int)" : "",
+                    lv(bb->term_val));
+            for (int c = 0; c < bb->sw_n; c++) {
+                indent(o, 1);
+                emit_case_label(o, bb->sw_vals[c]);
+                fprintf(o, "goto bb%d;\n", bb->sw_blocks[c]);
+            }
+            indent(o, 1);
+            fprintf(o, "default: goto bb%d;\n", bb->succ[0]);
+            indent(o, 1);
+            fprintf(o, "}\n");
+            break;
+        }
         case IR_TERM_UNREACHABLE:
             fprintf(o, "loam_panic(\"loam\", 0, \"unreachable\");\n");
             break;
@@ -3674,7 +3696,7 @@ static void emit_const_init(FILE *o, const AstNode *e) {
     }
     switch (e->kind) {
         case AST_NUMBER:
-            fprintf(o, "%lld", (long long)e->as.lit.value);
+            emit_int_lit(o, e->as.lit.value);
             break;
         case AST_FLOAT:
             fprintf(o, "%.17g", e->as.lit.f);

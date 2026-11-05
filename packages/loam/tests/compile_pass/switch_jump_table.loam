@@ -1,0 +1,72 @@
+// Every value of a dense switch reaches its own case, at both ends of the
+// table, past both ends, and for values around the sized-int limits.
+import "std:fmt"
+import "std:sys"
+
+fn expect(got: int, want: int) {
+    if got != want {
+        fmt.println("FAIL got", got, "want", want)
+        sys.exit(1)
+    }
+}
+
+fn dense(x: int) -> int {
+    switch x {
+        case 0: return 10
+        case 1: return 11
+        case 2: return 12
+        case 3: return 13
+        case 4: return 14
+        case 5: return 15
+        case 6: return 16
+        case 7: return 17
+        case 8: return 18
+        case 9: return 19
+        default: return -1
+    }
+}
+
+fn sparse(x: i64) -> int {
+    switch x {
+        case -9223372036854775808: return 1
+        case -1000000000000: return 2
+        case 1000000000000: return 3
+        case 9223372036854775807: return 4
+    }
+    return 0
+}
+
+fn narrow(x: i8) -> int {
+    switch x {
+        case -128: return 1
+        case 127: return 2
+    }
+    return 0
+}
+
+fn byte(x: u8) -> int {
+    switch x {
+        case 0: return 1
+        case 255: return 2
+    }
+    return 0
+}
+
+fn main() {
+    for i in 0..10 {
+        expect(dense(i), 10 + i)
+    }
+    expect(dense(-1), -1)
+    expect(dense(10), -1)
+    expect(sparse(-9223372036854775807 - 1), 1)
+    expect(sparse(-1000000000000), 2)
+    expect(sparse(1000000000000), 3)
+    expect(sparse(9223372036854775807), 4)
+    expect(sparse(0), 0)
+    expect(narrow(-128), 1)
+    expect(narrow(127), 2)
+    expect(narrow(0), 0)
+    expect(byte(255), 2)
+    expect(byte(1), 0)
+    fmt.println("jump table ok")
+}
