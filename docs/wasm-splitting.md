@@ -187,8 +187,8 @@ now reads the URL before its first build, which also helps unsplit builds.
 | When | What | How |
 |---|---|---|
 | In the HTML | Primary and this route's chunks | `<link rel="preload" as="fetch" crossorigin>`, emitted per route |
-| Pointer rests on a link for 80 ms | That route's chunks | `router.preload(path)` from the link's `on_hover`, skipped on `saveData` and 2G |
-| A finger lands on a link | That route's chunks, at once | The same `on_hover`, reported when the touch starts |
+| Pointer rests on a link for 80 ms | That route's chunks | Hovering a node with `href`, on the web. Skipped on `saveData` and 2G |
+| A finger lands on a link | That route's chunks, at once | The same hover, reported when the touch starts |
 | Browser idle after first paint | Chunks shared by 2 or more routes, up to 150 KB, one at a time | The build lists them; skipped on `saveData` and 2G |
 | After that, on a screen with no hover | The smallest other chunks, up to 250 KB in all | `idleTouch` in the chunk table, same rules |
 | Repeat visit | Everything fetched before | Content-hashed names with `immutable` caching |
@@ -259,8 +259,10 @@ Each phase ships alone and improves the site without the next one.
 
 ### Phase 4: prefetching (done)
 
-- `router.preload(path)`, called from `on_hover` on the site's links. The newest
-  hover replaces a waiting one, so a sweep down a list costs nothing.
+- Hovering a node with `href` calls `router.preload` for that path. This is
+  web only: desktop and mobile hosts do nothing. Any app that mounts `Router`
+  gets it, with no `on_hover` of its own. The newest hover replaces a waiting
+  one, so a sweep down a list costs nothing.
 - `zeli` lists the chunks to fetch at idle, so apps need no code for it.
 - A touch reports its hover as it lands, so a tap starts fetching at once, and a
   screen with no hover fetches more at idle.

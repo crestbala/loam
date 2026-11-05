@@ -66,10 +66,17 @@ fn main() {
     visit("/tooling/tests", "Test functions")
     visit("/playground", "Run Loam in the browser")
     visit("/nope", "not found")
-    // Fetching ahead leaves the current page alone, and an unknown path is fine.
+    // Hovering a nav link fetches that route ahead of the click. The `href` on
+    // the link is enough: the page stays here.
     visit("/language", "Language")
-    router.preload("/playground")
-    router.preload("/nope")
+    let link = zeus.engine_find_text("Playground")
+    if link == 0 {
+        fail("nav missing Playground")
+    }
+    zeus.engine_hover(zeus.node_x(link) + 2, zeus.node_y(link) + 2)
+    if router.preloaded() != "/playground" {
+        fail("hover did not preload")
+    }
     if router.current() != "/language" {
         fail("preload moved the page")
     }

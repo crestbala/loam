@@ -1051,6 +1051,54 @@ fn bar_hover(px: int, py: int) {
     arena.bar_set_hot(hot)
 }
 
+/// Installed by the router. Empty until a `Router` is mounted, so a hover in
+/// an app with no routes does nothing.
+let mut href_preload: fn(string) = fn(path: string) {}
+let mut href_preload_on: int = 0
+/// The `href` the pointer is resting on. A move inside that same link does not
+/// ask again, so it cannot keep resetting the web host's wait.
+let mut href_hot: string = ""
+
+fn set_href_preload(f: fn(string)) {
+    href_preload = f
+    href_preload_on = 1
+}
+
+/// The topmost shown node under the pointer that carries an `href`, or "".
+/// Later nodes win, the same order `cursor_at` uses, so a link inside a link
+/// is the one asked for.
+fn href_under_pointer() -> string {
+    let n = nodes.tree.len
+    for i in 1..n {
+        let id = n - i
+        if nodes.ui[id].href.len == 0 {
+            continue
+        }
+        if arena.ptr_in(id) == 0 {
+            continue
+        }
+        return nodes.ui[id].href
+    }
+    return ""
+}
+
+/// Ask for the route under the pointer once, as the pointer enters its link.
+/// The fetch itself is web-only: `plat_chunks_preload` does nothing on desktop
+/// and mobile. A node with no `href` is not a route link.
+fn note_href_hover() {
+    if href_preload_on == 0 {
+        return
+    }
+    let href = href_under_pointer()
+    if href == href_hot {
+        return
+    }
+    href_hot = href
+    if href.len > 0 {
+        href_preload(href)
+    }
+}
+
 fn hover(px: int, py: int) -> int {
     arena.ensure()
     arena.ptr_x = px
@@ -1111,6 +1159,7 @@ fn hover(px: int, py: int) -> int {
     for k in 0..changed.len {
         arena.mark_chrome_id(changed[k])
     }
+    note_href_hover()
     return dirty
 }
 

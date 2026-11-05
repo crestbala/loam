@@ -59,6 +59,7 @@
 
 import "std:zeus"
 import "std:zui"
+import "zeuscore/input.loam" as input
 import "zeuscore/platform.loam"
 
 /// Captured `:name` segments of a matched route.
@@ -536,17 +537,37 @@ fn engine_open_url(url: string) {
     navigate(url)
 }
 
-/// Fetch the code for `path` ahead of time, so a navigation there has nothing to
-/// wait for. Call it from a link's `on_hover`. Cheap to repeat, a no-op where code
-/// is not split, and it changes nothing about the current page.
+/// How many times `preload` has matched a route. A hover onto a node with
+/// `href` counts. The page does not change.
+let mut preload_hits: int = 0
+/// The last path that matched, or "" before any.
+let mut preload_path: string = ""
+
+/// Fetch the code for `path` ahead of time, so a navigation there has nothing
+/// to wait for. A node with `href` does this on its own when the pointer
+/// enters it (`Router` installs that). Web only: `plat_chunks_preload` fetches
+/// on the web host and does nothing on desktop and mobile. Cheap to repeat, a
+/// no-op where code is not split, and it changes nothing about the current page.
 fn preload(path: string) {
     for i in 0..cur_routes.len {
         if match_route(cur_routes[i].pattern, path) == 1 {
+            preload_hits = preload_hits + 1
+            preload_path = path
             // Even for a loaded route: the newest hover replaces a waiting one.
             platform.plat_chunks_preload(i)
             return
         }
     }
+}
+
+/// How many route preloads have been asked for. Tests read it.
+fn preload_count() -> int {
+    return preload_hits
+}
+
+/// The last path `preload` matched, or "". Tests read it.
+fn preloaded() -> string {
+    return preload_path
 }
 
 /// True while a navigation has been waiting on its code long enough to notice.
@@ -603,6 +624,9 @@ fn RouterPage(p: RouterProps) -> Node {
 /// every navigation except one that keeps a `live` route's page.
 fn Router(routes: []Route, p: RouterProps) -> Node {
     ensure_path()
+    // Any later hover of a node with `href` fetches that route's code. The
+    // host fetches only on web.
+    input.set_href_preload(preload)
     cur_routes = routes
     resolve(cur_path.get())
     if initial_loads_done == 0 {
