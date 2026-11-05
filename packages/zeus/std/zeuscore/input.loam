@@ -252,6 +252,16 @@ fn context_click(px: int, py: int) -> int {
     if hit <= 0 {
         hit = hit_node(arena.root_id, px, py)
     }
+    // Over the scrim of something open, a secondary click dismisses it as a
+    // primary one does, then lands on what it was covering.
+    if hit > 0 && int(nodes.tree[hit].kind) == 9 && nodes.ui[hit].click_fn > 0 {
+        arena.invoke_handler(nodes.ui[hit].click_fn, hit)
+        arena.mark_chrome()
+        hit = hit_floaters(arena.root_id, px, py)
+        if hit <= 0 {
+            hit = hit_node(arena.root_id, px, py)
+        }
+    }
     let id = arena.hook_owner(hit, arena.HOOK_CONTEXT)
     if id <= 0 {
         return 0

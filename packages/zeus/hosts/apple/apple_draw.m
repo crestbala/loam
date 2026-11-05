@@ -336,9 +336,10 @@ static void za_xform(void *ctx, int64_t dx, int64_t dy, int64_t scale, int64_t r
                      int64_t oy) {
     CGContextRef cg = za_cg();
     (void)ctx;
-    CGContextTranslateCTM(cg, (CGFloat)(ox + dx), (CGFloat)(oy + dy));
+    /* `dx`, `dy` are 1/16 dp and `scale` permille. */
+    CGContextTranslateCTM(cg, (CGFloat)ox + (CGFloat)dx / 16.0, (CGFloat)oy + (CGFloat)dy / 16.0);
     if (rot) CGContextRotateCTM(cg, (CGFloat)rot * (CGFloat)(M_PI / 180.0));
-    if (scale != 100) CGContextScaleCTM(cg, (CGFloat)scale / 100.0, (CGFloat)scale / 100.0);
+    if (scale != 1000) CGContextScaleCTM(cg, (CGFloat)scale / 1000.0, (CGFloat)scale / 1000.0);
     CGContextTranslateCTM(cg, (CGFloat)-ox, (CGFloat)-oy);
 }
 

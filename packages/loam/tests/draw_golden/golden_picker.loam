@@ -18,7 +18,7 @@ fn main() {
     zeus.engine_click_text("Pick a date")
     // The sheet fades in. Step past the track so the golden is the settled panel.
     let mut i = 0
-    while i < 16 {
+    while i < 60 {
         zeus.engine_step_dt(16)
         zeus.engine_layout(400, 420)
         zeus.engine_paint()

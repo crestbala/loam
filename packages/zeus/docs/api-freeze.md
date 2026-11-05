@@ -190,6 +190,10 @@ heading; keep one entry per line.
 - `zeus.engine_tree_dump`
 - `zeus.engine_window_drag_at`
 - `zeus.enter_fade`
+- `zeus.enter_motion`
+- `zeus.indicator_w`
+- `zeus.indicator_x`
+- `zeus.slide_indicator`
 - `zeus.enter_reveal`
 - `zeus.exit_fade`
 - `zeus.exit_scale`
@@ -489,6 +493,7 @@ heading; keep one entry per line.
 - `zeus.scoped_density_sid`
 - `zeus.screen_x`
 - `zeus.screen_y`
+- `zeus.screen_rect`
 - `zeus.scroll_to`
 - `zeus.scroll_to_index`
 - `zeus.scroll_to_x`
@@ -1169,6 +1174,7 @@ were `zeus.*` before.
 - `Style.textAlign`
 - `Style.cursor`
 - `Style.rotate`
+- `Style.scale`
 - `Style.shiftX`
 - `Style.shiftY`
 - `Style.transition`

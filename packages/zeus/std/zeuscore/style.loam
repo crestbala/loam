@@ -225,11 +225,14 @@ struct Style {
     // motion. Paint-only: none of these moves the layout box.
     /// Clockwise rotation in degrees about the centre.
     rotate: Option<int> = none,
+    /// Scale percent about the centre (100 = identity). Paint only.
+    scale: Option<int> = none,
     /// Paint offset in dp, along x and y.
     shiftX: Option<int> = none,
     shiftY: Option<int> = none,
-    /// Milliseconds to ease `opacity`, `rotate`, and the shifts when they
-    /// change (`Motion.*`). The first value lands at once, never animated.
+    /// How `opacity`, `rotate`, `scale` and the shifts ease when they change
+    /// (`Motion.*`: a time or a spring). The first value lands at once,
+    /// never animated.
     transition: Option<int> = none,
 
     // text
@@ -365,6 +368,7 @@ fn merge(a: Style, b: Style) -> Style {
         borderBetween = pick(a.borderBetween, b.borderBetween),
         elevation = pick(a.elevation, b.elevation),
         rotate = pick(a.rotate, b.rotate),
+        scale = pick(a.scale, b.scale),
         shiftX = pick(a.shiftX, b.shiftX),
         shiftY = pick(a.shiftY, b.shiftY),
         transition = pick(a.transition, b.transition),

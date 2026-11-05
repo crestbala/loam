@@ -1405,3 +1405,29 @@ Component upgrades the audit calls out in §1 (all landed as of batch 26):
   shared model does not have)**
 - [ ] A `www/` design-system page.
 - [ ] The remaining `spec.md` design-system coverage.
+
+### Motion outcome — physical springs
+
+Fixed-duration curves are kept for what only changes (colour, opacity). What
+moves now runs on real springs in the track pool (`EASE.Snap` / `Pop` /
+`Bounce` / `Glide`, `Motion.*` in `Style.transition`): unit mass, stiffness and
+damping, integrated in 4 ms steps so the curve does not depend on the frame
+rate. A spring has no duration, stops when it has stopped, and keeps its
+velocity through a retarget. What leaves uses `EASE.Exit`, which speeds up.
+
+- Tracks run in sub-units: `an_scale` is permille and `an_tx` / `an_ty` 1/16 dp,
+  and so is the xform op, so slow motion does not stair-step. The API stays in
+  percent and dp.
+- `Enter.Pop` / `Rise` / `Drop` add motion to `Enter.Fade`, both ways. Scale
+  grows from the trigger for an anchored panel (`arena.paint_origin`).
+- `zeus_spring.loam` locks overshoot, landing, reversal, frame-rate
+  independence, sub-dp output, no allocation, and reduced motion.
+
+Fixed on the way: a fading surface painted its shadows at full strength, and
+hosts leave the middle of a cached shadow undrawn, so a closing dialog showed a
+hard-cornered frame. `scene.shadow_fade` takes them down ahead of the surface.
+
+Motion is only where it explains something: a surface arriving from its
+trigger, a sheet from its edge, a value changing. Small controls respond on
+`Snap`, with no visible overshoot, and nothing in the component library
+bounces. `EASE.Bounce` stays available to apps.

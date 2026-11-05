@@ -1,0 +1,198 @@
+// Motion that behaves like a thing with mass. A spring track has no duration:
+// it overshoots by what its damping allows and stops when it has stopped. A
+// retarget keeps its speed, so a reversal curves back rather than restarting.
+// The curve does not depend on the frame rate. Spring frames allocate nothing,
+// and exits speed up as they go. A fading surface's shadow goes with it (it used
+// to stay at full strength, leaving a hard frame after the panel had gone).
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+/// Frames of `dt` ms until the track pool is idle.
+fn land(dt: int) -> int {
+    let mut i = 0
+    while i < 200 && zeus.proof_anim_live() > 0 {
+        zeus.engine_step_dt(dt)
+        i = i + 1
+    }
+    return i
+}
+
+/// The strongest shadow in the current draw list.
+fn strongest_shadow() -> int {
+    let mut top = 0
+    for i in 0..zeus.draw_count() {
+        if zeus.draw_op(i) == 12 && zeus.draw_alpha(i) > top {
+            top = zeus.draw_alpha(i)
+        }
+    }
+    return top
+}
+
+fn main() {
+    zeus.window("spring", 400, 300)
+    let n = zeus.Box(style = Style(width = px(50), height = px(50), background = "#336699"))
+    let open = zeus.signal(false)
+    let picked = zeus.signal(false)
+    let page = zeus.Box()
+    zeus.child(page, n)
+    zeus.root(zeus.child(page, zeus.Box() {
+        zui.Dialog(open, title = "Ship it?") {
+            zeus.Text("Body")
+        }
+        zui.Checkbox("Tick", picked)
+    }))
+    zeus.pump_frame()
+    zeus.engine_step_dt(16)
+    zeus.pump_frame()
+
+    // --- it overshoots, by the amount its spring has, and lands exactly ---
+    zeus.animate_x(n, 100, zeus.Motion.Base, zeus.EASE.Bounce)
+    let mut top = 0
+    let mut frames = 0
+    while frames < 200 && zeus.proof_anim_live() > 0 {
+        zeus.engine_step_dt(16)
+        if zeus.motion_x(n) > top {
+            top = zeus.motion_x(n)
+        }
+        frames = frames + 1
+    }
+    must(top > 104, "bounce runs past its target")
+    must(top < 125, "bounce stays damped")
+    must(zeus.motion_x(n) == 100, "lands on the target")
+    must(frames * 16 < 700, "a spring stops by itself")
+
+    // --- a glide barely overshoots ---
+    zeus.animate_x(n, 0, zeus.Motion.Base, zeus.EASE.Glide)
+    top = 100
+    let mut low = 100
+    while zeus.proof_anim_live() > 0 {
+        zeus.engine_step_dt(16)
+        if zeus.motion_x(n) < low {
+            low = zeus.motion_x(n)
+        }
+    }
+    must(low >= -2, "a glide does not swing")
+
+    // --- reversed in flight, it keeps its speed ---
+    zeus.animate_x(n, 200, zeus.Motion.Base, zeus.EASE.Glide)
+    let mut i = 0
+    while i < 6 {
+        zeus.engine_step_dt(16)
+        i = i + 1
+    }
+    let at = zeus.motion_x(n)
+    must(at > 0 && at < 200, "mid-flight")
+    zeus.animate_x(n, 0, zeus.Motion.Base, zeus.EASE.Glide)
+    zeus.engine_step_dt(16)
+    must(zeus.motion_x(n) > at, "still travelling the old way after the reversal")
+    land(16)
+    must(zeus.motion_x(n) == 0, "came back")
+
+    // --- the same curve at 60 and 120 Hz, in any frame size ---
+    zeus.animate_x(n, 300, zeus.Motion.Base, zeus.EASE.Pop)
+    i = 0
+    while i < 10 {
+        zeus.engine_step_dt(16)
+        i = i + 1
+    }
+    let at60 = zeus.motion_x(n)
+    land(16)
+    zeus.animate_x(n, 0, 0)
+    zeus.animate_x(n, 300, zeus.Motion.Base, zeus.EASE.Pop)
+    i = 0
+    while i < 20 {
+        zeus.engine_step_dt(8)
+        i = i + 1
+    }
+    must(zeus.motion_x(n) == at60, "frame rate does not change the curve")
+    land(8)
+
+    // --- a long stall resumes the motion, it does not jump (the frame clock
+    // caps a step at 64 ms) ---
+    zeus.animate_x(n, 0, zeus.Motion.Base, zeus.EASE.Pop)
+    zeus.engine_step_dt(5000)
+    must(zeus.motion_x(n) > 50, "a stall costs one capped step")
+    land(16)
+    must(zeus.motion_x(n) == 0, "then lands")
+
+    // --- sub-dp positions, so slow motion does not stair-step ---
+    zeus.animate_x(n, 3, zeus.Motion.Slow, zeus.EASE.Linear)
+    zeus.engine_step_dt(45)
+    zeus.pump_frame()
+    let mut sub = 0
+    for k in 0..zeus.draw_count() {
+        if zeus.draw_op(k) == 15 {
+            sub = zeus.draw_x(k)
+        }
+    }
+    must(sub % 16 != 0, "translation reaches the host in 1/16 dp")
+    land(16)
+    zeus.animate_x(n, 0, 0)
+
+    // --- a spring frame allocates nothing and runs nothing ---
+    zeus.animate_x(n, 120, zeus.Motion.Base, zeus.EASE.Bounce)
+    zeus.engine_step_dt(16)
+    let a0 = zeus.proof_allocs()
+    let c0 = zeus.proof_components()
+    let e0 = zeus.proof_effects()
+    i = 0
+    while i < 8 {
+        zeus.engine_step_dt(16)
+        i = i + 1
+    }
+    must(zeus.proof_allocs() == a0, "spring frames do not allocate")
+    must(zeus.proof_components() == c0 && zeus.proof_effects() == e0, "and run nothing")
+    land(16)
+
+    // --- an exit speeds up ---
+    must(zeus.anim_ease(zeus.EASE.Exit, 500) < 300, "starts slowly")
+    must(zeus.anim_ease(zeus.EASE.Exit, 1000) == 1000, "ends where it should")
+
+    // --- the shadow leaves with the surface ---
+    open.set(true)
+    zeus.pump_frame()
+    i = 0
+    while i < 40 {
+        zeus.engine_step_dt(16)
+        zeus.pump_frame()
+        i = i + 1
+    }
+    let rest = strongest_shadow()
+    must(rest > 0, "an open dialog casts a shadow")
+    open.set(false)
+    zeus.pump_frame()
+    let mut before = rest
+    i = 0
+    while i < 30 {
+        zeus.engine_step_dt(16)
+        zeus.pump_frame()
+        let s = strongest_shadow()
+        must(s <= before, "a closing shadow only weakens")
+        before = s
+        i = i + 1
+    }
+    must(strongest_shadow() == 0, "no shadow left")
+    must(zeus.draw_count() >= 0 && zeus.proof_anim_live() == 0, "closed and idle")
+    must(zeus.engine_step_dt(16) == 0, "idle wants zero frames")
+
+    // --- reduced motion: no spring, no entrance ---
+    zeus.set_reduced_motion(true)
+    zeus.animate_x(n, 80, zeus.Motion.Base, zeus.EASE.Bounce)
+    must(zeus.motion_x(n) == 80, "reduced: a spring jumps")
+    open.set(true)
+    zeus.pump_frame()
+    must(zeus.proof_anim_live() == 0, "reduced: no entrance tracks")
+    zeus.set_reduced_motion(false)
+
+    fmt.println("spring ok")
+}

@@ -208,6 +208,7 @@ fn IconButton(markup: string, look: int, size: int, label: string, p: IconButton
         label = label,
         hoverOff = false,
         press = true,
+        pressScale = true,
         hoverFade = true,
         keys = p.keys,
     ) {
@@ -844,7 +845,7 @@ fn Checkbox(label: string, on: Signal<bool>, p: CheckboxProps) -> Node {
             borderColor = accent(),
             background = if on.get() || mixed() { accent() } else { plate() },
         )) {
-            // The mark fades with the state; it is inset 2dp inside the
+            // The mark pops in with the state; it is inset 2dp inside the
             // hairline, so the box keeps its square.
             Icon(
                 IC_CHECK,
@@ -853,7 +854,8 @@ fn Checkbox(label: string, on: Signal<bool>, p: CheckboxProps) -> Node {
                 style = Style(
                     display = shown(!mixed()),
                     opacity = if on.get() { 100 } else { 0 },
-                    transition = Motion.Fast,
+                    scale = if on.get() { 100 } else { 60 },
+                    transition = Motion.Snap,
                 ),
             )
             if has_mix {
@@ -914,11 +916,15 @@ fn TrayItem(
     count: int,
     size: int,
     radio: bool,
-    underline: bool
+    underline: bool,
+    inTray: bool
 ) -> Node {
     fn on() -> bool {
         return selected.get() == index
     }
+    // In a tray the tray's one indicator marks the selection. On its own a
+    // trigger has to mark itself.
+    let solo = !inTray
     return Box(
         style = Style(
             height = px(if underline { control_h(size) } else { tray_item_h(size) }),
@@ -927,9 +933,9 @@ fn TrayItem(
             align = Align.Center,
             paddingX = Space.Xs,
             radius = RAD_CONTROL,
-            background = if on() && !underline { plate() } else { "" },
+            background = if solo && on() && !underline { plate() } else { "" },
             borderColor = ink(),
-            borderBottom = if on() && underline { 2 } else { 0 },
+            borderBottom = if solo && on() && underline { 2 } else { 0 },
             cursor = "pointer",
         ),
         on_click = fn() => selected.set(index),
@@ -959,7 +965,7 @@ fn Tab(
     size: int = Size.Md,
     underline: bool = false
 ) -> Node {
-    return TrayItem(label, selected, index, count, size, false, underline)
+    return TrayItem(label, selected, index, count, size, false, underline, false)
 }
 
 /// One radio trigger of a `Segmented` tray (see `TrayItem`).
@@ -970,7 +976,7 @@ fn Choice(
     count: int = 0,
     size: int = Size.Md
 ) -> Node {
-    return TrayItem(label, value, index, count, size, true, false)
+    return TrayItem(label, value, index, count, size, true, false, false)
 }
 
 /// Trigger height inside a tray: the tray is `control_h(size)` with a 4px inset.
@@ -1003,22 +1009,25 @@ fn IndicatorTray(
     underline: bool = false
 ) -> Node {
     let n = labels.len
-    // A row wrapper, so the tray hugs its triggers instead of stretching.
+    // A row wrapper, so the tray hugs its triggers instead of stretching. One
+    // indicator on the tray moves between them; the triggers carry no fill.
     return Row(0) {
-        Box(style = Style(
+        let tray = Box(style = Style(
             direction = Direction.Row,
             gap = 2,
             align = Align.Center,
             padding = if underline { 0 } else { 4 },
             radius = RAD_CONTROL,
             background = if underline { "" } else { raised() },
+            color = if underline { ink() } else { plate() },
             borderColor = rule(),
             borderBottom = if underline { 1 } else { 0 },
         )) {
             Each(labels, fn(i, lab) {
-                return TrayItem(lab, selected, i, n, size, radio, underline)
+                return TrayItem(lab, selected, i, n, size, radio, underline, true)
             })
         }
+        slide_indicator(tray, selected, underline)
     }
 }
 
@@ -1243,7 +1252,7 @@ fn Select(value: Signal<int>, labels: []string, p: SelectProps) -> Node {
             autofocus = active.get() >= 0,
             visible = active.get() >= 0,
             keys = keys,
-            enter = Enter.Fade,
+            enter = Enter.Fade + Enter.Pop,
         ) {
             Each(labels, fn(i, lab) {
                 return SelectRow(value, active, i, lab)
@@ -1291,7 +1300,7 @@ fn Radio(label: string, value: Signal<int>, index: int, p: RadioProps) -> Node {
         keys = keys,
         roving = active(),
     ) {
-        // The dot fades in when picked and out when the pick moves on.
+        // The dot pops in when picked and shrinks away when the pick moves on.
         Box(style = Style(
             width = px(CHECK),
             height = px(CHECK),
@@ -1308,7 +1317,8 @@ fn Radio(label: string, value: Signal<int>, index: int, p: RadioProps) -> Node {
                 radius = RAD_FULL,
                 background = accent(),
                 opacity = if active() { 100 } else { 0 },
-                transition = Motion.Fast,
+                scale = if active() { 100 } else { 40 },
+                transition = Motion.Snap,
             ))
         }
         Text(label, style = Style(font = control_font(p.size), color = ink()))
@@ -1498,7 +1508,7 @@ fn DisclosureHead(
             IC_CHEV_DOWN,
             16,
             mute(),
-            style = Style(rotate = if open.get() { 180 } else { 0 }, transition = Motion.Fast),
+            style = Style(rotate = if open.get() { 180 } else { 0 }, transition = Motion.Snap),
         )
     }
 }
@@ -1720,6 +1730,7 @@ fn BtnLook(p: ButtonProps) -> Node {
         label = p.label.get(),
         hoverOff = p.hoverOff,
         press = true,
+        pressScale = true,
         hoverFade = !p.hoverOff,
         keys = p.keys,
         enabled = on,
@@ -1834,6 +1845,7 @@ fn GroupSegment(
         label = label,
         enabled = enabled,
         press = true,
+        pressScale = true,
         hoverFade = true,
     ) {
         Text(label, style = Style(font = control_font(size), color = button_color(look)))
@@ -1918,6 +1930,7 @@ fn CopyButton(text: Signal<string>, p: CopyButtonProps) -> Node {
         role = "button",
         label = if copied.get() { p.copiedLabel } else { p.label },
         press = true,
+        pressScale = true,
         hoverFade = true,
     ) {
         Icon(
@@ -1982,6 +1995,7 @@ fn StepButton(markup: string, label: string, size: int, on_click: fn(), enabled:
         enabled = enabled,
         focusable = false,
         press = true,
+        pressScale = true,
         hoverFade = true,
     ) {
         Icon(markup, control_icon(size), ink())
@@ -2391,7 +2405,7 @@ fn RangeSlider(lo: Signal<int>, hi: Signal<int>, p: RangeSliderProps) -> Node {
         return (clamp_int(v, mn, mx) - mn) * (tw.get() - t) / (mx - mn)
     }
     fn at(x: int) -> int {
-        let r = rect(track)
+        let r = screen_rect(track)
         let travel = if r.w - t > 1 { r.w - t } else { 1 }
         return slider_snap(mn + (x - r.x - t / 2) * (mx - mn) / travel, mn, mx, step)
     }
@@ -3060,7 +3074,7 @@ fn MultiSelect(selected: Signal<[]string>, options: []string, p: MultiSelectProp
             style = floating_panel(MENU_MIN_W),
             anchor = Anchor(to = field, place = Place.PlaceBelow, gap = Space.Exxxs),
             visible = open.get(),
-            enter = Enter.Fade,
+            enter = Enter.Fade + Enter.Pop,
         ) {
             Each(matches.get(), fn(i, s) {
                 return Box(
@@ -3261,7 +3275,7 @@ fn RatingStar(value: Signal<int>, index: int, half: bool, read_only: bool, put: 
         if read_only {
             return
         }
-        let r = rect(star)
+        let r = screen_rect(star)
         let local = current_mouse().x - r.x
         let mut n = index + 1
         if half && local < r.w / 2 {

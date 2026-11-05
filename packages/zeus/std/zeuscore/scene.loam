@@ -229,7 +229,8 @@ fn fill4(x: int, y: int, w: int, h: int, rgb: int, alpha: int, tl: int, tr: int,
 
 /// Translate, then scale and rotate about an origin. Paint-space only: this
 /// never touches layout, which is what makes a move or a scale a PAINT-dirty
-/// change rather than a LAYOUT-dirty one.
+/// change rather than a LAYOUT-dirty one. `dx` / `dy` are 1/16 dp and `scale`
+/// permille, so hosts draw the positions between whole dp a slow spring ends on.
 fn xform(dx: int, dy: int, scale: int, rotation_degrees: int, ox: int, oy: int) {
     emit(15, dx, dy, ox, oy, 0, scale, 255, rotation_degrees, "", 0)
 }
@@ -597,6 +598,18 @@ fn paint_shimmer(id: int, x: int, y: int, w: int, h: int, r: int, a: int) {
     restore()
 }
 
+/// A shadow's alpha under a surface at alpha `a`. It goes faster than the
+/// surface: hosts leave the middle of a cached shadow undrawn, because an
+/// opaque surface covers it, and a shadow as strong as a half-faded surface
+/// shows that hole as a hard-edged frame. In 16 steps, because a host keeps a
+/// template per alpha and a fade must not build one a frame.
+fn shadow_fade(alpha: int, a: int) -> int {
+    if a >= 255 {
+        return alpha
+    }
+    return alpha * ((a * a / 255 + 8) / 16 * 16) / 255
+}
+
 fn paint_fill_box(id: int, wash: int) {
     let x = arena.draw_x(id)
     let y = arena.draw_y(id)
@@ -618,11 +631,13 @@ fn paint_fill_box(id: int, wash: int) {
         let e = arena.elev_hover(id)
         let sc = arena.paint_rgb(nodes.look[id].elev_c)
         // Ambient first, so the tight key shadow sits on top of it.
-        if e.amb_alpha > 0 {
-            shadow(x, y, w, h, r, sc, e.amb_alpha, e.amb_blur, 0, e.amb_dy)
+        let key_a = shadow_fade(e.alpha, a)
+        let amb_a = shadow_fade(e.amb_alpha, a)
+        if amb_a > 0 {
+            shadow(x, y, w, h, r, sc, amb_a, e.amb_blur, 0, e.amb_dy)
         }
-        if e.alpha > 0 {
-            shadow(x, y, w, h, r, sc, e.alpha, e.blur, e.dx, e.dy)
+        if key_a > 0 {
+            shadow(x, y, w, h, r, sc, key_a, e.blur, e.dx, e.dy)
         }
     }
     let rgb = arena.paint_rgb(nodes.look[id].bg)
@@ -692,6 +707,28 @@ fn paint_fill_box(id: int, wash: int) {
         if pa > 0 {
             fill_a(x, y, w, h, 0, r, pa * 36 / 100 * a / 255)
         }
+    }
+}
+
+/// The selection indicator, under the children: a pill the size of the selected
+/// child, or a line along its foot. Before its first sync it sits on the child.
+fn paint_indicator(id: int) {
+    let sel = arena.sig_val(nodes.anim[id].ind_sig)
+    let t = arena.ind_target(id, sel)
+    if t <= 0 {
+        return
+    }
+    let synced = nodes.anim[id].ind_at >= 0
+    let dx = if synced { nodes.anim[id].ind_x / 16 } else { nodes.box[t].x - nodes.box[id].x }
+    let x = arena.draw_x(id) + dx
+    let w = if synced { nodes.anim[id].ind_w / 16 } else { nodes.box[t].w }
+    let y = arena.draw_y(id) + nodes.box[t].y - nodes.box[id].y
+    let h = nodes.box[t].h
+    let a = arena.paint_alpha(id)
+    if int(nodes.anim[id].ind_kind) == 2 {
+        fill_alpha(x, y + h - 2, w, 2, arena.fg_of(id), 0, a)
+    } else {
+        fill_alpha(x, y, w, h, arena.fg_of(id), nodes.radius_at(t, 0), a)
     }
 }
 
@@ -1023,7 +1060,7 @@ fn cull_enter(x: int, y: int, w: int, h: int) {
 /// 1 when a node paints away from its laid-out box (an animated transform),
 /// so neither it nor its subtree can be culled by box.
 fn moves_off_box(id: int) -> int {
-    if int(nodes.anim[id].an_scale) != 100 ||
+    if int(nodes.anim[id].an_scale) != arena.SCALE_ONE ||
         int(nodes.anim[id].an_tx) != 0 ||
         int(nodes.anim[id].an_ty) != 0 ||
         int(nodes.anim[id].an_rot) != 0 ||
@@ -1098,9 +1135,16 @@ fn paint_node_shaped(id: int) {
     if arena.want_paint(id) == 0 {
         return
     }
-    let sc = int(nodes.anim[id].an_scale)
-    let tx = int(nodes.anim[id].an_tx)
-    let mut ty = int(nodes.anim[id].an_ty)
+    // The main walk only passes a floater by; no shell for that either.
+    if arena.paint_skip_z != 0 && nodes.is_floater(id) != 0 {
+        return
+    }
+    // An invisible node's transform shows nothing, so its rest pose (a tick
+    // shrunk away until checked) costs no ops.
+    let unseen = int(nodes.look[id].opacity) == 0
+    let sc = if unseen { arena.SCALE_ONE } else { int(nodes.anim[id].an_scale) }
+    let tx = if unseen { 0 } else { int(nodes.anim[id].an_tx) }
+    let mut ty = if unseen { 0 } else { int(nodes.anim[id].an_ty) }
     let mut rotation_degrees = int(nodes.anim[id].an_rot)
     // A spinning progress bar (kind 6) sweeps instead of rotating: the
     // flag only keeps the frame loop alive for it.
@@ -1122,9 +1166,9 @@ fn paint_node_shaped(id: int) {
         clipped = 1
         save()
         clip(arena.draw_x(id), arena.draw_y(id), nodes.box[id].w, shown, 0)
-        ty = ty + shown - h
+        ty = ty + (shown - h) * 16
     }
-    if sc == 100 {
+    if sc == arena.SCALE_ONE {
         if tx == 0 {
             if ty == 0 {
                 if rotation_degrees == 0 {
@@ -1137,10 +1181,9 @@ fn paint_node_shaped(id: int) {
             }
         }
     }
-    let cx = arena.draw_x(id) + nodes.box[id].w / 2
-    let cy = arena.draw_y(id) + nodes.box[id].h / 2
+    arena.paint_origin(id)
     save()
-    xform(tx, ty, sc, rotation_degrees, cx, cy)
+    xform(tx, ty, sc, rotation_degrees, arena.origin_x, arena.origin_y)
     let c_on = cull_on
     cull_on = 0
     paint_node_body(id)
@@ -1299,7 +1342,7 @@ fn paint_node_body_in(id: int) {
         }
     } else if k == 7 {
         let mut on = nodes.anim[id].tween
-        if on < 0 {
+        if on == arena.TWEEN_UNSET {
             on = 0
             if arena.bind_pct(id) > 0 {
                 on = 100
@@ -1335,7 +1378,7 @@ fn paint_node_body_in(id: int) {
             fillc = arena.paint_rgb(nodes.look[id].bg)
         }
         let mut twn = nodes.anim[id].tween
-        if twn < 0 {
+        if twn == arena.TWEEN_UNSET {
             twn = 0
             if arena.sig_val(nodes.ui[id].bind_sig) != 0 {
                 twn = 100
@@ -1395,6 +1438,9 @@ fn paint_node_body_in(id: int) {
         // is the only affordance. Focus is drawn at paint time by the host
         // theme (border_c was never reset, so no sticky mutation here).
         paint_fill_box(id, if k == 10 { 0 } else { 1 })
+        if int(nodes.anim[id].ind_kind) != 0 {
+            paint_indicator(id)
+        }
     }
     if k == 3 {
         paint_label(id)

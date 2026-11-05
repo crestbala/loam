@@ -135,8 +135,6 @@ fn Combobox(text: Signal<string>, options: []string, p: ComboboxProps) -> Node {
     let w = len_or(style_of(p.style).width, 240)
     let field = ref()
     let input = ref()
-    let list = ref()
-    let scrim = ref()
     fn open() -> bool {
         return active.get() >= 0
     }
@@ -164,8 +162,6 @@ fn Combobox(text: Signal<string>, options: []string, p: ComboboxProps) -> Node {
             if picked < ms.len {
                 text.set(ms[picked])
             }
-            skip_exit(list)
-            skip_exit(scrim)
             active.set(-1)
         }
     }
@@ -174,7 +170,6 @@ fn Combobox(text: Signal<string>, options: []string, p: ComboboxProps) -> Node {
     return Box(style = Style(direction = Direction.Column, alignSelf = Align.Start)) {
         Overlay(
             on_click = fn() { active.set(-1) },
-            ref = scrim,
             style = Style(display = shown(open()), zIndex = Z_SCRIM),
         )
         Box(
@@ -198,14 +193,13 @@ fn Combobox(text: Signal<string>, options: []string, p: ComboboxProps) -> Node {
             Icon(IC_CHEV_DOWN, control_icon(p.size), dim())
         }
         Box(
-            ref = list,
             style = floating_panel(0, width = w),
             anchor = Anchor(to = field, place = Place.PlaceBelow, gap = Space.Exxxs),
             visible = open(),
-            enter = Enter.Fade,
+            enter = Enter.Fade + Enter.Pop,
         ) {
             Each(matches.get(), fn(i, s) {
-                return ComboRow(text, active, input, i, s, scrim)
+                return ComboRow(text, active, input, i, s)
             })
         }
     }
@@ -217,23 +211,16 @@ fn ComboRow(
     active: Signal<int>,
     input: Ref,
     index: int,
-    label: string,
-    scrim: Ref
+    label: string
 ) -> Node {
-    // state
-    let row = ref()
-
     // controller
     fn pick() {
         text.set(label)
-        skip_exit(row)
-        skip_exit(scrim)
         active.set(-1)
     }
 
     // view
     return Box(
-        ref = row,
         // Hover moves `active` (below), so one fill marks the pointer's row
         // and the keyboard's.
         style = Style(
@@ -407,7 +394,7 @@ fn Popover(p: PopoverProps) -> Node {
             anchor = Anchor(to = host, place = p.place, gap = p.gap),
             autofocus = open.get(),
             visible = open.get(),
-            enter = Enter.Fade,
+            enter = Enter.Fade + Enter.Pop,
             keys = keys,
         ) {
             p.children()
@@ -445,7 +432,6 @@ fn Menu(p: MenuProps) -> Node {
     // state. `active` is the menu's only state; omitted, the menu owns it.
     let active = if result.is_some(p.active) { p.active.val } else { signal(-1) }
     let host = ref()
-    let scrim = ref()
     fn open() -> bool {
         return active.get() >= 0
     }
@@ -467,7 +453,6 @@ fn Menu(p: MenuProps) -> Node {
     return Box(ref = host) {
         click_built(p.trigger, toggle)
         Overlay(
-            ref = scrim,
             on_click = close,
             style = Style(display = shown(open()), zIndex = Z_SCRIM),
         )
@@ -477,7 +462,7 @@ fn Menu(p: MenuProps) -> Node {
             anchor = Anchor(to = host, place = p.place, gap = p.gap),
             visible = open(),
             role = "menu",
-            enter = Enter.Fade,
+            enter = Enter.Fade + Enter.Pop,
             keys = keys,
         ) {
             if p.label.len > 0 {
@@ -495,7 +480,6 @@ fn Menu(p: MenuProps) -> Node {
                             count = p.items.len,
                             label = item.label,
                             danger = item.danger,
-                            scrim = scrim,
                             on_click = fn() => emit_with(p.on_select, index),
                         )
                     }
@@ -506,7 +490,6 @@ fn Menu(p: MenuProps) -> Node {
                     count = p.items.len,
                     label = item.label,
                     danger = item.danger,
-                    scrim = scrim,
                     on_click = fn() => emit_with(p.on_select, index),
                 )
             })
@@ -530,9 +513,6 @@ struct MenuItemProps {
     disabled: bool = false,
     /// Destructive command: painted in the danger ink.
     danger: bool = false,
-    /// The menu scrim. Snapped on pick so its exit track does not keep frames
-    /// live after the panel is already gone.
-    scrim: Ref = Ref {},
 }
 
 /// One command row. Highlights while `active == index`; the pointer moves
@@ -545,15 +525,11 @@ fn MenuItem(p: MenuItemProps) -> Node {
     let n = p.count
     let off = p.disabled
     let row_ink = if p.danger { danger_ink() } else { ink() }
-    let row = ref()
 
-    // controller. A pick runs `on_click`, then jumps the exit fade so the
-    // panel is gone this frame (a Fast fade left item labels over the heading).
+    // controller. A pick closes the menu the way everything else does.
     fn run() {
         if !off {
             emit(p.on_click)
-            skip_exit(row)
-            skip_exit(p.scrim)
             active.set(-1)
         }
     }
@@ -586,7 +562,6 @@ fn MenuItem(p: MenuItemProps) -> Node {
     // only the active row is a tab stop, and it takes focus as it activates.
     // `hoverStyle` gives the same raised fill before `on_hover` runs.
     return Box(
-        ref = row,
         hoverStyle = Style(background = raised()),
         style = Style(
             direction = Direction.Row,
@@ -670,9 +645,10 @@ fn Drawer(open: Signal<bool>, p: DrawerProps) -> Node {
 
     // view. The overlay pins the panel to the chosen edge (a row for the side
     // edges); the panel swallows clicks so a press inside does not close it.
-    // Closed, it rests `size` past its edge; it slides on over `Motion.Base`
-    // and off over `Motion.Fast`, and takes focus as it opens. Only the inner
-    // edge rounds, so the sheet meets the window edge square.
+    // Closed, it rests `size` past its edge. It is a solid sheet, so it does
+    // not fade: it glides on with weight, is pulled off speeding up, and takes
+    // focus as it opens. Only the inner edge rounds, so the sheet meets the
+    // window edge square.
     return Overlay(style = drawer_dock(side), visible = open.get(), on_click = fn() {
         open.set(false)
     }) {
@@ -705,13 +681,12 @@ fn Drawer(open: Signal<bool>, p: DrawerProps) -> Node {
                 } else {
                     0
                 },
-                transition = if open.get() { Motion.Base } else { Motion.Fast },
+                transition = if open.get() { Motion.Glide } else { Motion.Fall },
             ),
             restyle = p.style,
             role = "dialog",
             on_click = fn() { return },
             autofocus = open.get(),
-            enter = Enter.Fade,
             keys = keys,
         ) {
             p.children()
@@ -819,7 +794,7 @@ fn Tooltip(p: TooltipProps) -> Node {
             visible = shown.get(),
             role = "tooltip",
             label = p.text.get(),
-            enter = Enter.Fade,
+            enter = Enter.Fade + Enter.Pop,
         ) {
             Text(p.text, style = Style(font = FONT_CAPTION, color = on_ink()))
             if p.arrow && tooltip_arrow_ok(p.place) {
@@ -906,7 +881,7 @@ fn HoverCard(p: HoverCardProps) -> Node {
             restyle = p.style,
             anchor = Anchor(to = host, place = p.place, gap = p.gap),
             visible = shown.get(),
-            enter = Enter.Fade,
+            enter = Enter.Fade + Enter.Pop,
         ) {
             p.children()
         }
@@ -925,10 +900,10 @@ struct ToastProps {
 }
 
 /// A transient message pinned to the bottom (or top) of the window. `open` is a
-/// bool signal; it dismisses itself after `ms`, or on click. It fades in on
-/// open and fades out on close. Trailing block is the message.
+/// bool signal; it dismisses itself after `ms`, or on click. It comes in from
+/// its edge and falls back to it. Trailing block is the message.
 fn Toast(open: Signal<bool>, p: ToastProps) -> Node {
-    // controller. Fade only (the card's `enter`). Dismisses itself after `ms`.
+    // controller. Dismisses itself after `ms`.
     effect(|| {
         if open.get() {
             async.after(p.ms, fn() { open.set(false) })
@@ -955,7 +930,7 @@ fn Toast(open: Signal<bool>, p: ToastProps) -> Node {
             ),
             restyle = p.style,
             on_click = fn() { open.set(false) },
-            enter = Enter.Fade,
+            enter = Enter.Fade + (if p.place == 1 { Enter.Drop } else { Enter.Rise }),
         ) {
             p.children()
         }
@@ -1008,7 +983,7 @@ fn DialogShell(open: Signal<bool>, close_x: bool, title: string, children: fn())
             ),
             role = "dialog",
             on_click = fn() { return },
-            enter = Enter.Fade,
+            enter = Enter.Fade + Enter.Pop + Enter.Rise,
             focusable = true,
             trap = open.get(),
             keys = keys,
@@ -1696,7 +1671,7 @@ fn DatePicker(y: Signal<int>, m: Signal<int>, d: Signal<int>, p: DatePickerProps
             on_click = fn() { return },
             keys = keys,
             visible = open.get(),
-            enter = Enter.Fade,
+            enter = Enter.Fade + Enter.Pop,
         ) {
             Row(4) {
                 CalStep(IC_CHEV_LEFT, "Previous month", prev_month)
@@ -1842,7 +1817,7 @@ fn ContextMenu(p: ContextMenuProps) -> Node {
             return
         }
         let m = current_mouse()
-        let r = rect(region)
+        let r = screen_rect(region)
         at_x.set(m.x - r.x)
         at_y.set(m.y - r.y)
         active.set(0)
@@ -2448,7 +2423,7 @@ fn SplitPane(p: SplitPaneProps) -> Node {
                 cursor = if vertical { "ns-resize" } else { "ew-resize" },
             ),
             on_drag = fn() {
-                let r = rect(host)
+                let r = screen_rect(host)
                 let v = if vertical { current_mouse().y - r.y } else { current_mouse().x - r.x }
                 let span = if vertical { r.h } else { r.w }
                 let cap = if span - mn > mn { span - mn } else { mn }
@@ -2737,7 +2712,7 @@ fn CommandPalette(open: Signal<bool>, items: []CommandItem, p: CommandPalettePro
             role = "dialog",
             label = "Commands",
             on_click = fn() { return },
-            enter = Enter.Fade,
+            enter = Enter.Fade + Enter.Pop + Enter.Rise,
             trap = open.get(),
         ) {
             Box(style = field_chrome(Size.Md)) {
@@ -2787,8 +2762,8 @@ struct CarouselProps {
 /// URLs — the same strings `Image` takes, so `Carousel(photos.get())` follows
 /// the signal. The current image fills the frame width and the frame height
 /// follows its aspect ratio, capped at `height` (pass `fit = Fit.Cover` to
-/// fill and crop instead). The frame clips to its width; a page change eases `shiftX`
-/// over `Motion.Base`. Each slide is pinned at its own frame offset rather
+/// fill and crop instead). The frame clips to its width; a page change glides `shiftX`
+/// on `Motion.Glide`. Each slide is pinned at its own frame offset rather
 /// than laid out in flow: a row of frame-wide slides overflows its width, and
 /// an overflowing row wraps, which would stack the slides under the first. Arrows, dots, and Left / Right / Home / End move the
 /// page and wrap at the ends. An empty list shows a placeholder.
@@ -2952,7 +2927,7 @@ fn Carousel(sources: Signal<[]string>, p: CarouselProps) -> Node {
                         width = pct(100),
                         height = px(frame_h()),
                         shiftX = -slide(),
-                        transition = Motion.Base,
+                        transition = Motion.Glide,
                     ),
                 ) {
                     // By position, not keyed by source: the same file may be

@@ -331,9 +331,10 @@ public class ZeusView extends View implements Choreographer.FrameCallback {
     /** Translate, then scale and rotate about (ox, oy). Composes with the
      *  enclosing clip and unwinds with the enclosing restore. */
     void jniXform(Canvas c, int dx, int dy, int scale, int rot, int ox, int oy) {
-        c.translate(ox + dx, oy + dy);
+        // dx, dy are 1/16 dp and scale permille.
+        c.translate(ox + dx / 16f, oy + dy / 16f);
         if (rot != 0) c.rotate(rot);
-        if (scale != 100) c.scale(scale / 100f, scale / 100f);
+        if (scale != 1000) c.scale(scale / 1000f, scale / 1000f);
         c.translate(-ox, -oy);
     }
 

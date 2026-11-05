@@ -2007,7 +2007,7 @@ T text 129 67 4012339 14 -
 T text 141 67 2039066 14 15
 T fill 0 0 420 279 16250611 0
 T save
-T xform 0 0 100 108 40 109
+T xform 0 0 1000 108 40 109
 T path stroke 6051663 255 85 5 ops=19 first=2944,6976 sum=83096682
 T restore
 T path stroke 6051663 255 149 5 ops=6 first=13803,4992 sum=152533611
@@ -2016,20 +2016,20 @@ T path stroke 6051663 255 149 5 ops=2 first=13056,4693 sum=1469025
 T text 149 104 2039066 17 No projects
 T text 100 137 4012339 14 Create one to get started.
 T save
-T xform 0 0 50 0 52 227
+T xform 0 0 500 0 52 227
 T fill 32 207 40 40 1513239 8
 T restore
 DRAW 12
 fill 0 0 420 279 16250611 0
 save
-xform 0 0 40 109 100 108
+xform 0 0 40 109 1000 108
 svg 32 101 16 16 6051663
 restore
 svg 190 64 28 28 6051663
 text 149 104 2039066 17 No projects
 text 100 137 4012339 14 Create one to get started.
 save
-xform 0 0 52 227 50 0
+xform 0 0 52 227 500 0
 fill 32 207 40 40 1513239 8
 restore
 T fill 0 0 480 400 16250611 0
