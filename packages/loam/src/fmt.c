@@ -457,10 +457,15 @@ static int rest_w(int k, int b, int *all) {
 static void emit_range(int a, int b, int ind, int tail);
 static void emit_block(int i, int ind);
 
-/** One line. A trailing comma (`g(1, 2,)`) only belongs to a broken list. */
+static int is_call(int i);
+
+/** One line. A trailing comma (`g(1, 2,)`) only belongs to a broken list, and
+ *  only `{ }` and call lists shed it: the same ones `list_comma` allows. */
 static void emit_flat(int a, int b) {
     for (int i = a; i < b; i++) {
-        if (T[i].k == K_OP && is(&T[i], ",") && i + 1 < b && T[i + 1].k == K_CLOSE) continue;
+        if (T[i].k == K_OP && is(&T[i], ",") && i + 1 < b && T[i + 1].k == K_CLOSE &&
+            (is_open(T[i + 1].mate, '{') || is_call(T[i + 1].mate)))
+            continue;
         put(i);
     }
 }
