@@ -191,6 +191,131 @@ fn the_snippet_lands_before_the_closing_body() {
     test.assert(has(body, "<!--LIVE--></body>"))
 }
 
+// --- compressed replies ---
+
+#[test]
+fn accept_encoding_is_read_by_token() {
+    test.assert(zeli.accepts_coding("gzip, deflate, br", "br"))
+    test.assert(zeli.accepts_coding("br;q=0.5", "br"))
+    test.assert(!zeli.accepts_coding("br;q=0", "br"))
+    test.assert(!zeli.accepts_coding("br;q=0.0", "br"))
+    test.assert(!zeli.accepts_coding("gzip", "br"))
+    /* A name that only contains the coding is another coding. */
+    test.assert(!zeli.accepts_coding("xbr", "br"))
+    test.assert(!zeli.accepts_coding("", "br"))
+}
+
+/* `s` with each `|` a NUL, the separator in parsed headers. A string literal
+   has no way to write one: `\\0` is a plain `0`. */
+fn nuls(s: string) -> string {
+    let mut out = []int {}
+    for i in 0..s.len {
+        out.push(if s[i] == 124 { 0 } else { s[i] })
+    }
+    return string_from_bytes(out)
+}
+
+#[test]
+fn accept_encoding_comes_from_the_parsed_headers() {
+    test.assert_eq_str(zeli.accept_encoding(nuls("host|x|accept-encoding|gzip, br|")), "gzip, br")
+    test.assert_eq_str(zeli.accept_encoding(nuls("host|x|")), "")
+}
+
+#[test]
+fn a_compressed_copy_answers_a_client_that_takes_it() {
+    let root = "packages/loam/tests/tmp/servebr"
+    fixture(root)
+    sys.write_file(cat(root, "/app.wasm.br"), "BR")
+    let r = zeli.serve_reply_for(root, "/app.wasm", snip, "gzip, br")
+    test.assert_eq_str(r.encoding, "br")
+    test.assert_eq_str(r.body, "BR")
+    test.assert_eq_str(r.content_type, "application/wasm")
+    let plain = zeli.serve_reply_for(root, "/app.wasm", snip, "gzip")
+    test.assert_eq_str(plain.encoding, "")
+    test.assert_eq_str(plain.body, "asm")
+}
+
+#[test]
+fn a_page_that_takes_a_snippet_is_never_a_compressed_copy() {
+    let root = "packages/loam/tests/tmp/servebr"
+    fixture(root)
+    sys.write_file(cat(root, "/index.html.br"), "BR")
+    let dev = zeli.serve_reply_for(root, "/", snip, "br")
+    test.assert_eq_str(dev.encoding, "")
+    test.assert(has(dev.body, snip))
+    /* `preview` has no snippet, so it sends what a host would. */
+    let prod = zeli.serve_reply_for(root, "/", "", "br")
+    test.assert_eq_str(prod.encoding, "br")
+    test.assert(has(prod.content_type, "text/html"))
+}
+
+#[test]
+fn an_encoded_reply_says_so() {
+    let r = zeli.serve_http_encoded(200, "application/wasm", "br", "no-cache", "x")
+    test.assert(has(r, "Content-Encoding: br\r\n"))
+    test.assert(has(r, "Vary: Accept-Encoding\r\n"))
+    test.assert(has(r, "Cache-Control: no-cache\r\n"))
+    test.assert(!has(zeli.serve_http_reply(200, "text/plain", "x"), "Content-Encoding"))
+}
+
+// --- preview ---
+
+#[test]
+fn preview_caches_as_the_release_headers_ask() {
+    test.assert(has(zeli.preview_cache("/_zeus/app.abc.wasm"), "immutable"))
+    test.assert_eq_str(zeli.preview_cache("/"), "no-cache")
+    test.assert_eq_str(zeli.preview_cache("/app.wasm"), "no-cache")
+}
+
+#[test]
+fn vercel_gets_the_release_headers_too() {
+    let v = zeli.vercel_config()
+    test.assert(has(v, "/_zeus/(.*)"))
+    test.assert(has(v, "immutable"))
+}
+
+#[test]
+fn a_plain_page_names_its_files_up_front() {
+    let h = zeli.plain_page("a<b", zeli.plain_assets("app"))
+    test.assert(has(h, "<title>a&lt;b</title>"))
+    test.assert(has(h, "rel=\"preload\" href=\"/loader.js\" as=\"script\""))
+    test.assert(has(h, "data-wasm=\"/app.wasm\""))
+}
+
+// --- stripping the loader ---
+
+#[test]
+fn strip_js_drops_comments_and_indentation() {
+    test.assert_eq_str(zeli.strip_js("a(); // x\n\n  c();\n  /* y */ b();\n"), "a();\nc();\n b();\n")
+    /* A comment across lines can end a statement, so its break stays. */
+    test.assert_eq_str(zeli.strip_js("a /* x\n y */ b"), "a \n b")
+}
+
+#[test]
+fn strip_js_leaves_literals_alone() {
+    let cases = []string {
+        "let u = \"http://x\";",
+        "let u = 'a /* b */';",
+        "let e = \"\\\" // \";",
+        "let r = /[/*]\\/\\/x/.test(s);",
+        "let t = `// ${a /* c */ ? \"//\" : `/*${b}*/`} //`;",
+        "return /\\/\\//.test(s);",
+    }
+    test.assert_eq_str(zeli.strip_js(cases[0]), cases[0])
+    test.assert_eq_str(zeli.strip_js(cases[1]), cases[1])
+    test.assert_eq_str(zeli.strip_js(cases[2]), cases[2])
+    test.assert_eq_str(zeli.strip_js(cases[3]), cases[3])
+    test.assert_eq_str(zeli.strip_js(cases[5]), cases[5])
+    /* The comment in the `${}` is code, so only it goes. */
+    test.assert_eq_str(zeli.strip_js(cases[4]), "let t = `// ${a  ? \"//\" : `/*${b}*/`} //`;")
+}
+
+#[test]
+fn strip_js_tells_division_from_a_regular_expression() {
+    test.assert_eq_str(zeli.strip_js("let x = a / b; // c"), "let x = a / b; ")
+    test.assert_eq_str(zeli.strip_js("let x = f(a) / 2 / 3; // c"), "let x = f(a) / 2 / 3; ")
+}
+
 // --- the release shell ---
 
 #[test]
