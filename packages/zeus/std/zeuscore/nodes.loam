@@ -254,10 +254,15 @@ struct ScrlRec {
     scroll_y: int,
     /// Smooth wheel scroll: the position eases toward `tgt_x` / `tgt_y` each
     /// frame while the matching `smooth` bit (1 = y, 2 = x) is set. Bounded —
-    /// a notch converges in ~150 ms and retargets on the next notch — unlike
+    /// a notch converges in ~100 ms and retargets on the next notch — unlike
     /// the momentum coast, which decays from a velocity.
     tgt_x: int,
     tgt_y: int,
+    /// What a pan has moved this scroller since the last physics frame. Touch
+    /// reports at its own rate, so velocity is measured over frames from this,
+    /// not read off whichever event came last.
+    acc_x: int,
+    acc_y: int,
     /// Wall-clock deadline (ms) until which the scrollbar thumb is shown;
     /// 0 = hidden. Set on every scroll; `bar_s` is the wall-clock time the
     /// bar *appeared*, so paint can fade it in from 0 and out again over the
@@ -433,7 +438,7 @@ fn blank_look() -> LookRec {
 
 fn blank_scrl() -> ScrlRec {
     return ScrlRec {
-        scroll_x: 0, scroll_y: 0, tgt_x: 0, tgt_y: 0, vel_x: 0, vel_y: 0, smooth: 0,
+        scroll_x: 0, scroll_y: 0, tgt_x: 0, tgt_y: 0, acc_x: 0, acc_y: 0, vel_x: 0, vel_y: 0, smooth: 0,
         bar_t: 0, bar_s: 0, bar_a0: 0,
     }
 }

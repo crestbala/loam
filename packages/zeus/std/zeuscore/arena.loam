@@ -5966,6 +5966,41 @@ fn floater_captures(f: int, sx: int, sy: int) -> int {
     return in_box(f, ptr_x + sx, ptr_y + sy)
 }
 
+/// 1 when floater `f` is a surface of its own: a modal, a scrim, a popup, a
+/// panel placed in window coordinates. The page's scroll stops at one. The
+/// others are page content that merely draws in a higher layer, as a Select
+/// trigger does to stay above its scrim, and scrolling goes straight through.
+fn floater_is_surface(f: int) -> int {
+    if f <= 0 {
+        return 0
+    }
+    if int(nodes.tree[f].kind) == 9 || nodes.is_window_floater(f) != 0 {
+        return 1
+    }
+    return 0
+}
+
+/// The topmost surface capturing the pointer (0 = none), under whatever
+/// `update_ptr_cover` just left in the floater list. `surface_sx` / `_sy` are
+/// its screen offset. An open Select's trigger is not one, but the scrim under
+/// it is: this finds the scrim, so the page stays put.
+let mut surface_sx: int = 0
+let mut surface_sy: int = 0
+fn scroll_surface() -> int {
+    let n = floater_id.len
+    for i in 0..n {
+        let f = floater_id[i]
+        if floater_is_surface(f) != 0 {
+            if floater_captures(f, floater_screen_x[i], floater_screen_y[i]) != 0 {
+                surface_sx = floater_screen_x[i]
+                surface_sy = floater_screen_y[i]
+                return f
+            }
+        }
+    }
+    return 0
+}
+
 /// Recompute `ptr_cover` for the current pointer and boxes. Called when the
 /// pointer moves and before the hover states re-sync (a scroll or a layout can
 /// slide a popup under a still pointer).
@@ -6208,11 +6243,24 @@ struct Axis {
     dirty: int,
 }
 
+/// How fast a coast dies, per mille per ms: about 3% a 60 Hz frame, the glide
+/// of a native list. A flick covers around 30 times its speed in px per frame.
+const COAST_DECAY: int = 2
+/// A flick leaves faster than the finger was measured, as on a phone: the last
+/// frames of a flick are its fastest, and the measure averages them away.
+const COAST_GAIN_NUM: int = 3
+const COAST_GAIN_DEN: int = 2
+/// Speed limit in px per 16 ms. High enough to cross a long page in a swipe.
+const COAST_MAX: int = 420
+/// `vel_x` / `vel_y` are in 1/16 px per 16 ms: whole pixels would round every
+/// decay down, and cut the glide short as it slowed.
+const VEL_UNIT: int = 16
+
 fn physics_axis(pos: int, vel: int, maxs: int, dt: int) -> Axis {
     // Frame-rate independent: advance the position and decay the velocity for the
     // frame's delta, with the 60 Hz values as the reference (dt == 16).
-    let mut y = pos + vel * dt / 16
-    let mut v = vel * (100 - dt / 2) / 100
+    let mut y = pos + vel * dt / (16 * VEL_UNIT)
+    let mut v = vel * (1000 - COAST_DECAY * dt) / 1000
     let mut dirty = 0
     // Hard clamp at the content bounds: momentum never overshoots, so the
     // viewport can never show a blank strip past the first/last content.
@@ -6224,7 +6272,8 @@ fn physics_axis(pos: int, vel: int, maxs: int, dt: int) -> Axis {
         y = maxs
         v = 0
         dirty = 1
-    } else if v * v < 4 {
+    } else if v > 0 - VEL_UNIT && v < VEL_UNIT {
+        // Under a pixel a frame there is nothing left to see.
         v = 0
     } else {
         dirty = 1
@@ -6232,7 +6281,11 @@ fn physics_axis(pos: int, vel: int, maxs: int, dt: int) -> Axis {
     return Axis { pos: y, vel: v, dirty: dirty }
 }
 
-/// One frame toward a wheel target: 35 % of the gap per 16 ms, at least 1 px, so
+/// Share of a wheel target's gap covered per 16 ms. A notch has landed in about
+/// 100 ms: smooth enough to follow, quick enough never to be waited for.
+const WHEEL_EASE: int = 50
+
+/// One frame toward a wheel target, at least 1 px, so
 /// a 100 px notch lands smoothly and never stalls short. `dt` keeps the feel the
 /// same on a 120 Hz display as on a 60 Hz one. Returns the new position; the
 /// caller clears the bit when it equals the target.
@@ -6241,9 +6294,9 @@ fn smooth_axis(pos: int, target_value: int, dt: int) -> int {
     if d == 0 {
         return pos
     }
-    // 35 % of the gap per 16 ms, scaled by the frame's delta and capped below
-    // 100 % so a long frame converges fast without overshooting the target.
-    let mut f = 35 * dt / 16
+    // Scaled by the frame's delta and capped below 100 % so a long frame
+    // converges fast without overshooting the target.
+    let mut f = WHEEL_EASE * dt / 16
     if f > 90 {
         f = 90
     }
@@ -6326,14 +6379,17 @@ fn physics_step() -> int {
             let panned_y = sm2 & 4
             let panned_x = sm2 & 8
             nodes.scrl[i].smooth = u8(sm2 & 3)
-            // A resting finger has no speed left to release with.
+            // Under a finger, speed is measured: what it moved this frame,
+            // averaged with the frames before. A frame with no pan in it counts
+            // as nothing moved, so touch slower than the screen averages out,
+            // and a resting finger has no speed left to release with.
             if pan_held != 0 {
-                if panned_y == 0 {
-                    nodes.scrl[i].vel_y = nodes.scrl[i].vel_y / 2
-                }
-                if panned_x == 0 {
-                    nodes.scrl[i].vel_x = nodes.scrl[i].vel_x / 2
-                }
+                let rate_y = nodes.scrl[i].acc_y * VEL_UNIT * 16 / dt
+                let rate_x = nodes.scrl[i].acc_x * VEL_UNIT * 16 / dt
+                nodes.scrl[i].vel_y = (nodes.scrl[i].vel_y + rate_y) / 2
+                nodes.scrl[i].vel_x = (nodes.scrl[i].vel_x + rate_x) / 2
+                nodes.scrl[i].acc_y = 0
+                nodes.scrl[i].acc_x = 0
                 continue
             }
             if panned_y == 0 {
@@ -6375,6 +6431,61 @@ fn physics_step() -> int {
         mark_scroll()
     }
     return dirty
+}
+
+/// The finger lifted: what it was measured at becomes the coast.
+fn pan_release() {
+    pan_held = 0
+    let n = nodes.tree.len
+    for i in 1..n {
+        if int(nodes.tree[i].kind) == 11 {
+            nodes.scrl[i].vel_y = coast_speed(lift_speed(nodes.scrl[i].vel_y, nodes.scrl[i].acc_y))
+            nodes.scrl[i].vel_x = coast_speed(lift_speed(nodes.scrl[i].vel_x, nodes.scrl[i].acc_x))
+            // Whatever moved since the last frame is in the position already.
+            nodes.scrl[i].acc_y = 0
+            nodes.scrl[i].acc_x = 0
+        }
+    }
+}
+
+/// The speed at lift, with the moves no frame has measured yet: a hard flick
+/// can be over before one comes.
+fn lift_speed(vel: int, acc: int) -> int {
+    if acc == 0 {
+        return vel
+    }
+    let rate = acc * VEL_UNIT
+    return if vel == 0 { rate } else { (vel + rate) / 2 }
+}
+
+fn coast_speed(v: int) -> int {
+    let s = v * COAST_GAIN_NUM / COAST_GAIN_DEN
+    let top = COAST_MAX * VEL_UNIT
+    if s > top {
+        return top
+    }
+    if s < 0 - top {
+        return 0 - top
+    }
+    return s
+}
+
+/// Notches in a row, while the last is still landing.
+let mut wheel_streak: int = 0
+const WHEEL_STREAK_MAX: int = 6
+
+/// A notch's distance, for a scroller at `pos` easing to `tgt` if `easing`. Each
+/// notch in a row reaches further, up to four times: a turn of the wheel moves
+/// a line, a spin crosses the page, as it does with an accelerated wheel.
+fn wheel_notch(easing: int, pos: int, tgt: int, d: int) -> int {
+    if easing != 0 && (tgt - pos) * d > 0 {
+        if wheel_streak < WHEEL_STREAK_MAX {
+            wheel_streak = wheel_streak + 1
+        }
+    } else {
+        wheel_streak = 0
+    }
+    return d * (2 + wheel_streak) / 2
 }
 
 /// Move a wheel target by `d` (clamped to the content). Starts from the live
@@ -6454,19 +6565,20 @@ fn apply_delta_y(id: int, dy: int, momentum: int) -> int {
     }
     let my = scroll_max(id)
     let mut ny = nodes.scrl[id].scroll_y + dy
-    let mut v = dy
-    if momentum == 0 {
-        v = 0
+    // A pan keeps the speed measured so far (`physics_step`); anything else,
+    // and an end of the content, stops it.
+    if momentum == 0 || ny < 0 || ny > my {
+        nodes.scrl[id].vel_y = 0
+        nodes.scrl[id].acc_y = 0
+    } else {
+        nodes.scrl[id].acc_y = nodes.scrl[id].acc_y + dy
     }
     if ny < 0 {
         ny = 0
-        v = 0
     }
     if ny > my {
         ny = my
-        v = 0
     }
-    nodes.scrl[id].vel_y = v
     // A direct scroll — a pan or a precise wheel step — is the finger taking
     // this axis over, so it CANCELS any pending wheel easing (bit 1). Leaving
     // that ease armed is the bug this comment exists for: the frames after the
@@ -6500,19 +6612,18 @@ fn apply_delta_x(id: int, dx: int, momentum: int) -> int {
     }
     let mx = scroll_max_x(id)
     let mut nx = nodes.scrl[id].scroll_x + dx
-    let mut v = dx
-    if momentum == 0 {
-        v = 0
+    if momentum == 0 || nx < 0 || nx > mx {
+        nodes.scrl[id].vel_x = 0
+        nodes.scrl[id].acc_x = 0
+    } else {
+        nodes.scrl[id].acc_x = nodes.scrl[id].acc_x + dx
     }
     if nx < 0 {
         nx = 0
-        v = 0
     }
     if nx > mx {
         nx = mx
-        v = 0
     }
-    nodes.scrl[id].vel_x = v
     // The x twin of the note in `apply_delta_y`: the finger cancels the x ease,
     // and bit 8 suppresses the same-frame coast.
     let mut bitsx = int(nodes.scrl[id].smooth) & 13
@@ -7092,6 +7203,39 @@ fn bar_thumb_y(id: int, oy: int) -> int {
         return bar_y(id, oy)
     }
     return bar_y(id, oy) + (text_height - thh) * nodes.scrl[id].scroll_y / maxs
+}
+
+/// A press on the track at `py`, off the thumb: the page jumps so the thumb
+/// sits centred there, and the press goes on as a drag of it. On the thumb, nothing.
+fn bar_track_press_y(id: int, py: int) {
+    let ty = bar_thumb_y(id, nodes.box[id].y)
+    let th = bar_thumb_h(id)
+    if py >= ty && py < ty + th {
+        return
+    }
+    let range = geometry.max2(bar_track_h(id) - th, 1)
+    let want = (py - bar_y(id, nodes.box[id].y) - th / 2) * scroll_max(id) / range
+    nodes.scrl[id].scroll_y = geometry.min2(geometry.max2(want, 0), scroll_max(id))
+    nodes.scrl[id].vel_y = 0
+    nodes.scrl[id].smooth = u8(int(nodes.scrl[id].smooth) & 14)
+    if nodes.ui[id].bind_sig > 0 {
+        store_sig_paint(nodes.ui[id].bind_sig, nodes.scrl[id].scroll_y)
+    }
+    mark_scroll_node(id)
+}
+
+fn bar_track_press_x(id: int, px: int) {
+    let tx = bar_thumb_x(id, nodes.box[id].x)
+    let tw = bar_thumb_w(id)
+    if px >= tx && px < tx + tw {
+        return
+    }
+    let range = geometry.max2(bar_track_w(id) - tw, 1)
+    let want = (px - bar_hx(id, nodes.box[id].x) - tw / 2) * scroll_max_x(id) / range
+    nodes.scrl[id].scroll_x = geometry.min2(geometry.max2(want, 0), scroll_max_x(id))
+    nodes.scrl[id].vel_x = 0
+    nodes.scrl[id].smooth = u8(int(nodes.scrl[id].smooth) & 13)
+    mark_scroll_node(id)
 }
 
 fn bar_hx(id: int, ox: int) -> int {

@@ -23,7 +23,8 @@ let mem: WebAssembly.Memory | null = null;
     { t: 80, x: 0, y: 420 },
   ];
   // The fingertip moves up the glass, so the content scrolls down: positive.
-  if (fling.velocity(swipe, 90).y !== 1) throw new Error("fling: velocity of a swipe");
+  // 1 px/ms measured, released at the fling's 1.35 gain.
+  if (fling.velocity(swipe, 90).y !== 1.35) throw new Error("fling: velocity of a swipe");
   if (fling.velocity(swipe, 400).y !== 0) throw new Error("fling: a rested finger has no velocity");
   if (fling.velocity(swipe.slice(0, 1), 5).y !== 0) throw new Error("fling: one sample has no velocity");
   const whole = fling.step(1, 32);

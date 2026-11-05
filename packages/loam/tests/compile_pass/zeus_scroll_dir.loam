@@ -107,6 +107,12 @@ fn main() {
         m = m + 1
     }
     must(zeus.node_scroll_y(id3) == 100, "an undisturbed notch still eases and lands")
+    // The flick that opened this test is still gliding on its own scroller.
+    m = 0
+    while m < 120 && zeus.engine_step_dt(16) != 0 {
+        zeus.pump_frame()
+        m = m + 1
+    }
     must(zeus.engine_step_dt(16) == 0, "and then goes idle")
 
     fmt.println("scroll dir ok", maxs)

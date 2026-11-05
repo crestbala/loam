@@ -54,6 +54,7 @@ public class ZeusView extends View implements Choreographer.FrameCallback {
     private boolean framed;
     private float lastX, lastY;
     private boolean tracking, scrolling;
+    private float startX, startY, remX, remY;
 
     public ZeusView(Context context) {
         super(context);
@@ -183,15 +184,31 @@ public class ZeusView extends View implements Choreographer.FrameCallback {
         if (action == MotionEvent.ACTION_DOWN) {
             lastX = ev.getX();
             lastY = ev.getY();
+            startX = lastX;
+            startY = lastY;
+            remX = 0;
+            remY = 0;
             tracking = true;
             scrolling = false;
             nativePointerDown(x, y);
             return true;
         }
         if (action == MotionEvent.ACTION_MOVE && tracking) {
-            int dx = (int) ((lastX - ev.getX()) / d);
-            int dy = (int) ((lastY - ev.getY()) / d);
-            if (!scrolling && dx * dx + dy * dy > 16) scrolling = true;
+            // The engine takes whole dp. Carry the fraction, or a slow drag
+            // loses a piece of every move and falls behind the finger.
+            float fx = (lastX - ev.getX()) / d + remX;
+            float fy = (lastY - ev.getY()) / d + remY;
+            int dx = (int) fx;
+            int dy = (int) fy;
+            remX = fx - dx;
+            remY = fy - dy;
+            // Measured from the press: moves are small, so a slow start judged
+            // one move at a time would never become a scroll.
+            if (!scrolling) {
+                float sx = (startX - ev.getX()) / d;
+                float sy = (startY - ev.getY()) / d;
+                if (sx * sx + sy * sy > 64) scrolling = true;
+            }
             nativePointerMove(x, y, scrolling ? dx : 0, scrolling ? dy : 0);
             lastX = ev.getX();
             lastY = ev.getY();

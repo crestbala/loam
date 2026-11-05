@@ -1,0 +1,95 @@
+// Scrolling with the pointer over page content that draws in a higher layer. A
+// Select trigger has a z-index so it stays above its own scrim, which made it a
+// floater, and the wheel stopped dead on it. Only a surface (a modal, a scrim, a
+// popup) holds the page. Over the trigger of an open Select, the scrim is
+// underneath, so the page still stays put.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("layer", 500, 300)
+    let top = zeus.signal(0)
+    let v = zeus.signal(1)
+    let text = zeus.signal("")
+    let open = zeus.signal(false)
+    let list = zui.Scroll(bind = top, style = Style(width = px(500), height = px(300))) {
+        zui.Select(v, []string { "web", "macOS" })
+        zui.Combobox(text, []string { "a", "b" })
+        zui.AvatarGroup([]string { "AL", "GH" }, 32)
+        zui.Dialog(open, title = "Modal") {
+            zeus.Text("Body")
+        }
+        zeus.Box(style = Style(height = px(3000)))
+    }
+    zeus.root(list)
+    zeus.pump_frame()
+    zeus.engine_step_dt(16)
+    zeus.pump_frame()
+    let id = list.id
+
+    // --- every in-page layer lets the wheel, the trackpad and a finger through ---
+    let mut y = 10
+    while y < 130 {
+        top.set(0)
+        zeus.pump_frame()
+        zeus.engine_scroll_step(60, y, 0, 7)
+        zeus.pump_frame()
+        must(zeus.node_scroll_y(id) == 7, "a precise scroll passes over the control")
+        top.set(0)
+        zeus.pump_frame()
+        zeus.engine_scroll_smooth(60, y, 0, 40)
+        zeus.engine_step_dt(16)
+        zeus.pump_frame()
+        must(zeus.node_scroll_y(id) > 0, "a wheel notch passes over the control")
+        let mut i = 0
+        while i < 30 {
+            zeus.engine_step_dt(16)
+            zeus.pump_frame()
+            i = i + 1
+        }
+        top.set(0)
+        zeus.pump_frame()
+        zeus.engine_scroll(60, y, 0, 7)
+        zeus.pump_frame()
+        must(zeus.node_scroll_y(id) == 7, "a finger passes over the control")
+        zeus.engine_mouseup()
+        i = 0
+        while i < 30 {
+            zeus.engine_step_dt(16)
+            zeus.pump_frame()
+            i = i + 1
+        }
+        y = y + 16
+    }
+
+    // --- an open Select's trigger: the scrim holds the page ---
+    top.set(0)
+    zeus.pump_frame()
+    must(zeus.engine_click(60, 16) != 0, "the trigger opens")
+    zeus.engine_mouseup()
+    zeus.pump_frame()
+    zeus.engine_scroll_step(60, 16, 0, 7)
+    zeus.pump_frame()
+    must(zeus.node_scroll_y(id) == 0, "not over its open trigger")
+    zeus.engine_key(27)
+    zeus.pump_frame()
+
+    // --- a modal still holds it ---
+    open.set(true)
+    zeus.pump_frame()
+    zeus.engine_scroll_step(60, 16, 0, 7)
+    zeus.pump_frame()
+    must(zeus.node_scroll_y(id) == 0, "not behind a modal")
+
+    fmt.println("scroll over layer ok")
+}
