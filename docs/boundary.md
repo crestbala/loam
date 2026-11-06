@@ -74,7 +74,8 @@ Bytes with NULs inside:
 - A `[]u8` holds one byte per element. A `[]int` holds four.
 
 Structs, closures, `[]string`, and C variadics do not cross. Neither does a call
-back from C into Loam. A thread worker cannot call a `#[c]` fn.
+back from C into Loam. A C function that takes a struct by value needs a small
+trampoline in the package, with no logic, as `packages/crypto` has for Argon2. A thread worker cannot call a `#[c]` fn.
 
 C runs on native builds only. A wasm, iOS, or Android build refuses a `#[c]` fn it
 can reach, and one only a `#[server]` body calls leaves nothing in that build.
