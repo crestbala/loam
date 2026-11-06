@@ -47,7 +47,7 @@ static AstNode *root_ident_node(AstNode *n) {
     `AST_FOR` node; `container` is the identifier whose `.len` bounds the loop.
     The index must *resolve* to `loop` (not a shadowing inner `i`), so the
     proof cannot be fooled by a `let i` inside the body. */
-typedef struct {
+typedef struct BoundCtx {
     AstNode *loop;      /* the AST_FOR node the loop variable resolves to */
     AstNode *container; /* the container identifier the range's `.len` resolves from */
     struct BoundCtx *next;
