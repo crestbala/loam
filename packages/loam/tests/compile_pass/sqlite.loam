@@ -1,0 +1,423 @@
+// `std:sqlite`: round trips of every type, text with quotes and NULs, transactions,
+// a file reopened in WAL mode, lock timeouts, and the SQL the analytics reports need.
+
+import "std:fmt"
+import "std:result"
+import "std:sqlite"
+import "std:str"
+import "std:sys"
+
+const FILE = "/tmp/loam_sqlite_test.db"
+const COPY = "/tmp/loam_sqlite_test_copy.db"
+
+fn expect(good: bool, what: string) {
+    if !good {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+/// `r` failed, and its error mentions `text`.
+fn expect_err(r: Result<bool>, text: string, what: string) {
+    if result.is_ok(r) {
+        fmt.println("FAIL", what, "succeeded")
+        sys.exit(1)
+    }
+    if str.index_of(r.err, text) < 0 {
+        fmt.println("FAIL", what, "said:", r.err)
+        sys.exit(1)
+    }
+}
+
+fn remove_files(path: string) {
+    let names = []string { path, "{{path}}-wal", "{{path}}-shm" }
+    for i in 0..names.len {
+        if sys.exists(names[i]) != 0 {
+            sys.remove_path(names[i])
+        }
+    }
+}
+
+fn scalar_i64(db: Db, sql: string) -> Result<i64> {
+    let mut st = Stmt {}
+    let prepared = sqlite.prepare(db, sql, &mut st)
+    if result.is_err(prepared) {
+        return result.res_err(prepared.err, i64(0))
+    }
+    let row = st.step()
+    if result.is_err(row) {
+        sqlite.finalize(&mut st)
+        return result.res_err(row.err, i64(0))
+    }
+    let v = st.column_i64(0)
+    st.reset()
+    sqlite.finalize(&mut st)
+    return result.res_ok(v)
+}
+
+fn count(db: Db, table: string) -> i64 {
+    return result.unwrap(scalar_i64(db, "SELECT count(*) FROM {{table}}"))
+}
+
+fn round_trips() -> Result<bool> {
+    let mut db = Db {}
+    sqlite.open(":memory:", OpenProps {}, &mut db)?
+    expect(sqlite.version() == "3.54.1", "version")
+    sqlite.exec(db, "CREATE TABLE t (i INTEGER, r REAL, s TEXT, b BLOB, n TEXT)")?
+
+    let mut add = Stmt {}
+    sqlite.prepare(db, "INSERT INTO t VALUES (?, ?, ?, ?, ?)", &mut add)?
+    let big: i64 = 9007199254740993
+    add.bind_i64(1, big * 1000)?
+    add.bind_f64(2, f64(0.5))?
+    add.bind_text(3, "héllo ✓")?
+    add.bind_blob(4, []u8 { 0, 255, 0, 1 })?
+    add.bind_null(5)?
+    add.run()?
+    expect(sqlite.changes(db) == 1, "changes")
+    expect(sqlite.last_insert_rowid(db) == 1, "rowid")
+
+    // Empty text and empty bytes are values, not NULL.
+    add.bind_int(1, -7)?
+    add.bind_text(3, "")?
+    add.bind_blob(4, []u8 {})?
+    add.run()?
+    sqlite.finalize(&mut add)
+
+    let mut get = Stmt {}
+    sqlite.prepare(db, "SELECT i, r, s, b, n FROM t ORDER BY rowid", &mut get)?
+    expect(get.column_count() == 5, "column count")
+    expect(get.column_name(3) == "b", "column name")
+
+    expect(get.step()?, "first row")
+    expect(get.column_type(0) == ColumnType.Integer, "integer type")
+    expect(get.column_type(1) == ColumnType.Float, "float type")
+    expect(get.column_type(2) == ColumnType.Text, "text type")
+    expect(get.column_type(3) == ColumnType.Blob, "blob type")
+    expect(get.column_is_null(4), "null")
+    expect(get.column_i64(0) == big * 1000, "i64 keeps every bit")
+    expect(get.column_f64(1) == f64(0.5), "f64")
+    expect(get.column_text(2) == "héllo ✓", "utf-8")
+    let bytes = get.column_blob(3)
+    expect(bytes.len == 4 && bytes[0] == 0 && bytes[1] == 255 && bytes[3] == 1, "blob")
+    expect(get.column_text(4) == "", "NULL reads as empty text")
+
+    expect(get.step()?, "second row")
+    expect(get.column_int(0) == -7, "negative int")
+    expect(get.column_type(2) == ColumnType.Text, "empty text is text")
+    expect(get.column_text(2).len == 0, "empty text")
+    expect(get.column_type(3) == ColumnType.Blob, "empty blob stays a blob")
+    expect(get.column_blob(3).len == 0, "empty blob")
+
+    expect(!get.step()?, "end of rows")
+    sqlite.finalize(&mut get)
+    return sqlite.close(&mut db)
+}
+
+fn hostile_text() -> Result<bool> {
+    let mut db = Db {}
+    sqlite.open(":memory:", OpenProps {}, &mut db)?
+    sqlite.exec(db, "CREATE TABLE t (s TEXT)")?
+
+    let nul = string_from_bytes([]int { 97, 0, 98, 0 })
+    let long = str.repeat("0123456789", 100000)
+    let cases = []string {
+        "O'Brien",
+        "x'); DROP TABLE t; --",
+        "\"double\" and `back`",
+        "%_?:1 $1 @a",
+        "line\nbreak\ttab\\",
+        nul,
+        long,
+    }
+    let mut add = Stmt {}
+    sqlite.prepare(db, "INSERT INTO t VALUES (?)", &mut add)?
+    for i in 0..cases.len {
+        add.bind_text(1, cases[i])?
+        add.run()?
+    }
+    sqlite.finalize(&mut add)
+    expect(count(db, "t") == i64(cases.len), "every row, and the table survived")
+
+    let mut get = Stmt {}
+    sqlite.prepare(db, "SELECT s FROM t ORDER BY rowid", &mut get)?
+    let mut at = 0
+    while get.step()? {
+        expect(get.column_text(0) == cases[at], "text comes back exact")
+        at += 1
+    }
+    sqlite.finalize(&mut get)
+
+    // A NUL inside text matches as the whole value, not as its first part.
+    let mut find = Stmt {}
+    sqlite.prepare(db, "SELECT count(*) FROM t WHERE s = ?", &mut find)?
+    find.bind_text(1, nul)?
+    expect(find.step()?, "lookup row")
+    expect(find.column_i64(0) == 1, "lookup by text with a NUL")
+    find.reset()
+    find.bind_text(1, "a")?
+    expect(find.step()?, "prefix row")
+    expect(find.column_i64(0) == 0, "its prefix is another value")
+    find.reset()
+    sqlite.finalize(&mut find)
+    return sqlite.close(&mut db)
+}
+
+fn insert(db: Db, v: int) -> Result<bool> {
+    let mut add = Stmt {}
+    sqlite.prepare(db, "INSERT INTO t VALUES (?)", &mut add)?
+    add.bind_int(1, v)?
+    let outcome = add.run()
+    sqlite.finalize(&mut add)
+    return outcome
+}
+
+fn pair(db: Db, a: int, b: int) -> Result<bool> {
+    insert(db, a)?
+    return insert(db, b)
+}
+
+fn transactions() -> Result<bool> {
+    let mut db = Db {}
+    sqlite.open(":memory:", OpenProps {}, &mut db)?
+    sqlite.exec(db, "CREATE TABLE t (v INTEGER PRIMARY KEY)")?
+
+    sqlite.begin(db)?
+    sqlite.finish(db, pair(db, 1, 2))?
+    expect(count(db, "t") == 2, "commit keeps the rows")
+
+    // The second insert breaks the key, so the first must go too.
+    sqlite.begin(db)?
+    expect_err(sqlite.finish(db, pair(db, 3, 1)), "UNIQUE", "constraint failure")
+    expect(count(db, "t") == 2, "rollback undoes the whole batch")
+
+    sqlite.begin(db)?
+    insert(db, 4)?
+    sqlite.rollback(db)?
+    expect(count(db, "t") == 2, "manual rollback")
+    sqlite.begin(db)?
+    insert(db, 4)?
+    expect_err(sqlite.begin(db), "within a transaction", "nested begin")
+    sqlite.commit(db)?
+    expect(count(db, "t") == 3, "manual commit")
+    return sqlite.close(&mut db)
+}
+
+fn statements() -> Result<bool> {
+    let mut db = Db {}
+    sqlite.open(":memory:", OpenProps {}, &mut db)?
+    sqlite.exec(db, "CREATE TABLE t (v INTEGER PRIMARY KEY)")?
+
+    expect_err(sqlite.exec(db, "SELEC 1"), "syntax error", "bad SQL")
+    expect_err(sqlite.exec(db, "SELECT 1; DROP TABLE t"), "one statement", "second statement")
+    expect_err(sqlite.exec(db, "   "), "no statement", "empty SQL")
+    expect_err(sqlite.exec(db, "SELECT nope FROM t"), "no such column", "missing column")
+    expect(count(db, "t") == 0, "the table survived")
+    sqlite.exec(db, "SELECT 1 ;  \n")?
+
+    // A statement that fails can run again with other values.
+    let mut add = Stmt {}
+    sqlite.prepare(db, "INSERT INTO t VALUES (?)", &mut add)?
+    add.bind_int(1, 1)?
+    add.run()?
+    expect_err(add.run(), "UNIQUE", "repeat key")
+    add.bind_int(1, 2)?
+    add.run()?
+    expect_err(add.bind_int(9, 1), "out of range", "bind index")
+
+    // Bindings stay across a reset, and `clear` drops them.
+    let mut get = Stmt {}
+    sqlite.prepare(db, "SELECT ?", &mut get)?
+    get.bind_int(1, 42)?
+    expect(get.step()?, "bound row")
+    get.reset()
+    expect(get.step()?, "bound row again")
+    expect(get.column_int(0) == 42, "binding stays")
+    get.clear()
+    expect(get.step()?, "cleared row")
+    expect(get.column_is_null(0), "clear drops it")
+    get.reset()
+
+    // Preparing into a used Stmt frees the old one, or close below would fail.
+    sqlite.prepare(db, "SELECT 2", &mut get)?
+
+    let stuck = sqlite.close(&mut db)
+    expect_err(stuck, "unfinalized", "close with a live statement")
+    expect(db.handle != 0, "a refused close leaves it open")
+    sqlite.finalize(&mut add)
+    sqlite.finalize(&mut add)
+    sqlite.finalize(&mut get)
+    sqlite.close(&mut db)?
+    sqlite.close(&mut db)?
+
+    expect_err(sqlite.exec(db, "SELECT 1"), "closed", "a closed database")
+    let mut open_twice = Db {}
+    sqlite.open(":memory:", OpenProps {}, &mut open_twice)?
+    expect_err(sqlite.open(":memory:", OpenProps {}, &mut open_twice), "already open", "open twice")
+    return sqlite.close(&mut open_twice)
+}
+
+fn file_database() -> Result<bool> {
+    remove_files(FILE)
+    remove_files(COPY)
+    let mut db = Db {}
+    expect_err(
+        sqlite.open("/tmp/no/such/dir/x.db", OpenProps {}, &mut db),
+        "unable to open",
+        "missing directory",
+    )
+    expect_err(
+        sqlite.open(string_from_bytes([]int { 47, 116, 0, 120 }), OpenProps {}, &mut db),
+        "NUL",
+        "NUL in a path",
+    )
+    expect_err(
+        sqlite.open(FILE, OpenProps { read_only: true }, &mut db),
+        "unable to open",
+        "read only does not create",
+    )
+    expect(db.handle == 0, "a failed open leaves nothing open")
+
+    sqlite.open(FILE, OpenProps {}, &mut db)?
+    let mut mode = Stmt {}
+    sqlite.prepare(db, "PRAGMA journal_mode", &mut mode)?
+    expect(mode.step()?, "journal mode row")
+    expect(mode.column_text(0) == "wal", "WAL")
+    mode.reset()
+    sqlite.finalize(&mut mode)
+    expect(result.unwrap(scalar_i64(db, "PRAGMA foreign_keys")) == 1, "foreign keys on")
+
+    sqlite.exec(db, "CREATE TABLE t (v INTEGER PRIMARY KEY)")?
+    insert(db, 1)?
+
+    // A reader sees committed data while a writer holds the lock, and a second
+    // writer gives up after its timeout.
+    let mut other = Db {}
+    sqlite.open(FILE, OpenProps { busy_ms: 20 }, &mut other)?
+    sqlite.begin(db)?
+    insert(db, 2)?
+    expect(count(other, "t") == 1, "WAL reader during a write")
+    expect_err(sqlite.begin(other), "locked", "second writer")
+    sqlite.commit(db)?
+    expect(count(other, "t") == 2, "reader sees the commit")
+
+    // A finished query must not keep the read lock that a checkpoint waits on.
+    let mut get = Stmt {}
+    sqlite.prepare(other, "SELECT v FROM t", &mut get)?
+    while get.step()? {}
+    let mut check = Stmt {}
+    sqlite.prepare(db, "PRAGMA wal_checkpoint(TRUNCATE)", &mut check)?
+    expect(check.step()?, "checkpoint row")
+    expect(check.column_int(0) == 0, "checkpoint not blocked")
+    check.reset()
+    sqlite.finalize(&mut check)
+    sqlite.finalize(&mut get)
+    sqlite.close(&mut other)?
+
+    // The backup in the deploy plan: `VACUUM INTO`, with the path bound.
+    let mut backup = Stmt {}
+    sqlite.prepare(db, "VACUUM INTO ?", &mut backup)?
+    backup.bind_text(1, COPY)?
+    backup.run()?
+    sqlite.finalize(&mut backup)
+    sqlite.close(&mut db)?
+
+    sqlite.open(FILE, OpenProps {}, &mut db)?
+    expect(count(db, "t") == 2, "rows survive a reopen")
+    sqlite.close(&mut db)?
+
+    sqlite.open(COPY, OpenProps { read_only: true }, &mut db)?
+    expect(count(db, "t") == 2, "the backup has the rows")
+    expect_err(insert(db, 3), "readonly", "read only refuses a write")
+    sqlite.close(&mut db)?
+    remove_files(FILE)
+    remove_files(COPY)
+    return result.res_ok(true)
+}
+
+fn write_events(add: Stmt, start: i64, day: i64) -> Result<bool> {
+    for i in 0..1000 {
+        add.bind_i64(1, start + i64(i % 3) * day * 2)?
+        add.bind_text(2, "v{{i % 7}}")?
+        add.run()?
+    }
+    return result.res_ok(true)
+}
+
+/// The SQL phase 5 ports from Postgres: a recursive CTE for quiet days, joins, and
+/// window functions, with times as integer milliseconds.
+fn report_sql() -> Result<bool> {
+    let mut db = Db {}
+    sqlite.open(":memory:", OpenProps {}, &mut db)?
+    sqlite.exec(db, "CREATE TABLE events (ts INTEGER NOT NULL, vid TEXT NOT NULL)")?
+    sqlite.exec(db, "CREATE INDEX events_ts ON events (ts)")?
+
+    let day: i64 = 86400000
+    let start = day * 20000
+    let mut add = Stmt {}
+    sqlite.prepare(db, "INSERT INTO events VALUES (?, ?)", &mut add)?
+    sqlite.begin(db)?
+    sqlite.finish(db, write_events(add, start, day))?
+    sqlite.finalize(&mut add)
+    expect(count(db, "events") == 1000, "a batch in one transaction")
+
+    let mut daily = Stmt {}
+    sqlite.prepare(
+        db,
+        "WITH RECURSIVE days(d) AS (
+           SELECT ?1 UNION ALL SELECT d + ?3 FROM days WHERE d + ?3 <= ?2
+         ),
+         counts AS (
+           SELECT ts / ?3 * ?3 AS d, count(*) AS views, count(DISTINCT vid) AS visitors
+           FROM events GROUP BY 1
+         )
+         SELECT strftime('%Y-%m-%d', days.d / 1000, 'unixepoch'),
+                coalesce(counts.views, 0), coalesce(counts.visitors, 0)
+         FROM days LEFT JOIN counts USING (d) ORDER BY days.d",
+        &mut daily,
+    )?
+    daily.bind_i64(1, start)?
+    daily.bind_i64(2, start + day * 29)?
+    daily.bind_i64(3, day)?
+    let mut rows = 0
+    let mut total = 0
+    let mut quiet = 0
+    while daily.step()? {
+        rows += 1
+        total += daily.column_int(1)
+        if daily.column_int(1) == 0 {
+            quiet += 1
+        }
+    }
+    sqlite.finalize(&mut daily)
+    expect(rows == 30, "a 30-day report has 30 rows")
+    expect(total == 1000, "every view is counted")
+    expect(quiet == 27, "quiet days are zero, not gaps")
+
+    let top = result.unwrap(scalar_i64(
+        db,
+        "SELECT rank FROM (
+           SELECT vid, row_number() OVER (ORDER BY count(*) DESC, vid) AS rank
+           FROM events GROUP BY vid
+         ) WHERE vid = 'v0'",
+    ))
+    expect(top == 1, "window function")
+    return sqlite.close(&mut db)
+}
+
+fn check(r: Result<bool>, what: string) {
+    if result.is_err(r) {
+        fmt.println("FAIL", what, r.err)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    check(round_trips(), "round trips")
+    check(hostile_text(), "hostile text")
+    check(transactions(), "transactions")
+    check(statements(), "statements")
+    check(file_database(), "file database")
+    check(report_sql(), "report sql")
+    fmt.println("sqlite ok")
+}
