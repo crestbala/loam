@@ -1,0 +1,42 @@
+# The analytics server on Fly.io. There is no Dockerfile and nothing is built here:
+# a stock image runs the static binary that analytics-server.yml builds. See phase 7
+# of docs/site-analytics.md.
+
+app = "loam-analytics"
+primary_region = "sin"
+
+[build]
+  image = "debian:bookworm-slim"
+
+# Fly refuses a file this size in `[[files]]`, so the binary lives on the volume, and
+# deploy.sh puts it there. Until then the machine waits.
+[experimental]
+  cmd = ["/bin/sh", "-c", "if [ -x /data/server ]; then exec /data/server; fi; exec sleep infinity"]
+
+[env]
+  HOST = "0.0.0.0"
+  PORT = "8080"
+  DATABASE_PATH = "/data/analytics.db"
+  SITE_ORIGIN = "https://loam-lang.vercel.app"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    method = "GET"
+    path = "/healthz"
+    interval = "30s"
+    timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+
+[mounts]
+  source = "analytics_data"
+  destination = "/data"
+  snapshot_retention = 14
