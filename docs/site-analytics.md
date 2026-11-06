@@ -3,7 +3,8 @@
 Analytics for the www site, moving from Vercel Functions to a Loam backend on
 Fly.io: async gRPC and HTTP on `std:http`, with C SQLite reached through FFI.
 
-This is a plan. None of the backend exists yet.
+Phases 0 to 5 are done: the server in `www/server/` runs and is tested, but the
+vault page does not call it yet, and nothing is deployed. Phases 6 and 7 are next.
 
 ## Decision
 
@@ -25,8 +26,9 @@ an async server, and crypto.
 |---|---|
 | `std:analytics` and the web host | Committed in `aff6124`. Stays |
 | Vercel functions, API test, password tool | Removed in phase 0. Readable in `2b9723f` |
-| Vault page, footer door, `analytics.start` in www | Uncommitted. Backend-agnostic |
-| `http.post_async`, `on_submit` on inputs | Uncommitted |
+| Vault page, footer door, `analytics.start` in www | Committed in `0cc1c79`. The page still calls the old JSON routes, until phase 6 |
+| `http.post_async`, `on_submit` on inputs | Committed. `post_async` goes in phase 6 if nothing else needs it |
+| Analytics server | `www/server/`, tested by `www_analytics.loam`. Not deployed |
 
 The vault page was tested against the old functions, in a browser, for sign in
 and the tables. Still unchecked: the chart and stat grid fix, the footer door
@@ -112,8 +114,9 @@ shared CPU will be slower.
 
 ### 5. Analytics server
 
-Lives in `www/server/`, built as a native binary. The wasm never imports it.
-It reads the port and database path from the environment.
+Done. It lives in `www/server/` and is built as a native binary. The wasm never
+imports it. `main.loam` lists its environment, and `hash_password.loam` prints the
+hash for `fly secrets set`, reading the password from standard input.
 
 | Call | Kind | Why |
 |---|---|---|
@@ -121,31 +124,47 @@ It reads the port and database path from the environment.
 | `Vault.Login`, `Vault.Logout`, `Vault.Stats` | gRPC-Web | Typed contract shared with the page |
 | `/healthz` | `app.json` route | Fly's health check |
 
-- Validate as the old `track.js` did: size cap, id format, known kinds, trimmed
-  text, and browser clocks that are off.
-- Write each batch in one transaction, to the `events` table.
-- Port the report queries. Postgres `unnest`, `DISTINCT ON`, `generate_series`,
-  and `make_interval` need SQLite forms, using window functions and a recursive
-  CTE. Store times as integer milliseconds.
-- The daily report returns every day of the window, with zero counts on quiet
-  days, not gaps. `2b9723f` predates this: its query skips them. Test it: a
-  30-day report has 30 rows.
-- `?` needs the enclosing fn to return the same `Result` type, so `open` and
-  `prepare` fill a `&mut` value, and return `Result<bool>` like every other call.
-- Do not create capturing closures per request or per batch: each leaks its
-  environment. Use `sqlite.begin` and `sqlite.finish`, and register handlers once.
-- SQLite calls block, so keep each one short. Measure the report queries on a
-  year of data, and add indexes or daily rollups if they stall other requests.
-- Limit failed logins, and store no addresses. Each attempt runs Argon2id, which
-  blocks every other request, so the limit also protects the server. Measure a
-  check on the Fly machine.
-- The password tool went with the Vercel code. Write one in Loam that prints a
-  `crypto.hash_password` hash for `fly secrets set`.
-- Secrets stay in the environment. No email, password, or hash in the repo.
+- `www_analytics.loam` drives it through a real socket, with the fixture and numbers
+  the Postgres functions passed. A 30-day report has 30 rows, with zeros on quiet days.
+- Times are integer milliseconds. Ids are stored as 60-bit integers, the last 15 hex
+  digits of each id, which keeps the table small and grouping fast.
+- Reports stop at 90 days, the widest the page offers.
+- Events older than 13 months are deleted once a day, on the next beacon.
+- 20 failed logins in 15 minutes lock sign in for everyone, as no addresses are
+  stored. A flood can lock the owner out, but a session already signed in still
+  works, and a locked attempt costs no hash.
+- With `SITE_ORIGIN` set, a beacon's `Origin` must equal it. A rewrite changes `Host`,
+  so production has to set it.
+- The server is one thread, and a panic stops it. Bytes from the network must not
+  reach arithmetic that can overflow. Fuzzing 6,000 mutated HTTP/1.1, gRPC-Web, h2c,
+  and WebSocket requests against the real binary found no crash or stall.
+
+Measured on the dev Mac in a real process, with 4.4 million rows, a year at about
+2,000 sessions a day:
+
+| Measure | Result |
+|---|---|
+| Sign in | 40 ms |
+| Report, 7 / 30 / 90 days | 0.33 s / 1.5 s / 4.9 s |
+| Beacons, 10 events each | About 1,250 a second |
+| Memory | 35 MB after 40,000 beacons, flat. After 8,000 reports on a small database, a physical footprint of 10 MB, with report time flat and `leaks` finding none |
+| Database file | 473 MB |
+
+A report costs about 3.3 µs for each row in its window, spread evenly over its
+queries, so an index will not help. Daily rollups were not added: visitors and
+sessions do not add up across days, so rollups would change the numbers. Only a
+signed in owner can start a report. Connections wait in the listen backlog meanwhile,
+and of 150 beacons sent during a 90-day report, 128 were stored and 22 timed out at
+the backlog's limit. A site with a tenth of that traffic reports in about 0.5 s here.
+A shared CPU will be slower, so measure a report on the Fly machine. If a report ever
+takes minutes or fills the backlog, reconsider rollups or shorten the window.
 
 ### 6. www
 
-- Point the vault page at the gRPC calls through `http.client("").call_async`.
+- Point the vault page at the gRPC calls through `http.client("").call_async`, and
+  import `www/server/api.loam` for the contract. Only that file: the rest is native.
+- Replies carry `status` from `api.loam`, where 0 means no answer came.
+- The page offers 7, 30, and 90 days, which matches the server's limit.
 - Drop `http.post_async` if nothing else needs it.
 - Finish the unchecked items listed under "Where things stand".
 
@@ -180,8 +199,10 @@ primary_region = "<region>"
   local_path = "server"
 
 [env]
+  HOST = "0.0.0.0"
   PORT = "8080"
   DATABASE_PATH = "/data/analytics.db"
+  SITE_ORIGIN = "https://<the site>"
 
 [http_service]
   internal_port = 8080
@@ -222,11 +243,14 @@ Steps:
 
 1. `fly apps create loam-analytics`
 2. `fly volumes create analytics_data --size 1 --region <region>`
-3. `fly secrets set` for the login email, password hash, and session secret.
+3. `fly secrets set` for `VAULT_EMAIL`, `VAULT_PASSWORD_HASH`, and
+   `VAULT_SESSION_SECRET`, which must be 32 to 64 bytes.
 4. Build the Linux binary, then `fly deploy` beside it. Keep it to one machine
    with `fly scale count 1`.
-5. Point the site's `/api/*` at the server, and turn on `analytics.start` in the
-   published build.
+5. Point the site's `/api/*` and `/Vault/:path+` at the server, and turn on
+   `analytics.start` in the published build. `/Vault/` is the gRPC-Web prefix, and the
+   session cookie's path. Keep `:path+`: the page itself is `/vault`, and Vercel may
+   match paths without regard to case.
 6. Run the browser checks against the live site.
 
 Running it:
@@ -234,6 +258,10 @@ Running it:
 - One machine and one volume, because a volume attaches to a single machine and
   SQLite has one writer. A deploy restarts it, and beacons sent during the restart
   are lost. That is acceptable for analytics.
+- `HOST` must be `0.0.0.0`. The server binds 127.0.0.1 unless told otherwise, and
+  Fly's proxy could not reach it there.
+- A `/healthz` check that lands during a long report can fail once. That only
+  matters if checks start restarting the machine.
 - Fly takes daily volume snapshots, but its docs say not to rely on them as the
   primary backup. Add a scheduled `VACUUM INTO`, and copy that file off the
   machine.
@@ -253,12 +281,12 @@ page, as sources disagree on some of these.
 | Outbound traffic | $0.02/GB in North America and Europe, $0.04 in Asia Pacific, $0.12 in India |
 | Shared IPv4, IPv6, first 10 certificates | Free |
 
-256 MB is an assumption. Measure the server's memory in phase 5.
+256 MB has room: see the memory measured in phase 5.
 
 ## Open decisions
 
 1. **Same origin.** Recommended: keep the static site on Vercel and rewrite
-   `/api/*` to the Fly app, through the `vercel.json` zeli writes. Same origin
+   `/api/*` and `/Vault/*` to the Fly app, through the `vercel.json` zeli writes. Same origin
    keeps cookies and `sendBeacon` simple. The alternative is to serve the whole
    site from the Loam server, which drops Vercel but means building static file
    serving and caching. Test that cookies and the host check pass through the rewrite.

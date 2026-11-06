@@ -1,0 +1,120 @@
+//! The vault's sign in: the only place the password is checked. Native only.
+
+import "std:crypto"
+import "std:http"
+import "std:log"
+import "std:str"
+import "api.loam" as api
+import "db.loam" as db
+
+const COOKIE: string = "vault"
+const COOKIE_PATH: string = "/Vault"
+const SESSION_MS: i64 = 604800000
+const SESSION_SECONDS: int = 604800
+/// Failures across all callers, as no addresses are stored. A flood can lock the
+/// owner out for this window, but it cannot try many passwords, and it cannot keep
+/// the server busy hashing them.
+const MAX_FAILURES: int = 20
+const WINDOW_MS: i64 = 900000
+
+/// Secrets, from the environment. Never logged, and never in the repo.
+struct Auth {
+    email: string,
+    password_hash: string,
+    session_secret: string,
+    /// Turn off only to try this over plain http on localhost.
+    secure_cookie: bool,
+}
+
+fn configured(a: Auth) -> bool {
+    return a.email.len > 0 && a.password_hash.len > 0 && a.session_secret.len >= 32 &&
+        a.session_secret.len <= 64
+}
+
+fn normal_email(s: string) -> string {
+    return str.to_lower(str.trim(s))
+}
+
+fn sign(a: Auth, expires: string) -> string {
+    return crypto.mac_hex(a.session_secret, "vault-session:{{expires}}")
+}
+
+fn issue(a: Auth, now: i64) -> bool {
+    let expires = "{{now + SESSION_MS}}"
+    let tag = sign(a, expires)
+    return http.set_cookie(
+        COOKIE,
+        "{{expires}}.{{tag}}",
+        CookieProps {
+            max_age: SESSION_SECONDS,
+            path: COOKIE_PATH,
+            same_site: "Strict",
+            secure: a.secure_cookie,
+        },
+    )
+}
+
+fn parse_ms(s: string) -> i64 {
+    if s.len == 0 || s.len > 18 {
+        return i64(-1)
+    }
+    let mut v: i64 = 0
+    for i in 0..s.len {
+        if s[i] < 48 || s[i] > 57 {
+            return i64(-1)
+        }
+        v = v * 10 + i64(s[i] - 48)
+    }
+    return v
+}
+
+/// Whether `cookie` is a session this server signed that has not expired.
+fn session_ok(a: Auth, cookie: string, now: i64) -> bool {
+    if !configured(a) {
+        return false
+    }
+    let dot = str.index_of(cookie, ".")
+    if dot <= 0 {
+        return false
+    }
+    let expires = str.slice(cookie, 0, dot)
+    let tag = str.slice_from(cookie, dot + 1)
+    return crypto.equal(tag, sign(a, expires)) && parse_ms(expires) > now
+}
+
+fn signed_in(a: Auth, now: i64) -> bool {
+    return session_ok(a, http.req_cookie(COOKIE), now)
+}
+
+/// Check an attempt. Returns an `api` status, and sets the cookie on success.
+fn login(a: Auth, req: LoginReq, now: i64) -> int {
+    if !configured(a) {
+        return api.UNAVAILABLE
+    }
+    // Checked first, so a flood stops costing a password hash.
+    let failures = db.failures_since(now - WINDOW_MS)
+    if failures < 0 || failures >= MAX_FAILURES {
+        return if failures < 0 { api.UNAVAILABLE } else { api.TOO_MANY_TRIES }
+    }
+    // The hash runs for a wrong email too, so timing does not reveal the email.
+    let passes = crypto.verify_password(req.password, a.password_hash)
+    let same = crypto.equal(normal_email(req.email), normal_email(a.email))
+    if !passes || !same {
+        let noted = db.add_failure(now)
+        if noted.tag != 0 {
+            log.warn("vault", "a failed login was not recorded: {{noted.err}}")
+        }
+        return api.WRONG_LOGIN
+    }
+    return if issue(a, now) { api.OK } else { api.UNAVAILABLE }
+}
+
+/// Clear the cookie, with the attributes it was set with.
+fn logout(a: Auth) -> int {
+    let cleared = http.set_cookie(
+        COOKIE,
+        "",
+        CookieProps { max_age: 0, path: COOKIE_PATH, same_site: "Strict", secure: a.secure_cookie },
+    )
+    return if cleared { api.OK } else { api.UNAVAILABLE }
+}
