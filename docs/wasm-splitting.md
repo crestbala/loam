@@ -338,6 +338,8 @@ About 1.2 s of each Slow 4G time is the two round trips, which no build can chan
   Node, comments and indentation are stripped instead, which reaches 15 KB.
 - The loader is preloaded in `<head>`, since a long page puts its tag far down.
 - Builds write `vercel.json`, because Vercel ignores `_headers`.
+  `backend` and `backend_paths` in `zeus.toml` add rewrites to it, so one origin
+  serves the site and its API.
 - The build report gives each file's compressed size and the first-load range.
 
 Vercel compresses by itself, at a low level: 227 KB for a primary Brotli 11 takes to
