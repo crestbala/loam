@@ -1,0 +1,228 @@
+// `std:crypto`: published vectors, hashes from the reference Argon2 library, and how
+// passwords and comparisons fail. Vectors are from RFC 7693 and RFC 9106. The rest
+// come from Python's hashlib and argon2-cffi 25.1.
+
+import "std:crypto"
+import "std:fmt"
+import "std:str"
+import "std:sys"
+
+fn expect(good: bool, what: string) {
+    if !good {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn expect_hex(b: []u8, want: string, what: string) {
+    let got = crypto.hex(b)
+    if got != want {
+        fmt.println("FAIL", what, "got", got)
+        sys.exit(1)
+    }
+}
+
+fn filled(n: int, v: u8) -> []u8 {
+    let mut out = []u8 {}
+    for i in 0..n {
+        out.push(v)
+    }
+    return out
+}
+
+fn text_of(n: int, c: int) -> string {
+    let mut out = []int {}
+    for i in 0..n {
+        out.push(c)
+    }
+    return string_from_bytes(out)
+}
+
+fn bytes_of(s: string) -> []u8 {
+    let mut out = []u8 {}
+    for i in 0..s.len {
+        out.push(u8(s[i]))
+    }
+    return out
+}
+
+fn hashes() {
+    expect_hex(
+        crypto.digest("abc", 64),
+        "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923",
+        "BLAKE2b, RFC 7693",
+    )
+    expect_hex(
+        crypto.digest(""),
+        "0e5751c026e543b2e8ab2eb06099daa1d1e5df47778f7787faab45cdf12fe3a8",
+        "empty input",
+    )
+    let nul = string_from_bytes([]int { 97, 0, 98 })
+    expect_hex(crypto.digest(nul, 16), "852635742d6eb30fdccb0e7c1b53d92f", "a NUL is hashed")
+
+    let key = text_of(32, 107)
+    expect_hex(
+        bytes_of(crypto.mac(key, "hello")),
+        "3cb025411d4565fb1ff2a11365c9ca1704e3315a04de857f0a5a79fbb1894002",
+        "keyed BLAKE2b",
+    )
+    expect(crypto.mac(key, "a") != crypto.mac(key, "b"), "a mac depends on the message")
+    expect(crypto.mac(key, "a") != crypto.mac(text_of(32, 108), "a"), "a mac depends on the key")
+}
+
+fn argon2_vector() {
+    // RFC 9106, section 5.3: 32 KiB, 3 passes, 4 lanes, with a secret and extra data.
+    let out = filled(32, u8(0))
+    let good = crypto.argon2id(
+        out,
+        text_of(32, 1),
+        filled(16, u8(2)),
+        32,
+        3,
+        4,
+        text_of(8, 3),
+        text_of(12, 4),
+    )
+    expect(good, "Argon2id runs")
+    expect_hex(
+        out,
+        "0d640df58d78766c08c037a34a8b53c9d01ef0452d75b65eb52520e96b01e659",
+        "Argon2id, RFC 9106",
+    )
+
+    let plain = filled(32, u8(0))
+    let ran = crypto.argon2id(plain, text_of(32, 1), filled(16, u8(2)), 32, 3, 4, "", "")
+    expect(ran, "Argon2id without extras")
+    expect_hex(
+        plain,
+        "03aab965c12001c9d7d0d2de33192c0494b684bb148196d73c1df1acaf6d0c2e",
+        "against the reference",
+    )
+}
+
+fn passwords() {
+    // Written by the reference library, in the standard form.
+    expect(
+        crypto.verify_password(
+            "hunter2",
+            "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$nUxirfVK2I/vOT6f2ly2wSgjwZ1oqwTLCmrcpDyjicA",
+        ),
+        "a hash from another tool",
+    )
+    expect(
+        crypto.verify_password(
+            "pässwörd'\"",
+            "$argon2id$v=19$m=4096,t=3,p=4$c2FsdHNhbHQ$WGw0YK6Vtpq71AeZErKDxwG3lvuJGiN9J0j2ETylJxQ",
+        ),
+        "several lanes, and bytes past ASCII",
+    )
+
+    let first = crypto.hash_password("correct horse")
+    expect(first.tag == 0, "hashing")
+    let stored = first.val
+    expect(str.index_of(stored, "$argon2id$v=19$m=19456,t=2,p=1$") == 0, "the standard form")
+    expect(crypto.verify_password("correct horse", stored), "round trip")
+    expect(!crypto.verify_password("correct horsf", stored), "one byte off")
+    expect(!crypto.verify_password("", stored), "empty")
+    expect(!crypto.verify_password("correct horse ", stored), "longer")
+
+    let second = crypto.hash_password("correct horse")
+    expect(second.val != stored, "a fresh salt each time")
+
+    // A NUL must not end the password early.
+    let a = string_from_bytes([]int { 97, 0, 98 })
+    let b = string_from_bytes([]int { 97, 0, 99 })
+    let nul = crypto.hash_password(a)
+    expect(
+        crypto.verify_password(a, nul.val) && !crypto.verify_password(b, nul.val),
+        "a NUL in a password",
+    )
+
+    let light = crypto.hash_password("x", PasswordProps { memory_kib: 64, passes: 1 })
+    expect(str.index_of(light.val, "m=64,t=1,p=1$") > 0, "cost is recorded")
+    expect(crypto.verify_password("x", light.val), "cost is read back")
+
+    let empty = crypto.hash_password("")
+    expect(empty.tag != 0, "an empty password is refused")
+    let huge = crypto.hash_password("x", PasswordProps { memory_kib: 1 })
+    expect(huge.tag != 0, "a cost out of range is refused")
+}
+
+fn malformed() {
+    let salt = "c2FsdHNhbHQ"
+    let hash = "WGw0YK6Vtpq71AeZErKDxwG3lvuJGiN9J0j2ETylJxQ"
+    let bad = []string {
+        "",
+        "plaintext",
+        "$$$$$",
+        "$argon2i$v=19$m=4096,t=3,p=4${{salt}}${{hash}}",
+        "$argon2id$v=16$m=4096,t=3,p=4${{salt}}${{hash}}",
+        "$argon2id$v=19$m=4096,t=3${{salt}}${{hash}}",
+        "$argon2id$v=19$t=3,m=4096,p=4${{salt}}${{hash}}",
+        "$argon2id$v=19$m=x,t=3,p=4${{salt}}${{hash}}",
+        // Costs that would hang or exhaust the machine.
+        "$argon2id$v=19$m=99999999,t=3,p=4${{salt}}${{hash}}",
+        "$argon2id$v=19$m=4096,t=9999,p=4${{salt}}${{hash}}",
+        "$argon2id$v=19$m=4096,t=0,p=4${{salt}}${{hash}}",
+        "$argon2id$v=19$m=4096,t=3,p=0${{salt}}${{hash}}",
+        "$argon2id$v=19$m=4,t=3,p=4${{salt}}${{hash}}",
+        // Salts and hashes of the wrong size or alphabet.
+        "$argon2id$v=19$m=4096,t=3,p=4$${{hash}}",
+        "$argon2id$v=19$m=4096,t=3,p=4$c2Fs${{hash}}",
+        "$argon2id$v=19$m=4096,t=3,p=4${{salt}}$",
+        "$argon2id$v=19$m=4096,t=3,p=4${{salt}}$c2Fs",
+        "$argon2id$v=19$m=4096,t=3,p=4$c2Fsd!NhbHQ${{hash}}",
+        "$argon2id$v=19$m=4096,t=3,p=4${{salt}}${{hash}}$extra",
+    }
+    for i in 0..bad.len {
+        expect(!crypto.verify_password("pässwörd'\"", bad[i]), "malformed hash {{i}}")
+    }
+}
+
+fn comparing() {
+    expect(crypto.equal("", ""), "empty strings")
+    expect(crypto.equal("same", "same"), "same text")
+    expect(!crypto.equal("same", "sane"), "one byte")
+    expect(!crypto.equal("same", "same "), "different lengths")
+    expect(!crypto.equal("", "x"), "empty against text")
+    let a = string_from_bytes([]int { 97, 0, 98 })
+    let b = string_from_bytes([]int { 97, 0, 99 })
+    expect(crypto.equal(a, a) && !crypto.equal(a, b), "bytes after a NUL count")
+    let long = text_of(100000, 120)
+    expect(crypto.equal(long, text_of(100000, 120)), "longer than any buffer here")
+}
+
+fn randomness() {
+    expect(crypto.random(0).len == 0, "no bytes")
+    let many = crypto.random(1000)
+    expect(many.len == 1000, "more than one OS call holds")
+
+    // Every byte value should appear in a few thousand random bytes.
+    let mut seen = []bool {}
+    for i in 0..256 {
+        seen.push(false)
+    }
+    let sample = crypto.random(8192)
+    for i in 0..sample.len {
+        seen[int(sample[i])] = true
+    }
+    for i in 0..256 {
+        expect(seen[i], "every byte value turns up")
+    }
+
+    let token = crypto.random_token()
+    expect(token.len == 64, "a token is 32 bytes as hex")
+    expect(token != crypto.random_token(), "tokens differ")
+    expect(crypto.random_token(16).len == 32, "a shorter token")
+    expect(crypto.hex([]u8 { 0, 15, 171, 255 }) == "000fabff", "hex")
+}
+
+fn main() {
+    hashes()
+    argon2_vector()
+    passwords()
+    malformed()
+    comparing()
+    randomness()
+    fmt.println("crypto ok")
+}

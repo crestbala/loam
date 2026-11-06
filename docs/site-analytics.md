@@ -45,7 +45,7 @@ Checked in this repo on 2026-11-06.
 | C FFI | `#[c]`, `#![c_source]`, and `#![c_link]`, native builds only. See `docs/boundary.md` | None |
 | SQLite | `std:sqlite`, vendored 3.54.1 in `packages/sqlite`, WAL by default | None |
 | Closures | A capturing closure's environment is never freed | Avoid them on per-request paths, or fix the language |
-| Crypto | SHA-1 in `httpcore/ws.loam`, nothing else | Needs password hashing, a MAC, and secure random |
+| Crypto | `std:crypto`, vendored Monocypher 4.0.3 in `packages/crypto` | None |
 | Sessions | `req_cookie`, `req_header`, `set_cookie`, and `clear_cookie` on HTTP/1.1 | None |
 | Environment | `sys.env` reads a variable | None |
 | Linux build | `zeus_plat.c` has Linux branches, but a server build on Linux is untested. `loamc` has no Linux cross target | Build on a Linux runner, and prove it in phase 7 |
@@ -96,9 +96,19 @@ and 127.0.0.1 was not reachable from the LAN unless the server opted in to 0.0.0
 
 ### 4. Crypto
 
-Vendor a small audited C library through FFI. Do not hand-roll any of this.
-Monocypher is the first candidate: Argon2id, BLAKE2b, and constant-time compare.
-Take random bytes from the OS. Check its license and fit before adopting it.
+Done. `packages/crypto` vendors Monocypher 4.0.3, which is CC0 or 2-clause BSD. Cure53
+audited it in June 2020, before this version.
+
+- `hash_password` and `verify_password`: Argon2id, 19 MiB and 2 passes, as OWASP
+  recommends, in the standard `$argon2id$...` form that other tools read.
+- `mac`: keyed BLAKE2b, for signing sessions. `digest`: plain BLAKE2b.
+- `equal`: constant time, at any length. Never compare secrets with `==`.
+- `random` and `random_token`: from the OS. They panic rather than return weak bytes.
+
+Tests use the RFC 7693 and RFC 9106 vectors, and hashes from the reference Argon2
+library, which also verified hashes made here. One password check took 35 ms on the
+dev Mac and fits a 256 MB machine, but it blocks the server while it runs, and a
+shared CPU will be slower.
 
 ### 5. Analytics server
 
@@ -126,7 +136,11 @@ It reads the port and database path from the environment.
   environment. Use `sqlite.begin` and `sqlite.finish`, and register handlers once.
 - SQLite calls block, so keep each one short. Measure the report queries on a
   year of data, and add indexes or daily rollups if they stall other requests.
-- Limit failed logins, and store no addresses.
+- Limit failed logins, and store no addresses. Each attempt runs Argon2id, which
+  blocks every other request, so the limit also protects the server. Measure a
+  check on the Fly machine.
+- The password tool went with the Vercel code. Write one in Loam that prints a
+  `crypto.hash_password` hash for `fly secrets set`.
 - Secrets stay in the environment. No email, password, or hash in the repo.
 
 ### 6. www

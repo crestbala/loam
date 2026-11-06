@@ -1,0 +1,347 @@
+//! crypto — hashing, passwords, and random bytes for native programs (`std:crypto`).
+//!
+//! ```
+//! import "std:crypto"
+//!
+//! let stored = crypto.hash_password("hunter2").val
+//! crypto.verify_password("hunter2", stored)     // true
+//!
+//! let token = crypto.random_token()             // 256 random bits as hex
+//! let tag = crypto.mac(key, "session:{{id}}")   // key is 32 to 64 bytes
+//! crypto.equal(tag, tag_from_client)            // never compare secrets with ==
+//! ```
+//!
+//! All of it is Monocypher, and the OS for random bytes. Secrets stay in Loam
+//! strings, which are not wiped when freed. Each call blocks, and `hash_password`
+//! and `verify_password` are slow on purpose, so a server should limit how often it
+//! runs them. A thread worker cannot call this module.
+
+#![c_source("vendor/monocypher.c", "-O2")]
+#![c_source("vendor/argon2_shim.c", "-O2")]
+
+import "std:result"
+
+/// One password's cost, as OWASP recommends for Argon2id: 19 MiB and 2 passes.
+struct PasswordProps {
+    memory_kib: int = 19456,
+    passes: int = 2,
+}
+
+/// The most a stored hash may ask for, so a bad value cannot exhaust the machine.
+const MAX_MEMORY_KIB: int = 262144
+const MAX_PASSES: int = 16
+const MAX_LANES: int = 8
+const HASH_BYTES: int = 32
+const SALT_BYTES: int = 16
+
+const HEX_DIGITS = "0123456789abcdef"
+const BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+#[c("crypto_blake2b")]
+fn c_blake2b(out: []u8, out_size: i64, message: string, message_size: i64) {}
+
+#[c("crypto_blake2b_keyed")]
+fn c_blake2b_keyed(
+    out: []u8,
+    out_size: i64,
+    key: string,
+    key_size: i64,
+    message: string,
+    message_size: i64
+) {}
+
+#[c("crypto_verify32")]
+fn c_verify32(a: []u8, b: []u8) -> i32 {}
+
+#[c("crypto_wipe")]
+fn c_wipe(secret: i64, size: i64) {}
+
+#[c("shim_crypto_argon2id")]
+fn c_argon2id(
+    out: []u8,
+    out_size: int,
+    work: i64,
+    blocks: int,
+    passes: int,
+    lanes: int,
+    password: string,
+    password_size: int,
+    salt: []u8,
+    salt_size: int,
+    key: string,
+    key_size: int,
+    ad: string,
+    ad_size: int
+) {}
+
+#[c("getentropy")]
+fn c_getentropy(out: []u8, n: i64) -> i32 {}
+
+#[c("malloc")]
+fn c_malloc(n: i64) -> i64 {}
+
+#[c("free")]
+fn c_free(p: i64) {}
+
+fn zeros(n: int) -> []u8 {
+    let mut out = []u8 {}
+    for i in 0..n {
+        out.push(u8(0))
+    }
+    return out
+}
+
+/// `n` random bytes from the OS. Panics if the OS refuses: nothing here may carry on
+/// with weak randomness.
+fn random(n: int) -> []u8 {
+    let mut out = []u8 {}
+    while out.len < n {
+        // getentropy gives at most 256 bytes at a time.
+        let left = n - out.len
+        let size = if left < 256 { left } else { 256 }
+        let chunk = zeros(size)
+        if c_getentropy(chunk, i64(size)) != 0 {
+            panic("crypto: the OS gave no random bytes")
+        }
+        for i in 0..size {
+            out.push(chunk[i])
+        }
+    }
+    return out
+}
+
+/// `bytes` random bytes as lowercase hex: 256 bits unless asked otherwise.
+fn random_token(bytes: int = 32) -> string {
+    return hex(random(bytes))
+}
+
+/// `b` as lowercase hex.
+fn hex(b: []u8) -> string {
+    let mut out = []int {}
+    for i in 0..b.len {
+        let v = int(b[i])
+        out.push(HEX_DIGITS[v / 16])
+        out.push(HEX_DIGITS[v % 16])
+    }
+    return string_from_bytes(out)
+}
+
+/// The BLAKE2b hash of `message`, `size` bytes long, from 1 to 64.
+fn digest(message: string, size: int = 32) -> []u8 {
+    if size < 1 || size > 64 {
+        panic("crypto: a digest is 1 to 64 bytes")
+    }
+    let out = zeros(size)
+    c_blake2b(out, i64(size), message, i64(message.len))
+    return out
+}
+
+fn bytes_string(b: []u8) -> string {
+    return string_from_bytes(b)
+}
+
+/// A 32-byte tag proving someone with `key` wrote `message`: keyed BLAKE2b. `key` is
+/// 32 to 64 bytes, and a key of any other size is a bug, so that panics. The tag is
+/// raw bytes in a string. Compare tags with `equal`.
+fn mac(key: string, message: string) -> string {
+    if key.len < 32 || key.len > 64 {
+        panic("crypto: a mac key is 32 to 64 bytes")
+    }
+    let out = zeros(HASH_BYTES)
+    c_blake2b_keyed(out, i64(HASH_BYTES), key, i64(key.len), message, i64(message.len))
+    return bytes_string(out)
+}
+
+/// The key `equal` hides its inputs with, made on first use.
+let mut equal_key: string = ""
+
+/// Whether `a` and `b` match, in a time that tells an attacker nothing about where
+/// they differ, or about their lengths. Hashing both with a secret key first turns
+/// any two strings into fixed-size values for `crypto_verify32`.
+fn equal(a: string, b: string) -> bool {
+    if equal_key.len == 0 {
+        equal_key = bytes_string(random(32))
+    }
+    let x = zeros(HASH_BYTES)
+    let y = zeros(HASH_BYTES)
+    c_blake2b_keyed(x, i64(HASH_BYTES), equal_key, i64(HASH_BYTES), a, i64(a.len))
+    c_blake2b_keyed(y, i64(HASH_BYTES), equal_key, i64(HASH_BYTES), b, i64(b.len))
+    return c_verify32(x, y) == 0
+}
+
+/// Raw Argon2id. False when the memory cannot be had. `key` and `ad` are Argon2's
+/// optional secret and associated data, and may be empty.
+fn argon2id(
+    out: []u8,
+    password: string,
+    salt: []u8,
+    memory_kib: int,
+    passes: int,
+    lanes: int,
+    key: string,
+    ad: string
+) -> bool {
+    let size = i64(memory_kib) * 1024
+    let work = c_malloc(size)
+    if work == 0 {
+        return false
+    }
+    c_argon2id(
+        out,
+        out.len,
+        work,
+        memory_kib,
+        passes,
+        lanes,
+        password,
+        password.len,
+        salt,
+        salt.len,
+        key,
+        key.len,
+        ad,
+        ad.len,
+    )
+    c_wipe(work, size)
+    c_free(work)
+    return true
+}
+
+fn params_ok(memory_kib: int, passes: int, lanes: int) -> bool {
+    return lanes >= 1 &&
+        lanes <= MAX_LANES &&
+        memory_kib >= 8 * lanes &&
+        memory_kib <= MAX_MEMORY_KIB &&
+        passes >= 1 &&
+        passes <= MAX_PASSES
+}
+
+/// Hash `password` with a fresh salt, for storing. The result is the standard
+/// `$argon2id$v=19$m=...,t=...,p=1$salt$hash` form.
+fn hash_password(password: string, p: PasswordProps = PasswordProps {}) -> Result<string> {
+    if password.len == 0 {
+        return result.res_err("crypto: the password is empty", "")
+    }
+    if !params_ok(p.memory_kib, p.passes, 1) {
+        return result.res_err("crypto: the password cost is out of range", "")
+    }
+    let salt = random(SALT_BYTES)
+    let out = zeros(HASH_BYTES)
+    if !argon2id(out, password, salt, p.memory_kib, p.passes, 1, "", "") {
+        return result.res_err("crypto: not enough memory", "")
+    }
+    let salt_text = base64(salt)
+    let hash_text = base64(out)
+    return result.res_ok(
+        "$argon2id$v=19$m={{p.memory_kib}},t={{p.passes}},p=1${{salt_text}}${{hash_text}}",
+    )
+}
+
+/// Whether `password` matches `stored`, from `hash_password` or any Argon2id tool
+/// using a 32-byte hash. A malformed `stored` matches nothing.
+fn verify_password(password: string, stored: string) -> bool {
+    let parts = split_on(stored, 36)
+    if parts.len != 6 || parts[0].len != 0 || parts[1] != "argon2id" || parts[2] != "v=19" {
+        return false
+    }
+    let costs = split_on(parts[3], 44)
+    if costs.len != 3 {
+        return false
+    }
+    let memory_kib = field_int(costs[0], 109)
+    let passes = field_int(costs[1], 116)
+    let lanes = field_int(costs[2], 112)
+    if !params_ok(memory_kib, passes, lanes) {
+        return false
+    }
+    let salt = unbase64(parts[4])
+    let want = unbase64(parts[5])
+    if salt.len < 8 || salt.len > 64 || want.len != HASH_BYTES {
+        return false
+    }
+    let got = zeros(HASH_BYTES)
+    if !argon2id(got, password, salt, memory_kib, passes, lanes, "", "") {
+        return false
+    }
+    return c_verify32(got, want) == 0
+}
+
+fn split_on(s: string, sep: int) -> []string {
+    let mut out = []string {}
+    let mut piece = []int {}
+    for i in 0..s.len {
+        if s[i] == sep {
+            out.push(string_from_bytes(piece))
+            piece = []int {}
+        } else {
+            piece.push(s[i])
+        }
+    }
+    out.push(string_from_bytes(piece))
+    return out
+}
+
+/// The number in `m=123` when the letter is `name`, or -1.
+fn field_int(s: string, name: int) -> int {
+    if s.len < 3 || s.len > 9 || s[0] != name || s[1] != 61 {
+        return -1
+    }
+    let mut v = 0
+    for i in 2..s.len {
+        if s[i] < 48 || s[i] > 57 {
+            return -1
+        }
+        v = v * 10 + s[i] - 48
+    }
+    return v
+}
+
+/// `b` as unpadded base64, the form these stored hashes use.
+fn base64(b: []u8) -> string {
+    let mut out = []int {}
+    let mut bits = 0
+    let mut have = 0
+    for i in 0..b.len {
+        bits = bits * 256 + int(b[i])
+        have += 8
+        while have >= 6 {
+            have -= 6
+            out.push(BASE64[bits / (1 << have)])
+            bits = bits % (1 << have)
+        }
+    }
+    if have > 0 {
+        out.push(BASE64[bits * (1 << (6 - have))])
+    }
+    return string_from_bytes(out)
+}
+
+fn base64_value(c: int) -> int {
+    for i in 0..BASE64.len {
+        if BASE64[i] == c {
+            return i
+        }
+    }
+    return -1
+}
+
+/// Unpadded base64 as bytes. Empty when `s` is not valid.
+fn unbase64(s: string) -> []u8 {
+    let mut out = []u8 {}
+    let mut bits = 0
+    let mut have = 0
+    for i in 0..s.len {
+        let v = base64_value(s[i])
+        if v < 0 {
+            return []u8 {}
+        }
+        bits = bits * 64 + v
+        have += 6
+        if have >= 8 {
+            have -= 8
+            out.push(u8(bits / (1 << have)))
+            bits = bits % (1 << have)
+        }
+    }
+    return out
+}
