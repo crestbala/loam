@@ -1,0 +1,471 @@
+//! sqlite — SQLite databases for native programs (`std:sqlite`).
+//!
+//! Prepared statements only: values go through `bind_*`, so SQL is never built by
+//! joining strings. Bind indexes start at 1, as SQLite's do. Column indexes start
+//! at 0.
+//!
+//! ```
+//! import "std:result"
+//! import "std:sqlite"
+//!
+//! fn notes() -> Result<bool> {
+//!     let mut db = Db {}
+//!     sqlite.open("app.db", OpenProps {}, &mut db)?
+//!     sqlite.exec(db, "CREATE TABLE IF NOT EXISTS notes (body TEXT NOT NULL)")?
+//!
+//!     let mut add = Stmt {}
+//!     sqlite.prepare(db, "INSERT INTO notes (body) VALUES (?)", &mut add)?
+//!     add.bind_text(1, "it's here")?
+//!     add.run()?
+//!     sqlite.finalize(&mut add)
+//!
+//!     let mut all = Stmt {}
+//!     sqlite.prepare(db, "SELECT body FROM notes", &mut all)?
+//!     while all.step()? {
+//!         fmt.println(all.column_text(0))
+//!     }
+//!     sqlite.finalize(&mut all)
+//!     return sqlite.close(&mut db)
+//! }
+//! ```
+//!
+//! Every fallible call returns `Result<bool>`, so `?` works on all of them. That is
+//! why `open` and `prepare` fill in a value rather than return one: `?` needs the
+//! enclosing fn to return the same `Result` type.
+//!
+//! Each call blocks until SQLite finishes. Only one thread may use this module:
+//! it is built without SQLite's locks, and a thread worker cannot call C at all.
+
+#![c_source("vendor/sqlite3.c", "-O2", "-DSQLITE_THREADSAFE=0", "-DSQLITE_DQS=0", "-DSQLITE_DEFAULT_MEMSTATUS=0", "-DSQLITE_DEFAULT_WAL_SYNCHRONOUS=1", "-DSQLITE_OMIT_DEPRECATED", "-DSQLITE_OMIT_LOAD_EXTENSION", "-DSQLITE_OMIT_SHARED_CACHE")]
+#![c_link("-lm")]
+
+import "std:result"
+
+const SQLITE_OK = 0
+const SQLITE_ROW = 100
+const SQLITE_DONE = 101
+const OPEN_READONLY = 1
+const OPEN_READWRITE = 2
+const OPEN_CREATE = 4
+
+/// SQLite copies a bound value at once when given this destructor.
+const TRANSIENT: i64 = -1
+
+/// What a column holds in the current row, from `column_type`.
+enum ColumnType {
+    Integer = 1,
+    Float = 2,
+    Text = 3,
+    Blob = 4,
+    Null = 5,
+}
+
+/// An open database. A copy names the same connection, so close only one.
+struct Db {
+    handle: i64 = 0,
+}
+
+/// A prepared statement. Finalize it before closing its database.
+struct Stmt {
+    handle: i64 = 0,
+    db: i64 = 0,
+}
+
+struct OpenProps {
+    /// How long a call waits for another connection's lock before it fails.
+    busy_ms: int = 5000,
+    /// Open an existing file for reading. It is not created or changed.
+    read_only: bool = false,
+}
+
+#[c("sqlite3_libversion")]
+fn c_libversion() -> string {}
+
+#[c("sqlite3_open_v2")]
+fn c_open(path: string, out: []i64, flags: int, vfs: i64) -> int {}
+
+#[c("sqlite3_close")]
+fn c_close(db: i64) -> int {}
+
+#[c("sqlite3_errmsg")]
+fn c_errmsg(db: i64) -> string {}
+
+#[c("sqlite3_busy_timeout")]
+fn c_busy_timeout(db: i64, ms: int) -> int {}
+
+#[c("sqlite3_changes64")]
+fn c_changes(db: i64) -> i64 {}
+
+#[c("sqlite3_last_insert_rowid")]
+fn c_last_insert_rowid(db: i64) -> i64 {}
+
+#[c("sqlite3_prepare_v2")]
+fn c_prepare(db: i64, sql: string, n: int, out: []i64, tail: i64) -> int {}
+
+#[c("sqlite3_sql")]
+fn c_sql(stmt: i64) -> string {}
+
+#[c("sqlite3_finalize")]
+fn c_finalize(stmt: i64) -> int {}
+
+#[c("sqlite3_reset")]
+fn c_reset(stmt: i64) -> int {}
+
+#[c("sqlite3_clear_bindings")]
+fn c_clear_bindings(stmt: i64) -> int {}
+
+#[c("sqlite3_step")]
+fn c_step(stmt: i64) -> int {}
+
+#[c("sqlite3_bind_null")]
+fn c_bind_null(stmt: i64, i: int) -> int {}
+
+#[c("sqlite3_bind_int64")]
+fn c_bind_i64(stmt: i64, i: int, v: i64) -> int {}
+
+#[c("sqlite3_bind_double")]
+fn c_bind_f64(stmt: i64, i: int, v: f64) -> int {}
+
+#[c("sqlite3_bind_text")]
+fn c_bind_text(stmt: i64, i: int, v: string, n: int, destructor: i64) -> int {}
+
+#[c("sqlite3_bind_blob")]
+fn c_bind_blob(stmt: i64, i: int, v: []u8, n: int, destructor: i64) -> int {}
+
+#[c("sqlite3_bind_zeroblob")]
+fn c_bind_zeroblob(stmt: i64, i: int, n: int) -> int {}
+
+#[c("sqlite3_column_count")]
+fn c_column_count(stmt: i64) -> int {}
+
+#[c("sqlite3_column_name")]
+fn c_column_name(stmt: i64, i: int) -> string {}
+
+#[c("sqlite3_column_type")]
+fn c_column_type(stmt: i64, i: int) -> int {}
+
+#[c("sqlite3_column_int64")]
+fn c_column_i64(stmt: i64, i: int) -> i64 {}
+
+#[c("sqlite3_column_double")]
+fn c_column_f64(stmt: i64, i: int) -> f64 {}
+
+#[c("sqlite3_column_text")]
+fn c_column_text(stmt: i64, i: int) -> i64 {}
+
+#[c("sqlite3_column_blob")]
+fn c_column_blob(stmt: i64, i: int) -> i64 {}
+
+#[c("sqlite3_column_bytes")]
+fn c_column_bytes(stmt: i64, i: int) -> int {}
+
+#[c("memcpy")]
+fn c_copy(dst: []u8, src: i64, n: i64) -> i64 {}
+
+/// The SQLite library's version, such as "3.54.1".
+fn version() -> string {
+    return c_libversion()
+}
+
+fn failed(db: i64) -> Result<bool> {
+    return result.res_err("sqlite: {{c_errmsg(db)}}", false)
+}
+
+fn checked(db: i64, rc: int) -> Result<bool> {
+    if rc != SQLITE_OK {
+        return failed(db)
+    }
+    return result.res_ok(true)
+}
+
+fn has_nul(s: string) -> bool {
+    for i in 0..s.len {
+        if s[i] == 0 {
+            return true
+        }
+    }
+    return false
+}
+
+/// Open the file at `path` into `db`, creating it unless `read_only`, in WAL mode.
+/// Pass ":memory:" for a private database that lasts until it is closed.
+fn open(path: string, p: OpenProps, db: &mut Db) -> Result<bool> {
+    if db.handle != 0 {
+        return result.res_err("sqlite: this Db is already open", false)
+    }
+    // C would stop at the NUL and open some other file.
+    if has_nul(path) {
+        return result.res_err("sqlite: the path has a NUL in it", false)
+    }
+    let out = []i64 { 0 }
+    let flags = if p.read_only { OPEN_READONLY } else { OPEN_READWRITE + OPEN_CREATE }
+    let rc = c_open(path, out, flags, i64(0))
+    let handle = out[0]
+    if rc != SQLITE_OK {
+        // SQLite hands back a handle even on failure, to read the error from.
+        let outcome = failed(handle)
+        let _ = c_close(handle)
+        return outcome
+    }
+    let setup = configure(Db { handle: handle }, p)
+    if result.is_err(setup) {
+        let _ = c_close(handle)
+        return setup
+    }
+    db.handle = handle
+    return setup
+}
+
+fn configure(db: Db, p: OpenProps) -> Result<bool> {
+    checked(db.handle, c_busy_timeout(db.handle, p.busy_ms))?
+    exec(db, "PRAGMA foreign_keys = ON")?
+    if !p.read_only {
+        // This reports the mode as a row, so `exec` steps over it.
+        exec(db, "PRAGMA journal_mode = WAL")?
+    }
+    return result.res_ok(true)
+}
+
+/// Close the connection. It fails while a statement is left unfinalized, and the
+/// database stays open. Closing twice is harmless.
+fn close(db: &mut Db) -> Result<bool> {
+    let rc = c_close(db.handle)
+    if rc != SQLITE_OK {
+        return failed(db.handle)
+    }
+    db.handle = 0
+    return result.res_ok(true)
+}
+
+/// The text of the connection's latest error.
+fn errmsg(db: Db) -> string {
+    return c_errmsg(db.handle)
+}
+
+/// Rows the latest INSERT, UPDATE, or DELETE changed.
+fn changes(db: Db) -> i64 {
+    return c_changes(db.handle)
+}
+
+/// The rowid of the latest successful INSERT.
+fn last_insert_rowid(db: Db) -> i64 {
+    return c_last_insert_rowid(db.handle)
+}
+
+/// Whether `sql` from `at` holds nothing but spaces and semicolons.
+fn only_filler(sql: string, at: int) -> bool {
+    for i in at..sql.len {
+        let c = sql[i]
+        if c != 32 && c != 9 && c != 10 && c != 13 && c != 59 {
+            return false
+        }
+    }
+    return true
+}
+
+/// Compile one SQL statement into `st`, with `?` where values go. Anything after
+/// that statement is an error, because SQLite would silently ignore it. A statement
+/// already in `st` is finalized first.
+fn prepare(db: Db, sql: string, st: &mut Stmt) -> Result<bool> {
+    let _ = c_finalize(st.handle)
+    st.handle = 0
+    st.db = 0
+    if db.handle == 0 {
+        return result.res_err("sqlite: the database is closed", false)
+    }
+    let out = []i64 { 0 }
+    let rc = c_prepare(db.handle, sql, sql.len, out, i64(0))
+    if rc != SQLITE_OK {
+        return failed(db.handle)
+    }
+    let handle = out[0]
+    if handle == 0 {
+        return result.res_err("sqlite: the SQL holds no statement", false)
+    }
+    if !only_filler(sql, c_sql(handle).len) {
+        let _ = c_finalize(handle)
+        return result.res_err("sqlite: prepare takes one statement", false)
+    }
+    st.handle = handle
+    st.db = db.handle
+    return result.res_ok(true)
+}
+
+/// Free the statement. Finalizing twice is harmless. The result of SQLite's own
+/// call only repeats the error `step` already reported, so there is none here.
+fn finalize(st: &mut Stmt) {
+    let _ = c_finalize(st.handle)
+    st.handle = 0
+}
+
+/// Rewind the statement to run again. Its bindings stay.
+fn reset(st: Stmt) {
+    let _ = c_reset(st.handle)
+}
+
+/// Rewind the statement, and set every parameter back to NULL.
+fn clear(st: Stmt) {
+    let _ = c_reset(st.handle)
+    let _ = c_clear_bindings(st.handle)
+}
+
+/// Advance to the next row. False means the statement finished. A finished or
+/// failed statement rewinds itself, so it can be bound and run again. A query left
+/// partway holds its read lock, so call `reset` to stop early.
+fn step(st: Stmt) -> Result<bool> {
+    let rc = c_step(st.handle)
+    if rc == SQLITE_ROW {
+        return result.res_ok(true)
+    }
+    if rc == SQLITE_DONE {
+        let _ = c_reset(st.handle)
+        return result.res_ok(false)
+    }
+    let outcome = failed(st.db)
+    let _ = c_reset(st.handle)
+    return outcome
+}
+
+/// Run the statement to its end, ignoring any rows.
+fn run(st: Stmt) -> Result<bool> {
+    while step(st)? {}
+    return result.res_ok(true)
+}
+
+/// Run one statement that has no parameters. Values belong in `bind_*`, not here.
+fn exec(db: Db, sql: string) -> Result<bool> {
+    let mut st = Stmt {}
+    prepare(db, sql, &mut st)?
+    let outcome = run(st)
+    finalize(&mut st)
+    return outcome
+}
+
+/// Start a transaction that holds the write lock from the first moment, so it
+/// cannot fail partway because another connection wrote first.
+fn begin(db: Db) -> Result<bool> {
+    return exec(db, "BEGIN IMMEDIATE")
+}
+
+fn commit(db: Db) -> Result<bool> {
+    return exec(db, "COMMIT")
+}
+
+fn rollback(db: Db) -> Result<bool> {
+    return exec(db, "ROLLBACK")
+}
+
+/// End the transaction `begin` started: commit if `outcome` succeeded, roll back
+/// if it failed. Returns what happened.
+///
+/// ```
+/// sqlite.begin(db)?
+/// let outcome = write_batch(db, rows)
+/// return sqlite.finish(db, outcome)
+/// ```
+fn finish(db: Db, outcome: Result<bool>) -> Result<bool> {
+    if result.is_err(outcome) {
+        abandon(db)
+        return outcome
+    }
+    let done = commit(db)
+    if result.is_err(done) {
+        abandon(db)
+    }
+    return done
+}
+
+/// Roll back after a failure, which is the error worth reporting. If SQLite
+/// already rolled back on its own, this one fails, and that is fine.
+fn abandon(db: Db) {
+    if result.is_err(rollback(db)) {
+        return
+    }
+}
+
+fn bind_null(st: Stmt, i: int) -> Result<bool> {
+    return checked(st.db, c_bind_null(st.handle, i))
+}
+
+fn bind_int(st: Stmt, i: int, v: int) -> Result<bool> {
+    return checked(st.db, c_bind_i64(st.handle, i, i64(v)))
+}
+
+fn bind_i64(st: Stmt, i: int, v: i64) -> Result<bool> {
+    return checked(st.db, c_bind_i64(st.handle, i, v))
+}
+
+fn bind_f64(st: Stmt, i: int, v: f64) -> Result<bool> {
+    return checked(st.db, c_bind_f64(st.handle, i, v))
+}
+
+/// Bind text, keeping any NUL inside it. SQLite copies it.
+fn bind_text(st: Stmt, i: int, v: string) -> Result<bool> {
+    return checked(st.db, c_bind_text(st.handle, i, v, v.len, TRANSIENT))
+}
+
+/// Bind bytes. Empty bytes stay empty: they do not become NULL. SQLite copies them.
+fn bind_blob(st: Stmt, i: int, v: []u8) -> Result<bool> {
+    if v.len == 0 {
+        return checked(st.db, c_bind_zeroblob(st.handle, i, 0))
+    }
+    return checked(st.db, c_bind_blob(st.handle, i, v, v.len, TRANSIENT))
+}
+
+fn column_count(st: Stmt) -> int {
+    return c_column_count(st.handle)
+}
+
+fn column_name(st: Stmt, i: int) -> string {
+    return c_column_name(st.handle, i)
+}
+
+/// What the column holds in this row. Read it before any `column_text` or other
+/// reader, which may convert the value.
+fn column_type(st: Stmt, i: int) -> int {
+    return c_column_type(st.handle, i)
+}
+
+fn column_is_null(st: Stmt, i: int) -> bool {
+    return c_column_type(st.handle, i) == ColumnType.Null
+}
+
+fn column_i64(st: Stmt, i: int) -> i64 {
+    return c_column_i64(st.handle, i)
+}
+
+/// The column as an `int`, for values that fit 32 bits. Use `column_i64` for
+/// counts of bytes, rowids, and times.
+fn column_int(st: Stmt, i: int) -> int {
+    return int(c_column_i64(st.handle, i))
+}
+
+fn column_f64(st: Stmt, i: int) -> f64 {
+    return c_column_f64(st.handle, i)
+}
+
+fn copy_bytes(from: i64, n: int) -> []u8 {
+    let mut out = []u8 {}
+    for k in 0..n {
+        out.push(u8(0))
+    }
+    if n > 0 {
+        let _ = c_copy(out, from, i64(n))
+    }
+    return out
+}
+
+/// The column as text, keeping any NUL inside it. NULL reads as "".
+fn column_text(st: Stmt, i: int) -> string {
+    // SQLite requires this order: the pointer, then its length.
+    let from = c_column_text(st.handle, i)
+    let n = c_column_bytes(st.handle, i)
+    return string_from_bytes(copy_bytes(from, n))
+}
+
+/// The column as bytes. NULL and an empty blob both read as no bytes.
+fn column_blob(st: Stmt, i: int) -> []u8 {
+    let from = c_column_blob(st.handle, i)
+    let n = c_column_bytes(st.handle, i)
+    return copy_bytes(from, n)
+}
