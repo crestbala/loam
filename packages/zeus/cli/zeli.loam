@@ -4939,7 +4939,8 @@ fn route_builders(appdir: string) -> []string {
         for j in 0..parts.len {
             let kv = split_on(parts[j], 58 /* : */ )
             if kv.len == 2 && trim(kv[0]) == "build" {
-                push(out, trim(kv[1]))
+                // With no field after it, the entry's closing brace follows.
+                push(out, split_on(trim(kv[1]), 32 /* space */ )[0])
             }
         }
     }
@@ -5188,7 +5189,7 @@ fn compress_web(web: string, quality: int) {
     } else {
         "gzip -9 -c \"$f\" > \"$f.gz\""
     }
-    let files = "find . -type f \\( -name '*.wasm' -o -name '*.js' -o -name '*.html' \\)"
+    let files = "find . -type f \\( -name '*.wasm' -o -name '*.js' -o -name '*.html' \\) -print"
     sys.exec("cd {{shell_quote(web)}} && {{files}} | { while read -r f; do {{one}} & done; wait; }")
 }
 
@@ -5355,7 +5356,8 @@ fn platform_list(targets: []string) -> string {
     return out
 }
 
-/// One HTML file per route, plus `sitemap.xml` and `robots.txt`.
+/// One HTML file per route, plus `sitemap.xml` and `robots.txt`, on top of a copy
+/// of the app's `public/`.
 ///
 /// The route table is the source of the URLs: a static route contributes its
 /// pattern, and a dynamic one contributes each entry of its `paths()`. A route
@@ -5364,6 +5366,11 @@ fn platform_list(targets: []string) -> string {
 fn emit_web_shell(appdir: string, assets: WebAssets, base: string) {
     ui_step(ui_bundle, 92, 100, "Writing HTML shells")
     let web = join(join(appdir, "build"), "web")
+    // Generated files are written after this, so they win over `public/`.
+    let public_dir = join(appdir, "public")
+    if sys.is_dir(public_dir) == 1 {
+        copy_tree(public_dir, web)
+    }
     sys.mkdir(web)
     let recs = collect_meta(appdir)
     let mut urls = []string {}

@@ -269,9 +269,29 @@ fn preview_caches_as_the_release_headers_ask() {
 
 #[test]
 fn vercel_gets_the_release_headers_too() {
-    let v = zeli.vercel_config()
+    let dir = "/tmp/zeli_serve_tests_vercel"
+    sys.remove_path(dir)
+    sys.mkdir(dir)
+    let v = zeli.vercel_config(dir)
     test.assert(has(v, "/_zeus/(.*)"))
     test.assert(has(v, "immutable"))
+    test.assert(!has(v, "rewrites"))
+    sys.remove_path(dir)
+}
+
+#[test]
+fn a_backend_becomes_vercel_rewrites() {
+    let dir = "/tmp/zeli_serve_tests_vercel"
+    sys.remove_path(dir)
+    sys.mkdir(dir)
+    sys.write_file(
+        cat(dir, "/zeus.toml"),
+        "backend = \"https://api.test\"\nbackend_paths = \"/api/:path* /Rpc/:path+\"\n",
+    )
+    let v = zeli.vercel_config(dir)
+    test.assert(has(v, "{\"source\":\"/api/:path*\",\"destination\":\"https://api.test/api/:path*\"}"))
+    test.assert(has(v, "{\"source\":\"/Rpc/:path+\",\"destination\":\"https://api.test/Rpc/:path+\"}"))
+    sys.remove_path(dir)
 }
 
 #[test]
@@ -668,4 +688,16 @@ fn hashes_come_back_in_the_order_asked() {
     test.assert_eq_str(both[1], zeli.short_hash("{{dir}}/a.txt"))
     test.assert(both[0].len == 12)
     sys.remove_path(dir)
+}
+
+// A route with no `meta` ends in `build`, right before the closing brace.
+#[test]
+fn route_builders_stop_at_the_closing_brace() {
+    let dir = "/tmp/zeli_route_builders"
+    sys.mkdir(dir)
+    sys.write_file("{{dir}}/app_routes.loam", "fn routes() -> []Route {\n    return []Route {\n        Route { pattern: \"/\", build: b_root_page },\n        Route { pattern: \"/a\", build: b_a_page, meta: m_a_page },\n    }\n}\n")
+    let got = zeli.route_builders(dir)
+    assert_eq_int(got.len, 2)
+    assert_eq_str(got[0], "b_root_page")
+    assert_eq_str(got[1], "b_a_page")
 }
