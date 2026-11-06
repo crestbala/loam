@@ -1,0 +1,9 @@
+// A listed source has to exist once something uses it.
+#![c_source("vendor/not_here.c")]
+
+#[c("not_here")]
+fn not_here() {}
+
+fn main() {
+    not_here()
+}

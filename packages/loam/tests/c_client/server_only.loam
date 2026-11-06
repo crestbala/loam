@@ -1,0 +1,26 @@
+// Only `#[server]` bodies reach this `#[c]` fn, one of them through a closure, so
+// a client build keeps no trace of it, and never reads the C source.
+
+#![c_source("vendor/c_client.c")]
+
+import "std:fmt"
+
+#[c("c_client_add")]
+fn add(a: i32, b: i32) -> i32 {}
+
+#[server]
+fn direct() -> i32 {
+    return add(1, 2)
+}
+
+#[server]
+fn through_closure() -> i32 {
+    let run = fn() -> i32 {
+        return add(3, 4)
+    }
+    return run()
+}
+
+fn main() {
+    fmt.println(direct() + through_closure())
+}

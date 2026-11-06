@@ -1,0 +1,7 @@
+// A `[]int` result would have no owner on the Loam side.
+#[c("labs")]
+fn c_labs() -> []int {}
+
+fn main() {
+    let _ = c_labs()
+}

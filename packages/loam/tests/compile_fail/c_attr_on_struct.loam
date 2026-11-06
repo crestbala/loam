@@ -1,0 +1,7 @@
+// `#[c]` names a C function, so it only applies to a fn.
+#[c("point")]
+struct Point {
+    x: int,
+}
+
+fn main() {}

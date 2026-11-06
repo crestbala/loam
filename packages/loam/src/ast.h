@@ -92,6 +92,14 @@ typedef struct {
     AstNode *init;
 } FieldInit;
 
+/** A file-level `#![c_source("x.c", flags...)]` or `#![c_link(flags...)]`. */
+typedef struct {
+    int is_link;
+    char **args;
+    size_t arg_count;
+    SourceLoc loc;
+} CDirective;
+
 struct AstNode {
     AstKind kind;
     SourceLoc loc;
@@ -107,6 +115,8 @@ struct AstNode {
             size_t decl_count;
             const char *mod_name;
             const char *mod_doc; /* `//!` lines at module scope */
+            CDirective *c_dirs;  /* `#![c_source(...)]` and `#![c_link(...)]` */
+            size_t c_dir_count;
         } program;
         struct {
             const char *alias;
@@ -145,6 +155,7 @@ struct AstNode {
             int is_async; /* `async fn`: body may contain `await` */
             int is_test;  /* `#[test] fn`: collected and run by `loam test` */
             int is_server; /* `#[server] fn`: body excluded from client targets */
+            const char *c_sym; /* `#[c("sym")]`: bodyless, calls the C symbol `sym` */
         } fn;
         struct {
             const char *name;

@@ -1184,6 +1184,16 @@ static inline loam_str loam_string_from_bytes(loam_vec b) {
     return loam_str_owned(p, n);
 }
 
+/** `string_from_bytes` for a `[]u8`, whose elements are already bytes. */
+static inline loam_str loam_string_from_u8(loam_vec b) {
+    int64_t n = b.len > 0 ? b.len : 0;
+    char *p = loam_str_bytes(n);
+    if (n) memcpy(p, b.ptr, (size_t)n);
+    p[n] = 0;
+    loam_vec_drop(&b);
+    return loam_str_owned(p, n);
+}
+
 /** Compile target: "wasm" | "ios" | "android" | "native". Used by
  *  `http.client()` to pick a default RPC address. */
 static inline loam_str loam_sys_target(void) {

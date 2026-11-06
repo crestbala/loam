@@ -3918,6 +3918,100 @@ static void emit_closure_fn(FILE *o, AstNode *fn) {
     fprintf(o, "}\n\n");
 }
 
+/** The C type a `#[c]` fn's parameter or return has at the call. */
+static void emit_c_abi_type(FILE *o, Type *t) {
+    if (t->kind == TY_STRING) fprintf(o, "const char *");
+    else if (t->kind == TY_VEC) fprintf(o, "void *");
+    else emit_ctype(o, t);
+}
+
+/** `#[c("sym")]` bindings: a static wrapper per kept fn, calling `sym` through a
+ *  pointer cast to the Loam signature. The cast lets one symbol carry several
+ *  signatures, and the asm label avoids any prototype a system header gave it.
+ *  A `string` argument passes as a NUL-terminated copy of all its bytes, so a C
+ *  function that also takes the length sees any NULs inside it. The copy lives
+ *  for the call only. A `[]T` argument passes its buffer, which C may write
+ *  through; an empty one passes NULL. A `string` result is copied up to its first
+ *  NUL, before the argument copies are freed since it may point into one, and
+ *  NULL becomes "". A C pointer is an `i64`: `int` is 32 bits.
+ *  The header holds these, so a shard build sees them in every unit. */
+static void emit_c_bindings(FILE *o, LoamModule *mods, int nmods) {
+    int any = 0;
+    for (int m = 0; m < nmods; m++) {
+        AstNode *p = mods[m].ast;
+        if (!p) continue;
+        for (size_t i = 0; i < p->as.program.decl_count; i++) {
+            AstNode *d = p->as.program.decls[i];
+            if (d->kind != AST_FN_DECL || !d->as.fn.c_sym || !loam_dce_keep(d)) continue;
+            if (!any) {
+                any = 1;
+                fprintf(o, "#define LOAM_CSYM_S2(x) #x\n"
+                           "#define LOAM_CSYM_S(x) LOAM_CSYM_S2(x)\n"
+                           "#define LOAM_CSYM(s) __asm__(LOAM_CSYM_S(__USER_LABEL_PREFIX__) s)\n"
+                           "static inline char *loam_csym_cstr(loam_str s) {\n"
+                           "    char *b = (char *)malloc((size_t)s.len + 1);\n"
+                           "    if (s.len) memcpy(b, s.ptr, (size_t)s.len);\n"
+                           "    b[s.len] = 0;\n"
+                           "    return b;\n"
+                           "}\n"
+                           "static inline loam_str loam_csym_str(const char *p) {\n"
+                           "    if (!p) return (loam_str){\"\", 0, 0};\n"
+                           "    int64_t n = (int64_t)strlen(p);\n"
+                           "    char *b = loam_str_bytes(n);\n"
+                           "    memcpy(b, p, (size_t)n);\n"
+                           "    b[n] = 0;\n"
+                           "    return loam_str_owned(b, n);\n"
+                           "}\n");
+            }
+            const char *cn = d->as.fn.cname;
+            Type *ft = d->ty;
+            Type *ret = (ft && ft->ret) ? ft->ret : ty_void();
+            size_t np = d->as.fn.param_count;
+            fprintf(o, "extern void %s__csym(void) LOAM_CSYM(\"%s\");\n", cn, d->as.fn.c_sym);
+            fprintf(o, "static ");
+            emit_fn_sig(o, d, 0);
+            fprintf(o, " {\n");
+            for (size_t k = 0; k < np; k++)
+                if (ft->params[k]->kind == TY_STRING)
+                    fprintf(o, "    char *_cs%zu = loam_csym_cstr(%s);\n", k,
+                            d->as.fn.params[k].name);
+            fprintf(o, "    ");
+            if (ret->kind == TY_STRING) fprintf(o, "const char *_p = ");
+            else if (ret->kind != TY_VOID) {
+                emit_ctype(o, ret);
+                fprintf(o, " _r = ");
+            }
+            fprintf(o, "((");
+            emit_c_abi_type(o, ret);
+            fprintf(o, " (*)(");
+            if (np == 0) fprintf(o, "void");
+            for (size_t k = 0; k < np; k++) {
+                if (k) fprintf(o, ", ");
+                emit_c_abi_type(o, ft->params[k]);
+            }
+            fprintf(o, "))(void *)%s__csym)(", cn);
+            for (size_t k = 0; k < np; k++) {
+                if (k) fprintf(o, ", ");
+                if (ft->params[k]->kind == TY_STRING) fprintf(o, "_cs%zu", k);
+                else if (ft->params[k]->kind == TY_VEC)
+                    fprintf(o, "%s.ptr", d->as.fn.params[k].name);
+                else fprintf(o, "%s", d->as.fn.params[k].name);
+            }
+            fprintf(o, ");\n");
+            if (ret->kind == TY_STRING) fprintf(o, "    loam_str _r = loam_csym_str(_p);\n");
+            for (size_t k = 0; k < np; k++) {
+                if (ft->params[k]->kind == TY_STRING) fprintf(o, "    free(_cs%zu);\n", k);
+                /* The caller retained it for the callee, and this is the callee. */
+                else if (ft->params[k]->kind == TY_VEC)
+                    fprintf(o, "    loam_vec_drop(&%s);\n", d->as.fn.params[k].name);
+            }
+            if (ret->kind != TY_VOID) fprintf(o, "    return _r;\n");
+            fprintf(o, "}\n");
+        }
+    }
+    if (any) fprintf(o, "\n");
+}
+
 /** Adapter so a named Loam fn can be stored in a loam_fn (env unused). */
 static void emit_as_fn_tramp(FILE *o, AstNode *fn, int proto) {
     Type *ft = fn->ty;
@@ -4086,7 +4180,7 @@ void codegen_emit_c(FILE *out, LoamModule *mods, int nmods, const char *rt_path)
             if (d->kind != AST_FN_DECL || d->as.fn.tparam_count) continue;
             if (!loam_dce_keep(d)) continue;
             if (d->as.fn.is_intrinsic) {
-                if (std_mod) continue;
+                if (std_mod || d->as.fn.c_sym) continue; /* #[c]: emit_c_bindings */
                 emit_fn_sig(out, d, 0);
                 fprintf(out, ";\n");
                 continue;
@@ -4120,6 +4214,7 @@ void codegen_emit_c(FILE *out, LoamModule *mods, int nmods, const char *rt_path)
         clear_subst();
     }
     fprintf(out, "\n");
+    emit_c_bindings(out, mods, nmods);
 
     /* The trampolines are the first definitions, so a shard build has to finish
        the header before them: the literal templates, and their own prototypes,
@@ -4135,7 +4230,8 @@ void codegen_emit_c(FILE *out, LoamModule *mods, int nmods, const char *rt_path)
             /* A user seam (`fn x() {}` outside std, implemented in app C) has
                a prototype above, so it can be stored as a value too. */
             if (d->kind == AST_FN_DECL && d->as.fn.used_as_value &&
-                (!d->as.fn.is_intrinsic || !loam_is_std_path(mods[m].path)) &&
+                (!d->as.fn.is_intrinsic || d->as.fn.c_sym ||
+                 !loam_is_std_path(mods[m].path)) &&
                 !d->as.fn.tparam_count && loam_dce_keep(d))
                 emit_as_fn_tramp(out, d, proto);
         }

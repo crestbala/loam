@@ -1728,6 +1728,37 @@ fn ig_server_split() {
     ok("server split (body excluded)")
 }
 
+/// `#[c]` on a client build: a reachable binding is refused, and one only a
+/// `#[server]` body calls leaves no C behind, not even from a closure.
+fn ig_c_client() {
+    mark("c client")
+    let dir = "packages/loam/tests/c_client"
+    let c = tmpf("c_client.c")
+    let log = tmpf("c_client.log")
+    if sh("{{shq(LOAMC)}} --target=wasm32 --emit-c {{dir}}/reachable.loam -o {{shq(c)}} >{{shq(log)}} 2>&1") {
+        bad("reachable #[c] accepted on wasm", "")
+        return
+    }
+    if !file_has(log, "C runs only on native builds") {
+        bad("reachable #[c] refused without its diagnostic", sys.read_file(log))
+        return
+    }
+    if !sh("{{shq(LOAMC)}} --target=wasm32 --emit-c {{dir}}/server_only.loam -o {{shq(c)}} >{{shq(log)}} 2>&1") {
+        bad("server-only #[c] refused on wasm", sys.read_file(log))
+        return
+    }
+    if file_has(c, "c_client_add") {
+        bad("server-only #[c] leaked into client build", "")
+        return
+    }
+    let bin = tmpf("c_client")
+    if !sh("{{shq(LOAMC)}} {{dir}}/server_only.loam -o {{shq(bin)}} >{{shq(log)}} 2>&1") {
+        bad("server-only #[c] failed on native", sys.read_file(log))
+        return
+    }
+    ok("c client (reachable refused, server-only absent)")
+}
+
 fn ig_lsp() {
     mark("lsp smoke")
     let o = sys.exec("cd {{shq(ROOT)}} && python3 packages/loam/tests/lsp_smoke.py 2>&1")
@@ -2033,6 +2064,7 @@ fn stanza_dispatch(name: string) -> bool {
         ig_wasm_smoke()
     } else if name == "server_split" {
         ig_server_split()
+        ig_c_client()
     } else if name == "lsp" {
         ig_lsp()
     } else if name == "cost" {
@@ -2148,6 +2180,7 @@ fn host_checks() -> int {
     let before = N_FAIL
     ig_wasm_smoke()
     ig_server_split()
+    ig_c_client()
     ig_lsp()
     ig_cost()
     ig_stale_capture()

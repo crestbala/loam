@@ -1,0 +1,12 @@
+// A client build refuses a `#[c]` fn that its code can reach.
+
+#![c_source("vendor/c_client.c")]
+
+import "std:fmt"
+
+#[c("c_client_add")]
+fn add(a: i32, b: i32) -> i32 {}
+
+fn main() {
+    fmt.println(add(1, 2))
+}
