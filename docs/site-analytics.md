@@ -3,8 +3,8 @@
 Analytics for the www site, moving from Vercel Functions to a Loam backend on
 Fly.io: async gRPC and HTTP on `std:http`, with C SQLite reached through FFI.
 
-Phases 0 to 5 are done: the server in `www/server/` runs and is tested, but the
-vault page does not call it yet, and nothing is deployed. Phases 6 and 7 are next.
+Phases 0 to 6 are done: the server in `www/server/` runs and is tested, and the
+vault page calls it, but nothing is deployed. Phase 7 is next.
 
 ## Decision
 
@@ -26,13 +26,12 @@ an async server, and crypto.
 |---|---|
 | `std:analytics` and the web host | Committed in `aff6124`. Stays |
 | Vercel functions, API test, password tool | Removed in phase 0. Readable in `2b9723f` |
-| Vault page, footer door, `analytics.start` in www | Committed in `0cc1c79`. The page still calls the old JSON routes, until phase 6 |
-| `http.post_async`, `on_submit` on inputs | Committed. `post_async` goes in phase 6 if nothing else needs it |
+| Vault page, footer door, `analytics.start` in www | Done. The page uses the gRPC calls |
+| `on_submit` on inputs | Done |
 | Analytics server | `www/server/`, tested by `www_analytics.loam`. Not deployed |
 
-The vault page was tested against the old functions, in a browser, for sign in
-and the tables. Still unchecked: the chart and stat grid fix, the footer door
-click, the range switch, sign out, and narrow screens.
+The vault page was tested in a browser against the real server, behind a local
+same-origin proxy. What is left is to repeat that on the live site, in phase 7.
 
 ## What Loam has today
 
@@ -161,12 +160,23 @@ takes minutes or fills the backlog, reconsider rollups or shorten the window.
 
 ### 6. www
 
-- Point the vault page at the gRPC calls through `http.client("").call_async`, and
-  import `www/server/api.loam` for the contract. Only that file: the rest is native.
-- Replies carry `status` from `api.loam`, where 0 means no answer came.
-- The page offers 7, 30, and 90 days, which matches the server's limit.
-- Drop `http.post_async` if nothing else needs it.
-- Finish the unchecked items listed under "Where things stand".
+Done. The vault page imports `www/server/api.loam` for the contract, and only that
+file: the rest of `www/server/` is native. It calls the server through
+`http.client("").call_async`. `http.post_async` went with the old routes.
+
+Replies carry `status` from `api.loam`, where 0 means no answer came, so a proxy
+error or a stopped server shows as a failure and never as an empty report. The page
+only looks signed out once the server has confirmed it.
+
+Checked in headless Chrome, with the built wasm, a real server, and a same-origin
+proxy: a wrong password, then a right one, the stat grid and charts, the 7, 30, and
+90 day switch, the tables, staying signed in across a reload, sign out, the lockout
+message, a stopped server, the footer door, and a 390 px screen. The session cookie
+is hidden from page scripts, and the owner's browser opts out of counting.
+
+A real browser's beacons were not checked, as `analytics.start` does not report from
+localhost or from automated browsers. The server takes the fields `loader.js`
+sends, checked by reading it, so check real beacons on the live site in phase 7.
 
 ### 7. Deploy to Fly.io
 

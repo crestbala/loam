@@ -2,17 +2,17 @@
 //!
 //! The password is checked by the server, never here: everything in this module
 //! downloads to every visitor who opens the page, so it holds no secret and shows
-//! only what `/api/stats` agrees to return.
+//! only what `Vault.Stats` agrees to return.
 
 import "std:analytics"
 import "std:colors"
 import "std:fmt"
 import "std:http"
-import "std:json"
 import "std:spacing"
 import "std:str"
 import "std:zeus"
 import "std:zui"
+import "../server/api.loam" as api
 import "shell.loam" as shell
 
 const CHECKING: int = 0
@@ -85,55 +85,6 @@ fn range_days(i: int) -> int {
     return 90
 }
 
-fn int_at(doc: JsonDoc, id: int, key: string) -> int {
-    let f = json.field(doc.nodes, id, key, key)
-    if f.ok != 1 {
-        return 0
-    }
-    let n = json.as_int(doc.nodes, f.id, key)
-    if n.ok != 1 {
-        return 0
-    }
-    return int(n.n)
-}
-
-fn str_at(doc: JsonDoc, id: int, key: string) -> string {
-    let f = json.field(doc.nodes, id, key, key)
-    if f.ok != 1 {
-        return ""
-    }
-    let s = json.as_str(doc.nodes, f.id, key)
-    if s.ok != 1 {
-        return ""
-    }
-    return s.s
-}
-
-/// The rows at `key`, as `Line`s. `text` columns print as they are, and `nums`
-/// and `times` as counts and durations.
-fn lines_at(doc: JsonDoc, key: string, text: []string, nums: []string, times: []string) -> []Line {
-    let mut out = []Line {}
-    let list = json.field(doc.nodes, doc.root, key, key)
-    if list.ok != 1 {
-        return out
-    }
-    for i in 0..json.child_count(doc.nodes, list.id) {
-        let row = json.index(doc.nodes, list.id, i, key)
-        let mut cells = []string {}
-        for t in 0..text.len {
-            push(cells, str_at(doc, row.id, text[t]))
-        }
-        for n in 0..nums.len {
-            push(cells, "{{int_at(doc, row.id, nums[n])}}")
-        }
-        for d in 0..times.len {
-            push(cells, duration(int_at(doc, row.id, times[d])))
-        }
-        push(out, Line { cells: cells })
-    }
-    return out
-}
-
 fn duration(ms: int) -> string {
     let s = ms / 1000
     if s < 60 {
@@ -149,46 +100,34 @@ fn percent(part: int, whole: int) -> string {
     return "{{part * 100 / whole}}%"
 }
 
-fn parse_report(doc: JsonDoc) {
+/// Rows of a name and a count.
+fn ranked(names: []string, counts: []int) -> []Line {
+    let mut out = []Line {}
+    for i in 0..names.len {
+        push(out, Line { cells: []string { names[i], "{{counts[i]}}" } })
+    }
+    return out
+}
+
+fn show_report(r: StatsResp) {
     let mut days = []string {}
     let mut daily = []int {}
-    let series = json.field(doc.nodes, doc.root, "daily", "daily")
-    if series.ok == 1 {
-        for i in 0..json.child_count(doc.nodes, series.id) {
-            let d = json.index(doc.nodes, series.id, i, "daily")
-            // Month and day of YYYY-MM-DD.
-            let name = str_at(doc, d.id, "day")
-            push(days, str.slice(name, 5, name.len))
-            push(daily, int_at(doc, d.id, "page_views"))
-            push(daily, int_at(doc, d.id, "visitors"))
-        }
+    for i in 0..r.daily_days.len {
+        // Month and day of YYYY-MM-DD.
+        let name = r.daily_days[i]
+        push(days, str.slice(name, 5, name.len))
+        push(daily, r.daily_page_views[i])
+        push(daily, r.daily_visitors[i])
     }
-    let mut leaving = []int {}
-    let left = json.field(doc.nodes, doc.root, "leaving", "leaving")
-    if left.ok == 1 {
-        let keys = []string { "under_10s", "under_30s", "under_1m", "under_5m", "over_5m" }
-        for i in 0..keys.len {
-            push(leaving, int_at(doc, left.id, keys[i]))
-        }
-    }
-    let mut screens = ""
-    let s = json.field(doc.nodes, doc.root, "screens", "screens")
-    if s.ok == 1 {
-        let phone = int_at(doc, s.id, "phone")
-        let tablet = int_at(doc, s.id, "tablet")
-        let desktop = int_at(doc, s.id, "desktop")
-        screens = "{{phone}} phone, {{tablet}} tablet, {{desktop}} desktop"
-    }
-    let root = doc.root
     report.set(Report {
-        visitors: int_at(doc, root, "visitors"),
-        page_views: int_at(doc, root, "page_views"),
-        unique_page_visits: int_at(doc, root, "unique_page_visits"),
-        clicks: int_at(doc, root, "clicks"),
-        sessions: int_at(doc, root, "sessions"),
-        bounces: int_at(doc, root, "bounces"),
-        avg_session_ms: int_at(doc, root, "avg_session_ms"),
-        screens: screens,
+        visitors: r.visitors,
+        page_views: r.page_views,
+        unique_page_visits: r.unique_page_visits,
+        clicks: r.clicks,
+        sessions: r.sessions,
+        bounces: r.bounces,
+        avg_session_ms: r.avg_session_ms,
+        screens: "{{r.screens[0]}} phone, {{r.screens[1]}} tablet, {{r.screens[2]}} desktop",
     })
     traffic.set(ChartData {
         labels: days,
@@ -198,15 +137,24 @@ fn parse_report(doc: JsonDoc) {
     lengths.set(ChartData {
         labels: []string { "Under 10s", "10-30s", "30-60s", "1-5m", "Over 5m" },
         names: []string { "Sessions" },
-        vals: leaving,
+        vals: r.leaving,
     })
-    let none = []string {}
-    pages.set(lines_at(doc, "pages", []string { "path" }, []string { "views", "visitors" }, []string { "avg_ms" }))
-    entries.set(lines_at(doc, "entries", []string { "path" }, []string { "sessions" }, none))
-    exits.set(lines_at(doc, "exits", []string { "path" }, []string { "sessions" }, none))
-    clicks.set(lines_at(doc, "clicks_top", []string { "name" }, []string { "count" }, none))
-    events.set(lines_at(doc, "events_top", []string { "name", "data" }, []string { "count" }, none))
-    referrers.set(lines_at(doc, "referrers", []string { "ref" }, []string { "sessions" }, none))
+    let mut page_rows = []Line {}
+    for i in 0..r.page_paths.len {
+        let views = "{{r.page_view_counts[i]}}"
+        let people = "{{r.page_visitors[i]}}"
+        push(page_rows, Line { cells: []string { r.page_paths[i], views, people, duration(r.page_avg_ms[i]) } })
+    }
+    pages.set(page_rows)
+    entries.set(ranked(r.entry_paths, r.entry_sessions))
+    exits.set(ranked(r.exit_paths, r.exit_sessions))
+    clicks.set(ranked(r.click_names, r.click_counts))
+    let mut event_rows = []Line {}
+    for i in 0..r.event_names.len {
+        push(event_rows, Line { cells: []string { r.event_names[i], r.event_data[i], "{{r.event_counts[i]}}" } })
+    }
+    events.set(event_rows)
+    referrers.set(ranked(r.referrer_hosts, r.referrer_sessions))
 }
 
 fn fail(text: string) {
@@ -217,24 +165,21 @@ fn fail(text: string) {
 fn load() {
     asked = asked + 1
     let mine = asked
-    http.post_async("/api/stats?days={{range_days(range.peek())}}", "", fn(status: int, body: string) {
+    let req = StatsReq { days: range_days(range.peek()) }
+    http.client("").call_async(api.STATS_RPC, api.encode_StatsReq(req), fn(body: string) {
         if mine != asked {
             return
         }
-        if status == 401 {
+        let r = api.decode_StatsResp(body)
+        if r.status == api.SIGN_IN {
             view.set(SIGN_IN)
-        } else if status != 200 {
+        } else if r.status != api.OK {
             fail("The analytics service did not answer. Try again in a moment.")
         } else {
-            let doc = json.parse(body)
-            if doc.ok != 1 {
-                fail("The report came back unreadable.")
-            } else {
-                parse_report(doc)
-                // Whoever can sign in stays out of their own numbers.
-                analytics.opt_out()
-                view.set(REPORT)
-            }
+            show_report(r)
+            // Whoever can sign in stays out of their own numbers.
+            analytics.opt_out()
+            view.set(REPORT)
         }
     })
 }
@@ -245,20 +190,16 @@ fn sign_in() {
     }
     busy.set(true)
     sign_in_error.set("")
-    json.enc_obj_begin()
-    json.enc_key("email")
-    json.enc_str(email.peek())
-    json.enc_key("password")
-    json.enc_str(password.peek())
-    json.enc_obj_end()
-    http.post_async("/api/login", json.enc_take(), fn(status: int, body: string) {
+    let req = LoginReq { email: email.peek(), password: password.peek() }
+    http.client("").call_async(api.LOGIN_RPC, api.encode_LoginReq(req), fn(body: string) {
         busy.set(false)
         password.set("")
-        if status == 200 {
+        let status = api.decode_LoginResp(body).status
+        if status == api.OK {
             load()
-        } else if status == 401 {
+        } else if status == api.WRONG_LOGIN {
             sign_in_error.set("That email and password do not match.")
-        } else if status == 429 {
+        } else if status == api.TOO_MANY_TRIES {
             sign_in_error.set("Too many tries. Wait 15 minutes and try again.")
         } else {
             sign_in_error.set("Sign in is not available right now.")
@@ -267,8 +208,15 @@ fn sign_in() {
 }
 
 fn sign_out() {
-    http.post_async("/api/logout", "", fn(status: int, body: string) {
-        view.set(SIGN_IN)
+    // A report still on its way must not bring the dashboard back.
+    asked = asked + 1
+    http.client("").call_async(api.LOGOUT_RPC, api.encode_LogoutReq(LogoutReq { unused: 0 }), fn(body: string) {
+        // Only the server can end the session, so do not look signed out until it has.
+        if api.decode_LogoutResp(body).status == api.OK {
+            view.set(SIGN_IN)
+        } else {
+            fail("Could not sign out, so this browser is still signed in. Try again in a moment.")
+        }
     })
 }
 
