@@ -3967,6 +3967,7 @@ void codegen_emit_c(FILE *out, LoamModule *mods, int nmods, const char *rt_path)
        LOAM_NO_DCE=1 to emit the full monolith (debug / size comparisons). */
     if (!getenv("LOAM_NO_DCE")) {
         loam_dce_set_test_mode(test_mode);
+        loam_dce_set_server_split(server_split);
         loam_dce_run(mods, nmods);
     }
     IrModule *ir = ir_lower(mods, nmods);
@@ -4002,6 +4003,8 @@ void codegen_emit_c(FILE *out, LoamModule *mods, int nmods, const char *rt_path)
             AstNode *d = p->as.program.decls[i];
             if (d->kind == AST_FN_DECL) {
                 if (d->as.fn.tparam_count || !loam_dce_keep(d)) continue;
+                /* A client build keeps nothing of a `#[server]` body. */
+                if (d->as.fn.is_server && server_split) continue;
                 collect_clos(d->as.fn.body);
             } else if (d->kind == AST_VAR_DECL) {
                 collect_clos(d->as.var.init);
@@ -4192,7 +4195,7 @@ void codegen_emit_c(FILE *out, LoamModule *mods, int nmods, const char *rt_path)
                 emit_fn_sig(out, d, 0);
                 fprintf(out,
                         " { loam_panic(\"<server>\", 0, \"server function excluded "
-                        "from client build\"); }\n");
+                        "from client build\"); __builtin_unreachable(); }\n");
                 continue;
             }
             emit_fn(out, d, is_main);

@@ -35,6 +35,7 @@ typedef struct {
 static DceSet kept;   /* fn decls whose C is emitted */
 static DceSet todo;   /* fn decls still to process (body walk) */
 static DceSet done;   /* fn decls already processed */
+static int server_split; /* `#[server]` bodies are dropped from this build */
 static int ran;       /* loam_dce_run completed (LOAM_NO_DCE skips it) */
 static int dce_test_mode;
 
@@ -304,6 +305,8 @@ static int has_mono_instance(AstNode *decl) {
     return 0;
 }
 
+void loam_dce_set_server_split(int on) { server_split = on; }
+
 void loam_dce_run(LoamModule *mods, int nmods) {
     kept.n = todo.n = done.n = 0;
     ran = 1;
@@ -387,7 +390,8 @@ void loam_dce_run(LoamModule *mods, int nmods) {
         if (in_set(&done, fn)) continue;
         add_set(&done, fn);
         if (fn->kind == AST_FN_DECL) {
-            walk(fn->as.fn.body);
+            /* Codegen drops this body, so what only it calls is not reachable. */
+            if (!(server_split && fn->as.fn.is_server)) walk(fn->as.fn.body);
             walk_params(fn);
         }
     }

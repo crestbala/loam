@@ -25,6 +25,10 @@ void loam_dce_run(LoamModule *mods, int nmods);
  *  in the Loam call graph reaches them. Call before loam_dce_run. */
 void loam_dce_set_test_mode(int on);
 
+/** `#[server]` bodies are dropped from this build, so nothing they call is
+ *  reachable through them. Call before loam_dce_run. */
+void loam_dce_set_server_split(int on);
+
 /** 1 = emit this fn declaration's prototype/body/tramp (and its clones). */
 int loam_dce_keep(const AstNode *fn_decl);
 
