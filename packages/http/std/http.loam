@@ -1972,8 +1972,20 @@ fn reason_phrase(code: int) -> string {
     if code == 405 {
         s = "Method Not Allowed"
     }
+    if code == 204 {
+        s = "No Content"
+    }
+    if code == 403 {
+        s = "Forbidden"
+    }
     if code == 408 {
         s = "Request Timeout"
+    }
+    if code == 429 {
+        s = "Too Many Requests"
+    }
+    if code == 503 {
+        s = "Service Unavailable"
     }
     if code == 413 {
         s = "Payload Too Large"
@@ -3414,6 +3426,11 @@ fn json(app: App, path: string, handler: fn(string) -> string) -> App {
     return app
 }
 
+/// From an `app.json` handler: answer with `code`, not 200.
+fn set_status(code: int) {
+    json_status = code
+}
+
 /// Status chosen by the last `serve_json` call (0 = no route matched).
 fn last_json_status() -> int {
     return json_status
@@ -4279,6 +4296,10 @@ fn watch_finish(idx: int, why: string) {
 fn watch_deliver(idx: int, acc: string) -> string {
     let mut rest = acc
     while rest.len >= 5 {
+        // No message is a gigabyte, and the sum below must not overflow.
+        if rest[1] >= 64 {
+            return ""
+        }
         let n = rest[1] * 16777216 + rest[2] * 65536 + rest[3] * 256 + rest[4]
         if rest.len < 5 + n {
             break
