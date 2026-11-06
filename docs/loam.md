@@ -12,8 +12,7 @@ files, and no backend other than `cc` is used. The generated C may be large
 same shape is what a **self-hosting** `loamc` (the compiler written in Loam,
 building and testing itself from whole Loam sources) will keep.
 
-Language rules live in [spec.md](spec.md). C vs Loam: [boundary.md](boundary.md).
-Loam vs C and Rust: [loam-vs-c-and-rust.md](loam-vs-c-and-rust.md).
+C vs Loam: [boundary.md](boundary.md).
 Self-improvement phases: [downsides.md](downsides.md).
 This file is architecture plus how to write and run programs.
 
@@ -596,7 +595,7 @@ callers should not assume the face is present.
 |---|---|
 | A CLI or algorithm | `import "std:fmt"`, `fn main()` |
 | CPU-bound work off the UI thread | `import "std:thread"` — `spawn` a closure, return results through a `Chan<T>` drained on the UI thread |
-| A desktop UI | [zeus.md](zeus.md) — `import "std:zeus"` |
+| A desktop UI | [packages/zeus/README.md](../packages/zeus/README.md) — `import "std:zeus"` |
 | A tiny RPC server | `import "std:http"` (`examples/language/http_server.loam`) |
 | A 3D/2D toy scene | `import "std:maya"` (`examples/language/solar.loam`) |
 | Grapheme-correct text | `import "std:unicode"` for cluster boundaries; `import "std:font"` for in-tree metrics |

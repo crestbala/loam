@@ -7,8 +7,9 @@
 #     www/deploy.sh all       the server, then the site
 #     www/deploy.sh check     test that a deploy could run, and change nothing
 #
-# The server cannot be built on a Mac. Commit and push, wait for the analytics server
-# job on GitHub, then run this. It refuses a build older than your server code.
+# The server cannot be built on a Mac. Commit and push, run the analytics server job
+# with `gh workflow run analytics-server.yml --ref <branch>`, wait for it, then run
+# this. It refuses a build older than your server code.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -17,7 +18,7 @@ project=loam-lang
 site=https://loam-lang.vercel.app
 fly_app=loam-analytics
 workflow=analytics-server.yml
-# What the server binary is built from. Keep in step with the workflow's paths.
+# What the server binary is built from.
 server_code=('www/server/*.loam' packages/crypto packages/http packages/loam packages/sqlite Makefile nob.loam)
 
 say() { printf '\ndeploy: %s\n' "$1"; }
@@ -51,12 +52,12 @@ find_server_build() {
     branch=$(git rev-parse --abbrev-ref HEAD)
     run_id=$(gh run list --workflow "$workflow" --branch "$branch" --status success \
         --limit 1 --json databaseId -q '.[0].databaseId')
-    [ -n "$run_id" ] || die "no passing $workflow run on $branch: push it, and wait for the job"
+    [ -n "$run_id" ] || die "no passing $workflow run on $branch: push, run gh workflow run $workflow --ref $branch, and wait for the job"
     sha=$(gh run view "$run_id" --json headSha -q .headSha)
     git cat-file -e "$sha" 2> /dev/null || die "fetch first: this checkout lacks $sha"
     if ! git diff --quiet "$sha" -- "${server_code[@]}"; then
         git diff --stat "$sha" -- "${server_code[@]}" | tail -8
-        die "the server code above is newer than the last build: commit, push, and wait for the job"
+        die "the server code above is newer than the last build: commit, push, run gh workflow run $workflow --ref $branch, and wait for the job"
     fi
 }
 
@@ -117,7 +118,7 @@ case ${1:-} in
         say "ready: the server would come from run $run_id"
         ;;
     *)
-        sed -n 2,11p "$0" | sed 's/^# \{0,1\}//'
+        sed -n 2,12p "$0" | sed 's/^# \{0,1\}//'
         exit 1
         ;;
 esac
