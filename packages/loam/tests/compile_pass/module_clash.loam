@@ -1,0 +1,48 @@
+// Names shared between modules stay separate. Two files with one stem, each with
+// a global and a `Todo`, must not share C symbols; a generic instantiated with
+// each `Todo` must be two instances; and a struct here named like one in std must
+// not change what the std struct's fields mean.
+
+import "std:fmt"
+import "std:sys"
+import "std:json"
+import "module_clash/a/track.loam" as first
+import "module_clash/b/track.loam" as second
+
+struct Json {
+    kind: int,
+}
+
+struct Holder<T> {
+    item: T,
+}
+
+fn same<T>(x: T) -> T {
+    return x
+}
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    must(first.value() == 1, "first module's global")
+    must(second.value() == 20, "second module's global")
+
+    must(same(first.make()).n == 1, "generic fn over the first Todo")
+    must(same(second.make()).label == "b", "generic fn over the second Todo")
+
+    let a = Holder { item: first.make() }
+    let b = Holder { item: second.make() }
+    must(a.item.n == 1, "generic struct over the first Todo")
+    must(b.item.n == 20, "generic struct over the second Todo")
+
+    let mine = Json { kind: 7 }
+    must(mine.kind == 7, "local Json")
+    let doc = json.parse("[1, 2]")
+    must(doc.ok != 0, "std Json parse")
+    must(doc.nodes.len > 0, "std Json nodes")
+}

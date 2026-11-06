@@ -1,0 +1,15 @@
+// The other `track`: same stem, same public names, different meaning.
+let base = 20
+
+struct Todo {
+    label: string,
+    n: int,
+}
+
+fn make() -> Todo {
+    return Todo { label: "b", n: base }
+}
+
+fn value() -> int {
+    return make().n
+}

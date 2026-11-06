@@ -286,6 +286,7 @@ int64_t loam_platform_plat_mem_kb(void);
 int64_t loam_runtime_mem_stats(void);
 void loam_runtime_trace_draw(int64_t on);
 int64_t loam_platform_plat_now_ms(void);
+void loam_platform_plat_clock_skip(int32_t ms);
 /* Phase 4 blit. The Loam `[]u8` arrives as a `loam_vec` (ptr/len/cap) BY VALUE,
    so the pixels are handed over rather than copied. See loam_zeus_plat_blit.
    The parameter types are `int32_t` because that is exactly what codegen emits

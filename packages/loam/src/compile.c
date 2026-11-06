@@ -296,6 +296,41 @@ static char *resolve_import(const char *importer, AstNode *im) {
 
 static int load_module(const char *path, const char *name);
 
+/* A module's name prefixes its C symbols, and two different files can share a
+   stem, so the name must be unique even though the alias need not be: importers
+   reach a module through the path their import resolved to, never this name.
+   The driver recognises std modules by name (`zeus`, `http`), so a std module
+   always holds the plain name and a user file that shares it steps aside. */
+static char *numbered_module_name(const char *name) {
+    char buf[300];
+    for (int n = 1;; n++) {
+        int taken = 0;
+        snprintf(buf, sizeof buf, "%s__%d", name, n);
+        for (int i = 0; i < CUR->nmods; i++)
+            if (CUR->mods[i].name && strcmp(CUR->mods[i].name, buf) == 0) taken = 1;
+        if (!taken) return loam_dup(buf);
+    }
+}
+
+static char *unique_module_name(const char *name, const char *path) {
+    if (!name) return NULL;
+    for (int i = 0; i < CUR->nmods; i++) {
+        LoamModule *m = &CUR->mods[i];
+        if (!m->name || strcmp(m->name, name) != 0) continue;
+        if (!loam_is_std_path(path) || loam_is_std_path(m->path)) return numbered_module_name(name);
+        /* Only `mod_name` remains to rename: symbols come from a later pass. */
+        char *moved = numbered_module_name(name);
+        free(m->name);
+        m->name = moved;
+        if (m->ast) {
+            free((void *)m->ast->as.program.mod_name);
+            m->ast->as.program.mod_name = loam_dup(moved);
+        }
+        break;
+    }
+    return loam_dup(name);
+}
+
 static int load_imports(LoamModule *m) {
     AstNode *p = m->ast;
     if (!p) return 1;
@@ -329,7 +364,8 @@ static int load_module(const char *path, const char *name) {
         return 1;
     }
     int idx = CUR->nmods++;
-    CUR->mods[idx].name = loam_dup(name);
+    char *unique = unique_module_name(name, path);
+    CUR->mods[idx].name = unique;
     CUR->mods[idx].path = loam_dup(path);
     CUR->mods[idx].loading = 1;
     CUR->mods[idx].ast = NULL;
@@ -348,7 +384,7 @@ static int load_module(const char *path, const char *name) {
     parser_init(&p, &lex);
     CUR->mods[idx].ast = parser_parse(&p);
     if (p.had_error || !CUR->mods[idx].ast) return 1;
-    CUR->mods[idx].ast->as.program.mod_name = loam_dup(name);
+    CUR->mods[idx].ast->as.program.mod_name = loam_dup(unique);
     if (name && strcmp(name, "http") != 0) {
         AstNode *ast = CUR->mods[idx].ast;
         int has_proto = 0, has_http = 0;

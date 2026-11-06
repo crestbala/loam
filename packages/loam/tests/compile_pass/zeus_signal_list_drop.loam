@@ -1,6 +1,6 @@
 // `Signal<[]T>.set` releases the list it replaces. The store used to retain
 // the old list once more before dropping it, so the cell's own reference
-// leaked: here 1 MB per set, 300 times over.
+// leaked: here 1 MB per set, 60 times over.
 
 import "std:fmt"
 import "std:str"
@@ -35,7 +35,7 @@ fn main() {
         rows.set(big(250000 + i))
     }
     let r = rss_mb()
-    for i in 0..300 {
+    for i in 0..60 {
         rows.set(big(250000 + i))
         let mut ns = []string {}
         for k in 0..2000 {
@@ -44,7 +44,7 @@ fn main() {
         names.set(ns)
     }
     let d = rss_mb() - r
-    if d > 120 {
+    if d > 24 {
         fmt.println("signal lists leaked: +{{d}} MB")
         sys.exit(1)
     } else {

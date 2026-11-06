@@ -9,7 +9,6 @@
 
 import "std:fmt"
 import "std:sys"
-import "std:async"
 import "std:zeus"
 
 fn must(ok: bool, what: string) {
@@ -19,11 +18,12 @@ fn must(ok: bool, what: string) {
     }
 }
 
-/// Emulate the host's 16 ms wakes for `ms` of wall time.
+/// Emulate the host's 16 ms wakes for `ms` of wall time, on a clock this test
+/// moves itself: real sleeps cost seconds and made frame timing a race.
 fn run_ms(ms: int) {
     let mut t = 0
     while t < ms {
-        async.sleep(16)
+        zeus.proof_clock_skip(16)
         zeus.engine_step_dt(16)
         zeus.pump_frame()
         t = t + 16

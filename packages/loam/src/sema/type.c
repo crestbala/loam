@@ -331,6 +331,10 @@ int type_arg_transfers(const Type *t) {
     return 0;
 }
 
+/* Set while `type_name` spells a type for a C symbol: two modules' `Todo` read
+   the same in a diagnostic, but are different types in a mangled name. */
+static int symbol_spelling;
+
 void type_c_name(const Type *t, char *buf, size_t cap) {
     if (!buf || cap == 0) return;
     if (!t || t->kind != TY_STRUCT) {
@@ -348,7 +352,7 @@ void type_c_name(const Type *t, char *buf, size_t cap) {
         if (used + 3 >= cap) break;
         snprintf(buf + used, cap - used, "__");
         used = strlen(buf);
-        const char *nm = type_name(t->params[i]);
+        const char *nm = type_symbol_name(t->params[i]);
         for (const char *p = nm; *p && used + 1 < cap; p++) {
             char c = *p;
             if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))
@@ -367,6 +371,13 @@ void type_c_name(const Type *t, char *buf, size_t cap) {
 }
 
 /** Rotating buffer: not safe to hold across another type_name call. */
+const char *type_symbol_name(const Type *t) {
+    symbol_spelling = 1;
+    const char *nm = type_name(t);
+    symbol_spelling = 0;
+    return nm;
+}
+
 const char *type_name(const Type *t) {
     static char bufs[8][160];
     static int rot;
@@ -404,7 +415,10 @@ const char *type_name(const Type *t) {
             snprintf(buf, 160, "[]%s", type_name(t->elem));
             return buf;
         case TY_STRUCT:
-            if (!t->param_count) return t->name ? t->name : "struct";
+            if (!t->param_count) {
+                if (symbol_spelling && t->cname) return t->cname;
+                return t->name ? t->name : "struct";
+            }
             {
                 size_t used = (size_t)snprintf(buf, 160, "%s<", t->name ? t->name : "struct");
                 for (size_t i = 0; i < t->param_count && used < 150; i++)

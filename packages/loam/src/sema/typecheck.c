@@ -363,7 +363,7 @@ static void cname_append_ty(char *buf, size_t cap, const Type *t) {
         cname_append_ty(buf, cap, t->elem);
         return;
     }
-    const char *nm = type_name(t);
+    const char *nm = type_symbol_name(t);
     size_t used = strlen(buf);
     for (const char *p = nm; *p && used + 1 < cap; p++) {
         char c = *p;
@@ -971,6 +971,15 @@ static int type_same_decl(const Type *a, const Type *b) {
 
 static Type *struct_type_of(AstNode *st) {
     if (st->ty) return st->ty;
+    /* As in `fn_type_of`: field types mean what they mean where they are
+       written, whichever module happens to reach this struct first. */
+    int save_cur = Gcur;
+    const char *save_mod = cur_mod_name;
+    int home = module_of_decl(st);
+    if (home >= 0 && home < Gn && home != Gcur) {
+        Gcur = home;
+        cur_mod_name = Gmods[home].name;
+    }
     const char **save_tp = cur_tparams;
     size_t save_n = cur_ntparams;
     cur_tparams = st->as.strct.tparams;
@@ -996,6 +1005,8 @@ static Type *struct_type_of(AstNode *st) {
     st->ty = t;
     cur_tparams = save_tp;
     cur_ntparams = save_n;
+    Gcur = save_cur;
+    cur_mod_name = save_mod;
     return t;
 }
 

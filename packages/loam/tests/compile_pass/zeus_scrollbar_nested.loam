@@ -6,7 +6,6 @@
 
 import "std:fmt"
 import "std:sys"
-import "std:async"
 import "std:zeus"
 import "std:zui"
 
@@ -20,7 +19,7 @@ fn must(ok: bool, what: string) {
 fn run_ms(ms: int) {
     let mut t = 0
     while t < ms {
-        async.sleep(16)
+        zeus.proof_clock_skip(16)
         zeus.engine_step_dt(16)
         zeus.pump_frame()
         t = t + 16

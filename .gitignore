@@ -72,3 +72,6 @@ packages/zeus/node_modules/
 
 # The Linux binary fly.toml deploys.
 /www/server/analytics
+
+# Ignore analytics DB files
+/analytics.db*

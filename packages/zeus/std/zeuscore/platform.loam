@@ -115,6 +115,8 @@ fn plat_mem_kb() -> int {}
 /// across an idle host sleep: the engine's own `now_ms` advances by a capped
 /// frame delta, so it lags wall time after a wake.
 fn plat_now_ms() -> int {}
+/// Move that clock forward: a test's way through a timeline without waiting.
+fn plat_clock_skip(ms: int) {}
 /// Router history: mirror a pushed / replaced entry into the host's own
 /// back stack (browser history, Cocoa/Android back button).
 fn plat_history_push(path: string) {}

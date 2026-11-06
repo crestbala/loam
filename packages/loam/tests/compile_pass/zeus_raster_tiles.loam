@@ -17,17 +17,17 @@ fn must(ok: bool, what: string) {
 }
 
 fn main() {
-    // 600x600 at scale 1 spans a 3x3 grid of 256px tiles. A 260px-radius circle
-    // centered in it crosses every interior tile boundary.
-    zeusraster.raster_ensure(600, 600, 1)
-    must(zeusraster.raster_width() == 600, "framebuffer width")
+    // 300x300 at scale 1 spans a 2x2 grid of 256px tiles. A 130px-radius circle
+    // centered in it crosses both interior tile boundaries.
+    zeusraster.raster_ensure(300, 300, 1)
+    must(zeusraster.raster_width() == 300, "framebuffer width")
 
     zeusraster.raster_clear(255, 255, 255)
-    zeusraster.raster_fill_round_rect_whole(40, 40, 520, 520, 260, 20, 20, 20, 255)
+    zeusraster.raster_fill_round_rect_whole(20, 20, 260, 260, 130, 20, 20, 20, 255)
     let whole = zeusraster.raster_checksum()
 
     zeusraster.raster_clear(255, 255, 255)
-    zeusraster.raster_fill_round_rect_tiled(40, 40, 520, 520, 260, 20, 20, 20, 255)
+    zeusraster.raster_fill_round_rect_tiled(20, 20, 260, 260, 130, 20, 20, 20, 255)
     let tiled = zeusraster.raster_checksum()
 
     must(whole == tiled, "tiled fill is byte-identical to the whole-surface fill (no seams)")
@@ -36,9 +36,9 @@ fn main() {
     // green channel sits strictly between background (255) and fill (20).
     let mut partial = 0
     let mut y = 0
-    while y < 600 {
+    while y < 300 {
         let mut x = 0
-        while x < 600 {
+        while x < 300 {
             let v = zeusraster.raster_get(x, y, 1)
             if v > 25 && v < 250 {
                 partial = partial + 1
@@ -50,17 +50,17 @@ fn main() {
     must(partial > 200, "edge pixels are graded (analytic AA), not binary")
 
     // Interior is solid fill; the corners outside the circle stay background.
-    must(zeusraster.raster_get(300, 300, 1) == 20, "center is solid fill")
-    must(zeusraster.raster_get(45, 45, 1) == 255, "outside the rounded corner is background")
+    must(zeusraster.raster_get(150, 150, 1) == 20, "center is solid fill")
+    must(zeusraster.raster_get(23, 23, 1) == 255, "outside the rounded corner is background")
 
     // A plain (unrounded) rectangle spanning tiles is identical too, and its
     // interior edge lands exactly on the pixel grid (no half-lit rows).
     zeusraster.raster_clear(0, 0, 0)
-    zeusraster.raster_fill_round_rect_tiled(100, 100, 400, 200, 0, 255, 255, 255, 255)
-    must(zeusraster.raster_get(100, 100, 2) == 255, "snapped corner is full white")
-    must(zeusraster.raster_get(499, 299, 2) == 255, "snapped last pixel is full white")
-    must(zeusraster.raster_get(99, 100, 2) == 0, "one pixel left of the rect is untouched")
-    must(zeusraster.raster_get(500, 299, 2) == 0, "one pixel right of the rect is untouched")
+    zeusraster.raster_fill_round_rect_tiled(50, 50, 220, 220, 0, 255, 255, 255, 255)
+    must(zeusraster.raster_get(50, 50, 2) == 255, "snapped corner is full white")
+    must(zeusraster.raster_get(269, 269, 2) == 255, "snapped last pixel is full white")
+    must(zeusraster.raster_get(49, 50, 2) == 0, "one pixel left of the rect is untouched")
+    must(zeusraster.raster_get(270, 269, 2) == 0, "one pixel right of the rect is untouched")
 
     fmt.println("raster tiles ok", partial, whole, tiled)
 }

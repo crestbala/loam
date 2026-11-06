@@ -757,6 +757,12 @@ fn engine_next_ms() -> int {
 
 // --- Phase 3 proof harness ------------------------------------------------
 /// Component-function runs since boot. Flat across an animation.
+/// Advance the wall clock `plat_now_ms` reads, so a test can step a wall-clock
+/// timeline (the scrollbar's fades) without sleeping through it.
+fn proof_clock_skip(ms: int) {
+    platform.plat_clock_skip(ms)
+}
+
 fn proof_components() -> int {
     return arena.component_runs
 }
