@@ -1376,13 +1376,11 @@ fn key(k: int) -> int {
         }
         return changed
     }
-    // Tab: a mapped chord wins; otherwise single-line fields and non-input
-    // controls move focus (shift = back). Multiline fields insert a tab and
-    // fall through to the editing path below.
+    // Tab: single-line fields and non-input controls move focus (shift = back),
+    // even after an `on_key_down` handler saw the key: a field that listens for
+    // Enter must not trap the keyboard. Mapped chords never reach here. Multiline
+    // fields insert a tab and fall through to the editing path below.
     if k == 9 {
-        if handled != 0 {
-            return 1
-        }
         let mut insert = 0
         if arena.focus_captures_text() != 0 {
             let focus_node_id = arena.focus_id
