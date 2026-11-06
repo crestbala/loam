@@ -69,3 +69,6 @@ packages/loam/tests/pkg_app/loam.lock
 # Gradle caches (rewritten by every Android build)
 .gradle/
 packages/zeus/node_modules/
+
+# The Linux binary fly.toml deploys.
+/www/server/analytics

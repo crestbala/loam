@@ -3,8 +3,9 @@
 Analytics for the www site, moving from Vercel Functions to a Loam backend on
 Fly.io: async gRPC and HTTP on `std:http`, with C SQLite reached through FFI.
 
-Phases 0 to 6 are done: the server in `www/server/` runs and is tested, and the
-vault page calls it, but nothing is deployed. Phase 7 is next.
+Live since 2026-11-06. The site is on Vercel at https://loam-lang.vercel.app, which
+rewrites `/api/*` and `/Vault/*` to the server on Fly.io. What is left is at the end
+of phase 7.
 
 ## Decision
 
@@ -28,7 +29,7 @@ an async server, and crypto.
 | Vercel functions, API test, password tool | Removed in phase 0. Readable in `2b9723f` |
 | Vault page, footer door, `analytics.start` in www | Done. The page uses the gRPC calls |
 | `on_submit` on inputs | Done |
-| Analytics server | `www/server/`, tested by `www_analytics.loam`. Not deployed |
+| Analytics server | `www/server/`, tested by `www_analytics.loam`. Deployed |
 
 The vault page was tested in a browser against the real server, behind a local
 same-origin proxy. What is left is to repeat that on the live site, in phase 7.
@@ -184,86 +185,32 @@ Needs the owner: a Fly account with a card, `fly auth login`, the login email
 and password, and the region.
 
 We do not use Docker: no Dockerfile, no image of our own, and no Docker on any
-machine. Fly does start every machine from an image, so `fly.toml` names a stock
-one, and `[[files]]` places our binary on it at deploy. Nothing is built on Fly.
+machine. Fly does start every machine from an image, so `www/server/fly.toml` names
+a stock one. Nothing is built on Fly.
 
 `.github/workflows/analytics-server.yml` builds the binary on a Linux runner, on
 `ubuntu-latest`, and links it statically with `LOAM_LINK_EXTRA=-static`, or it would
 depend on the base image's C library. It runs the server's tests and
-`www/server/smoke.sh` on Linux, and keeps the binary as an artifact for 14 days. It
-passes, and it does not deploy. The same job can run `fly deploy` with a `FLY_API_TOKEN`
-secret once the rest of this phase works.
+`www/server/smoke.sh` on Linux, and keeps the binary as an artifact for 14 days.
 
-`fly.toml`, in `www/server/`:
+The plan to place the binary with `[[files]]` failed: Fly answers `request body too
+large` to the 2.5 MB binary, and to 1.2 MB gzipped. So the binary lives on the volume.
+The machine runs `/data/server`, and waits if it is not there yet.
 
-```toml
-app = "loam-analytics"
-primary_region = "<region>"
+To deploy, use `www/deploy.sh site`, `server`, or `all`. `check` tests that a deploy
+could run, and changes nothing. `server` refuses a build older than the server code,
+so commit, push, and wait for the job first.
 
-[build]
-  image = "debian:bookworm-slim"
+The app, volume, and secrets are set up in `sin`, the closest region to India. A real
+visit through Vercel has been counted, and sign in works on the live site.
 
-[experimental]
-  cmd = ["/bin/sh", "-c", "chmod +x /app/server && exec /app/server"]
+The first browser sign in got 431: `curl` had passed, but a browser behind Vercel
+sends over 40 headers. Test paths a browser uses with a browser's headers.
 
-[[files]]
-  guest_path = "/app/server"
-  local_path = "server"
+Left to do:
 
-[env]
-  HOST = "0.0.0.0"
-  PORT = "8080"
-  DATABASE_PATH = "/data/analytics.db"
-  SITE_ORIGIN = "https://loam-lang.vercel.app"
-
-[http_service]
-  internal_port = 8080
-  force_https = true
-  auto_stop_machines = "off"
-  min_machines_running = 1
-
-  [[http_service.checks]]
-    method = "GET"
-    path = "/healthz"
-    interval = "30s"
-    timeout = "5s"
-
-[[vm]]
-  size = "shared-cpu-1x"
-  memory = "256mb"
-
-[mounts]
-  source = "analytics_data"
-  destination = "/data"
-  snapshot_retention = 14
-```
-
-Check these field names against Fly's `fly.toml` reference when writing the file.
-
-Prove these first, with a small test binary. Fly's docs show `[[files]]` for
-config files, not programs:
-
-- A binary this size fits through `[[files]]`.
-- It runs: whether the file arrives executable is unconfirmed, hence the `chmod`.
-
-If either fails, copy the binary to the volume with `fly ssh sftp` and run it
-from there. If Fly proves too awkward without images, the fallback is a plain
-VPS, such as Hetzner at about $4.50-5 a month: copy the binary, and run it
-under systemd.
-
-Steps:
-
-1. `fly apps create loam-analytics`
-2. `fly volumes create analytics_data --size 1 --region <region>`
-3. `fly secrets set` for `VAULT_EMAIL`, `VAULT_PASSWORD_HASH`, and
-   `VAULT_SESSION_SECRET`, which must be 32 to 64 bytes.
-4. Build the Linux binary, then `fly deploy` beside it. Keep it to one machine
-   with `fly scale count 1`.
-5. Point the site's `/api/*` and `/Vault/:path+` at the server, and turn on
-   `analytics.start` in the published build. `/Vault/` is the gRPC-Web prefix, and the
-   session cookie's path. Keep `:path+`: the page itself is `/vault`, and Vercel may
-   match paths without regard to case.
-6. Run the browser checks against the live site.
+1. Back up the database. See "Running it".
+2. Measure sign in and a report on the Fly machine.
 
 Running it:
 
