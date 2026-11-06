@@ -18,7 +18,8 @@
 # the incremental object build from then on.
 
 CC      := cc
-CFLAGS  := -std=c11 -Wall -Wextra -Wpedantic -O2 -g
+# Strict -std=c11 hides strdup and friends from glibc's headers.
+CFLAGS  := -std=c11 -D_GNU_SOURCE -Wall -Wextra -Wpedantic -O2 -g
 CFLAGS  += -DLOAM_RT_PATH='"$(CURDIR)/packages/loam/runtime/loam_rt.h"'
 CFLAGS  += -DLOAM_RUNTIME_DIR='"$(CURDIR)/packages/loam/runtime"'
 CFLAGS  += -DLOAM_STD_DIR='"$(CURDIR)/packages/loam/std"'
