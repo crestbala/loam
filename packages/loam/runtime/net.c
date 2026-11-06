@@ -374,6 +374,35 @@ int64_t loam_net_tcp_listen(int64_t port) {
     return -1;
 }
 
+int64_t loam_net_tcp_listen_on(loam_str host, int64_t port) {
+    (void)host;
+    (void)port;
+    return -1;
+}
+
+int64_t loam_net_tcp_nonblock(int64_t fd) {
+    (void)fd;
+    return -1;
+}
+
+void loam_net_tcp_poll_clear(void) {}
+
+int64_t loam_net_tcp_poll_add(int64_t fd, int64_t want) {
+    (void)fd;
+    (void)want;
+    return -1;
+}
+
+int64_t loam_net_tcp_poll_wait(int64_t ms) {
+    (void)ms;
+    return -1;
+}
+
+int64_t loam_net_tcp_poll_ready(int64_t i) {
+    (void)i;
+    return 0;
+}
+
 int64_t loam_net_tcp_accept(int64_t fd) {
     (void)fd;
     return -1;
@@ -416,6 +445,9 @@ loam_str loam_net_fetch_rpc(loam_str path, loam_str body) {
 #include <arpa/inet.h>
 #include <errno.h>
 
+/* The latest read or send would have blocked, on a TLS handle or a plain socket. */
+static int g_tls_wouldblock;
+
 /* Every socket is close-on-exec: a child the program spawns (a downloader, a
    shell) must not inherit the listener, or the port stays bound after the
    server exits and connections queue on it with nobody accepting. */
@@ -446,7 +478,6 @@ typedef struct {
 
 static TlsConn g_tls[TLS_SLOTS];
 static int tls_slot_of(int64_t fd);
-static int g_tls_wouldblock;
 #endif
 
 #if defined(__APPLE__) && defined(__clang__)
@@ -563,6 +594,7 @@ loam_str loam_net_tcp_read(int64_t fd, int64_t max) {
     if (!p) return (loam_str){ .ptr = "", .len = 0 };
     {
         ssize_t n = read((int)fd, p, (size_t)max);
+        g_tls_wouldblock = n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK);
         if (n <= 0) {
             free(p);
             return (loam_str){ .ptr = "", .len = 0 };
@@ -594,7 +626,7 @@ void loam_net_tcp_close(int64_t fd) {
     close((int)fd);
 }
 
-int64_t loam_net_tcp_listen(int64_t port) {
+static int64_t listen_addr(uint32_t addr, int64_t port) {
     int fd;
     struct sockaddr_in sa;
     int one = 1;
@@ -606,17 +638,39 @@ int64_t loam_net_tcp_listen(int64_t port) {
     (void)setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
     memset(&sa, 0, sizeof sa);
     sa.sin_family = AF_INET;
-    sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    sa.sin_addr.s_addr = addr;
     sa.sin_port = htons(p);
     if (bind(fd, (struct sockaddr *)&sa, sizeof sa) != 0) {
         close(fd);
         return -1;
     }
-    if (listen(fd, 16) != 0) {
+    if (listen(fd, 128) != 0) {
         close(fd);
         return -1;
     }
     return (int64_t)fd;
+}
+
+int64_t loam_net_tcp_listen(int64_t port) {
+    return listen_addr(htonl(INADDR_LOOPBACK), port);
+}
+
+int64_t loam_net_tcp_listen_on(loam_str host, int64_t port) {
+    char text[16];
+    struct in_addr addr;
+    if (host.len <= 0 || host.len >= (int64_t)sizeof text) return -1;
+    memcpy(text, host.ptr, (size_t)host.len);
+    text[host.len] = 0;
+    if (inet_pton(AF_INET, text, &addr) != 1) return -1;
+    return listen_addr(addr.s_addr, port);
+}
+
+int64_t loam_net_tcp_nonblock(int64_t fd) {
+    int flags;
+    if (fd < 0) return -1;
+    flags = fcntl((int)fd, F_GETFL, 0);
+    if (flags < 0 || fcntl((int)fd, F_SETFL, flags | O_NONBLOCK) != 0) return -1;
+    return 0;
 }
 
 int64_t loam_net_tcp_accept(int64_t fd) {
@@ -955,7 +1009,7 @@ int64_t loam_net_tls_nb_ready(int64_t fd) {
     return -1;
 }
 
-int64_t loam_net_tcp_wouldblock(void) { return 0; }
+int64_t loam_net_tcp_wouldblock(void) { return g_tls_wouldblock; }
 
 #endif
 
@@ -1036,6 +1090,45 @@ int64_t loam_net_tcp_poll(int64_t fd, int64_t want, int64_t ms) {
     if (p.revents & POLLHUP) return 1;
     if (p.revents & (POLLIN | POLLOUT)) return 1;
     return 0;
+}
+
+/* A set of sockets to wait on at once: `tcp_poll_clear`, one `tcp_poll_add` per
+   socket, `tcp_poll_wait`, then `tcp_poll_ready` by the index `add` returned.
+   One set per process, for the thread that runs a server. */
+static struct pollfd *g_poll;
+static int g_poll_n;
+static int g_poll_cap;
+
+void loam_net_tcp_poll_clear(void) { g_poll_n = 0; }
+
+int64_t loam_net_tcp_poll_add(int64_t fd, int64_t want) {
+    if (g_poll_n == g_poll_cap) {
+        int cap = g_poll_cap ? g_poll_cap * 2 : 64;
+        struct pollfd *grown = (struct pollfd *)realloc(g_poll, (size_t)cap * sizeof *grown);
+        if (!grown) return -1;
+        g_poll = grown;
+        g_poll_cap = cap;
+    }
+    g_poll[g_poll_n].fd = (int)fd;
+    g_poll[g_poll_n].events = (want == 2) ? POLLOUT : POLLIN;
+    g_poll[g_poll_n].revents = 0;
+    return (int64_t)g_poll_n++;
+}
+
+int64_t loam_net_tcp_poll_wait(int64_t ms) {
+    int rc;
+    if (ms < 0) ms = 0;
+    if (ms > 60000) ms = 60000;
+    for (;;) {
+        rc = poll(g_poll, (nfds_t)g_poll_n, (int)ms);
+        if (rc >= 0) return (int64_t)rc;
+        if (errno != EINTR) return -1;
+    }
+}
+
+int64_t loam_net_tcp_poll_ready(int64_t i) {
+    if (i < 0 || i >= g_poll_n) return 0;
+    return g_poll[i].revents != 0;
 }
 
 /* One non-blocking send of `data[off..]`. Returns bytes written (> 0),

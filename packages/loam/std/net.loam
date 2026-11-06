@@ -22,7 +22,7 @@ fn tls_nb_connect(host: string, port: int) -> int {}
 /// when `fd` is not a TLS handle.
 fn tls_nb_ready(fd: int) -> int {}
 
-/// 1 if the last `tcp_read` / `tcp_send` on a TLS handle would block (not EOF).
+/// 1 if the last `tcp_read` or `tcp_send` would have blocked: empty did not mean EOF.
 fn tcp_wouldblock() -> int {}
 
 /// Non-blocking connect for the async transport: returns a non-blocking fd
@@ -54,6 +54,25 @@ fn tcp_close(fd: int) {}
 /// Bind 127.0.0.1:`port` and listen. `port == 0` picks an ephemeral port.
 /// Returns a fd, or `-1`.
 fn tcp_listen(port: int) -> int {}
+
+/// Bind `host`, an IPv4 address such as "0.0.0.0", and listen. Returns a fd, or `-1`.
+fn tcp_listen_on(host: string, port: int) -> int {}
+
+/// Make reads, sends, and accepts on `fd` return at once. `-1` on failure.
+fn tcp_nonblock(fd: int) -> int {}
+
+/// Start a new set of sockets to wait on. One set per process.
+fn tcp_poll_clear() {}
+
+/// Add `fd` to the set. `want`: 1 = readable, 2 = writable. Returns its index.
+fn tcp_poll_add(fd: int, want: int) -> int {}
+
+/// Wait until a socket in the set is ready, up to `ms`, at most 60 s. Returns how
+/// many are ready, `0` on timeout, `-1` on error.
+fn tcp_poll_wait(ms: int) -> int {}
+
+/// 1 if the socket at index `i` is ready, EOF and errors included.
+fn tcp_poll_ready(i: int) -> int {}
 
 /// Accept one client. Returns a fd, or `-1`.
 fn tcp_accept(fd: int) -> int {}

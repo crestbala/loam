@@ -4,8 +4,9 @@
 //!
 //! Protobuf field codecs live here (`encode_int_field`, `bytes_of`, …).
 //! `#[proto]` structs get `encode_Name` / `decode_Name` in **their** module;
-//! those functions call this library. Sockets are `std/net`. `listen` is Loam
-//! (accept loop + HTTP/1.1 + h2c). `ZEUS_HEADLESS=1` runs a Loam self-test.
+//! those functions call this library. Sockets are `std/net`. `listen` is Loam: a
+//! non-blocking loop over HTTP/1.1 and h2c, on one thread. `ZEUS_HEADLESS=1` runs a
+//! Loam self-test.
 //!
 //! ```
 //! import "std:http"
@@ -147,6 +148,11 @@ let mut json_routes: []JsonRoute = []JsonRoute {}
 let mut json_status: int = 0
 let mut json_ctype: string = "application/json; charset=utf-8"
 let mut last_status: int = 0
+/// Bytes allowed for the request line and headers, on top of the body.
+const HEAD_ROOM: int = 24576
+/// The largest body `parse_http11` takes, and the most it reads for one request.
+let mut body_cap: int = 65536
+let mut request_cap: int = 65536 + HEAD_ROOM
 let mut handlers: []fn(string) -> string = []fn(string) -> string {}
 let mut mw_fns: []fn(string, string) -> string = []fn(string, string) -> string {}
 let mut next_app: int = 0
@@ -159,6 +165,8 @@ let mut next_app: int = 0
 // (grpc-status 16) without running it.
 let mut auth_tok: string = ""
 let mut req_tok: string = ""
+let mut req_hdrs: string = ""
+let mut reply_cookies: []string = []string {}
 let mut gate: int = 0
 
 /// Set the bearer token the sync/async clients send on every call.
@@ -174,6 +182,145 @@ fn token() -> string {
 /// Bearer token of the request being dispatched (server side).
 fn req_token() -> string {
     return req_tok
+}
+
+/// Header `name`, in lowercase, of the HTTP/1.1 request being dispatched. "" when
+/// absent. The first wins if it repeats.
+fn req_header(name: string) -> string {
+    let mut pos = 0
+    while pos < req_hdrs.len {
+        let name_end = find_nul(req_hdrs, pos)
+        let value_end = find_nul(req_hdrs, name_end + 1)
+        if eq(str_slice(req_hdrs, pos, name_end), name) {
+            return str_slice(req_hdrs, name_end + 1, value_end)
+        }
+        pos = value_end + 1
+    }
+    return ""
+}
+
+/// The index of the next NUL in `s` from `at`, or `s.len`.
+fn find_nul(s: string, at: int) -> int {
+    let mut i = at
+    while i < s.len && s[i] != 0 {
+        i += 1
+    }
+    return i
+}
+
+/// The value of cookie `name` on the request being dispatched. "" when absent.
+fn req_cookie(name: string) -> string {
+    let mut pos = 0
+    while pos < req_hdrs.len {
+        let name_end = find_nul(req_hdrs, pos)
+        let value_end = find_nul(req_hdrs, name_end + 1)
+        if eq(str_slice(req_hdrs, pos, name_end), "cookie") {
+            let v = cookie_in(str_slice(req_hdrs, name_end + 1, value_end), name)
+            if v.found {
+                return v.value
+            }
+        }
+        pos = value_end + 1
+    }
+    return ""
+}
+
+struct CookieValue {
+    found: bool,
+    value: string,
+}
+
+/// Find `name` in a `Cookie` header: `a=1; b=2`.
+fn cookie_in(header: string, name: string) -> CookieValue {
+    let mut at = 0
+    while at < header.len {
+        let mut end = find_char(header, at, header.len, 59)
+        if end < 0 {
+            end = header.len
+        }
+        while at < end && (header[at] == 32 || header[at] == 9) {
+            at += 1
+        }
+        let eq_at = find_char(header, at, end, 61)
+        if eq_at > at && eq(str_slice(header, at, eq_at), name) {
+            let mut from = eq_at + 1
+            let mut to = end
+            while to > from && (header[to - 1] == 32 || header[to - 1] == 9) {
+                to -= 1
+            }
+            if to - from >= 2 && header[from] == 34 && header[to - 1] == 34 {
+                from += 1
+                to -= 1
+            }
+            return CookieValue { found: true, value: str_slice(header, from, to) }
+        }
+        at = end + 1
+    }
+    return CookieValue { found: false, value: "" }
+}
+
+struct CookieProps {
+    /// Seconds to keep it. Negative lasts until the browser closes.
+    max_age: int = -1,
+    path: string = "/",
+    /// "Strict", "Lax", or "None".
+    same_site: string = "Lax",
+    /// Hide it from scripts in the page.
+    http_only: bool = true,
+    /// Send it over HTTPS only. Turn this off only for a local http server.
+    secure: bool = true,
+}
+
+/// A cookie name: an RFC 6265 token.
+fn cookie_name_ok(s: string) -> bool {
+    if s.len == 0 {
+        return false
+    }
+    for i in 0..s.len {
+        let c = s[i]
+        if c <= 32 || c >= 127 || find_char("()<>@,;:\\\"/[]?={}", 0, 19, c) >= 0 {
+            return false
+        }
+    }
+    return true
+}
+
+/// A cookie value or path: printable, with nothing that ends the attribute.
+fn cookie_text_ok(s: string) -> bool {
+    for i in 0..s.len {
+        let c = s[i]
+        if c <= 32 || c >= 127 || c == 34 || c == 44 || c == 59 || c == 92 {
+            return false
+        }
+    }
+    return true
+}
+
+/// Add a `Set-Cookie` to the reply being built, from a handler or `before` hook of
+/// an HTTP/1.1 request. False, and no cookie, when a value could change the header.
+fn set_cookie(name: string, value: string, p: CookieProps) -> bool {
+    let site_ok = eq(p.same_site, "Strict") || eq(p.same_site, "Lax") || eq(p.same_site, "None")
+    if !cookie_name_ok(name) || !cookie_text_ok(value) || !cookie_text_ok(p.path) || !site_ok {
+        log.warn("http.server", "refused a cookie that would break its header")
+        return false
+    }
+    let mut line = "Set-Cookie: {{name}}={{value}}; Path={{p.path}}; SameSite={{p.same_site}}"
+    if p.max_age >= 0 {
+        line = "{{line}}; Max-Age={{p.max_age}}"
+    }
+    if p.http_only {
+        line = "{{line}}; HttpOnly"
+    }
+    if p.secure {
+        line = "{{line}}; Secure"
+    }
+    push(reply_cookies, line)
+    return true
+}
+
+/// Tell the browser to drop cookie `name`. Pass the `path` it was set with.
+fn clear_cookie(name: string, path: string = "/") -> bool {
+    return set_cookie(name, "", CookieProps { max_age: 0, path: path })
 }
 
 /// From a `before` hook: skip the handler, answer grpc-status 16.
@@ -1255,7 +1402,7 @@ fn parse_cl(s: string) -> int {
         }
         if bad == 0 {
             n = n * 10 + d
-            if n > 65536 {
+            if n > body_cap {
                 bad = 2
             }
         }
@@ -1458,7 +1605,7 @@ fn parse_http11(raw: string) -> ParsedReq {
     if raw.len == 0 {
         err = 400
     }
-    if raw.len > 90112 {
+    if raw.len > request_cap {
         err = 400
     }
     let hdr_end = find_dbl_crlf(raw)
@@ -1791,7 +1938,7 @@ fn header_cl(raw: string, hdr_end: int) -> int {
 /// `1` when `raw` has a full HTTP/1.1 message (headers + declared body).
 fn request_ready(raw: string) -> int {
     let mut ready = 0
-    if raw.len > 90112 {
+    if raw.len > request_cap {
         ready = 1
     }
     let hdr_end = find_dbl_crlf(raw)
@@ -1824,6 +1971,9 @@ fn reason_phrase(code: int) -> string {
     }
     if code == 405 {
         s = "Method Not Allowed"
+    }
+    if code == 408 {
+        s = "Request Timeout"
     }
     if code == 413 {
         s = "Payload Too Large"
@@ -1885,6 +2035,13 @@ fn http_reply(code: int, ctype: string, body: string) -> string {
     append_bytes(b, bytes_of(ctype))
     append_bytes(b, bytes_of("\r\nContent-Length: "))
     append_bytes(b, u_itoa(body.len))
+    if reply_cookies.len > 0 {
+        append_bytes(b, bytes_of("\r\nCache-Control: no-store"))
+        for i in 0..reply_cookies.len {
+            append_bytes(b, bytes_of("\r\n"))
+            append_bytes(b, bytes_of(reply_cookies[i]))
+        }
+    }
     append_bytes(b, bytes_of("\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nContent-Security-Policy: default-src 'none'; frame-ancestors 'none'\r\nReferrer-Policy: no-referrer\r\nConnection: close\r\n\r\n"))
     append_bytes(b, bytes_of(body))
     return string_of(b)
@@ -1956,12 +2113,14 @@ fn bearer_of(hdrs: string) -> string {
 }
 
 fn serve_h1(app: App, raw: string) -> string {
+    reply_cookies = []string {}
     let req = parse_http11(raw)
     if req.err != 0 {
         log.warn("http.server", "bad request -> {{req.err}} {{reason_phrase(req.err)}}")
         return http_reply(req.err, "text/plain; charset=utf-8", reason_phrase(req.err))
     }
     req_tok = bearer_of(req.hdrs)
+    req_hdrs = req.hdrs
     let mut grpc = 0
     if eq(req.method, "POST") {
         if ctype_grpc_web(req.ctype) == 1 {
@@ -2386,7 +2545,7 @@ fn serve_conn(app: App, fd: int) {
                 if request_ready(acc) == 1 {
                     more = 0
                 }
-                if acc.len > 90112 {
+                if acc.len > request_cap {
                     more = 0
                 }
             }
@@ -2396,7 +2555,6 @@ fn serve_conn(app: App, fd: int) {
         return
     }
     if watch_accept(app, fd, acc) != 0 {
-        conn_kept = 1
         return
     }
     let resp = serve_h1(app, acc)
@@ -2596,47 +2754,286 @@ fn headless_selftest(user_app: App) -> int {
     return 1
 }
 
-/// Bind 127.0.0.1:`port` and serve until killed. Port 0 picks an ephemeral port.
-fn listen(app: App, port: int) {
+struct ListenProps {
+    /// The IPv4 address to bind. "0.0.0.0" accepts other machines.
+    host: string = "127.0.0.1",
+    /// The largest request body in bytes. Larger gets 413.
+    max_body: int = 65536,
+    /// How long a client gets to send its request, and then to read the reply.
+    timeout_ms: int = 10000,
+    /// Connections held at once, streams included. More wait to be accepted.
+    max_conns: int = 128,
+}
+
+const CONN_READING: int = 0
+const CONN_WRITING: int = 1
+const CONN_CLOSED: int = 2
+
+/// One client. Its socket never blocks, so a slow one only ever costs its own turn.
+struct Conn {
+    fd: int,
+    state: int,
+    acc: string,
+    out: string,
+    off: int,
+    deadline: i64,
+}
+
+/// A running server. `server_step` moves it along.
+struct Server {
+    app: App,
+    fd: int,
+    port: int,
+    p: ListenProps,
+    conns: []Conn,
+}
+
+/// Bind and start serving. `fd` is `-1` when the address cannot be bound.
+fn server_start(app: App, port: int, p: ListenProps) -> Server {
+    body_cap = p.max_body
+    request_cap = p.max_body + HEAD_ROOM
+    let fd = net.tcp_listen_on(p.host, port)
+    if fd >= 0 {
+        let _ = net.tcp_nonblock(fd)
+    }
+    return Server { app: app, fd: fd, port: net.tcp_bound_port(fd), p: p, conns: []Conn {} }
+}
+
+/// Close the server and its connections. Open streams stay with the process.
+fn server_stop(s: &mut Server) {
+    for i in 0..s.conns.len {
+        net.tcp_close(s.conns[i].fd)
+    }
+    s.conns = []Conn {}
+    net.tcp_close(s.fd)
+    s.fd = -1
+}
+
+fn h2_preface() -> string {
+    return "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+}
+
+/// `raw` could still become the h2c preface.
+fn may_be_h2(raw: string) -> bool {
+    let pre = h2_preface()
+    let n = if raw.len < pre.len { raw.len } else { pre.len }
+    return eq(str_slice(raw, 0, n), str_slice(pre, 0, n))
+}
+
+/// `raw`, which opens with the preface, holds a frame that ends the request.
+fn h2_request_ready(raw: string) -> bool {
+    let mut i = 24
+    while i + 9 <= raw.len {
+        let hdr = h2.parse_hdr(h2.slice_str(raw, i, i + 9))
+        if hdr.ok == 0 {
+            return true
+        }
+        i += 9 + hdr.len
+        if i > raw.len {
+            return false
+        }
+        // HEADERS or DATA with END_STREAM, or RST_STREAM or GOAWAY.
+        if (hdr.ty == 0 || hdr.ty == 1) && wrapping_and(hdr.flags, 1) == 1 {
+            return true
+        }
+        if hdr.ty == 3 || hdr.ty == 7 {
+            return true
+        }
+    }
+    return false
+}
+
+/// `raw` declares a body over `body_cap`, before that body has to arrive.
+fn declared_too_big(raw: string) -> bool {
+    let hdr_end = find_dbl_crlf(raw)
+    if hdr_end < 0 {
+        return false
+    }
+    let cl = header_cl(raw, hdr_end)
+    return cl == -2
+}
+
+fn conn_reply(c: &mut Conn, out: string, timeout_ms: int) {
+    c.state = CONN_WRITING
+    c.out = out
+    c.off = 0
+    c.acc = ""
+    c.deadline = async.now_ms() + i64(timeout_ms)
+}
+
+fn conn_refuse(c: &mut Conn, code: int, timeout_ms: int) {
+    reply_cookies = []string {}
+    log.warn("http.server", "request -> {{code}} {{reason_phrase(code)}}")
+    conn_reply(c, http_reply(code, "text/plain; charset=utf-8", reason_phrase(code)), timeout_ms)
+}
+
+/// Answer the buffered request, or hand the socket to a stream.
+fn conn_serve(app: App, c: &mut Conn, timeout_ms: int, is_h2: bool) {
+    if is_h2 {
+        conn_reply(c, serve_h2(app, c.acc), timeout_ms)
+        return
+    }
+    if watch_accept(app, c.fd, c.acc) != 0 {
+        // The stream owns the socket now, or closed it on refusing.
+        c.fd = -1
+        c.state = CONN_CLOSED
+        return
+    }
+    conn_reply(c, serve_h1(app, c.acc), timeout_ms)
+}
+
+/// Take what the socket has, and answer once the request is whole.
+fn conn_read(s: &Server, c: &mut Conn) {
+    let chunk = net.tcp_read(c.fd, 16384)
+    if chunk.len == 0 {
+        if net.tcp_wouldblock() == 0 {
+            c.state = CONN_CLOSED
+        }
+        return
+    }
+    c.acc = concat_str(c.acc, chunk)
+    if may_be_h2(c.acc) {
+        if c.acc.len >= 24 {
+            if c.acc.len > request_cap {
+                c.state = CONN_CLOSED
+            } else if h2_request_ready(c.acc) {
+                conn_serve(s.app, c, s.p.timeout_ms, true)
+            }
+        }
+        return
+    }
+    if c.acc.len > request_cap || declared_too_big(c.acc) {
+        conn_refuse(c, 413, s.p.timeout_ms)
+    } else if request_ready(c.acc) == 1 {
+        conn_serve(s.app, c, s.p.timeout_ms, false)
+    }
+}
+
+/// Send what the socket takes, and finish once the reply is out.
+fn conn_write(c: &mut Conn) {
+    while c.off < c.out.len {
+        let n = net.tcp_send(c.fd, c.out, c.off)
+        if n < 0 {
+            c.state = CONN_CLOSED
+            return
+        }
+        if n == 0 {
+            return
+        }
+        c.off += n
+    }
+    c.state = CONN_CLOSED
+}
+
+/// Whichever deadline comes first, capped at `ms`.
+fn server_wait(s: &Server, ms: int) -> int {
+    let mut wait = ms
+    if watchers.len > 0 && STREAM_MS < wait {
+        wait = STREAM_MS
+    }
+    let now = async.now_ms()
+    for i in 0..s.conns.len {
+        let left = s.conns[i].deadline - now
+        if left < i64(wait) {
+            wait = if left < i64(0) { 0 } else { int(left) }
+        }
+    }
+    return wait
+}
+
+fn server_accept(s: &mut Server) {
+    while s.conns.len + watchers.len < s.p.max_conns {
+        let fd = net.tcp_accept(s.fd)
+        if fd < 0 {
+            return
+        }
+        let _ = net.tcp_nonblock(fd)
+        let deadline = async.now_ms() + i64(s.p.timeout_ms)
+        push(s.conns, Conn { fd: fd, state: CONN_READING, acc: "", out: "", off: 0, deadline: deadline })
+    }
+}
+
+/// Wait up to `ms` for something to do, and do it. Nothing here waits on a client,
+/// but a handler that takes a long time holds up everyone.
+fn server_step(s: &mut Server, ms: int) {
+    net.tcp_poll_clear()
+    let accepting = s.conns.len + watchers.len < s.p.max_conns
+    let listener = if accepting { net.tcp_poll_add(s.fd, 1) } else { -1 }
+    let base = listener + 1
+    for i in 0..s.conns.len {
+        let want = if s.conns[i].state == CONN_WRITING { 2 } else { 1 }
+        let _ = net.tcp_poll_add(s.conns[i].fd, want)
+    }
+    for i in 0..watchers.len {
+        let want = if watchers[i].off < watchers[i].out.len { 2 } else { 1 }
+        let _ = net.tcp_poll_add(watchers[i].fd, want)
+    }
+    if net.tcp_poll_wait(server_wait(s, ms)) < 0 {
+        return
+    }
+
+    let now = async.now_ms()
+    let mut keep = []Conn {}
+    for i in 0..s.conns.len {
+        let mut c = s.conns[i]
+        if net.tcp_poll_ready(base + i) != 0 {
+            if c.state == CONN_READING {
+                conn_read(s, &mut c)
+            } else {
+                conn_write(&mut c)
+            }
+        }
+        if c.state != CONN_CLOSED && now >= c.deadline {
+            // An h2c client would not understand an HTTP/1.1 reply.
+            if c.state == CONN_READING && (c.acc.len == 0 || !may_be_h2(c.acc)) {
+                conn_refuse(&mut c, 408, s.p.timeout_ms)
+            } else {
+                c.state = CONN_CLOSED
+            }
+        }
+        // A reply that fits the socket is finished on this same turn.
+        if c.state == CONN_WRITING {
+            conn_write(&mut c)
+        }
+        if c.state == CONN_CLOSED {
+            net.tcp_close(c.fd)
+        } else {
+            push(keep, c)
+        }
+    }
+    s.conns = keep
+    watch_tick()
+    watch_io()
+    if listener >= 0 && net.tcp_poll_ready(listener) != 0 {
+        server_accept(s)
+    }
+}
+
+/// Bind `p.host`, 127.0.0.1 by default, and serve until killed. Port 0 picks an
+/// ephemeral port.
+fn listen(app: App, port: int, p: ListenProps = ListenProps {}) {
     if headless_selftest(app) != 0 {
         return
     }
-    let fd = net.tcp_listen(port)
-    if fd < 0 {
+    let mut s = server_start(app, port, p)
+    if s.fd < 0 {
         /* Exiting rather than returning: a server that asked to serve and
            silently got nothing is indistinguishable, from the client's side,
            from a request that never settles. */
         fmt.writeln()
-        fmt.write("http: cannot bind 127.0.0.1:")
+        fmt.write("http: cannot bind {{p.host}}:")
         fmt.write_int(port)
         fmt.writeln()
         fmt.write("http: is something else already listening on that port?")
         fmt.writeln()
         sys.exit(1)
     }
-    let p = net.tcp_bound_port(fd)
-    fmt.write("http listening on 127.0.0.1:")
-    fmt.write_int(p)
+    fmt.write("http listening on {{p.host}}:")
+    fmt.write_int(s.port)
     fmt.writeln()
-    for k in 0..2147483647 {
-        // An open stream needs its ticks while nobody connects.
-        if watchers.len > 0 {
-            if net.tcp_poll(fd, 1, STREAM_MS) <= 0 {
-                watch_tick()
-                continue
-            }
-        }
-        let c = net.tcp_accept(fd)
-        if c >= 0 {
-            conn_kept = 0
-            serve_conn(app, c)
-            if conn_kept == 0 {
-                net.tcp_close(c)
-            }
-        }
-        watch_tick()
+    while true {
+        server_step(&mut s, 1000)
     }
-    net.tcp_close(fd)
 }
 
 fn rt_call(addr: string, name: string, body: string) -> string {
@@ -2805,6 +3202,8 @@ fn rpc(app: App, name: string, handler: fn(string) -> string) -> App {
 
 /// How often an open stream's handler is asked for the current message.
 const STREAM_MS: int = 500
+/// Bytes a stream's client may fall behind by before it is dropped.
+const STREAM_BACKLOG: int = 1048576
 
 /// Register a server-streaming RPC: the reply stays open. The client gets
 /// `handler(req)` at once, then again each time its bytes change (asked every
@@ -2826,14 +3225,14 @@ struct Watcher {
     name: string,
     t0: i64,
     sent: int,
+    /// Bytes the socket has not taken yet, from `off`.
+    out: string,
+    off: int,
 }
 
 let mut streams: []RpcEntry = []RpcEntry {}
 let mut watchers: []Watcher = []Watcher {}
 let mut watch_last: i64 = 0
-/// Set by `serve_conn` when it handed the connection to a stream, so `listen`
-/// leaves it open.
-let mut conn_kept: int = 0
 
 /// Hand `fd` to a registered stream when `raw` is a gRPC-Web POST for one:
 /// write the head and the first message, then keep it. Returns 1 when the
@@ -2865,12 +3264,9 @@ fn watch_accept(app: App, fd: int, raw: string) -> int {
             }
             let first = invoke_handler(streams[i].hid, b)
             let head = "HTTP/1.1 200 OK\r\nContent-Type: application/grpc-web+proto\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n"
-            if net.tcp_write(fd, concat_str(head, frame_str(first))) < 0 {
-                net.tcp_close(fd)
-                return 1
-            }
+            let _ = net.tcp_nonblock(fd)
             push(watchers, Watcher { fd: fd, hid: streams[i].hid, req: b, last: first, name: name,
-                t0: async.now_ms(), sent: 1 })
+                t0: async.now_ms(), sent: 1, out: concat_str(head, frame_str(first)), off: 0 })
             log.info("http.server", "{{name}} stream open · {{watchers.len}} open")
             return 1
         }
@@ -2878,44 +3274,66 @@ fn watch_accept(app: App, fd: int, raw: string) -> int {
     return 0
 }
 
-/// Push to every open stream whose message changed, and drop the ones whose
-/// client went away. At most once per `STREAM_MS`.
-fn watch_tick() {
-    let now = async.now_ms()
-    if int(now - watch_last) < STREAM_MS {
-        return
+/// Send what `w` has queued, as far as the socket takes it. False when it failed.
+fn watch_flush(w: &mut Watcher) -> bool {
+    while w.off < w.out.len {
+        let n = net.tcp_send(w.fd, w.out, w.off)
+        if n < 0 {
+            return false
+        }
+        if n == 0 {
+            return true
+        }
+        w.off += n
     }
-    watch_last = now
+    w.out = ""
+    w.off = 0
+    return true
+}
+
+/// Drop every open stream whose client went away, or fell too far behind, and
+/// send what the rest have queued. The client sends nothing after its request, so
+/// readable means it closed or the socket failed.
+fn watch_io() {
     let mut keep = []Watcher {}
     for i in 0..watchers.len {
         let mut w = watchers[i]
-        let mut alive = true
-        // The client sends nothing after its request, so readable means it
-        // closed (or the socket failed).
-        if net.tcp_poll(w.fd, 1, 0) != 0 {
-            if net.tcp_read(w.fd, 512).len == 0 {
-                alive = false
-            }
+        let mut alive = watch_flush(&mut w)
+        if w.out.len - w.off > STREAM_BACKLOG {
+            alive = false
         }
-        if alive {
-            let out = invoke_handler(w.hid, w.req)
-            if !eq(out, w.last) {
-                if net.tcp_write(w.fd, frame_str(out)) < 0 {
-                    alive = false
-                } else {
-                    w.last = out
-                    w.sent += 1
-                }
+        if alive && net.tcp_poll(w.fd, 1, 0) != 0 {
+            if net.tcp_read(w.fd, 512).len == 0 && net.tcp_wouldblock() == 0 {
+                alive = false
             }
         }
         if alive {
             push(keep, w)
         } else {
             net.tcp_close(w.fd)
-            log.info("http.server", "{{w.name}} stream closed · {{w.sent}} messages · {{int(now - w.t0) / 1000}} s")
+            log.info("http.server", "{{w.name}} stream closed · {{w.sent}} messages · {{int(async.now_ms() - w.t0) / 1000}} s")
         }
     }
     watchers = keep
+}
+
+/// Queue the next message of every open stream whose message changed. At most once
+/// per `STREAM_MS`.
+fn watch_tick() {
+    let now = async.now_ms()
+    if int(now - watch_last) < STREAM_MS {
+        return
+    }
+    watch_last = now
+    for i in 0..watchers.len {
+        let out = invoke_handler(watchers[i].hid, watchers[i].req)
+        if !eq(out, watchers[i].last) {
+            watchers[i].out = concat_str(str_slice(watchers[i].out, watchers[i].off, watchers[i].out.len), frame_str(out))
+            watchers[i].off = 0
+            watchers[i].last = out
+            watchers[i].sent += 1
+        }
+    }
 }
 
 /// Middleware: `(name, body) -> body` before the RPC handler.
@@ -3448,9 +3866,9 @@ fn log_call(name: string, addr: string, sent: int, out: string, why: string, t0:
 // SSE and WebSocket both ride the same per-frame steppers as `call_async`:
 // a non-blocking connect, one request write, then poll-driven reads that
 // deliver each event/message to a callback on the UI thread. The server
-// side stays on the blocking accept loop: `read_head` / `sse_start` /
-// `sse_send` / `ws_upgrade` / `ws_send_text` are the push helpers a server
-// process (or a later reactor) calls per connection.
+// side does not run on `listen`: `read_head` / `sse_start` / `sse_send` /
+// `ws_upgrade` / `ws_send_text` block, for a server process that owns its own
+// connection.
 
 fn read_head(fd: int) -> string {
     let mut acc = ""
