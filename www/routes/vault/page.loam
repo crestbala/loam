@@ -1,0 +1,16 @@
+import "std:zeus"
+import "std:zui"
+import "std:router"
+import "../../components/vault.loam" as vault
+
+fn Page(p: Params) -> Node {
+    return vault.Vault()
+}
+
+fn meta(p: Params) -> Meta {
+    return Meta {
+        title: "Vault — Loam",
+        description: "Private site analytics.",
+        robots: "noindex",
+    }
+}
