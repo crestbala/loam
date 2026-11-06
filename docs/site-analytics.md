@@ -187,10 +187,12 @@ We do not use Docker: no Dockerfile, no image of our own, and no Docker on any
 machine. Fly does start every machine from an image, so `fly.toml` names a stock
 one, and `[[files]]` places our binary on it at deploy. Nothing is built on Fly.
 
-Build the binary on a Linux runner, using GitHub Actions on `ubuntu-latest`:
-`make`, then compile `www/server` with `loamc`. Link it statically, or it depends
-on the base image's C library. The same job can run `fly deploy` with a
-`FLY_API_TOKEN` secret.
+`.github/workflows/analytics-server.yml` builds the binary on a Linux runner, on
+`ubuntu-latest`, and links it statically with `LOAM_LINK_EXTRA=-static`, or it would
+depend on the base image's C library. It runs the server's tests and
+`www/server/smoke.sh` on Linux, and keeps the binary as an artifact. It has not run
+yet, and it does not deploy. The same job can run `fly deploy` with a `FLY_API_TOKEN`
+secret once the rest of this phase works.
 
 `fly.toml`, in `www/server/`:
 
@@ -212,7 +214,7 @@ primary_region = "<region>"
   HOST = "0.0.0.0"
   PORT = "8080"
   DATABASE_PATH = "/data/analytics.db"
-  SITE_ORIGIN = "https://<the site>"
+  SITE_ORIGIN = "https://loam-lang.vercel.app"
 
 [http_service]
   internal_port = 8080
