@@ -152,6 +152,16 @@ fn mac(key: string, message: string) -> string {
     return bytes_string(out)
 }
 
+/// `mac` as hex, for a tag that travels in a cookie or a header.
+fn mac_hex(key: string, message: string) -> string {
+    let tag = mac(key, message)
+    let mut out = []u8 {}
+    for i in 0..tag.len {
+        out.push(u8(tag[i]))
+    }
+    return hex(out)
+}
+
 /// The key `equal` hides its inputs with, made on first use.
 let mut equal_key: string = ""
 
