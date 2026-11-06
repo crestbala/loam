@@ -1641,7 +1641,47 @@ static AstNode *parse_import(Parser *p) {
 }
 
 /** Module: zero or more imports, then fn/struct/let items, until EOF. */
+/** `#![c_source("x.c", flags...)]` or `#![c_link(flags...)]`, after the `#!`. */
+static int parse_c_directive(Parser *p, CDirective **dirs, size_t *count) {
+    SourceLoc loc = p->previous.loc;
+    consume(p, TOK_LBRACKET, "expected [ after #!");
+    if (!match(p, TOK_IDENT)) {
+        error(p, "expected c_source or c_link after #![");
+        return 0;
+    }
+    char *attr = tok_text(p->previous);
+    int is_link = strcmp(attr, "c_link") == 0;
+    int known = is_link || strcmp(attr, "c_source") == 0;
+    if (!known) {
+        char msg[96];
+        snprintf(msg, sizeof msg, "unknown file attribute '%s'", attr);
+        error(p, msg);
+    }
+    free(attr);
+    if (!known) return 0;
+    consume(p, TOK_LPAREN, "expected ( after the attribute name");
+    char **args = NULL;
+    size_t n = 0;
+    do {
+        if (!match(p, TOK_STRING)) {
+            error(p, "expected a string in #![c_source] or #![c_link]");
+            free(args);
+            return 0;
+        }
+        args = (char **)realloc(args, (n + 1) * sizeof(char *));
+        args[n++] = unescape_string(p->previous);
+    } while (match(p, TOK_COMMA) && !check(p, TOK_RPAREN));
+    consume(p, TOK_RPAREN, "expected ) after the attribute's strings");
+    consume(p, TOK_RBRACKET, "expected ] after the attribute");
+    *dirs = (CDirective *)realloc(*dirs, (*count + 1) * sizeof(CDirective));
+    (*dirs)[*count] = (CDirective){is_link, args, n, loc};
+    (*count)++;
+    return 1;
+}
+
 AstNode *parser_parse(Parser *p) {
+    CDirective *c_dirs = NULL;
+    size_t c_dir_count = 0;
     SourceLoc loc = p->current.loc;
     AstNode **imps = NULL;
     size_t ni = 0;
@@ -1677,7 +1717,16 @@ AstNode *parser_parse(Parser *p) {
         int is_json = 0;
         int is_must_check = 0;
         int is_no_send = 0;
+        char *c_sym = NULL;
         if (match(p, TOK_HASH)) {
+            if (match(p, TOK_BANG)) {
+                if (!parse_c_directive(p, &c_dirs, &c_dir_count)) {
+                    free(doc);
+                    break;
+                }
+                free(doc);
+                continue;
+            }
             consume(p, TOK_LBRACKET, "expected [ after #");
             if (!match(p, TOK_IDENT)) {
                 error(p, "expected attribute name");
@@ -1697,6 +1746,16 @@ AstNode *parser_parse(Parser *p) {
                 is_must_check = 1;
             } else if (strcmp(attr, "no_send") == 0) {
                 is_no_send = 1;
+            } else if (strcmp(attr, "c") == 0) {
+                consume(p, TOK_LPAREN, "expected ( after #[c");
+                if (!match(p, TOK_STRING)) {
+                    error(p, "#[c] expects a C symbol name: #[c(\"sym\")]");
+                    free(attr);
+                    free(doc);
+                    break;
+                }
+                c_sym = unescape_string(p->previous);
+                consume(p, TOK_RPAREN, "expected ) after #[c symbol");
             } else {
                 char msg[96];
                 snprintf(msg, sizeof msg, "unknown attribute '%s'", attr);
@@ -1737,6 +1796,11 @@ AstNode *parser_parse(Parser *p) {
                 free(doc);
                 break;
             }
+            if (c_sym && !check(p, TOK_FN)) {
+                error(p, "#[c] can only be applied to a fn");
+                free(doc);
+                break;
+            }
         }
         if (match(p, TOK_FN)) {
             AstNode *fn = parse_fn(p);
@@ -1744,6 +1808,7 @@ AstNode *parser_parse(Parser *p) {
                 fn->doc = doc;
                 fn->as.fn.is_test = is_test;
                 fn->as.fn.is_server = is_server;
+                fn->as.fn.c_sym = c_sym;
                 decls = (AstNode **)realloc(decls, (nd + 1) * sizeof(AstNode *));
                 decls[nd++] = fn;
             } else {
@@ -1833,6 +1898,8 @@ AstNode *parser_parse(Parser *p) {
     }
 
     AstNode *prog = ast_program(imps, ni, decls, nd, loc);
+    prog->as.program.c_dirs = c_dirs;
+    prog->as.program.c_dir_count = c_dir_count;
     prog->as.program.mod_doc = mod_doc;
     return prog;
 }

@@ -11,6 +11,7 @@
 #include "../diagnostics.h"
 #include "../ast.h"
 #include "type.h"
+#include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -2660,9 +2661,10 @@ static Type *check_call(AstNode *n, Type *expect) {
                 return ty_void();
             }
             Type *a = check_expr(n->as.call.args[0]);
-            if (!a || a->kind != TY_VEC || !type_eq(a->elem, ty_int()))
-                err(n->loc, "string_from_bytes requires []int");
-            n->as.call.c_builtin = "loam_string_from_bytes";
+            int is_u8 = a && a->kind == TY_VEC && type_eq(a->elem, ty_int_bits(8, 1));
+            if (!is_u8 && (!a || a->kind != TY_VEC || !type_eq(a->elem, ty_int())))
+                err(n->loc, "string_from_bytes requires []int or []u8");
+            n->as.call.c_builtin = is_u8 ? "loam_string_from_u8" : "loam_string_from_bytes";
             n->ty = ty_string();
             return n->ty;
         }
@@ -4759,8 +4761,83 @@ static void cname_claim(CnameSet *set, const char **cname) {
     cname_add(set, *cname);
 }
 
+/** A number C can take as its own scalar type. */
+static int c_scalar_type(const Type *t) {
+    return t && type_is_numeric(t) && t->bits <= 64;
+}
+
+/** What crosses into C: scalars, `string`, and `[]` of numbers. */
+static int c_param_type(const Type *t) {
+    if (!t) return 0;
+    if (t->kind == TY_BOOL || t->kind == TY_STRING || c_scalar_type(t)) return 1;
+    return t->kind == TY_VEC && c_scalar_type(t->elem);
+}
+
+/** A `#[c("sym")]` fn is a declaration: a C name and a signature C can use. */
+static void check_c_fn(AstNode *d) {
+    const char *name = d->as.fn.name;
+    const char *sym = d->as.fn.c_sym;
+    int valid = sym[0] != 0 && !(sym[0] >= '0' && sym[0] <= '9');
+    for (const char *c = sym; *c; c++)
+        if (!(*c == '_' || (*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') ||
+              (*c >= '0' && *c <= '9')))
+            valid = 0;
+    if (!valid) err(d->loc, "#[c] symbol '%s' is not a C identifier", sym);
+    if (strcmp(name, "main") == 0) err(d->loc, "#[c] cannot apply to main");
+    if (d->as.fn.tparam_count) err(d->loc, "#[c] fn '%s' must not be generic", name);
+    AstNode *body = d->as.fn.body;
+    if (body && !(body->kind == AST_BLOCK && body->as.block.stmt_count == 0))
+        err(d->loc, "#[c] fn '%s' must be bodyless: C provides it", name);
+    Type *ft = d->ty;
+    for (size_t k = 0; ft && k < ft->param_count; k++)
+        if (!c_param_type(ft->params[k]))
+            err(d->loc, "#[c] fn '%s': parameter %zu has a type C cannot take "
+                        "(use a number, bool, string, or [] of numbers)", name, k + 1);
+    Type *ret = ft ? ft->ret : NULL;
+    if (ret && ret->kind != TY_VOID && ret->kind != TY_BOOL && ret->kind != TY_STRING &&
+        !c_scalar_type(ret))
+        err(d->loc, "#[c] fn '%s' returns a type C cannot give "
+                    "(use a number, bool, or string)", name);
+    d->as.fn.is_intrinsic = 1;
+}
+
 static int user_symbol_mod(LoamModule *mod, int m) {
     return m == 0 || (mod->path && user_seam_mod(mod->path) && !is_ffi_mod(mod->name));
+}
+
+static int ident_char(char c) {
+    return isalnum((unsigned char)c) || c == '_';
+}
+
+/** The runtime header's text, or NULL if it cannot be read. */
+static char *read_runtime_header(void) {
+    FILE *f = fopen(LOAM_RT_PATH, "rb");
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char *buf = size > 0 ? malloc((size_t)size + 1) : NULL;
+    if (buf) buf[fread(buf, 1, (size_t)size, f)] = 0;
+    fclose(f);
+    return buf;
+}
+
+/** Claim every `loam_*` name in the header, so a user fn called `str_copy` is
+    renamed, not defined over `loam_str_copy`. The set keeps pointers into `text`. */
+static void claim_runtime_cnames(CnameSet *set, char *text) {
+    char *c = text;
+    while (c && (c = strstr(c, "loam_"))) {
+        if (c > text && ident_char(c[-1])) {
+            c++;
+            continue;
+        }
+        char *e = c;
+        while (ident_char(*e)) e++;
+        int more = *e != 0;
+        *e = 0;
+        cname_add(set, c);
+        c = more ? e + 1 : e;
+    }
 }
 
 /** Pass 1 tail: std and seam fns claim their names first, then user fns. */
@@ -4780,7 +4857,9 @@ static void dedupe_fn_cnames(LoamModule *mods, int nmods, CnameSet *set) {
                 cname_add(set, gn);
             }
             if (d->kind != AST_FN_DECL || !d->as.fn.cname) continue;
-            int fixed = !user || d->as.fn.is_intrinsic || strcmp(d->as.fn.cname, "main") == 0;
+            /* A `#[c]` wrapper's own name is private: only its symbol is fixed. */
+            int seam = d->as.fn.is_intrinsic && !d->as.fn.c_sym;
+            int fixed = !user || seam || strcmp(d->as.fn.cname, "main") == 0;
             if (pass == 0 && fixed) cname_add(set, d->as.fn.cname);
             if (pass == 1 && !fixed) cname_claim(set, &d->as.fn.cname);
         }
@@ -4831,6 +4910,7 @@ int typecheck_modules(LoamModule *mods, int nmods) {
                 if (d->as.fn.tparam_count)
                     err(d->loc, "#[test] fn '%s' must not be generic", d->as.fn.name);
             }
+            if (d->as.fn.c_sym) check_c_fn(d);
             if (is_ffi_mod(mods[m].name) || user_seam_mod(mods[m].path)) {
                 AstNode *body = d->as.fn.body;
                 if (!body || (body->kind == AST_BLOCK && body->as.block.stmt_count == 0)) {
@@ -4860,9 +4940,12 @@ int typecheck_modules(LoamModule *mods, int nmods) {
     size_t nsyms = (size_t)LOAM_MAX_GLOBALS;
     for (int m = 0; m < nmods; m++)
         if (mods[m].ast) nsyms += mods[m].ast->as.program.decl_count;
+    char *rt_text = read_runtime_header();
+    for (char *c = rt_text; c && (c = strstr(c, "loam_")); c++) nsyms++;
     CnameSet syms = {NULL, 64};
     while (syms.cap < nsyms * 2) syms.cap <<= 1;
     syms.slot = calloc(syms.cap, sizeof *syms.slot);
+    claim_runtime_cnames(&syms, rt_text);
     dedupe_fn_cnames(mods, nmods, &syms);
 
     /* pass 2a: type every module `let` so `mod.global` can see imported state.

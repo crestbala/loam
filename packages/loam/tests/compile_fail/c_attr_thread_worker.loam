@@ -1,0 +1,11 @@
+// C may hold locks or thread-local state, so a worker cannot call it directly.
+import "std:thread"
+
+#[c("labs")]
+fn c_labs(x: i64) -> i64 {}
+
+fn main() {
+    thread.spawn(|| {
+        let _ = c_labs(-1)
+    })
+}

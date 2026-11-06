@@ -1,0 +1,4 @@
+// File attributes are `c_source` and `c_link`.
+#![c_include("x.h")]
+
+fn main() {}

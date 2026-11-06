@@ -1,0 +1,112 @@
+// `#[c]` over a vendored source: scalars, strings, out pointers, and bytes with
+// NULs in both directions. An unused binding links nothing, so `c_ffi_missing`
+// has no definition anywhere.
+
+#![c_source("vendor/c_ffi.c", "-DC_FFI_BASE=10")]
+#![c_link("-lm")]
+
+import "std:fmt"
+import "std:sys"
+
+#[c("c_ffi_add")]
+fn add(a: i32, b: i32) -> i32 {}
+
+#[c("c_ffi_open")]
+fn open_handle(name: string, handle: []i64) {}
+
+#[c("c_ffi_tail")]
+fn tail(text: string) -> string {}
+
+#[c("c_ffi_half")]
+fn half(x: f64) -> f64 {}
+
+#[c("c_ffi_quarter")]
+fn quarter(x: float) -> float {}
+
+#[c("c_ffi_even")]
+fn even(n: i64) -> bool {}
+
+#[c("c_ffi_sum")]
+fn sum_bytes(bytes: []u8, n: i64) -> i64 {}
+
+#[c("c_ffi_sum")]
+fn sum_string(text: string, n: i64) -> i64 {}
+
+#[c("c_ffi_blob")]
+fn blob() -> i64 {}
+
+#[c("c_ffi_addr")]
+fn addr(bytes: []u8) -> i64 {}
+
+#[c("c_ffi_tick")]
+fn tick() {}
+
+#[c("c_ffi_calls")]
+fn calls() -> int {}
+
+#[c("memcpy")]
+fn copy_out(dst: []u8, src: i64, n: i64) -> i64 {}
+
+#[c("floor")]
+fn c_floor(x: f64) -> f64 {}
+
+#[c("c_ffi_missing")]
+fn missing() {}
+
+/// Named like a runtime function: the wrapper has to be renamed, not collide.
+#[c("strlen")]
+fn str_copy(s: string) -> i64 {}
+
+fn expect(good: bool, what: string) {
+    if !good {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    expect(add(2, 3) == 15, "scalars and compile flags")
+
+    let handle = []i64 { 0 }
+    open_handle("hello", handle)
+    expect(handle[0] == 10, "out pointer")
+
+    expect(tail("xyz") == "yz", "string result")
+    expect(tail("") == "", "NULL string result")
+    expect(half(5.0) == 2.5, "f64")
+    expect(quarter(float(1)) == 0.25, "f32")
+    expect(even(4) && !even(3), "bool")
+    expect(c_floor(2.5) == 2.0, "c_link")
+    expect(str_copy("four") == 4, "name shared with the runtime")
+
+    let bytes = []u8 { 1, 0, 255 }
+    expect(sum_bytes(bytes, i64(bytes.len)) == 256, "bytes into C")
+
+    let out = []u8 { 0, 0, 0, 0, 0 }
+    copy_out(out, blob(), 5)
+    let text = string_from_bytes(out)
+    expect(text.len == 5, "bytes out of C keep their NUL")
+    expect(sum_string(text, i64(text.len)) == 394, "string into C keeps its NUL")
+
+    // A reference the wrapper failed to release would make this pop copy.
+    let mut buffer = []u8 {}
+    buffer.push(u8(1))
+    buffer.push(u8(2))
+    let before = addr(buffer)
+    let _ = buffer.pop()
+    expect(addr(buffer) == before, "[]T argument released")
+
+    let f = tick
+    f()
+    tick()
+    expect(calls() == 2, "binding as a value")
+
+    let mut total = 0
+    for i in 0..200000 {
+        let s = tail("loam")
+        total += s.len
+    }
+    expect(total == 600000, "string results over many calls")
+
+    fmt.println("c ffi ok")
+}

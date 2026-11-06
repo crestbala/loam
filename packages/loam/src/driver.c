@@ -20,6 +20,7 @@
 #include "ext.h"
 #include "ir.h"
 #include "diagnostics.h"
+#include <ctype.h>
 #include <dirent.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -200,10 +201,162 @@ static int ensure_obj(const char *src, const char *obj, const char *extra,
        objects are names nothing has made yet (zeus_plat.host.o). */
     if (access(obj, F_OK) == 0 && !any_src_newer(obj, deps, ndeps)) return 0;
     if (ensure_parent_dir(obj) != 0) return 1;
-    char cmd[4096];
+    char cmd[6144];
     snprintf(cmd, sizeof cmd, "cc -std=gnu99 -O1 -I\"%s\" %s", LOAM_RUNTIME_DIR,
              extra ? extra : "");
     return compile_obj(cmd, src, obj);
+}
+
+/* --- C sources (`#[c]`) -------------------------------------------------- */
+
+static uint64_t fnv(const void *data, size_t n, uint64_t h);
+
+/** Whether module `mod` still has a `#[c]` fn after dead code removal. A module
+    with none needs no C, whatever its directives list. */
+static int module_uses_c(const LoamModule *mod) {
+    AstNode *p = mod->ast;
+    for (size_t i = 0; p && i < p->as.program.decl_count; i++) {
+        AstNode *d = p->as.program.decls[i];
+        if (d->kind == AST_FN_DECL && d->as.fn.c_sym && loam_dce_keep(d)) return 1;
+    }
+    return 0;
+}
+
+/** C runs on native builds only: a client build must not reach any. */
+static int reject_client_c(LoamModule *mods, int nmods) {
+    int bad = 0;
+    for (int m = 0; m < nmods; m++) {
+        AstNode *p = mods[m].ast;
+        for (size_t i = 0; p && i < p->as.program.decl_count; i++) {
+            AstNode *d = p->as.program.decls[i];
+            if (d->kind != AST_FN_DECL || !d->as.fn.c_sym || !loam_dce_keep(d)) continue;
+            fprintf(stderr, "%s:%d: error: #[c] fn '%s' is reachable, and C runs only on "
+                            "native builds. Keep it behind #[server] or out of this target\n",
+                    mods[m].path, d->loc.line, d->as.fn.name);
+            bad = 1;
+        }
+    }
+    return bad;
+}
+
+/** Append `arg` to `out`, quoted for the shell. 0 when it does not fit. */
+static int append_quoted(char *out, size_t n, const char *arg) {
+    size_t at = strlen(out);
+    if (at + 4 + strlen(arg) * 4 >= n) return 0;
+    out[at++] = ' ';
+    out[at++] = '\'';
+    for (const char *c = arg; *c; c++) {
+        if (*c == '\'') {
+            memcpy(out + at, "'\\''", 4);
+            at += 4;
+        } else {
+            out[at++] = *c;
+        }
+    }
+    out[at++] = '\'';
+    out[at] = 0;
+    return 1;
+}
+
+/** A source is named relative to its `.loam` file, with no way out of it and
+    nothing the shell or the compiler's quoting could read. */
+static int c_source_path_ok(const char *p) {
+    if (!p[0] || p[0] == '/' || strstr(p, "..")) return 0;
+    for (; *p; p++)
+        if (!(isalnum((unsigned char)*p) || strchr("._/+-", *p))) return 0;
+    return 1;
+}
+
+/** Compile one `#![c_source]` if stale, and add its object to `link`. A header
+    beside the source counts as a dependency. The object's name hashes the path
+    and flags, so two flag sets never share an object. */
+static int c_source_obj(const char *loam_path, const CDirective *dir, char *link, size_t linkn) {
+    char src[1024], srcdir[1024], flags[2048] = "", obj[1400];
+    const char *slash = strrchr(loam_path, '/');
+    int dn = slash ? (int)(slash - loam_path) : 1;
+    snprintf(srcdir, sizeof srcdir, "%.*s", dn, slash ? loam_path : ".");
+    snprintf(src, sizeof src, "%s/%s", srcdir, dir->args[0]);
+    if (!c_source_path_ok(dir->args[0])) {
+        fprintf(stderr, "%s:%d: error: #![c_source] path '%s' must be relative and stay "
+                        "inside this directory\n", loam_path, dir->loc.line, dir->args[0]);
+        return 1;
+    }
+    if (access(src, R_OK) != 0) {
+        fprintf(stderr, "%s:%d: error: cannot read C source '%s'\n", loam_path, dir->loc.line, src);
+        return 1;
+    }
+    char *base = strrchr(src, '/') + 1;
+    char include[1024];
+    snprintf(include, sizeof include, "%.*s", (int)(base - 1 - src), src);
+    for (size_t k = 1; k < dir->arg_count; k++) {
+        if (!append_quoted(flags, sizeof flags, dir->args[k])) {
+            fprintf(stderr, "%s:%d: error: #![c_source] flags are too long\n", loam_path,
+                    dir->loc.line);
+            return 1;
+        }
+    }
+    uint64_t key = fnv(src, strlen(src), fnv(flags, strlen(flags), 14695981039346656037ULL));
+    snprintf(obj, sizeof obj, "%s/.obj/c_%.*s_%016llx.o", LOAM_RUNTIME_DIR,
+             (int)strcspn(base, "."), base, (unsigned long long)key);
+    const char *deps[64];
+    int nd = 0;
+    deps[nd++] = src;
+    static char hdrs[63][1280];
+    DIR *dp = opendir(include);
+    for (struct dirent *e; dp && nd < 64 && (e = readdir(dp));) {
+        size_t en = strlen(e->d_name);
+        if (en < 3 || strcmp(e->d_name + en - 2, ".h") != 0) continue;
+        snprintf(hdrs[nd - 1], sizeof hdrs[0], "%s/%s", include, e->d_name);
+        deps[nd] = hdrs[nd - 1];
+        nd++;
+    }
+    if (dp) closedir(dp);
+    char extra[4096];
+    snprintf(extra, sizeof extra, "-I\"%s\"%s", include, flags);
+    if (ensure_obj(src, obj, extra, deps, nd) != 0) {
+        fprintf(stderr, "%s:%d: error: failed to compile C source '%s'\n", loam_path,
+                dir->loc.line, src);
+        return 1;
+    }
+    size_t used = strlen(link);
+    if (used + strlen(obj) + 4 >= linkn) {
+        fprintf(stderr, "loam: too many C sources for one link\n");
+        return 1;
+    }
+    snprintf(link + used, linkn - used, " \"%s\"", obj);
+    return 0;
+}
+
+/** The objects and flags the modules that use C add to the native link. */
+static int c_inputs(LoamModule *mods, int nmods, char *link, size_t linkn) {
+    size_t start = strlen(link);
+    int any = 0;
+    for (int pass = 0; pass < 2; pass++) {
+        for (int m = 0; m < nmods; m++) {
+            AstNode *p = mods[m].ast;
+            if (!p || !module_uses_c(&mods[m])) continue;
+            for (size_t i = 0; i < p->as.program.c_dir_count; i++) {
+                const CDirective *dir = &p->as.program.c_dirs[i];
+                if (dir->is_link != pass) continue;
+                if (!any) {
+                    /* The link line may still be reading inputs as `-x c`. */
+                    snprintf(link + start, linkn - start, " -x none");
+                    any = 1;
+                }
+                if (!dir->is_link) {
+                    if (c_source_obj(mods[m].path, dir, link, linkn) != 0) return 1;
+                    continue;
+                }
+                for (size_t k = 0; k < dir->arg_count; k++) {
+                    if (!append_quoted(link, linkn, dir->args[k])) {
+                        fprintf(stderr, "loam: #![c_link] flags are too long\n");
+                        return 1;
+                    }
+                }
+            }
+        }
+    }
+    return 0;
 }
 
 /** `ensure_obj` for the iOS objects, which share one list of headers and whose
@@ -1353,6 +1506,13 @@ int main(int argc, char **argv) {
     codegen_emit_c(out, sess.mods, sess.nmods, LOAM_RT_PATH);
     fclose(out);
     if (show_time) fprintf(stderr, "loam: codegen %.3fs\n", now_sec() - t0);
+    if ((target_wasm || target_ios || target_android) &&
+        reject_client_c(sess.mods, sess.nmods) != 0) {
+        if (cpath_is_temp) unlink(cpath);
+        free(stem);
+        loam_session_free(&sess);
+        return 1;
+    }
 
     if (emit_c) {
         printf("loam: %s -> %s\n", in_path, cpath);
@@ -1388,10 +1548,16 @@ int main(int argc, char **argv) {
     }
 
     /* App C seam (above): compile it inside the native link command. */
-    char extra_link[1400] = "";
+    char extra_link[8192] = "";
     if (app_rt[0])
         snprintf(extra_link, sizeof extra_link,
                  " -I\"%s\" -x c \"%s\"", LOAM_RUNTIME_DIR, app_rt);
+    if (c_inputs(sess.mods, sess.nmods, extra_link, sizeof extra_link) != 0) {
+        if (cpath_is_temp) unlink(cpath);
+        free(stem);
+        loam_session_free(&sess);
+        return 1;
+    }
     /* LOAM_LINK_EXTRA: extra .c/.o inputs appended to the native link, for
        entries without a sibling runtime file (e.g. CLI tools sharing an
        app's C seam). Space-separated paths. */
@@ -1753,7 +1919,7 @@ int main(int argc, char **argv) {
     const char *ld = (headless || dev) ? "" : "-Wl,--gc-sections";
 #endif
 
-    char cmd[4096];
+    char cmd[16384];
     char app_in[1400];
     char plat_c[512], key_c[512], mac_m[512], rt_h[512], key_h[512];
     char plat_o[512], key_o[512], mac_o[512];

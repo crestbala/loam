@@ -334,7 +334,8 @@ void loam_dce_run(LoamModule *mods, int nmods) {
                 mark_fn(d);
                 continue;
             }
-            if (m == 0) {
+            /* A `#[c]` fn is kept by its callers: it decides what C gets linked. */
+            if (m == 0 && !d->as.fn.c_sym) {
                 mark_fn(d);
                 continue;
             }

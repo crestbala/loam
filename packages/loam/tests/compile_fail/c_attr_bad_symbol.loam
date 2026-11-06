@@ -1,0 +1,7 @@
+// The symbol reaches generated C, so it has to be an identifier.
+#[c("labs\"); evil(\"")]
+fn c_labs(x: i64) -> i64 {}
+
+fn main() {
+    let _ = c_labs(1)
+}

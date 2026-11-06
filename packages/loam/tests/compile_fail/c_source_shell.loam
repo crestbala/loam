@@ -1,0 +1,9 @@
+// A source path reaches a shell command, so it cannot hold shell syntax.
+#![c_source("vendor/$(touch pwned).c")]
+
+#[c("c_ffi_add")]
+fn add(a: i32, b: i32) -> i32 {}
+
+fn main() {
+    let _ = add(1, 2)
+}

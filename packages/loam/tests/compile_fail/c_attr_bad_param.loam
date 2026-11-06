@@ -1,0 +1,7 @@
+// A `[]string` is Loam's own layout, which C cannot read.
+#[c("puts")]
+fn c_puts(lines: []string) -> i32 {}
+
+fn main() {
+    let _ = c_puts([]string { "a" })
+}

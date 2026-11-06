@@ -1,0 +1,7 @@
+// A C function has one signature.
+#[c("labs")]
+fn c_labs<T>(x: T) -> i64 {}
+
+fn main() {
+    let _ = c_labs<i64>(1)
+}
