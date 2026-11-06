@@ -20,7 +20,6 @@ make
 ```
 
 Language: [docs/loam.md](docs/loam.md). C vs Loam: [docs/boundary.md](docs/boundary.md).
-Loam vs C and Rust (incl. disadvantages): [docs/loam-vs-c-and-rust.md](docs/loam-vs-c-and-rust.md).
 Zeus backends and specifications: [packages/zeus/docs/spec.md](packages/zeus/docs/spec.md).
 Browsable docs: `./run.sh www` — Zeus UI at http://127.0.0.1:5175, `Docs.Page` on `:8082`.
 
@@ -163,7 +162,7 @@ The themed look (zinc palette, `Card`, `Button` with `Look` / `Size`, dialogs,
 charts, `DatePicker`) ships inside [`std:zeus`](packages/zeus/std/zeus.loam).
 The catalog is [`examples/zeus/gallery`](examples/zeus/gallery). Zeus paints
 its own theme on every host; Cocoa / UIKit / Android widgets are not used.
-Map: [zeus/README.md](zeus/README.md). Architecture:
+Map: [packages/zeus/README.md](packages/zeus/README.md). Architecture:
 [packages/zeus/docs/spec.md](packages/zeus/docs/spec.md).
 
 The component catalog running in the browser (same source as the Cocoa,
@@ -311,9 +310,7 @@ examples/language/     standalone .loam programs
 examples/zeus/         gallery (component catalog), dashboard, full-stack counter
 www/                   language site (zeli, wasm web target)
 docs/                  loam.md (language + architecture), boundary.md (C seam),
-                       loam-vs-c-and-rust.md (comparison + disadvantages),
-                       downsides.md (self-improvement phases),
-                       zeus_roadmap.md (phase history)
+                       downsides.md (self-improvement phases)
 bin/loamc              compiler
 bin/loam-lsp           diagnostics, hover, go-to-def, completion, semantic tokens
 ```

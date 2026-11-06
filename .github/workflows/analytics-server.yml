@@ -1,21 +1,24 @@
 # Builds the analytics server for Fly.io's machines, and proves it works on Linux.
 # `loamc` has no cross target, so the binary has to be built on Linux. See phase 7 of
 # docs/site-analytics.md. This does not deploy.
+#
+# It runs by hand only, not on pushes or PRs. Before `www/deploy.sh server`, push,
+# then run: gh workflow run analytics-server.yml --ref <branch>
 
 name: analytics server
 
 on:
-  push:
-    branches: [master, feat/zeus-web-site-tracking]
-    paths:
-      - .github/workflows/analytics-server.yml
-      - Makefile
-      - nob.loam
-      - www/server/**
-      - packages/crypto/**
-      - packages/http/**
-      - packages/loam/**
-      - packages/sqlite/**
+  # push:
+  #   branches: [master, feat/zeus-web-site-tracking]
+  #   paths:
+  #     - .github/workflows/analytics-server.yml
+  #     - Makefile
+  #     - nob.loam
+  #     - www/server/**
+  #     - packages/crypto/**
+  #     - packages/http/**
+  #     - packages/loam/**
+  #     - packages/sqlite/**
   workflow_dispatch:
 
 permissions:

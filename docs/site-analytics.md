@@ -188,7 +188,8 @@ a stock one. Nothing is built on Fly.
 `.github/workflows/analytics-server.yml` builds the binary on a Linux runner, on
 `ubuntu-latest`, and links it statically with `LOAM_LINK_EXTRA=-static`, or it would
 depend on the base image's C library. It runs the server's tests and
-`www/server/smoke.sh` on Linux, and keeps the binary as an artifact for 14 days.
+`www/server/smoke.sh` on Linux, and keeps the binary as an artifact for 14 days. It
+runs by hand, not on pushes or PRs: `gh workflow run analytics-server.yml --ref <branch>`.
 
 The plan to place the binary with `[[files]]` failed: Fly answers `request body too
 large` to the 2.5 MB binary, and to 1.2 MB gzipped. So the binary lives on the volume.
@@ -196,7 +197,7 @@ The machine runs `/data/server`, and waits if it is not there yet.
 
 To deploy, use `www/deploy.sh site`, `server`, or `all`. `check` tests that a deploy
 could run, and changes nothing. `server` refuses a build older than the server code,
-so commit, push, and wait for the job first.
+so commit, push, run the workflow, and wait for it first.
 
 The app, volume, and secrets are set up in `sin`, the closest region to India. A real
 visit through Vercel has been counted, and sign in works on the live site.
