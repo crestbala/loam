@@ -49,7 +49,7 @@ Checked in this repo on 2026-11-06.
 | Crypto | `std:crypto`, vendored Monocypher 4.0.3 in `packages/crypto` | None |
 | Sessions | `req_cookie`, `req_header`, `set_cookie`, and `clear_cookie` on HTTP/1.1 | None |
 | Environment | `sys.env` reads a variable | None |
-| Linux build | `zeus_plat.c` has Linux branches, but a server build on Linux is untested. `loamc` has no Linux cross target | Build on a Linux runner, and prove it in phase 7 |
+| Linux build | A static x86-64 server, built by `analytics-server.yml`, which runs its tests on Linux. `loamc` has no Linux cross target | None |
 | Deploy tools | `flyctl` is installed | None |
 
 ## Phases
@@ -190,8 +190,8 @@ one, and `[[files]]` places our binary on it at deploy. Nothing is built on Fly.
 `.github/workflows/analytics-server.yml` builds the binary on a Linux runner, on
 `ubuntu-latest`, and links it statically with `LOAM_LINK_EXTRA=-static`, or it would
 depend on the base image's C library. It runs the server's tests and
-`www/server/smoke.sh` on Linux, and keeps the binary as an artifact. It has not run
-yet, and it does not deploy. The same job can run `fly deploy` with a `FLY_API_TOKEN`
+`www/server/smoke.sh` on Linux, and keeps the binary as an artifact for 14 days. It
+passes, and it does not deploy. The same job can run `fly deploy` with a `FLY_API_TOKEN`
 secret once the rest of this phase works.
 
 `fly.toml`, in `www/server/`:
@@ -299,8 +299,7 @@ page, as sources disagree on some of these.
 
 1. **Same origin.** Recommended: keep the static site on Vercel and rewrite
    `/api/*` and `/Vault/*` to the Fly app, through the `vercel.json` zeli writes, from `backend` and `backend_paths` in
-   `www/zeus.toml`. Same origin
-   keeps cookies and `sendBeacon` simple. The alternative is to serve the whole
+   `www/zeus.toml`. Same origin keeps cookies and `sendBeacon` simple. The alternative is to serve the whole
    site from the Loam server, which drops Vercel but means building static file
    serving and caching. Test that cookies and the host check pass through the rewrite.
 2. **Region.** Near the visitors, but traffic from India costs the most per GB.
