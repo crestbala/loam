@@ -9,6 +9,8 @@ on:
     branches: [master, feat/zeus-web-site-tracking]
     paths:
       - .github/workflows/analytics-server.yml
+      - Makefile
+      - nob.loam
       - www/server/**
       - packages/crypto/**
       - packages/http/**

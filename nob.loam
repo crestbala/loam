@@ -412,7 +412,7 @@ fn split_lines(s: string) -> []string {
 /// bootstrap rule mirrors this, and `build` stamps the value into
 /// `obj/.cflags` so a change here forces a full object rebuild.
 fn cflags() -> string {
-    let mut s = "-std=c11 -Wall -Wextra -Wpedantic -O2 -g"
+    let mut s = "-std=c11 -D_GNU_SOURCE -Wall -Wextra -Wpedantic -O2 -g"
     s = cat(s, " -DLOAM_RT_PATH='\"{{ROOT}}/packages/loam/runtime/loam_rt.h\"'")
     s = cat(s, " -DLOAM_RUNTIME_DIR='\"{{ROOT}}/packages/loam/runtime\"'")
     s = cat(s, " -DLOAM_STD_DIR='\"{{ROOT}}/packages/loam/std\"'")
