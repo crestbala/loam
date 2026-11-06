@@ -139,6 +139,14 @@ static int want_dev(void) {
     return env_on("LOAM_DEV");
 }
 
+/* clang's arm64 -O0 selects instructions with GlobalISel, which costs a third of
+   the compile over FastISel and buys nothing an unoptimized build wants. */
+#if defined(__APPLE__) && defined(__aarch64__)
+#define O0_FAST_ISEL " -mllvm -global-isel=false"
+#else
+#define O0_FAST_ISEL ""
+#endif
+
 static double now_sec(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -601,7 +609,9 @@ static int shard_compile(const char *cpath, const char *cc, const char *dir,
         if (write_parts(hpath, src, head_n, "\n", 1) != 0) goto done;
         snprintf(cmd, sizeof cmd, "%s -x c-header \"%s\" -o \"%s.%ld\" && mv -f \"%s.%ld\" \"%s\"",
                  cc, hpath, pch, (long)getpid(), pch, (long)getpid(), pch);
+        double t0 = now_sec();
         if (system(cmd) != 0) goto done;
+        if (env_on("LOAM_TIME")) fprintf(stderr, "loam: pch %.3fs\n", now_sec() - t0);
     } else {
         utimes(pch, NULL);
     }
@@ -1486,6 +1496,7 @@ int main(int argc, char **argv) {
             shard_dir = NULL;
     }
     codegen_set_shard(shard_dir && shard_dir[0]);
+    codegen_set_batch(env_on("LOAM_BATCH"));
     t0 = now_sec();
     progress("codegen\n");
     codegen_set_test_mode(test_mode);
@@ -1539,6 +1550,7 @@ int main(int argc, char **argv) {
        define. Codegen releases that operand, so every target must match or
        the release frees a string the next piece still reads. */
     const char *owns_def = string_owns ? " -DLOAM_STRING_OWNS" : "";
+    const char *owns_tag = string_owns ? ".owns" : "";
 
     char http_link[768] = "";
     if (uses_http) {
@@ -1657,10 +1669,11 @@ int main(int argc, char **argv) {
                          "%s %s -o \"%s\"",
                          cc, maps,
                          /* clang runs wasm-opt after any link it sees -O for,
-                            which strips the names the splitter needs. Giving
-                            -Oz to the compile step alone keeps the optimised
-                            code and skips that. */
-                         wasm_split_input ? "-Xclang -Oz" : "-Oz",
+                            which strips the names the splitter needs, and most
+                            of a dev build's link is that pass. Giving -Oz to the
+                            compile step alone keeps the optimised code and skips
+                            it. */
+                         wasm_split_input || want_dev() ? "-Xclang -Oz" : "-Oz",
                          /* The allocation proof is a test harness, and a
                             release is what visitors download. */
                          wasm_release ? " -DLOAM_NO_TRAP_LOC -DLOAM_WEB_RELEASE"
@@ -1903,7 +1916,7 @@ int main(int argc, char **argv) {
     static char copt_buf[256];
     snprintf(copt_buf, sizeof copt_buf, "%s%s%s%s%s",
              (headless || dev)
-                 ? "-std=gnu99 -O0 -fno-asynchronous-unwind-tables -ffp-contract=off"
+                 ? "-std=gnu99 -O0 -fno-asynchronous-unwind-tables -ffp-contract=off" O0_FAST_ISEL
                  : "-std=gnu99 -O1 -fno-asynchronous-unwind-tables "
                    "-fomit-frame-pointer -ffp-contract=off",
              env_on("LOAM_DEBUG") ? " -g" : "",
@@ -1981,6 +1994,23 @@ int main(int argc, char **argv) {
             loam_session_free(&sess);
             return 0;
         }
+    }
+
+    if (env_on("LOAM_BATCH")) {
+        /* `-x none`: a link line may still be reading its inputs as `-x c`. */
+        char run_c[512], run_o[512];
+        snprintf(run_c, sizeof run_c, "%s/batch_run.c", LOAM_RUNTIME_DIR);
+        snprintf(run_o, sizeof run_o, "%s/.obj/batch_run.o", LOAM_RUNTIME_DIR);
+        const char *run_deps[] = {run_c};
+        size_t used = strlen(extra_link);
+        if (ensure_obj(run_c, run_o, "", run_deps, 1) != 0) {
+            fprintf(stderr, "loam: failed to compile the batch runner\n");
+            if (cpath_is_temp) unlink(cpath);
+            free(stem);
+            loam_session_free(&sess);
+            return 1;
+        }
+        snprintf(extra_link + used, sizeof extra_link - used, " -x none \"%s\"", run_o);
     }
 
     t0 = now_sec();
@@ -2072,18 +2102,37 @@ int main(int argc, char **argv) {
         (void)mac_o;
 #endif
     } else if (uses_maya) {
+        /* Like the Zeus host: the same sources every build, so they compile once
+           per string layout rather than once per program. */
+        char src_c[512], src_h[512], obj_c[512];
+        snprintf(src_c, sizeof src_c, "%s/maya_plat.c", LOAM_RUNTIME_DIR);
+        snprintf(src_h, sizeof src_h, "%s/maya_rt.h", LOAM_RUNTIME_DIR);
+        snprintf(obj_c, sizeof obj_c, "%s/.obj/maya_plat%s.o", LOAM_RUNTIME_DIR, owns_tag);
+        const char *plat_deps[] = {src_c, src_h};
+        int bad = ensure_obj(src_c, obj_c, owns_def, plat_deps, 2);
 #if defined(__APPLE__)
+        char src_m[512], obj_m[512], mac_flags[128];
+        snprintf(src_m, sizeof src_m, "%s/maya_mac.m", LOAM_RUNTIME_DIR);
+        snprintf(obj_m, sizeof obj_m, "%s/.obj/maya_mac%s.o", LOAM_RUNTIME_DIR, owns_tag);
+        snprintf(mac_flags, sizeof mac_flags, "-x objective-c -fobjc-arc%s", owns_def);
+        const char *mac_deps[] = {src_m, src_h};
+        bad = bad || ensure_obj(src_m, obj_m, mac_flags, mac_deps, 2);
         snprintf(cmd, sizeof cmd,
-                 "cc %s %s -o \"%s\" -I\"%s\" -x c \"%s\" \"%s/maya_plat.c\" "
-                 "-x objective-c -fobjc-arc \"%s/maya_mac.m\" "
+                 "cc %s %s -o \"%s\" -I\"%s\" -x c \"%s\" -x none \"%s\" \"%s\" "
                  "-framework Cocoa -lm%s",
-                 copt, ld, binpath, LOAM_RUNTIME_DIR, cpath, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR,
-                 extra_link);
+                 copt, ld, binpath, LOAM_RUNTIME_DIR, cpath, obj_c, obj_m, extra_link);
 #else
         snprintf(cmd, sizeof cmd,
-                 "cc %s %s -o \"%s\" -I\"%s\" -x c \"%s\" \"%s/maya_plat.c\" -lm%s",
-                 copt, ld, binpath, LOAM_RUNTIME_DIR, cpath, LOAM_RUNTIME_DIR, extra_link);
+                 "cc %s %s -o \"%s\" -I\"%s\" -x c \"%s\" -x none \"%s\" -lm%s",
+                 copt, ld, binpath, LOAM_RUNTIME_DIR, cpath, obj_c, extra_link);
 #endif
+        if (bad) {
+            fprintf(stderr, "loam: failed to compile the maya host\n");
+            if (cpath_is_temp) unlink(cpath);
+            free(stem);
+            loam_session_free(&sess);
+            return 1;
+        }
     } else if (uses_http) {
 #if defined(__APPLE__)
         snprintf(cmd, sizeof cmd,
@@ -2110,13 +2159,25 @@ int main(int argc, char **argv) {
         /* raygui.h is vendored in the raygui package; raylib comes from the
            system (Homebrew / pkg-config / RAYLIB_PREFIX). The host shim owns
            the window + raygui implementation; Loam owns the frame loop. */
-        char rlib[512];
+        char rlib[512], src_c[512], src_h[512], obj_c[512], flags[1024];
         raygui_raylib_flags(rlib, sizeof rlib);
+        snprintf(src_c, sizeof src_c, "%s/raygui_plat.c", LOAM_RUNTIME_DIR);
+        snprintf(src_h, sizeof src_h, "%s/raygui_rt.h", LOAM_RUNTIME_DIR);
+        snprintf(obj_c, sizeof obj_c, "%s/.obj/raygui_plat%s.o", LOAM_RUNTIME_DIR, owns_tag);
+        snprintf(flags, sizeof flags, "-I\"%s/vendor\" %s%s", LOAM_RAYGUI_DIR, rlib, owns_def);
+        const char *deps[] = {src_c, src_h};
+        if (ensure_obj(src_c, obj_c, flags, deps, 2)) {
+            fprintf(stderr, "loam: failed to compile the raygui host\n");
+            if (cpath_is_temp) unlink(cpath);
+            free(stem);
+            loam_session_free(&sess);
+            return 1;
+        }
         snprintf(cmd, sizeof cmd,
                  "cc %s %s -o \"%s\" -I\"%s\" -I\"%s/vendor\" %s "
-                 "-x c \"%s\" -x none \"%s/raygui_plat.c\" -lm%s",
-                 copt, ld, binpath, LOAM_RUNTIME_DIR, LOAM_RAYGUI_DIR, rlib, cpath,
-                 LOAM_RUNTIME_DIR, extra_link);
+                 "-x c \"%s\" -x none \"%s\" -lm%s",
+                 copt, ld, binpath, LOAM_RUNTIME_DIR, LOAM_RAYGUI_DIR, rlib, cpath, obj_c,
+                 extra_link);
     } else {
         snprintf(cmd, sizeof cmd, "cc %s %s -x c \"%s\" -o \"%s\"%s", copt, ld, cpath,
                  binpath, extra_link);

@@ -46,4 +46,12 @@ void codegen_set_path_strip(const char *prefix);
  */
 void codegen_set_shard(int on);
 
+/**
+ * Batch mode, for `LOAM_BATCH` builds: the program imports its fixtures as
+ * `case0`, `case1`, ... and runs one per process, chosen by `LOAM_CASE`. Only the
+ * modules that case can reach run their initializers, so it starts up as it would
+ * alone. `nob test` uses this to build hundreds of fixtures as one binary.
+ */
+void codegen_set_batch(int on);
+
 #endif

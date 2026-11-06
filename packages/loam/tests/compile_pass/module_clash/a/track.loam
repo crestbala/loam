@@ -1,0 +1,14 @@
+// One of two files with this stem; `../b/track.loam` is the other.
+let base = 1
+
+struct Todo {
+    n: int,
+}
+
+fn make() -> Todo {
+    return Todo { n: base }
+}
+
+fn value() -> int {
+    return make().n
+}

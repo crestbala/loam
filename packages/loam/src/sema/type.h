@@ -111,6 +111,9 @@ int type_can_hold_fn(const Type *t);
 
 /** Diagnostic name (`"&mut int"`, `"fn(int) -> bool"`, …). Not thread-safe. */
 const char *type_name(const Type *t);
+/** `type_name`, except a struct two modules both declare keeps its module-
+    qualified C name, so it is safe to build a C symbol from. */
+const char *type_symbol_name(const Type *t);
 
 /** Free pooled compound types. Call at end of a compile. */
 void type_pool_reset(void);

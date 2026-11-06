@@ -3,7 +3,6 @@
 // stops at the last rows.
 // Keep this file free of prints: stdout is the golden.
 
-import "std:async"
 import "std:zeus"
 import "std:zui"
 
@@ -36,7 +35,7 @@ fn main() {
     }
     // The scrollbar fades on the wall clock and is gone 1100 ms after the last
     // scroll; wait past that so its alpha is always 0 in the dump.
-    async.sleep(1200)
+    zeus.proof_clock_skip(1200)
     zeus.engine_layout(420, 360)
     zeus.engine_paint()
     zeus.dump_draw_list()

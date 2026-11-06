@@ -1,6 +1,7 @@
 // A `[]T` pushed into a `[][]T`, or put in a struct beside a string, is
 // retained by its new home and still dropped by its source. Each case here
-// used to leak one reference per iteration: 1 MB each, 300 times over.
+// used to leak one reference per iteration: 1 MB each, 60 times over against a
+// 24 MB allowance, so one leak per iteration fails even at half that size.
 // `sys.read_file` and `sys.exec` hand back owned strings, freed on drop.
 
 import "std:fmt"
@@ -34,7 +35,7 @@ fn rss_mb() -> int {
 
 fn grew(what: string, before: int) {
     let d = rss_mb() - before
-    if d > 120 {
+    if d > 24 {
         fmt.println("{{what}} leaked: +{{d}} MB")
         sys.exit(1)
     } else {
@@ -73,27 +74,27 @@ fn main() {
         let n = push_temp() + push_local() + array_lit() + struct_lit(i)
     }
     let mut r = rss_mb()
-    for i in 0..300 {
+    for i in 0..60 {
         let n = push_temp()
     }
     grew("push(rows, f())", r)
     r = rss_mb()
-    for i in 0..300 {
+    for i in 0..60 {
         let n = push_local()
     }
     grew("push(rows, row)", r)
     r = rss_mb()
-    for i in 0..300 {
+    for i in 0..60 {
         let n = array_lit()
     }
     grew("[][]int { f() }", r)
     r = rss_mb()
-    for i in 0..300 {
+    for i in 0..60 {
         let n = struct_lit(i)
     }
     grew("Named { name, xs: f() }", r)
     r = rss_mb()
-    for i in 0..300 {
+    for i in 0..60 {
         let s = sys.read_file(path)
         let n = s.len
     }

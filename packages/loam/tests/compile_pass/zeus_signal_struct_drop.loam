@@ -1,6 +1,6 @@
 // A struct signal that owns lists and strings releases them when the signal
 // is freed: a keyed row that unmounts frees its row-owned signals, and their
-// payloads go with them. Each row here holds 1 MB; 300 rows come and go.
+// payloads go with them. Each row here holds 1 MB; 60 rows come and go.
 // `set` releases the value it replaces too.
 
 import "std:fmt"
@@ -50,7 +50,7 @@ fn Row(i: int, s: string) -> Node {
 
 fn check(what: string, before: int) {
     let d = rss_mb() - before
-    if d > 120 {
+    if d > 24 {
         fmt.println("{{what}} leaked: +{{d}} MB")
         sys.exit(1)
     }
@@ -70,7 +70,7 @@ fn main() {
         held.set(rec(c))
     }
     let mut r = rss_mb()
-    for c in 0..300 {
+    for c in 0..60 {
         zui.push_item(names, "r{{c}}")
         zeus.engine_layout(240, 160)
         zui.pop_item(names)
@@ -78,7 +78,7 @@ fn main() {
     }
     check("row struct signals", r)
     r = rss_mb()
-    for c in 0..300 {
+    for c in 0..60 {
         held.set(rec(c))
     }
     check("struct signal set", r)

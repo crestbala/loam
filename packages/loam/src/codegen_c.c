@@ -156,6 +156,12 @@ void codegen_set_shard(int on) {
     shard_mode = on;
 }
 
+static int batch_mode;
+
+void codegen_set_batch(int on) {
+    batch_mode = on;
+}
+
 /* One definition starts here, for the driver to cut on. The newline keeps the
    marker at the start of a line, where a string literal cannot put one. */
 static void shard_mark(FILE *o, const char *name) {
@@ -3402,12 +3408,46 @@ static void emit_ir_term(FILE *o, const IrBlock *bb, int is_main) {
     }
 }
 
-static IrFn *find_ir_fn(const char *cname) {
-    if (!emit_ir_mod || !cname) return NULL;
+/* `find_ir_fn` runs for every function emitted and every call inside one, so it
+   is a hash table over the module's functions rather than a scan of them. */
+static IrFn **ir_fn_slots;
+static size_t ir_fn_cap;
+static const IrModule *ir_fn_for;
+
+static size_t ir_fn_hash(const char *s) {
+    size_t h = 5381;
+    for (; *s; s++) h = h * 33 + (unsigned char)*s;
+    return h;
+}
+
+static void ir_fn_index(void) {
+    size_t cap = 64;
+    while (cap < (size_t)emit_ir_mod->nfns * 2 + 1) cap *= 2;
+    free(ir_fn_slots);
+    ir_fn_slots = (IrFn **)calloc(cap, sizeof(IrFn *));
+    if (!ir_fn_slots) loam_fatal("out of memory");
+    ir_fn_cap = cap;
+    ir_fn_for = emit_ir_mod;
     for (int i = 0; i < emit_ir_mod->nfns; i++) {
         IrFn *f = &emit_ir_mod->fns[i];
-        if (f->cname && strcmp(f->cname, cname) == 0) return f;
+        if (!f->cname) continue;
+        size_t at = ir_fn_hash(f->cname) & (cap - 1);
+        int taken = 0;
+        while (ir_fn_slots[at]) {
+            /* The first function with a name is the one a lookup means. */
+            if (strcmp(ir_fn_slots[at]->cname, f->cname) == 0) taken = 1;
+            at = (at + 1) & (cap - 1);
+        }
+        if (!taken) ir_fn_slots[at] = f;
     }
+}
+
+static IrFn *find_ir_fn(const char *cname) {
+    if (!emit_ir_mod || !cname) return NULL;
+    if (ir_fn_for != emit_ir_mod) ir_fn_index();
+    for (size_t at = ir_fn_hash(cname) & (ir_fn_cap - 1); ir_fn_slots[at];
+         at = (at + 1) & (ir_fn_cap - 1))
+        if (strcmp(ir_fn_slots[at]->cname, cname) == 0) return ir_fn_slots[at];
     return NULL;
 }
 
@@ -3419,17 +3459,119 @@ static void emit_main_args(FILE *o) {
                "#endif\n");
 }
 
+/* `case<N>`, as the batch program imports fixture N; -1 for any other alias. */
+static int batch_case_of(const char *alias) {
+    if (!alias || strncmp(alias, "case", 4) != 0 || !alias[4]) return -1;
+    for (const char *p = alias + 4; *p; p++)
+        if (*p < '0' || *p > '9') return -1;
+    return atoi(alias + 4);
+}
+
+static int batch_import_mod(AstNode *im) {
+    for (int k = 0; im->as.import.resolved && k < emit_nmods; k++)
+        if (emit_mods[k].path && strcmp(emit_mods[k].path, im->as.import.resolved) == 0) return k;
+    return -1;
+}
+
+/* What each module imports, as module indices, so the table below costs a walk
+   per case rather than a path search per edge per case. */
+typedef struct {
+    int *mods;
+    size_t n;
+} BatchEdges;
+
+/* Add `m` and everything it imports to `seen`. A batch program's own imports of
+   its cases are skipped by `batch_edges`: those are what the table tells apart. */
+static void batch_mark(const BatchEdges *edges, int m, unsigned char *seen) {
+    if (m < 0 || m >= emit_nmods || seen[m]) return;
+    seen[m] = 1;
+    for (size_t i = 0; i < edges[m].n; i++) batch_mark(edges, edges[m].mods[i], seen);
+}
+
+static BatchEdges *batch_edges(void) {
+    BatchEdges *edges = (BatchEdges *)calloc((size_t)emit_nmods, sizeof(BatchEdges));
+    if (!edges) loam_fatal("out of memory");
+    for (int m = 0; m < emit_nmods; m++) {
+        AstNode *p = emit_mods[m].ast;
+        size_t n = p ? p->as.program.import_count : 0;
+        edges[m].mods = (int *)calloc(n + 1, sizeof(int));
+        if (!edges[m].mods) loam_fatal("out of memory");
+        for (size_t i = 0; i < n; i++) {
+            AstNode *im = p->as.program.imports[i];
+            if (m == 0 && batch_case_of(im->as.import.alias) >= 0) continue;
+            edges[m].mods[edges[m].n++] = batch_import_mod(im);
+        }
+    }
+    return edges;
+}
+
+/* A batch program holds many fixtures but runs one per process, chosen by
+   `LOAM_CASE`. That case must start up as it would alone, so only the modules it
+   can reach run their initializers: another fixture's globals would otherwise
+   take arena slots and signal ids this one's output depends on. Emits the table
+   and returns the number of cases. */
+static int emit_batch_table(FILE *o) {
+    AstNode *root = emit_mods[0].ast;
+    int cases = 0;
+    for (size_t i = 0; root && i < root->as.program.import_count; i++) {
+        int c = batch_case_of(root->as.program.imports[i]->as.import.alias);
+        if (c >= cases) cases = c + 1;
+    }
+    if (!cases) return 0;
+    unsigned char *seen = (unsigned char *)malloc((size_t)emit_nmods);
+    if (!seen) loam_fatal("out of memory");
+    BatchEdges *edges = batch_edges();
+    int bytes = emit_nmods / 8 + 1;
+    fprintf(o, "    extern int loam_batch_serve(void);\n");
+    fprintf(o, "    const int loam_served = loam_batch_serve();\n");
+    fprintf(o, "    if (loam_served >= 0) return loam_served;\n");
+    fprintf(o, "    const char *loam_case_env = getenv(\"LOAM_CASE\");\n");
+    fprintf(o, "    const int loam_case = loam_case_env ? atoi(loam_case_env) : 0;\n");
+    fprintf(o, "    if (loam_case < 0 || loam_case >= %d) {\n", cases);
+    fprintf(o, "        fprintf(stderr, \"loam: no case %%d\\n\", loam_case);\n");
+    fprintf(o, "        return 2;\n    }\n");
+    fprintf(o, "    static const unsigned char loam_case_mods[%d][%d] = {\n", cases, bytes);
+    for (int c = 0; c < cases; c++) {
+        memset(seen, 0, (size_t)emit_nmods);
+        batch_mark(edges, 0, seen);
+        for (size_t i = 0; i < root->as.program.import_count; i++) {
+            AstNode *im = root->as.program.imports[i];
+            if (batch_case_of(im->as.import.alias) == c)
+                batch_mark(edges, batch_import_mod(im), seen);
+        }
+        fprintf(o, "        {");
+        for (int b = 0; b < bytes; b++) {
+            int v = 0;
+            for (int m = b * 8; m < (b + 1) * 8 && m < emit_nmods; m++)
+                if (seen[m]) v |= 1 << (m % 8);
+            fprintf(o, "%d,", v);
+        }
+        fprintf(o, "},\n");
+    }
+    fprintf(o, "    };\n");
+    for (int m = 0; m < emit_nmods; m++) free(edges[m].mods);
+    free(edges);
+    free(seen);
+    return cases;
+}
+
 /* Call every module's `__init`, each after the inits of everything it
    imports (load finish order, `done_rank`). A global initialised with
    `zeus.signal(0)` must not run before the arena it allocates into, or the
    arena's own initialiser wipes the slot and the ids are handed out again. */
 static void emit_init_calls(FILE *o) {
+    int cases = batch_mode ? emit_batch_table(o) : 0;
     for (int r = 0; r < emit_nmods; r++) {
         for (int i = 0; i < emit_ir_mod->nfns; i++) {
             IrFn *g = &emit_ir_mod->fns[i];
             if (!g->name || strcmp(g->name, "__init") != 0 || !g->cname) continue;
             if (g->init_mod < 0 || g->init_mod >= emit_nmods) continue;
-            if (emit_mods[g->init_mod].done_rank == r) fprintf(o, "    %s();\n", g->cname);
+            if (emit_mods[g->init_mod].done_rank != r) continue;
+            if (cases)
+                fprintf(o, "    if (loam_case_mods[loam_case][%d] & %d) %s();\n",
+                        g->init_mod / 8, 1 << (g->init_mod % 8), g->cname);
+            else
+                fprintf(o, "    %s();\n", g->cname);
         }
     }
 }
@@ -4355,5 +4497,6 @@ void codegen_emit_c(FILE *out, LoamModule *mods, int nmods, const char *rt_path)
     }
 
     emit_ir_mod = NULL;
+    ir_fn_for = NULL;
     ir_free(ir);
 }

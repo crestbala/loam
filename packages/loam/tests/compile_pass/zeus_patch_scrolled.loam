@@ -6,7 +6,6 @@
 // of its row, and the old one stayed behind. Every frame of an app that keeps
 // painting (a media player running) takes the patch path, so it showed there.
 
-import "std:async"
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
@@ -69,7 +68,7 @@ fn main() {
     frame()
     // Let the scrollbar linger and fade finish (800 + 300 ms): while it runs
     // every frame records in full.
-    async.sleep(1300)
+    zeus.proof_clock_skip(1300)
     zeus.engine_step()
     frame()
     frame()

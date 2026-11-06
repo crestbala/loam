@@ -1,28 +1,38 @@
 //! nob — the Loam build and test tool.
 //!
-//! This replaces the build and test logic that used to live in the top-level
-//! Makefile. The Makefile is now only a bootstrap: it compiles a seed
-//! `bin/loamc` (the one thing this program cannot do for itself) and then hands
-//! `make` and `make test` to `nob.loam`.
+//! `nob` is a Loam program, so something else has to build the first compiler:
+//! `nob.sh` compiles a seed `bin/loamc` and `bin/nob`, then hands every command
+//! here. Everything after that bootstrap lives in this file.
 //!
 //!     nob                  build bin/loamc, bin/loam-lsp, bin/loam-fmt, bin/zeli
 //!     nob test [-j N]      build, then run the language suites and host checks
+//!     nob test --isolated  the same, but every fixture as its own binary
+//!     nob test <filter>    only fixtures whose path contains <filter>, isolated
+//!     nob test <f.loam>    build and run exactly this file
 //!     nob integration      the zeli/serve/pkg/fmt suite (slow; on demand)
 //!     nob lsp              build the language server (and its objects) only
 //!     nob bench            build, then run packages/loam/tests/bench/run.sh
+//!     nob grammar          regenerate, check and publish the tree-sitter grammar
+//!     nob grammar-check    check the grammar against the compiler's parser
+//!     nob install-editor   install the VS Code extension
 //!     nob clean            remove build output
 //!     nob help
 //!
-//! `-j N` (default 4, or `NOB_JOBS` / `LOAM_JOBS`) bounds how many fixture
-//! compiles run at once; each case's result line is streamed as it finishes, so
-//! a parallel run still shows every file immediately. The pool is `xargs -P`,
-//! because Loam's `thread.spawn` workers are deliberately barred from the C seam
-//! (`sys.exec` is not in `worker_seam_ok`), so parallelism is one process per
-//! case rather than one Loam thread per case.
+//! `-j N` (default: every core, or `NOB_JOBS` / `LOAM_JOBS`) bounds how many
+//! cases run at once; each case's result line is streamed as it finishes. The
+//! pool is `xargs -P`, because Loam's `thread.spawn` workers are deliberately
+//! barred from the C seam (`sys.exec` is not in `worker_seam_ok`), so parallelism
+//! is one process per case rather than one Loam thread per case.
 //!
-//! The per-file fixture suites are generated here and run as a bounded pool.
-//! The long tail of process/port/git-shaped checks lives in
-//! `packages/loam/tests/integration.sh`, which `test` runs and reports.
+//! Why `nob test` batches: compiling hundreds of fixtures separately parses and
+//! compiles the same Zeus library hundreds of times, and macOS scans every new
+//! binary on its first exec, about 0.3s per binary, one at a time across the whole
+//! machine, whatever `-j` says. So a full run builds the fixtures into two
+//! binaries, and each binary forks one process per fixture before anything has
+//! initialized (`runtime/batch_run.c`); only that fixture's modules then start
+//! (`codegen_set_batch`). A fixture that does not pass that way is rerun, then
+//! retried on its own, and that verdict stands.
+//! `--isolated` is the slower check that no fixture depends on being batched.
 
 import "std:fmt"
 import "std:sys"
@@ -44,6 +54,8 @@ let mut JOBS: int = 1
 let mut CHANGED: bool = false
 let mut N_PASS: int = 0
 let mut N_FAIL: int = 0
+/// Cases that failed inside a batch and were retried alone.
+let mut N_RETRIED: int = 0
 let mut TSTART: int = 0
 let mut FAILURES: []string = []string {}
 /// `nob test <filter>`: run only the fixtures whose path contains this
@@ -51,6 +63,8 @@ let mut FAILURES: []string = []string {}
 let mut ONLY: string = ""
 /// `nob test <file.loam>`: build and run exactly this file, headless.
 let mut ONLY_FILE: string = ""
+/// `nob test --isolated`: every fixture as its own binary.
+let mut ISOLATED: bool = false
 
 // --- small string helpers ------------------------------------------------
 
@@ -195,7 +209,7 @@ fn join(dir: string, name: string) -> string {
     return "{{dir}}/{{name}}"
 }
 
-/// `p` without this repo's root prefix — how the Makefile used to name a file.
+/// `p` without this repo's root prefix, the way the suite prints a file.
 fn rel_of(p: string) -> string {
     let pre = "{{ROOT}}/"
     if starts_with(p, pre) {
@@ -408,9 +422,9 @@ fn split_lines(s: string) -> []string {
 
 // --- compiler build ------------------------------------------------------
 
-/// The flags the compiler is built with. Kept in one place: the Makefile's
-/// bootstrap rule mirrors this, and `build` stamps the value into
-/// `obj/.cflags` so a change here forces a full object rebuild.
+/// The flags the compiler is built with. Kept in one place: `nob.sh`'s seed
+/// build mirrors this, and `build` stamps the value into `obj/.cflags` so a
+/// change here forces a full object rebuild.
 fn cflags() -> string {
     let mut s = "-std=c11 -D_GNU_SOURCE -Wall -Wextra -Wpedantic -O2 -g"
     s = cat(s, " -DLOAM_RT_PATH='\"{{ROOT}}/packages/loam/runtime/loam_rt.h\"'")
@@ -531,7 +545,7 @@ fn build(what: string) -> int {
 
     // A full rebuild is needed when the reference binary is missing, when the
     // flags changed since the last build, or when any header is newer than that
-    // build. Not newer than `ref`: the Makefile relinks bin/loamc first, which
+    // build. Not newer than `ref`: the seed build links bin/loamc first, which
     // would hide the header and leave objects built against the old layout.
     let mut full = false
     let stamp = "{{OBJ}}/.cflags"
@@ -597,68 +611,110 @@ fn build(what: string) -> int {
 // --- the test plan -------------------------------------------------------
 
 /// One fixture case. `kind` selects the shell body `body` generates; `desc` is
-/// what the suite prints (the Makefile's `$$f`, or a golden's stem).
+/// what the suite prints (a file, or a golden's stem). `bin` is the batch binary
+/// that holds this fixture as `case_id`; "" means it is compiled on its own.
 struct Job {
     kind: string,
     src: string,
     out: string,
     want: string,
     desc: string,
+    bin: string,
+    case_id: int,
 }
 
 fn run_job(src: string, out: string) -> Job {
-    return Job { kind: "run", src: src, out: out, want: "", desc: rel_of(src) }
+    return Job { kind: "run", src: src, out: out, want: "", desc: rel_of(src), bin: "", case_id: 0 }
 }
 
 fn reject_job(src: string, out: string) -> Job {
-    return Job { kind: "reject", src: src, out: out, want: "", desc: rel_of(src) }
+    return Job { kind: "reject", src: src, out: out, want: "", desc: rel_of(src), bin: "", case_id: 0 }
 }
 
 fn ir_job(src: string, out: string) -> Job {
-    return Job { kind: "ir", src: src, out: out, want: "", desc: rel_of(src) }
+    return Job { kind: "ir", src: src, out: out, want: "", desc: rel_of(src), bin: "", case_id: 0 }
 }
 
 fn irgold_job(src: string, out: string, want: string, desc: string) -> Job {
-    return Job { kind: "irgold", src: src, out: out, want: want, desc: desc }
+    return Job { kind: "irgold", src: src, out: out, want: want, desc: desc, bin: "", case_id: 0 }
 }
 
 fn draw_job(src: string, out: string, want: string, desc: string) -> Job {
-    return Job { kind: "draw", src: src, out: out, want: want, desc: desc }
+    return Job { kind: "draw", src: src, out: out, want: want, desc: desc, bin: "", case_id: 0 }
 }
 
 fn inlang_job(src: string) -> Job {
-    return Job { kind: "inlang", src: src, out: "", want: "", desc: rel_of(src) }
+    return Job { kind: "inlang", src: src, out: "", want: "", desc: rel_of(src), bin: "", case_id: 0 }
 }
 
 fn ztests_job(src: string) -> Job {
-    return Job { kind: "ztests", src: src, out: "", want: "", desc: rel_of(src) }
+    return Job { kind: "ztests", src: src, out: "", want: "", desc: rel_of(src), bin: "", case_id: 0 }
 }
 
 fn oob_job(src: string, out: string) -> Job {
-    return Job { kind: "oob", src: src, out: out, want: "", desc: rel_of(src) }
+    return Job { kind: "oob", src: src, out: out, want: "", desc: rel_of(src), bin: "", case_id: 0 }
 }
 
 fn argv_job(src: string, out: string, want: string) -> Job {
-    return Job { kind: "argv", src: src, out: out, want: want, desc: rel_of(src) }
+    return Job { kind: "argv", src: src, out: out, want: want, desc: rel_of(src), bin: "", case_id: 0 }
 }
 
 fn fs_job(src: string, out: string, want: string) -> Job {
-    return Job { kind: "fs", src: src, out: out, want: want, desc: rel_of(src) }
+    return Job { kind: "fs", src: src, out: out, want: want, desc: rel_of(src), bin: "", case_id: 0 }
 }
 
 fn watch_job(src: string, out: string) -> Job {
-    return Job { kind: "watch", src: src, out: out, want: "", desc: rel_of(src) }
+    return Job { kind: "watch", src: src, out: out, want: "", desc: rel_of(src), bin: "", case_id: 0 }
 }
 
 fn missing_job(desc: string) -> Job {
-    return Job { kind: "missing", src: "", out: "", want: "", desc: desc }
+    return Job { kind: "missing", src: "", out: "", want: "", desc: desc, bin: "", case_id: 0 }
+}
+
+/// A named integration stanza, run as a child `nob` alongside the fixture cases.
+fn stanza_job(name: string) -> Job {
+    return Job { kind: "stanza", src: "", out: "", want: "", desc: name, bin: "", case_id: 0 }
+}
+
+/// Compile `j` for a case, or nothing when a batch binary already holds it.
+fn build_of(j: Job, id: string) -> string {
+    if j.bin != "" {
+        return "true"
+    }
+    return "{{shq(LOAMC)}} {{shq(j.src)}} -o {{shq(j.out)}} >\"$RES/{{id}}.build\" 2>&1"
+}
+
+/// The command that runs `j`'s program.
+fn exe_of(j: Job) -> string {
+    if j.bin != "" {
+        return "LOAM_CASE={{j.case_id}} {{shq(j.bin)}}"
+    }
+    return shq(j.out)
+}
+
+/// `j` as a case compiled on its own.
+fn alone(j: Job) -> Job {
+    return Job { kind: j.kind, src: j.src, out: j.out, want: j.want, desc: j.desc, bin: "", case_id: 0 }
+}
+
+/// The whole case. A failure inside a batch is not yet a verdict, since the
+/// fixture has been built beside hundreds of others: it reruns alone, as
+/// `--isolated` would, which also reports a compile error in its plain form.
+fn case_body(j: Job, id: string) -> string {
+    if j.bin == "" {
+        return body(j, id)
+    }
+    let mut s = body(j, id)
+    s = cat(s, "if [ \"$st\" != 0 ]; then\n  echo \"warn batch: {{j.desc}} failed batched, retrying alone\"\n")
+    s = cat(s, body(alone(j), id))
+    return cat(s, "fi\n")
 }
 
 /// The shell a case runs. Every branch sets `st` to 0 or 1; `pool` writes it to
 /// the status file and the case exits with it. Output goes to `$RES/<id>.log`.
 fn body(j: Job, id: string) -> string {
     if j.kind == "run" {
-        return "if {{shq(LOAMC)}} {{shq(j.src)}} -o {{shq(j.out)}} >\"$RES/{{id}}.build\" 2>&1; then\n  if {{shq(j.out)}} >/dev/null 2>&1; then\n    echo \"ok   {{j.desc}}\"\n    st=0\n  else\n    echo \"FAIL run {{j.desc}}\"\n    st=1\n  fi\nelse\n  echo \"FAIL compile {{j.desc}}\"\n  cat \"$RES/{{id}}.build\"\n  st=1\nfi\n"
+        return "if {{build_of(j, id)}}; then\n  if {{exe_of(j)}} >/dev/null 2>&1; then\n    echo \"ok   {{j.desc}}\"\n    st=0\n  else\n    echo \"FAIL run {{j.desc}}\"\n    st=1\n  fi\nelse\n  echo \"FAIL compile {{j.desc}}\"\n  cat \"$RES/{{id}}.build\"\n  st=1\nfi\n"
     }
     if j.kind == "reject" {
         return "if {{shq(LOAMC)}} {{shq(j.src)}} -o {{shq(j.out)}} >\"$RES/{{id}}.build\" 2>&1; then\n  echo \"FAIL should-reject {{j.desc}}\"\n  st=1\nelse\n  echo \"ok   {{j.desc}} (rejected)\"\n  st=0\nfi\n"
@@ -670,7 +726,7 @@ fn body(j: Job, id: string) -> string {
         return "if ! {{shq(LOAMC)}} --emit-ir {{shq(j.src)}} -o {{shq(j.out)}} >\"$RES/{{id}}.build\" 2>&1; then\n  echo \"FAIL ir golden emit {{j.desc}}\"\n  cat \"$RES/{{id}}.build\"\n  st=1\nelif ! diff -u {{shq(j.want)}} {{shq(j.out)}} >\"$RES/{{id}}.diff\" 2>&1; then\n  echo \"FAIL ir golden {{j.desc}}\"\n  cat \"$RES/{{id}}.diff\"\n  st=1\nelse\n  echo \"ok   ir golden {{j.desc}}\"\n  st=0\nfi\n"
     }
     if j.kind == "draw" {
-        return "if ! {{shq(LOAMC)}} {{shq(j.src)}} -o {{shq(j.out)}} >\"$RES/{{id}}.build\" 2>&1; then\n  echo \"FAIL compile {{rel_of(j.src)}}\"\n  cat \"$RES/{{id}}.build\"\n  st=1\nelif ! {{shq(j.out)}} >\"$RES/{{id}}.out\" 2>&1; then\n  echo \"FAIL run {{rel_of(j.src)}}\"\n  st=1\nelif ! diff -u {{shq(j.want)}} \"$RES/{{id}}.out\" >\"$RES/{{id}}.diff\" 2>&1; then\n  echo \"FAIL draw golden {{j.desc}}\"\n  cat \"$RES/{{id}}.diff\"\n  st=1\nelse\n  echo \"ok   draw golden {{j.desc}}\"\n  st=0\nfi\n"
+        return "if ! {{build_of(j, id)}}; then\n  echo \"FAIL compile {{rel_of(j.src)}}\"\n  cat \"$RES/{{id}}.build\"\n  st=1\nelif ! {{exe_of(j)}} >\"$RES/{{id}}.out\" 2>&1; then\n  echo \"FAIL run {{rel_of(j.src)}}\"\n  st=1\nelif ! diff -u {{shq(j.want)}} \"$RES/{{id}}.out\" >\"$RES/{{id}}.diff\" 2>&1; then\n  echo \"FAIL draw golden {{j.desc}}\"\n  cat \"$RES/{{id}}.diff\"\n  st=1\nelse\n  echo \"ok   draw golden {{j.desc}}\"\n  st=0\nfi\n"
     }
     if j.kind == "inlang" {
         return "if {{shq(LOAMC)}} test {{shq(j.src)}} >\"$RES/{{id}}.build\" 2>&1; then\n  echo \"ok   in-language {{j.desc}}\"\n  st=0\nelse\n  echo \"FAIL in-language tests {{j.desc}}\"\n  cat \"$RES/{{id}}.build\"\n  st=1\nfi\n"
@@ -679,16 +735,20 @@ fn body(j: Job, id: string) -> string {
         return "if {{shq(LOAMC)}} test {{shq(j.src)}} >\"$RES/{{id}}.build\" 2>&1; then\n  echo \"ok   in-language {{j.desc}}\"\n  st=0\nelse\n  echo \"FAIL in-language {{j.desc}}\"\n  cat \"$RES/{{id}}.build\"\n  st=1\nfi\n"
     }
     if j.kind == "oob" {
-        return "if ! {{shq(LOAMC)}} {{shq(j.src)}} -o {{shq(j.out)}} >\"$RES/{{id}}.build\" 2>&1; then\n  echo \"FAIL compile {{rel_of(j.src)}}\"\n  cat \"$RES/{{id}}.build\"\n  st=1\nelif {{shq(j.out)}} >\"$RES/{{id}}.out\" 2>\"$RES/{{id}}.err\"; then\n  echo \"FAIL should-trap {{rel_of(j.src)}}\"\n  st=1\nelif ! grep -q \"index out of bounds\" \"$RES/{{id}}.err\"; then\n  echo \"FAIL trap message {{rel_of(j.src)}}\"\n  cat \"$RES/{{id}}.err\"\n  st=1\nelse\n  echo \"ok   {{rel_of(j.src)}} (trapped)\"\n  st=0\nfi\n"
+        return "if ! {{build_of(j, id)}}; then\n  echo \"FAIL compile {{rel_of(j.src)}}\"\n  cat \"$RES/{{id}}.build\"\n  st=1\nelif {{exe_of(j)}} >\"$RES/{{id}}.out\" 2>\"$RES/{{id}}.err\"; then\n  echo \"FAIL should-trap {{rel_of(j.src)}}\"\n  st=1\nelif ! grep -q \"index out of bounds\" \"$RES/{{id}}.err\"; then\n  echo \"FAIL trap message {{rel_of(j.src)}}\"\n  cat \"$RES/{{id}}.err\"\n  st=1\nelse\n  echo \"ok   {{rel_of(j.src)}} (trapped)\"\n  st=0\nfi\n"
     }
     if j.kind == "argv" {
-        return "if ! {{shq(LOAMC)}} {{shq(j.src)}} -o {{shq(j.out)}} >\"$RES/{{id}}.build\" 2>&1; then\n  echo \"FAIL argv (compile)\"\n  cat \"$RES/{{id}}.build\"\n  st=1\nelif ! {{shq(j.out)}} alpha \"beta gamma\" >\"$RES/{{id}}.out\" 2>&1; then\n  echo \"FAIL argv (run)\"\n  st=1\nelif ! diff -u {{shq(j.want)}} \"$RES/{{id}}.out\" >\"$RES/{{id}}.diff\" 2>&1; then\n  echo \"FAIL argv (output)\"\n  cat \"$RES/{{id}}.diff\"\n  st=1\nelse\n  echo \"ok   sys args (argc / arg / args, spaces preserved)\"\n  st=0\nfi\n"
+        return "if ! {{build_of(j, id)}}; then\n  echo \"FAIL argv (compile)\"\n  cat \"$RES/{{id}}.build\"\n  st=1\nelif ! {{exe_of(j)}} alpha \"beta gamma\" >\"$RES/{{id}}.out\" 2>&1; then\n  echo \"FAIL argv (run)\"\n  st=1\nelif ! diff -u {{shq(j.want)}} \"$RES/{{id}}.out\" >\"$RES/{{id}}.diff\" 2>&1; then\n  echo \"FAIL argv (output)\"\n  cat \"$RES/{{id}}.diff\"\n  st=1\nelse\n  echo \"ok   sys args (argc / arg / args, spaces preserved)\"\n  st=0\nfi\n"
     }
     if j.kind == "fs" {
-        return "if ! {{shq(LOAMC)}} {{shq(j.src)}} -o {{shq(j.out)}} >\"$RES/{{id}}.build\" 2>&1; then\n  echo \"FAIL fs (compile)\"\n  cat \"$RES/{{id}}.build\"\n  st=1\nelif ! {{shq(j.out)}} {{shq(TMP)}}/fsscratch >\"$RES/{{id}}.out\" 2>&1; then\n  echo \"FAIL fs (run)\"\n  st=1\nelif ! diff -u {{shq(j.want)}} \"$RES/{{id}}.out\" >\"$RES/{{id}}.diff\" 2>&1; then\n  echo \"FAIL fs (output)\"\n  cat \"$RES/{{id}}.diff\"\n  st=1\nelse\n  echo \"ok   sys filesystem (exists / is_dir / list_dir / remove_path)\"\n  st=0\nfi\n"
+        return "if ! {{build_of(j, id)}}; then\n  echo \"FAIL fs (compile)\"\n  cat \"$RES/{{id}}.build\"\n  st=1\nelif ! {{exe_of(j)}} {{shq(TMP)}}/fsscratch >\"$RES/{{id}}.out\" 2>&1; then\n  echo \"FAIL fs (run)\"\n  st=1\nelif ! diff -u {{shq(j.want)}} \"$RES/{{id}}.out\" >\"$RES/{{id}}.diff\" 2>&1; then\n  echo \"FAIL fs (output)\"\n  cat \"$RES/{{id}}.diff\"\n  st=1\nelse\n  echo \"ok   sys filesystem (exists / is_dir / list_dir / remove_path)\"\n  st=0\nfi\n"
     }
     if j.kind == "watch" {
-        return "if ! {{shq(LOAMC)}} {{shq(j.src)}} -o {{shq(j.out)}} >\"$RES/{{id}}.build\" 2>&1; then\n  echo \"FAIL sys watcher (compile)\"\n  cat \"$RES/{{id}}.build\"\n  st=1\nelse\n  {{shq(j.out)}} {{shq(TMP)}}/watchscratch >\"$RES/{{id}}.out\" 2>&1\n  wstat=$?\n  if grep -q 'no kernel watcher on this host' \"$RES/{{id}}.out\"; then\n    echo \"skip sys watcher (no kernel watcher on this host)\"\n    st=0\n  elif [ $wstat -ne 0 ]; then\n    echo \"FAIL sys watcher (exit $wstat)\"\n    cat \"$RES/{{id}}.out\"\n    st=1\n  elif ! grep -q '^  hit .*existing[.]loam$' \"$RES/{{id}}.out\"; then\n    echo \"FAIL sys watcher (an in-place edit did not wake it)\"\n    cat \"$RES/{{id}}.out\"\n    st=1\n  elif ! grep -q '^  hit .*new[.]loam$' \"$RES/{{id}}.out\"; then\n    echo \"FAIL sys watcher (a new file did not wake it)\"\n    cat \"$RES/{{id}}.out\"\n    st=1\n  elif ! grep -q '^  (none)$' \"$RES/{{id}}.out\"; then\n    echo \"FAIL sys watcher (a write outside the watch set woke it)\"\n    cat \"$RES/{{id}}.out\"\n    st=1\n  elif grep -qE '/build/|/[.]zeus/' \"$RES/{{id}}.out\"; then\n    echo \"FAIL sys watcher (build output or the cache woke it)\"\n    cat \"$RES/{{id}}.out\"\n    st=1\n  else\n    echo \"ok   sys watcher (in-place edit, new file, build output ignored)\"\n    st=0\n  fi\nfi\n"
+        return "if ! {{build_of(j, id)}}; then\n  echo \"FAIL sys watcher (compile)\"\n  cat \"$RES/{{id}}.build\"\n  st=1\nelse\n  {{exe_of(j)}} {{shq(TMP)}}/watchscratch >\"$RES/{{id}}.out\" 2>&1\n  wstat=$?\n  if grep -q 'no kernel watcher on this host' \"$RES/{{id}}.out\"; then\n    echo \"skip sys watcher (no kernel watcher on this host)\"\n    st=0\n  elif [ $wstat -ne 0 ]; then\n    echo \"FAIL sys watcher (exit $wstat)\"\n    cat \"$RES/{{id}}.out\"\n    st=1\n  elif ! grep -q '^  hit .*existing[.]loam$' \"$RES/{{id}}.out\"; then\n    echo \"FAIL sys watcher (an in-place edit did not wake it)\"\n    cat \"$RES/{{id}}.out\"\n    st=1\n  elif ! grep -q '^  hit .*new[.]loam$' \"$RES/{{id}}.out\"; then\n    echo \"FAIL sys watcher (a new file did not wake it)\"\n    cat \"$RES/{{id}}.out\"\n    st=1\n  elif ! grep -q '^  (none)$' \"$RES/{{id}}.out\"; then\n    echo \"FAIL sys watcher (a write outside the watch set woke it)\"\n    cat \"$RES/{{id}}.out\"\n    st=1\n  elif grep -qE '/build/|/[.]zeus/' \"$RES/{{id}}.out\"; then\n    echo \"FAIL sys watcher (build output or the cache woke it)\"\n    cat \"$RES/{{id}}.out\"\n    st=1\n  else\n    echo \"ok   sys watcher (in-place edit, new file, build output ignored)\"\n    st=0\n  fi\nfi\n"
+    }
+    if j.kind == "stanza" {
+        let self = join(BIN, "nob")
+        return "{{shq(self)}} integration {{j.desc}}\nst=$?\n"
     }
     if j.kind == "missing" {
         return "echo \"FAIL ir golden missing source {{j.desc}}\"\nst=1\n"
@@ -696,41 +756,40 @@ fn body(j: Job, id: string) -> string {
     return "echo \"FAIL unknown job kind {{j.kind}}\"\nst=1\n"
 }
 
-/// One case script per suite: `case "$1"` dispatches by zero-padded index, each
-/// branch redirects to its own log and records its status. The suite is run as
-/// `xargs -P JOBS -n 1 sh <script> < <index-file>`.
+/// Run `jobs` as a bounded pool: `xargs -P JOBS` over one small script per case,
+/// each of which redirects to its own log and records its status. Separate files
+/// because `sh` parses a whole script to run any line of it, and a suite's worth
+/// of cases in one script costs more to parse than most of them cost to run.
 fn pool(suite: string, jobs: []Job) -> int {
     let n = jobs.len
     if n == 0 {
         return 0
     }
     let res = "{{NOB}}/{{suite}}"
-    let script = "{{NOB}}/{{suite}}.sh"
     let idxf = "{{NOB}}/{{suite}}.idx"
     let outlog = "{{NOB}}/{{suite}}.out"
     sys.remove_path(res)
     sys.mkdir(res)
 
-    let mut s = "#!/bin/sh\n"
-    s = cat(s, "RES={{shq(res)}}\n")
-    s = cat(s, "case \"$1\" in\n")
-    let mut ids = ""
+    let mut ids = []int {}
     for i in 0..n {
         let id = pad4(i)
-        s = cat(s, "{{id}})\n  {\n")
-        s = cat(s, body(jobs[i], id))
-        s = cat(s, "    echo \"$st\" >\"$RES/{{id}}.status\"\n  } 2>&1 | tee \"$RES/{{id}}.log\" >&2\n  ;;\n")
-        ids = cat(ids, "{{id}}\n")
+        let mut s = "#!/bin/sh\nRES={{shq(res)}}\n{\n"
+        s = cat(s, case_body(jobs[i], id))
+        s = cat(s, "echo \"$st\" >\"$RES/{{id}}.status\"\n} >\"$RES/{{id}}.log\" 2>&1\ncat \"$RES/{{id}}.log\" >&2\n")
+        sys.write_file("{{res}}/{{id}}.sh", s)
+        let line = "{{res}}/{{id}}.sh\n"
+        for k in 0..line.len {
+            push(ids, line[k])
+        }
     }
-    s = cat(s, "esac\nexit 0\n")
-    sys.write_file(script, s)
-    sys.write_file(idxf, ids)
+    sys.write_file(idxf, string_from_bytes(ids))
 
-    // Each case streams its result line to stderr as it finishes, so a run
-    // shows every file immediately instead of a silent suite followed by a
-    // dump. stdout is kept only for anything xargs itself prints.
+    // Each case prints its result to stderr as it finishes, so a run shows
+    // every file immediately instead of a silent suite followed by a dump.
+    // stdout is kept only for anything xargs itself prints.
     let t0 = now_s()
-    sys.exec("cd {{shq(ROOT)}} && { echo \"nob: {{suite}} — {{n}} check(s), -j {{JOBS}}\" >&2; ZEUS_HEADLESS=1 MAYA_HEADLESS=1 xargs -P {{JOBS}} -n 1 sh {{shq(script)}} < {{shq(idxf)}} >{{shq(outlog)}}; }")
+    sys.exec("cd {{shq(ROOT)}} && { echo \"nob: {{suite}} — {{n}} check(s), -j {{JOBS}}\" >&2; ZEUS_HEADLESS=1 MAYA_HEADLESS=1 xargs -P {{JOBS}} -n 1 sh < {{shq(idxf)}} >{{shq(outlog)}}; }")
     let el = now_s() - t0
     sys.exec("echo 'nob: {{suite}} done in {{el}}s' >&2")
 
@@ -738,14 +797,24 @@ fn pool(suite: string, jobs: []Job) -> int {
     for i in 0..n {
         let id = pad4(i)
         let st = trim(sys.read_file("{{res}}/{{id}}.status"))
-        if st != "0" {
+        let log = sys.read_file("{{res}}/{{id}}.log")
+        N_RETRIED += count_of(log, "warn batch: ")
+        if jobs[i].kind == "stanza" {
+            // A stanza is several checks: count its own ok lines.
+            N_PASS += lines_with(log, "ok   ").len
+            if st != "0" {
+                failed += 1
+                N_FAIL += 1
+                push(FAILURES, "stanza {{jobs[i].desc}}")
+            }
+        } else if st != "0" {
             failed += 1
+            N_FAIL += 1
             push(FAILURES, jobs[i].desc)
         } else {
             N_PASS += 1
         }
     }
-    N_FAIL += failed
     return failed
 }
 
@@ -755,7 +824,7 @@ fn pass_files() -> []string {
     return list_loam("{{TESTS}}/compile_pass")
 }
 
-/// The examples the Makefile compiled: the golden programs, the language demos
+/// The examples the suite compiles: the golden programs, the language demos
 /// (minus the trap fixture, and minus raygui when raylib is absent), and the
 /// Zeus apps whose entry point is named after their directory.
 fn example_files() -> []string {
@@ -962,9 +1031,13 @@ fn test() -> int {
         sys.exit(0)
     }
 
-    fmt.println("nob: test — language suites + host checks (-j {{JOBS}})")
+    if ONLY == "" && !ISOLATED {
+        return test_batched(t0)
+    }
 
-    // Fixtures first, in the Makefile's order; each suite is a bounded pool.
+    fmt.println("nob: test — language suites + host checks, isolated (-j {{JOBS}})")
+
+    // Every fixture as its own binary; each suite is a bounded pool.
     let pj = pass_jobs()
     failed += pool("pass", pj)
     let fj = keep_jobs(fail_jobs())
@@ -1000,10 +1073,375 @@ fn test() -> int {
     return report(t0, failed)
 }
 
+// --- batched runs --------------------------------------------------------
+
+/// Which batch `src` builds in. The two batches exist because a program's imports
+/// choose its link line and build flags, so a fixture without Zeus should not get
+/// them from a neighbour. "alone" is for what cannot share a program at all: maya
+/// and raygui take over the link, and an app with a `runtime/` directory has C
+/// seams the driver only finds beside its entry file.
+fn class_of(src: string) -> string {
+    let text = sys.read_file(src)
+    if contains_str(text, "\"std:maya\"") || contains_str(text, "\"std:raygui\"") {
+        return "alone"
+    }
+    if sys.is_dir(join(dir_of(src), "runtime")) == 1 {
+        return "alone"
+    }
+    if contains_str(src, "/examples/zeus/") || contains_str(text, "import \"../") {
+        return "zeus"
+    }
+    let zeus = []string { "\"std:zeus", "\"std:zui", "\"zeus:", "\"std:router", "\"std:colors", "\"std:devtools" }
+    for i in 0..zeus.len {
+        if contains_str(text, zeus[i]) {
+            return "zeus"
+        }
+    }
+    return "plain"
+}
+
+fn has_str(v: []string, x: string) -> bool {
+    for i in 0..v.len {
+        if v[i] == x {
+            return true
+        }
+    }
+    return false
+}
+
+fn index_of(v: []string, x: string) -> int {
+    for i in 0..v.len {
+        if v[i] == x {
+            return i
+        }
+    }
+    return -1
+}
+
+fn suite_path(class: string, ext: string) -> string {
+    return "{{NOB}}/suite_{{class}}{{ext}}"
+}
+
+fn unlines(v: []string) -> string {
+    let mut b = []int {}
+    for i in 0..v.len {
+        let l = v[i]
+        for k in 0..l.len {
+            push(b, l[k])
+        }
+        push(b, 10)
+    }
+    return string_from_bytes(b)
+}
+
+/// The program that holds `files`: each is imported as `case<N>`, and `LOAM_CASE`
+/// picks the one whose `main` this process runs.
+fn suite_source(files: []string) -> string {
+    let mut lines = []string { "import \"std:sys\"" }
+    for i in 0..files.len {
+        push(lines, "import \"{{files[i]}}\" as case{{i}}")
+    }
+    push(lines, "fn main() {")
+    push(lines, "    let c = sys.env(\"LOAM_CASE\")")
+    for i in 0..files.len {
+        push(lines, "    if c == \"{{i}}\" { case{{i}}.main() }")
+    }
+    push(lines, "}")
+    return unlines(lines)
+}
+
+/// A case its batch binary can judge itself: exit status, plus a golden for a
+/// draw. The rest need arguments or read their output in ways only a script does.
+fn servable(j: Job) -> bool {
+    return j.kind == "run" || j.kind == "draw"
+}
+
+fn serve_label(j: Job) -> string {
+    if j.kind == "draw" {
+        return "draw golden {{j.desc}}"
+    }
+    return j.desc
+}
+
+fn split_tabs(s: string) -> []string {
+    let mut out = []string {}
+    let mut start = 0
+    for i in 0..s.len {
+        if s[i] == 9 {
+            push(out, slice(s, start, i))
+            start = i + 1
+        }
+    }
+    push(out, slice(s, start, s.len))
+    return out
+}
+
+/// Have the suite binary fork its own cases. The runner reports what passed; a
+/// case it does not report reruns as a script, so nothing here decides a failure.
+fn serve_suite(class: string, files: []string) {
+    let dir = suite_path(class, "_serve")
+    reset_dir(dir)
+    mkdirp(dir)
+    let jobs = split_lines(sys.read_file(suite_path(class, ".jobs")))
+    let mut lines = []string {}
+    for i in 0..jobs.len {
+        let f = split_tabs(jobs[i])
+        let at = index_of(files, f[1])
+        if at >= 0 {
+            push(lines, "{{at}}\t{{f[0]}}\t{{f[2]}}\t{{f[3]}}")
+        }
+    }
+    let manifest = join(dir, "manifest")
+    sys.write_file(manifest, unlines(lines))
+    let bin = suite_path(class, "")
+    sh("LOAM_SERVE={{shq(manifest)}} LOAM_SERVE_JOBS={{JOBS}} {{shq(bin)}} 1>&2")
+}
+
+/// The fixtures every full run compiles, whichever way it builds them.
+fn program_jobs() -> []Job {
+    let mut out = []Job {}
+    let groups = [][]Job { pass_jobs(), example_jobs(), oob_jobs(), draw_jobs(), argv_jobs(), fs_jobs(), watch_jobs() }
+    for g in 0..groups.len {
+        let js = groups[g]
+        for i in 0..js.len {
+            push(out, js[i])
+        }
+    }
+    return out
+}
+
+/// A full run: build the batches beside everything that needs no fixture binary,
+/// then run every case. All of it shares one pool, so the wall time is the slowest
+/// part of each stage rather than the sum of them.
+fn test_batched(t0: int) -> int {
+    fmt.println("nob: test — language suites + host checks, batched (-j {{JOBS}})")
+    let jobs = program_jobs()
+    let mut zeus = []string {}
+    let mut plain = []string {}
+    // Longest first: `xargs` starts jobs in order, so anything queued behind the
+    // hundred quick rejections below would run after them, not beside the build.
+    let mut setup = []Job {
+        stanza_job("suite_zeus"), stanza_job("wasm_smoke"), stanza_job("wasm_trap"),
+        stanza_job("ir_zeus"), stanza_job("suite_plain"), stanza_job("ir_plain"),
+        stanza_job("suite_tests"),
+    }
+    let hosts = host_stanzas()
+    for i in 0..hosts.len {
+        if !starts_with(hosts[i], "wasm_") {
+            push(setup, stanza_job(hosts[i]))
+        }
+    }
+    let mut lone = []string {}
+    for i in 0..jobs.len {
+        let src = jobs[i].src
+        let class = class_of(src)
+        if class == "zeus" {
+            if !has_str(zeus, src) {
+                push(zeus, src)
+            }
+        } else if class == "plain" {
+            if !has_str(plain, src) {
+                push(plain, src)
+            }
+        } else {
+            // It depends on nothing, so it need not wait for the batches.
+            push(setup, jobs[i])
+            if !has_str(lone, src) {
+                push(lone, src)
+                push(setup, ir_job(src, "{{TMP}}/ir_{{stem_of(src)}}.ir"))
+            }
+        }
+    }
+    let classes = []string { "zeus", "plain" }
+    for c in 0..classes.len {
+        let class = classes[c]
+        let mut files = zeus
+        if class == "plain" {
+            files = plain
+        }
+        sys.remove_path(suite_path(class, ".built"))
+        sys.remove_path(suite_path(class, "_serve"))
+        sys.write_file(suite_path(class, ".loam"), suite_source(files))
+        let mut served = []string {}
+        for i in 0..jobs.len {
+            let j = jobs[i]
+            if servable(j) && class_of(j.src) == class {
+                push(served, "{{i}}\t{{j.src}}\t{{serve_label(j)}}\t{{j.want}}")
+            }
+        }
+        sys.write_file(suite_path(class, ".jobs"), unlines(served))
+    }
+    sys.remove_path(suite_path("tests", ".failed"))
+    let tests = [][]Job { inlang_jobs(), ztests_jobs() }
+    let mut imports = []string {}
+    for g in 0..tests.len {
+        let js = tests[g]
+        for i in 0..js.len {
+            push(imports, "import \"{{js[i].src}}\" as t{{g}}_{{i}}")
+        }
+    }
+    sys.write_file(suite_path("tests", ".loam"), unlines(imports))
+    let groups = [][]Job { fail_jobs(), irgolden_jobs() }
+    for g in 0..groups.len {
+        let js = groups[g]
+        for i in 0..js.len {
+            push(setup, js[i])
+        }
+    }
+    let mut failed = pool("setup", setup)
+
+    // A suite that could not hold a fixture left it out of `.built`, and with no
+    // `.built` at all every fixture compiles alone: slower, never wrong. What a
+    // suite served and passed is done; the rest goes through a case script.
+    let built_zeus = split_lines(sys.read_file(suite_path("zeus", ".built")))
+    let built_plain = split_lines(sys.read_file(suite_path("plain", ".built")))
+    let mut done = []bool {}
+    for i in 0..jobs.len {
+        push(done, false)
+    }
+    for c in 0..classes.len {
+        let dir = suite_path(classes[c], "_serve")
+        let ids = split_lines(sys.read_file(join(dir, "passed")))
+        for i in 0..ids.len {
+            done[int_of(ids[i])] = true
+        }
+    }
+    let mut cases = []Job {}
+    if sys.exists(suite_path("tests", ".failed")) == 1 {
+        for g in 0..tests.len {
+            let js = tests[g]
+            for i in 0..js.len {
+                push(cases, js[i])
+            }
+        }
+    }
+    for i in 0..jobs.len {
+        let j = jobs[i]
+        if done[i] || has_str(lone, j.src) {
+            continue
+        }
+        let z = index_of(built_zeus, j.src)
+        let p = index_of(built_plain, j.src)
+        if z >= 0 {
+            push(cases, Job { kind: j.kind, src: j.src, out: j.out, want: j.want, desc: j.desc, bin: suite_path("zeus", ""), case_id: z })
+        } else if p >= 0 {
+            push(cases, Job { kind: j.kind, src: j.src, out: j.out, want: j.want, desc: j.desc, bin: suite_path("plain", ""), case_id: p })
+        } else {
+            push(cases, j)
+        }
+    }
+    failed += pool("cases", cases)
+    return report(t0, failed)
+}
+
+/// Compile one batch. A fixture the compiler rejects is left out, so it reports
+/// alone with its own diagnostics and the rest stay batched. Files from a batch
+/// that fails some other way (a link error names no fixture) all compile alone.
+fn ig_suite(class: string) {
+    mark("suite {{class}}")
+    let source = suite_path(class, ".loam")
+    let mut files = suite_files(source)
+    let log = suite_path(class, ".log")
+    let bin = suite_path(class, "")
+    let shard = tmpf("shard")
+    let mut tries = 0
+    while tries < 4 {
+        tries += 1
+        let mut env = "LOAM_BATCH=1"
+        if class == "zeus" {
+            env = "LOAM_BATCH=1 LOAM_SHARD={{shq(shard)}}"
+        }
+        if sh("{{env}} {{shq(LOAMC)}} {{shq(source)}} -o {{shq(bin)}} > {{shq(log)}} 2>&1") {
+            sys.write_file(suite_path(class, ".built"), unlines(files))
+            ok("batch {{class}} ({{files.len}} fixtures, one binary)")
+            serve_suite(class, files)
+            return
+        }
+        let text = sys.read_file(log)
+        let mut rest = []string {}
+        for i in 0..files.len {
+            if contains_str(text, "{{files[i]}}:") {
+                fmt.println("warn batch: {{rel_of(files[i])}} does not compile in a batch; building it alone")
+            } else {
+                push(rest, files[i])
+            }
+        }
+        if rest.len == files.len {
+            break
+        }
+        files = rest
+        sys.write_file(source, suite_source(files))
+    }
+    fmt.println("warn batch: {{class}} did not build, so its fixtures compile alone")
+    catlog(log)
+    N_RETRIED += 1
+}
+
+/// The files a generated suite imports.
+fn suite_files(source: string) -> []string {
+    let mut out = []string {}
+    let lines = split_lines(sys.read_file(source))
+    let pre = "import \""
+    for i in 0..lines.len {
+        let l = lines[i]
+        let close = " as case"
+        if starts_with(l, pre) && contains_str(l, close) {
+            let mut e = pre.len
+            while l[e] != 34 {
+                e += 1
+            }
+            push(out, slice(l, pre.len, e))
+        }
+    }
+    return out
+}
+
+/// Every `#[test]` file as one test binary, for the same reason as the suites.
+/// If it fails, `.failed` sends each file to run alone and name its own failure.
+fn ig_suite_tests() {
+    mark("suite tests")
+    let log = suite_path("tests", ".log")
+    let source = suite_path("tests", ".loam")
+    if sh("{{shq(LOAMC)}} test {{shq(source)}} > {{shq(log)}} 2>&1") {
+        ok("in-language tests ({{suite_files_tests(source)}} files, one binary)")
+        return
+    }
+    fmt.println("warn batch: in-language tests failed together; running each alone")
+    catlog(log)
+    N_RETRIED += 1
+    sys.write_file(suite_path("tests", ".failed"), "")
+}
+
+fn suite_files_tests(source: string) -> int {
+    return split_lines(sys.read_file(source)).len
+}
+
+/// Lower and verify every fixture in the batch. This pass is separate from the
+/// build because the build lowers only what survives dead-code removal, while
+/// `--emit-ir` covers every function the fixtures and libraries declare.
+fn ig_suite_ir(class: string) {
+    mark("ir {{class}}")
+    let source = tmpf("nob/suite_{{class}}_ir.loam")
+    cp(suite_path(class, ".loam"), source)
+    let out = suite_path(class, ".ir")
+    let log = suite_path(class, ".irlog")
+    if !sh("{{shq(LOAMC)}} --emit-ir {{shq(source)}} -o {{shq(out)}} > {{shq(log)}} 2>&1") {
+        bad("ir lowering + verify ({{class}})", log)
+        return
+    }
+    if file_has(out, "[PARTIAL]") {
+        fmt.println("warn ir {{class}} (partial lowering)")
+    }
+    ok("ir lowering + verify ({{class}})")
+}
+
 /// Print the run summary and return the exit code.
 fn report(t0: int, failed: int) -> int {
     let secs = now_s() - t0
     fmt.println("")
+    if N_RETRIED > 0 {
+        fmt.println("note: {{N_RETRIED}} failed batched; see the `warn batch:` lines above")
+    }
     if failed != 0 {
         fmt.println("{{N_PASS}} passed, {{N_FAIL}} failed in {{secs}}s — failed:")
         for i in 0..FAILURES.len {
@@ -1021,8 +1459,7 @@ fn report(t0: int, failed: int) -> int {
 // The process/port/git-shaped checks: they drive `bin/zeli`, watch processes,
 // bind ports, and compare git-tracked output. Control flow is Loam; the shell
 // is only used for the one-line primitives (background a process, sleep, kill,
-// grep, diff, chmod). They run after the fixture pools, one after another, and
-// report the same ok/FAIL lines the Makefile did.
+// grep, diff, chmod). Each reports `ok` / `FAIL` lines, and `pool` counts them.
 
 fn mark(name: string) {
     let el = now_s() - TSTART
@@ -1067,8 +1504,7 @@ fn tmpf(name: string) -> string {
     return "{{TMP}}/{{name}}"
 }
 
-/// Run `cmd` from the repo root; true when it exits 0. The headless variables
-/// match the export the Makefile's `test` recipe used for the whole run.
+/// Run `cmd` from the repo root; true when it exits 0, headless like every test.
 fn sh(cmd: string) -> bool {
     sys.exec("cd {{shq(ROOT)}} && ZEUS_HEADLESS=1 MAYA_HEADLESS=1 {{cmd}}")
     return sys.exec_status() == 0
@@ -1663,21 +2099,27 @@ fn ig_serve_boot() {
 
 fn ig_wasm_smoke() {
     mark("wasm smoke")
+    let cache = tmpf("shard_wasm")
     let wasm = tmpf("wasm_smoke.wasm")
     let bl = tmpf("wasm_smoke_build.log")
     let rl = tmpf("wasm_smoke.log")
     let denodir = tmpf("deno_smoke")
-    let good = sh("{{shq(LOAMC)}} --target=wasm32 packages/loam/tests/wasm_smoke/app.loam -o {{shq(wasm)}} > {{shq(bl)}} 2>&1") && sh("DENO_DIR={{shq(denodir)}} deno run --quiet --allow-read packages/zeus/hosts/web/wasm_smoke.ts {{shq(wasm)}} > {{shq(rl)}} 2>&1")
+    let good = sh("LOAM_DEV=1 LOAM_SHARD={{shq(cache)}} {{shq(LOAMC)}} --target=wasm32 packages/loam/tests/wasm_smoke/app.loam -o {{shq(wasm)}} > {{shq(bl)}} 2>&1") && sh("DENO_DIR={{shq(denodir)}} deno run --quiet --allow-read packages/zeus/hosts/web/wasm_smoke.ts {{shq(wasm)}} > {{shq(rl)}} 2>&1")
     if good {
         ok("wasm smoke (host entry points)")
     } else {
         bad2("wasm smoke", rl, bl)
     }
+}
+
+fn ig_wasm_trap() {
     mark("wasm trap")
+    let cache = tmpf("shard_wasm")
+    let denodir = tmpf("deno_trap")
     let twasm = tmpf("wasm_trap.wasm")
     let tbl = tmpf("wasm_trap_build.log")
     let trl = tmpf("wasm_trap.log")
-    let tgood = sh("{{shq(LOAMC)}} --target=wasm32 packages/loam/tests/wasm_smoke/trap_app.loam -o {{shq(twasm)}} > {{shq(tbl)}} 2>&1") && sh("DENO_DIR={{shq(denodir)}} deno run --quiet --allow-read packages/zeus/hosts/web/wasm_trap.ts {{shq(twasm)}} > {{shq(trl)}} 2>&1")
+    let tgood = sh("LOAM_DEV=1 LOAM_SHARD={{shq(cache)}} {{shq(LOAMC)}} --target=wasm32 packages/loam/tests/wasm_smoke/trap_app.loam -o {{shq(twasm)}} > {{shq(tbl)}} 2>&1") && sh("DENO_DIR={{shq(denodir)}} deno run --quiet --allow-read packages/zeus/hosts/web/wasm_trap.ts {{shq(twasm)}} > {{shq(trl)}} 2>&1")
     if tgood {
         ok("wasm trap (Boundary recovery: startup restart, handler in place)")
     } else {
@@ -1954,7 +2396,7 @@ fn ig_arena_lint() {
     // `show` / `show_eq` / … are element-layer visibility hooks: components
     // and apps use `Show(when = …)` or a reactive `Style(display = …)`.
     let re = "(^|[^A-Za-z0-9_])((ui_push|ui_pop|slot|raw_[a-z_]+|show|show_(eq|ne|ge|le))[(]|arena[.]|intern_[a-z]|prop_int|set_prop_[a-z])"
-    sh("grep -rnE {{shq(re)}} --include='*.loam' examples/zeus www | grep -v '/build/' | grep -vE ':[0-9]+:[[:space:]]*//' > {{shq(l)}}")
+    sh("grep -rnE {{shq(re)}} --include='*.loam' --exclude-dir=build --exclude-dir=node_modules examples/zeus www | grep -vE ':[0-9]+:[[:space:]]*//' > {{shq(l)}}")
     if is_nonempty(l) {
         bad("arena lint (app code reaches into the element layer)", l)
         return
@@ -2062,6 +2504,8 @@ fn stanza_dispatch(name: string) -> bool {
         ig_serve_boot()
     } else if name == "wasm_smoke" {
         ig_wasm_smoke()
+    } else if name == "wasm_trap" {
+        ig_wasm_trap()
     } else if name == "server_split" {
         ig_server_split()
         ig_c_client()
@@ -2077,14 +2521,23 @@ fn stanza_dispatch(name: string) -> bool {
         ig_arena_lint()
     } else if name == "api_freeze" {
         ig_api_freeze()
+    } else if name == "suite_zeus" {
+        ig_suite("zeus")
+    } else if name == "suite_plain" {
+        ig_suite("plain")
+    } else if name == "suite_tests" {
+        ig_suite_tests()
+    } else if name == "ir_zeus" {
+        ig_suite_ir("zeus")
+    } else if name == "ir_plain" {
+        ig_suite_ir("plain")
     } else {
         return false
     }
     return true
 }
 
-/// The stanzas the driver runs, in the order the Makefile ran them. A stanza is
-/// the unit of parallelism: `myapp` merges the route-table regeneration with the
+/// The stanzas `nob integration` runs. A stanza is the unit of parallelism: `myapp` merges the route-table regeneration with the
 /// build that consumes it, and each of the others owns a scratch tree of its
 /// own, so no two can collide.
 fn stanza_names() -> []string {
@@ -2103,6 +2556,7 @@ fn stanza_names() -> []string {
     push(v, "watch")
     push(v, "serve_boot")
     push(v, "wasm_smoke")
+    push(v, "wasm_trap")
     push(v, "server_split")
     push(v, "lsp")
     push(v, "cost")
@@ -2176,17 +2630,17 @@ fn integration() -> int {
 /// The host checks `test` does run: they need neither `bin/zeli` nor a scratch
 /// app. The wasm module's entry points, the server/client split, and the
 /// language server all sit next to the compiler.
+fn host_stanzas() -> []string {
+    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "api_freeze" }
+}
+
+/// One after another, for an `--isolated` run; a batched run pools them.
 fn host_checks() -> int {
     let before = N_FAIL
-    ig_wasm_smoke()
-    ig_server_split()
-    ig_c_client()
-    ig_lsp()
-    ig_cost()
-    ig_stale_capture()
-    ig_one_surface()
-    ig_arena_lint()
-    ig_api_freeze()
+    let names = host_stanzas()
+    for i in 0..names.len {
+        stanza_dispatch(names[i])
+    }
     return N_FAIL - before
 }
 
@@ -2226,6 +2680,22 @@ fn bench() -> int {
     return sys.exec_status()
 }
 
+/// The grammar is a second, hand-maintained parser and nothing in `nob test`
+/// reads it, so it rots silently while Loam moves on: `grammar` gates on this.
+fn grammar_check() -> int {
+    return rc("bash packages/tooling/tree-sitter-loam/check.sh")
+}
+
+fn grammar() -> int {
+    if !run_ok("cd packages/tooling/tree-sitter-loam && npx --yes tree-sitter-cli generate 1>&2") {
+        return 1
+    }
+    if grammar_check() != 0 {
+        return 1
+    }
+    return rc("sh packages/tooling/tree-sitter-loam/zed-grammar.sh 1>&2")
+}
+
 fn clean() {
     sys.remove_path(OBJ)
     sys.remove_path(BIN)
@@ -2241,14 +2711,19 @@ fn usage() {
     fmt.println("")
     fmt.println("  build   (default) bin/loamc, bin/loam-lsp, bin/loam-fmt, bin/zeli")
     fmt.println("  test    language suites + host checks (no zeli)")
-    fmt.println("  test <s>  only fixtures whose path contains <s> (no host checks)")
+    fmt.println("  test --isolated  the same, every fixture as its own binary")
+    fmt.println("  test <s>  only fixtures whose path contains <s>, each as its own")
+    fmt.println("          binary (no host checks)")
     fmt.println("  test <f.loam>  build and run exactly this file")
     fmt.println("  lsp     bin/loam-lsp and its objects only")
     fmt.println("  integration  the zeli/serve/pkg/fmt suite (slow; on demand)")
     fmt.println("  bench   build, then run packages/loam/tests/bench/run.sh")
+    fmt.println("  grammar  regenerate, check and publish the tree-sitter grammar")
+    fmt.println("  grammar-check  check the grammar against the compiler's parser")
+    fmt.println("  install-editor  install the VS Code extension")
     fmt.println("  clean   remove obj/, bin/ and packages/loam/tests/tmp")
     fmt.println("")
-    fmt.println("  -j N    fixture jobs in flight (default 4; NOB_JOBS / LOAM_JOBS)")
+    fmt.println("  -j N    cases in flight (default: every core; NOB_JOBS / LOAM_JOBS)")
 }
 
 fn main() {
@@ -2278,7 +2753,10 @@ fn main() {
     ZELI = "{{BIN}}/zeli"
     FMT = "{{BIN}}/loam-fmt"
 
-    JOBS = 4
+    let cores = int_of(sys.exec("sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null"))
+    if cores > 0 {
+        JOBS = cores
+    }
     let mut ej = sys.env("NOB_JOBS")
     if ej == "" {
         ej = sys.env("LOAM_JOBS")
@@ -2308,6 +2786,8 @@ fn main() {
             if k > 0 {
                 JOBS = k
             }
+        } else if a == "--isolated" {
+            ISOLATED = true
         } else if a == "-h" || a == "--help" {
             usage()
             return
@@ -2366,6 +2846,12 @@ fn main() {
         sys.exit(run_integration_only())
     } else if cmd == "bench" {
         sys.exit(bench())
+    } else if cmd == "grammar" {
+        sys.exit(grammar())
+    } else if cmd == "grammar-check" {
+        sys.exit(grammar_check())
+    } else if cmd == "install-editor" {
+        sys.exit(rc("python3 packages/tooling/editors/vscode/install.py 1>&2"))
     } else if cmd == "clean" {
         clean()
         sys.exit(0)

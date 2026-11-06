@@ -1046,7 +1046,12 @@ void loam_platform_plat_image_size(loam_str src, int32_t *w, int32_t *h) {
 /* Wall clock for host-sleep-safe deadlines (scrollbar hide). The clock itself is
    the runtime's `loam_now_ms`, so there is exactly one monotonic clock in the
    tree instead of one per library. */
-int64_t loam_platform_plat_now_ms(void) { return loam_now_ms(); }
+static int64_t plat_clock_skipped;
+
+int64_t loam_platform_plat_now_ms(void) { return loam_now_ms() + plat_clock_skipped; }
+
+/* Tests move this clock instead of sleeping through a timeline. */
+void loam_platform_plat_clock_skip(int32_t ms) { plat_clock_skipped += ms; }
 
 /* Host process memory in KB for the gallery RAM chip: Apple phys_footprint
    (the number Xcode's memory gauge shows — RSS overstates iOS processes),

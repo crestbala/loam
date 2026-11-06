@@ -9,7 +9,7 @@
 
 #include "ast.h"
 
-#define LOAM_MAX_MODULES 256
+#define LOAM_MAX_MODULES 1024
 
 typedef struct {
     char *name;   /* module alias: stem, or `foo` from import "std:foo" */
