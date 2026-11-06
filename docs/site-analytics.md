@@ -298,7 +298,8 @@ page, as sources disagree on some of these.
 ## Open decisions
 
 1. **Same origin.** Recommended: keep the static site on Vercel and rewrite
-   `/api/*` and `/Vault/*` to the Fly app, through the `vercel.json` zeli writes. Same origin
+   `/api/*` and `/Vault/*` to the Fly app, through the `vercel.json` zeli writes, from `backend` and `backend_paths` in
+   `www/zeus.toml`. Same origin
    keeps cookies and `sendBeacon` simple. The alternative is to serve the whole
    site from the Loam server, which drops Vercel but means building static file
    serving and caching. Test that cookies and the host check pass through the rewrite.

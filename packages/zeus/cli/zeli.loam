@@ -4840,11 +4840,33 @@ fn web_headers() -> string {
     return join_lines(lines)
 }
 
+/// Vercel rewrites, from zeus.toml: `backend` is the server's origin, and
+/// `backend_paths` the space-separated paths it answers, in Vercel's pattern form.
+/// The browser stays on one origin, so cookies and `sendBeacon` need no CORS.
+fn vercel_rewrites(appdir: string) -> string {
+    let backend = toml_str(appdir, "backend")
+    let paths = split_ws(toml_str(appdir, "backend_paths"))
+    if (backend == "") != (paths.len == 0) {
+        fmt.println("zeli: zeus.toml needs both `backend` and `backend_paths`")
+        sys.exit(1)
+    }
+    if backend == "" {
+        return ""
+    }
+    let mut out = ""
+    for i in 0..paths.len {
+        let sep = if i > 0 { "," } else { "" }
+        out = "{{out}}{{sep}}{\"source\":\"{{paths[i]}}\",\"destination\":\"{{backend}}{{paths[i]}}\"}"
+    }
+    return ",\"rewrites\":[{{out}}]"
+}
+
 /// `web_headers` for Vercel, which ignores that file.
-fn vercel_config() -> string {
+fn vercel_config(appdir: string) -> string {
     let cache = "{\"key\":\"Cache-Control\",\"value\":\"public, max-age=31536000, immutable\"}"
     let sniff = "{\"key\":\"X-Content-Type-Options\",\"value\":\"nosniff\"}"
-    return "{\"headers\":[{\"source\":\"/_zeus/(.*)\",\"headers\":[{{cache}}]},{\"source\":\"/(.*)\",\"headers\":[{{sniff}}]}]}\n"
+    let rewrites = vercel_rewrites(appdir)
+    return "{\"headers\":[{\"source\":\"/_zeus/(.*)\",\"headers\":[{{cache}}]},{\"source\":\"/(.*)\",\"headers\":[{{sniff}}]}]{{rewrites}}}\n"
 }
 
 fn preload_link(url: string) -> string {
@@ -5048,11 +5070,12 @@ fn split_web(appdir: string, web: string, stem: string, opt_flag: string) -> Web
         push(idle_touch, plan.chunks[extra[i]].name)
     }
     sys.exec("rm -rf {{shell_quote(tmp)}} {{shell_quote(raw)}} {{shell_quote(csrc)}}")
-    return finish_web(web, primary, files, routes, idle, idle_touch, opt_flag != "")
+    return finish_web(appdir, web, primary, files, routes, idle, idle_touch, opt_flag != "")
 }
 
 /// Fingerprint the loader and write the files a static host reads.
 fn finish_web(
+    appdir: string,
     web: string,
     wasm: string,
     files: []ChunkFile,
@@ -5068,7 +5091,7 @@ fn finish_web(
     }
     let loader = fingerprint_file(loader_js, join(web, "_zeus"), "loader", "js")
     sys.write_file(join(web, "_headers"), web_headers())
-    sys.write_file(join(web, "vercel.json"), vercel_config())
+    sys.write_file(join(web, "vercel.json"), vercel_config(appdir))
     // GitHub Pages hides `_` directories unless this file exists.
     sys.write_file(join(web, ".nojekyll"), "")
     return WebAssets {
