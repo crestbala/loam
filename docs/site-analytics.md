@@ -25,8 +25,8 @@ an async server, and crypto.
 
 | Piece | State |
 |---|---|
-| `std:analytics` and the web host | Committed in `aff6124`. Stays |
-| Vercel functions, API test, password tool | Removed in phase 0. Readable in `2b9723f` |
+| `std:analytics` and the web host | Done |
+| Vercel functions, API test, password tool | Removed. The server replaces them |
 | Vault page, footer door, `analytics.start` in www | Done. The page uses the gRPC calls |
 | `on_submit` on inputs | Done |
 | Analytics server | `www/server/`, tested by `www_analytics.loam`. Deployed |
@@ -63,9 +63,6 @@ Checked in this repo on 2026-11-06.
 - Keep zeli's copy of `public/`. It is generic.
 - Keep `vercel_config` in zeli while the static site stays on Vercel.
 - Do not deploy www with `analytics.start` until phase 5: its posts would 404.
-
-The removed SQL stays readable in `2b9723f`, as the reference for phase 5. One
-later change to it is recorded under phase 5.
 
 ### 1. C FFI
 
