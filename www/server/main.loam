@@ -1,0 +1,67 @@
+//! The analytics server. Build it for the machine that runs it:
+//!
+//!     ./bin/loamc www/server/main.loam -o analytics
+//!
+//! It reads everything from the environment:
+//!
+//!     PORT                  8080 unless set
+//!     HOST                  127.0.0.1 unless set. Fly needs 0.0.0.0
+//!     DATABASE_PATH         analytics.db unless set
+//!     SITE_ORIGIN           the published site, such as https://example.com
+//!     VAULT_EMAIL           the owner's login
+//!     VAULT_PASSWORD_HASH   from hash_password.loam
+//!     VAULT_SESSION_SECRET  32 to 64 bytes: `openssl rand -hex 32`
+//!     INSECURE_COOKIE       set to 1 only to try it over http on localhost
+//!
+//! None of the secrets go in the repo.
+
+import "std:fmt"
+import "std:http"
+import "std:result"
+import "std:sys"
+import "app.loam" as server
+import "auth.loam" as auth
+import "db.loam" as db
+
+fn text_int(s: string, fallback: int) -> int {
+    if s.len == 0 || s.len > 5 {
+        return fallback
+    }
+    let mut v = 0
+    for i in 0..s.len {
+        if s[i] < 48 || s[i] > 57 {
+            return fallback
+        }
+        v = v * 10 + s[i] - 48
+    }
+    return v
+}
+
+fn or_default(s: string, fallback: string) -> string {
+    return if s.len > 0 { s } else { fallback }
+}
+
+fn main() {
+    let path = or_default(sys.env("DATABASE_PATH"), "analytics.db")
+    let opened = db.open(path)
+    if result.is_err(opened) {
+        fmt.println("analytics: cannot open", path, opened.err)
+        sys.exit(1)
+    }
+    let c = Config {
+        auth: Auth {
+            email: sys.env("VAULT_EMAIL"),
+            password_hash: sys.env("VAULT_PASSWORD_HASH"),
+            session_secret: sys.env("VAULT_SESSION_SECRET"),
+            secure_cookie: sys.env("INSECURE_COOKIE") != "1",
+        },
+        site_origin: sys.env("SITE_ORIGIN"),
+    }
+    if !auth.configured(c.auth) {
+        // Beacons still count. Only the vault stays shut.
+        fmt.println("analytics: the VAULT_ settings are missing or the wrong size, so sign in is off")
+    }
+    let port = text_int(sys.env("PORT"), 8080)
+    let host = or_default(sys.env("HOST"), "127.0.0.1")
+    server.build(c).listen(port, ListenProps { host: host })
+}

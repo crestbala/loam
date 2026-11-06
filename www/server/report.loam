@@ -1,0 +1,272 @@
+//! The dashboard's numbers, for a signed in owner only. Native only.
+//!
+//! Each query reads the events since `?1`, in integer milliseconds. They run one
+//! after another and block other requests, so keep an eye on `Stats` in the logs.
+
+import "std:result"
+import "std:sqlite"
+import "api.loam" as api
+
+const DAY_MS: i64 = 86400000
+/// The widest the page offers. A year of a busy site takes tens of seconds to
+/// report, and nothing else is served meanwhile, so that is not on offer.
+const MAX_DAYS: int = 90
+const DEFAULT_DAYS: int = 30
+const INT_MAX: i64 = 2147483647
+
+/// The column as an `int`, held to the range. `int()` traps on overflow, and these
+/// sums come from what browsers sent.
+fn count(st: Stmt, i: int) -> int {
+    let v = st.column_i64(i)
+    if v > INT_MAX {
+        return int(INT_MAX)
+    }
+    if v < i64(0) {
+        return 0
+    }
+    return int(v)
+}
+
+fn clamp_days(days: int) -> int {
+    if days < 1 {
+        return DEFAULT_DAYS
+    }
+    return if days > MAX_DAYS { MAX_DAYS } else { days }
+}
+
+fn prepared(db: Db, sql: string, since: i64, st: &mut Stmt) -> Result<bool> {
+    sqlite.prepare(db, sql, st)?
+    return sqlite.bind_i64(*st, 1, since)
+}
+
+fn read_totals(db: Db, since: i64, r: &mut StatsResp) -> Result<bool> {
+    let mut st = Stmt {}
+    prepared(
+        db,
+        "WITH e AS (SELECT vid, path, kind, width FROM events WHERE ts > ?1)
+         SELECT count(DISTINCT vid),
+                count(*) FILTER (WHERE kind = 'page'),
+                (SELECT count(*) FROM (SELECT DISTINCT vid, path FROM e WHERE kind = 'page')),
+                count(*) FILTER (WHERE kind = 'click'),
+                count(*) FILTER (WHERE kind = 'event'),
+                count(*) FILTER (WHERE kind = 'page' AND width < 640),
+                count(*) FILTER (WHERE kind = 'page' AND width >= 640 AND width < 1024),
+                count(*) FILTER (WHERE kind = 'page' AND width >= 1024)
+         FROM e",
+        since,
+        &mut st,
+    )?
+    let row = st.step()
+    if row.tag == 0 && row.val {
+        r.visitors = count(st, 0)
+        r.page_views = count(st, 1)
+        r.unique_page_visits = count(st, 2)
+        r.clicks = count(st, 3)
+        r.events = count(st, 4)
+        for i in 5..8 {
+            r.screens.push(count(st, i))
+        }
+        st.reset()
+    }
+    sqlite.finalize(&mut st)
+    return row
+}
+
+fn read_sessions(db: Db, since: i64, r: &mut StatsResp) -> Result<bool> {
+    let mut st = Stmt {}
+    prepared(
+        db,
+        "WITH s AS (
+           SELECT sid,
+                  count(*) FILTER (WHERE kind = 'page') AS pages,
+                  count(*) FILTER (WHERE kind IN ('click', 'event')) AS actions,
+                  coalesce(sum(ms), 0) AS ms
+           FROM events WHERE ts > ?1 GROUP BY sid
+         )
+         SELECT count(*),
+                count(*) FILTER (WHERE pages = 1 AND actions = 0),
+                coalesce(CAST(round(avg(ms)) AS INTEGER), 0),
+                count(*) FILTER (WHERE ms < 10000),
+                count(*) FILTER (WHERE ms >= 10000 AND ms < 30000),
+                count(*) FILTER (WHERE ms >= 30000 AND ms < 60000),
+                count(*) FILTER (WHERE ms >= 60000 AND ms < 300000),
+                count(*) FILTER (WHERE ms >= 300000)
+         FROM s WHERE pages > 0",
+        since,
+        &mut st,
+    )?
+    let row = st.step()
+    if row.tag == 0 && row.val {
+        r.sessions = count(st, 0)
+        r.bounces = count(st, 1)
+        r.avg_session_ms = count(st, 2)
+        // How fast people leave: each session's visible time, in buckets.
+        for i in 3..8 {
+            r.leaving.push(count(st, i))
+        }
+        st.reset()
+    }
+    sqlite.finalize(&mut st)
+    return row
+}
+
+fn read_pages(db: Db, since: i64, r: &mut StatsResp) -> Result<bool> {
+    let mut st = Stmt {}
+    prepared(
+        db,
+        "WITH e AS (SELECT path, vid, pv, kind, ms FROM events WHERE ts > ?1),
+         views AS (
+           SELECT path, count(*) AS views, count(DISTINCT vid) AS visitors
+           FROM e WHERE kind = 'page' GROUP BY path
+         ),
+         time AS (
+           SELECT path, CAST(round(avg(ms)) AS INTEGER) AS avg_ms
+           FROM (SELECT path, pv, sum(ms) AS ms FROM e WHERE kind = 'leave' GROUP BY path, pv)
+           GROUP BY path
+         )
+         SELECT v.path, v.views, v.visitors, coalesce(t.avg_ms, 0)
+         FROM views v LEFT JOIN time t USING (path)
+         ORDER BY v.views DESC, v.path LIMIT 20",
+        since,
+        &mut st,
+    )?
+    let mut more = st.step()
+    while more.tag == 0 && more.val {
+        r.page_paths.push(st.column_text(0))
+        r.page_view_counts.push(count(st, 1))
+        r.page_visitors.push(count(st, 2))
+        r.page_avg_ms.push(count(st, 3))
+        more = st.step()
+    }
+    sqlite.finalize(&mut st)
+    return more
+}
+
+/// Rows of a name and a count, into `names` and `counts`.
+fn read_ranked(db: Db, since: i64, sql: string, names: &mut []string, counts: &mut []int) -> Result<bool> {
+    let mut st = Stmt {}
+    prepared(db, sql, since, &mut st)?
+    let mut more = st.step()
+    while more.tag == 0 && more.val {
+        names.push(st.column_text(0))
+        counts.push(count(st, 1))
+        more = st.step()
+    }
+    sqlite.finalize(&mut st)
+    return more
+}
+
+fn read_events(db: Db, since: i64, r: &mut StatsResp) -> Result<bool> {
+    let mut st = Stmt {}
+    prepared(
+        db,
+        "SELECT name, coalesce(data, ''), count(*) AS n FROM events
+         WHERE ts > ?1 AND kind = 'event' AND name IS NOT NULL
+         GROUP BY name, data ORDER BY n DESC, name LIMIT 20",
+        since,
+        &mut st,
+    )?
+    let mut more = st.step()
+    while more.tag == 0 && more.val {
+        r.event_names.push(st.column_text(0))
+        r.event_data.push(st.column_text(1))
+        r.event_counts.push(count(st, 2))
+        more = st.step()
+    }
+    sqlite.finalize(&mut st)
+    return more
+}
+
+/// Every day of the window, so a quiet day shows as zero, not as a gap.
+fn read_daily(db: Db, since: i64, days: int, now: i64, r: &mut StatsResp) -> Result<bool> {
+    let mut st = Stmt {}
+    prepared(
+        db,
+        "WITH RECURSIVE days(d) AS (
+           SELECT ?2 UNION ALL SELECT d + 86400000 FROM days WHERE d < ?3
+         ),
+         counts AS (
+           SELECT ts / 86400000 * 86400000 AS d, count(*) AS views, count(DISTINCT vid) AS visitors
+           FROM events WHERE ts > ?1 AND kind = 'page' GROUP BY 1
+         )
+         SELECT strftime('%Y-%m-%d', days.d / 1000, 'unixepoch'),
+                coalesce(counts.views, 0), coalesce(counts.visitors, 0)
+         FROM days LEFT JOIN counts USING (d) ORDER BY days.d",
+        since,
+        &mut st,
+    )?
+    let today = now / DAY_MS * DAY_MS
+    st.bind_i64(2, today - i64(days - 1) * DAY_MS)?
+    st.bind_i64(3, today)?
+    let mut more = st.step()
+    while more.tag == 0 && more.val {
+        r.daily_days.push(st.column_text(0))
+        r.daily_page_views.push(count(st, 1))
+        r.daily_visitors.push(count(st, 2))
+        more = st.step()
+    }
+    sqlite.finalize(&mut st)
+    return more
+}
+
+fn read_all(db: Db, days: int, now: i64, r: &mut StatsResp) -> Result<bool> {
+    let since = now - i64(days) * DAY_MS
+    read_totals(db, since, r)?
+    read_sessions(db, since, r)?
+    read_pages(db, since, r)?
+    read_ranked(
+        db,
+        since,
+        "SELECT path, count(*) AS n FROM (
+           SELECT path, row_number() OVER (PARTITION BY sid ORDER BY ts, id) AS place
+           FROM events WHERE ts > ?1 AND kind = 'page'
+         ) WHERE place = 1 GROUP BY path ORDER BY n DESC, path LIMIT 20",
+        &mut r.entry_paths,
+        &mut r.entry_sessions,
+    )?
+    read_ranked(
+        db,
+        since,
+        "SELECT path, count(*) AS n FROM (
+           SELECT path, row_number() OVER (PARTITION BY sid ORDER BY ts DESC, id DESC) AS place
+           FROM events WHERE ts > ?1 AND kind = 'page'
+         ) WHERE place = 1 GROUP BY path ORDER BY n DESC, path LIMIT 20",
+        &mut r.exit_paths,
+        &mut r.exit_sessions,
+    )?
+    read_ranked(
+        db,
+        since,
+        "SELECT name, count(*) AS n FROM events
+         WHERE ts > ?1 AND kind = 'click' AND name IS NOT NULL
+         GROUP BY name ORDER BY n DESC, name LIMIT 20",
+        &mut r.click_names,
+        &mut r.click_counts,
+    )?
+    read_events(db, since, r)?
+    read_ranked(
+        db,
+        since,
+        "SELECT ref, count(*) AS n FROM events
+         WHERE ts > ?1 AND kind = 'page' AND ref IS NOT NULL
+         GROUP BY ref ORDER BY n DESC, ref LIMIT 20",
+        &mut r.referrer_hosts,
+        &mut r.referrer_sessions,
+    )?
+    return read_daily(db, since, days, now, r)
+}
+
+fn empty() -> StatsResp {
+    return decode_StatsResp("")
+}
+
+/// Every number the dashboard shows, for the last `days` days. On failure `status`
+/// says so, and nothing else in the reply counts.
+fn stats(db: Db, days: int, now: i64) -> StatsResp {
+    let mut r = empty()
+    r.days = clamp_days(days)
+    let outcome = read_all(db, r.days, now, &mut r)
+    let failed = outcome.tag != 0
+    r.status = if failed { api.UNAVAILABLE } else { api.OK }
+    return r
+}

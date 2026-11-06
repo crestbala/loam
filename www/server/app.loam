@@ -1,0 +1,105 @@
+//! The analytics server's routes. `main.loam` starts it, and tests drive it. The
+//! wasm never imports this.
+
+import "std:http"
+import "std:log"
+import "api.loam" as api
+import "auth.loam" as auth
+import "db.loam" as db
+import "report.loam" as report
+import "track.loam" as track
+
+const DAY_MS: i64 = 86400000
+
+/// What the server needs from the environment.
+struct Config {
+    auth: Auth,
+    /// The site's origin, such as "https://example.com". A rewrite changes `Host`,
+    /// so with this set a beacon's `Origin` must equal it. Empty compares `Host`.
+    site_origin: string = "",
+}
+
+#[c("gettimeofday")]
+fn c_gettimeofday(out: []i64, zone: i64) -> i32 {}
+
+/// Real time in milliseconds since 1970. `async.now_ms` only counts from boot.
+fn wall_ms() -> i64 {
+    let out = []i64 { 0, 0 }
+    let _ = c_gettimeofday(out, i64(0))
+    return out[0] * 1000 + (out[1] % 4294967296) / 1000
+}
+
+/// Whether a beacon came from the site. A request with no `Origin` is not from a
+/// page on another site, as browsers send one there.
+fn same_origin(c: Config) -> bool {
+    let origin = http.req_header("origin")
+    if origin.len == 0 {
+        return true
+    }
+    if c.site_origin.len > 0 {
+        return http.eq(origin, c.site_origin)
+    }
+    let host = http.req_header("host")
+    return http.eq(origin, "https://{{host}}") || http.eq(origin, "http://{{host}}")
+}
+
+let mut last_prune: i64 = 0
+
+fn prune_daily(now: i64) {
+    if now - last_prune < DAY_MS {
+        return
+    }
+    last_prune = now
+    let outcome = db.prune(now)
+    if outcome.tag != 0 {
+        log.warn("analytics", "prune failed: {{outcome.err}}")
+    }
+}
+
+fn on_track(c: Config, body: string) -> string {
+    if !same_origin(c) {
+        http.set_status(403)
+        return ""
+    }
+    let now = wall_ms()
+    http.set_status(track.receive(body, now))
+    prune_daily(now)
+    return ""
+}
+
+/// Fly's health check: the process answers and the database reads.
+fn on_health() -> string {
+    if db.failures_since(i64(0)) < 0 {
+        http.set_status(503)
+        return "{\"ok\":false}"
+    }
+    return "{\"ok\":true}"
+}
+
+fn on_stats(c: Config, req: StatsReq) -> StatsResp {
+    let now = wall_ms()
+    if !auth.signed_in(c.auth, now) {
+        let mut refused = report.empty()
+        refused.status = api.SIGN_IN
+        return refused
+    }
+    return report.stats(db.connection(), req.days, now)
+}
+
+/// The app. Handlers are made once here: a closure made per request would leak.
+fn build(c: Config) -> App {
+    let app = http.app()
+    app.json("/api/track", |body| { on_track(c, body) })
+    app.json("/healthz", |body| { on_health() })
+    app.rpc(api.LOGIN_RPC, |body| {
+        let req = api.decode_LoginReq(body)
+        api.encode_LoginResp(LoginResp { status: auth.login(c.auth, req, wall_ms()) })
+    })
+    app.rpc(api.LOGOUT_RPC, |body| {
+        api.encode_LogoutResp(LogoutResp { status: auth.logout(c.auth) })
+    })
+    app.rpc(api.STATS_RPC, |body| {
+        api.encode_StatsResp(on_stats(c, api.decode_StatsReq(body)))
+    })
+    return app
+}

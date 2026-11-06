@@ -1,6 +1,83 @@
-//! The published site has no backend.
+//! The contract between the vault page and the analytics server. Both import this,
+//! so it holds types and names only: nothing here touches a secret, a file, or the
+//! database, and it is safe in the published wasm.
 //!
-//! Do not add credentials, host paths, environment reads, or filesystem
-//! access here. This app's zeus.toml lists only the web target, and the
-//! entry does not import this file, so nothing in server/ is linked into
-//! the wasm module.
+//! Protobuf here has no nested messages, so each report table is parallel lists:
+//! row `i` is `page_paths[i]`, `page_views[i]`, and so on.
+
+import "std:http"
+
+/// `status` in a reply. An empty reply decodes to zeros, so 0 has to mean that no
+/// answer came, and never success.
+const NO_REPLY: int = 0
+const OK: int = 1
+const SIGN_IN: int = 2
+const WRONG_LOGIN: int = 3
+const TOO_MANY_TRIES: int = 4
+const UNAVAILABLE: int = 5
+
+#[proto]
+struct LoginReq {
+    email: string,
+    password: string,
+}
+
+#[proto]
+struct LoginResp {
+    status: int,
+}
+
+#[proto]
+struct LogoutReq {
+    unused: int,
+}
+
+#[proto]
+struct LogoutResp {
+    status: int,
+}
+
+#[proto]
+struct StatsReq {
+    days: int,
+}
+
+#[proto]
+struct StatsResp {
+    status: int,
+    days: int,
+    visitors: int,
+    page_views: int,
+    unique_page_visits: int,
+    clicks: int,
+    events: int,
+    sessions: int,
+    bounces: int,
+    avg_session_ms: int,
+    page_paths: []string,
+    page_view_counts: []int,
+    page_visitors: []int,
+    page_avg_ms: []int,
+    entry_paths: []string,
+    entry_sessions: []int,
+    exit_paths: []string,
+    exit_sessions: []int,
+    click_names: []string,
+    click_counts: []int,
+    event_names: []string,
+    event_data: []string,
+    event_counts: []int,
+    referrer_hosts: []string,
+    referrer_sessions: []int,
+    daily_days: []string,
+    daily_page_views: []int,
+    daily_visitors: []int,
+    /// Sessions under 10 s, under 30 s, under 1 min, under 5 min, and longer.
+    leaving: []int,
+    /// Page views on a phone, a tablet, and a desktop.
+    screens: []int,
+}
+
+const LOGIN_RPC: string = "Vault.Login"
+const LOGOUT_RPC: string = "Vault.Logout"
+const STATS_RPC: string = "Vault.Stats"

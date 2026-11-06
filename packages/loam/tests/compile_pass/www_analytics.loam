@@ -1,0 +1,495 @@
+// The analytics server in `www/server`, driven through a real socket. The fixture and
+// its numbers are the ones the Postgres functions passed, so the SQLite queries have
+// to report the same thing.
+
+import "std:async"
+import "std:crypto"
+import "std:fmt"
+import "std:http"
+import "std:net"
+import "std:result"
+import "std:sqlite"
+import "std:str"
+import "std:sys"
+import "../../../../www/server/api.loam" as api
+import "../../../../www/server/app.loam" as server
+import "../../../../www/server/auth.loam" as auth
+import "../../../../www/server/db.loam" as db
+import "../../../../www/server/report.loam" as report
+
+const EMAIL = "owner@example.com"
+const PASSWORD = "correct horse battery staple"
+const SECRET = "0123456789abcdef0123456789abcdef"
+const HOST = "site.test"
+const DAY: i64 = 86400000
+
+fn expect(good: bool, what: string) {
+    if !good {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn expect_eq(got: int, want: int, what: string) {
+    if got != want {
+        fmt.println("FAIL", what, "got", got, "want", want)
+        sys.exit(1)
+    }
+}
+
+fn dial(s: &Server) -> int {
+    let fd = net.tcp_connect("127.0.0.1", s.port)
+    expect(fd >= 0, "connect")
+    return fd
+}
+
+fn read_reply(s: &mut Server, fd: int) -> string {
+    let mut out = ""
+    let start = async.now_ms()
+    while int(async.now_ms() - start) < 5000 {
+        server_step(s, 5)
+        if net.tcp_poll(fd, 1, 0) != 0 {
+            let chunk = net.tcp_read(fd, 65536)
+            if chunk.len == 0 {
+                net.tcp_close(fd)
+                return out
+            }
+            out = "{{out}}{{chunk}}"
+        }
+    }
+    expect(false, "no reply")
+    return out
+}
+
+fn status_of(reply: string) -> int {
+    return http.http_status(reply)
+}
+
+fn body_of(reply: string) -> string {
+    return http.http_payload(reply)
+}
+
+/// POST a beacon as a browser would, and return the status.
+fn beacon(s: &mut Server, body: string, origin: string) -> int {
+    let fd = dial(s)
+    let head = if origin.len > 0 { "Origin: {{origin}}\r\n" } else { "" }
+    net.tcp_write(fd, "POST /api/track HTTP/1.1\r\nHost: {{HOST}}\r\n{{head}}Content-Type: text/plain\r\nContent-Length: {{body.len}}\r\n\r\n{{body}}")
+    return status_of(read_reply(s, fd))
+}
+
+fn track(s: &mut Server, body: string) -> int {
+    return beacon(s, body, "https://{{HOST}}")
+}
+
+/// A gRPC-Web call. Returns the raw reply.
+fn call(s: &mut Server, path: string, message: string, cookie: string) -> string {
+    let framed = http.frame_str(message)
+    let head = if cookie.len > 0 { "Cookie: {{cookie}}\r\n" } else { "" }
+    let fd = dial(s)
+    net.tcp_write(fd, "POST {{path}} HTTP/1.1\r\nHost: {{HOST}}\r\n{{head}}Content-Type: application/grpc-web+proto\r\nContent-Length: {{framed.len}}\r\n\r\n{{framed}}")
+    return read_reply(s, fd)
+}
+
+fn stats(s: &mut Server, days: int, cookie: string) -> StatsResp {
+    let raw = call(s, "/Vault/Stats", api.encode_StatsReq(StatsReq { days: days }), cookie)
+    return api.decode_StatsResp(http.unframe_str(body_of(raw)))
+}
+
+fn login_status(s: &mut Server, email: string, password: string) -> int {
+    let raw = call(s, "/Vault/Login", api.encode_LoginReq(LoginReq { email: email, password: password }), "")
+    return api.decode_LoginResp(http.unframe_str(body_of(raw))).status
+}
+
+fn id(n: int) -> string {
+    let t = "{{n}}"
+    let zeros = str.repeat("0", 32 - t.len)
+    return "{{zeros}}{{t}}"
+}
+
+/// One event, as JSON. `extra` is any more fields, each with a leading comma.
+fn ev(k: string, sid: int, pv: int, path: string, ts: i64, extra: string) -> string {
+    let a = id(sid)
+    let b = id(pv)
+    return "{\"k\":\"{{k}}\",\"sid\":\"{{a}}\",\"pv\":\"{{b}}\",\"path\":\"{{path}}\",\"ts\":{{ts}}{{extra}}}"
+}
+
+/// Events joined for a batch. Up to seven, as Loam has no rest parameters.
+fn list(a: string, b: string = "", c: string = "", d: string = "", e: string = "", f: string = "", g: string = "") -> string {
+    let parts = []string { a, b, c, d, e, f, g }
+    let mut out = ""
+    for i in 0..parts.len {
+        if parts[i].len > 0 {
+            out = if out.len > 0 { "{{out}},{{parts[i]}}" } else { parts[i] }
+        }
+    }
+    return out
+}
+
+fn batch(vid: int, events: string) -> string {
+    let v = id(vid)
+    return "{\"v\":1,\"vid\":\"{{v}}\",\"events\":[{{events}}]}"
+}
+
+fn index_of(list: []string, s: string) -> int {
+    for i in 0..list.len {
+        if list[i] == s {
+            return i
+        }
+    }
+    return -1
+}
+
+fn sum(list: []int) -> int {
+    let mut t = 0
+    for i in 0..list.len {
+        t += list[i]
+    }
+    return t
+}
+
+fn rows_stored() -> int {
+    let mut st = Stmt {}
+    let prepared = sqlite.prepare(db.connection(), "SELECT count(*) FROM events", &mut st)
+    expect(prepared.tag == 0, "count prepares")
+    let row = st.step()
+    expect(row.tag == 0 && row.val, "count steps")
+    let n = st.column_int(0)
+    st.reset()
+    sqlite.finalize(&mut st)
+    return n
+}
+
+fn the_auth() -> Auth {
+    let hashed = crypto.hash_password(PASSWORD, PasswordProps { memory_kib: 64, passes: 1 })
+    return Auth { email: EMAIL, password_hash: hashed.val, session_secret: SECRET, secure_cookie: true }
+}
+
+fn bad_input_is_refused(s: &mut Server) {
+    expect_eq(track(s, "not json"), 400, "not JSON")
+    let one = id(1)
+    let wrong_version = "{\"v\":2,\"vid\":\"{{one}}\",\"events\":[]}"
+    expect_eq(track(s, wrong_version), 400, "version")
+    expect_eq(track(s, "{\"v\":1,\"vid\":\"x'; DROP TABLE events;--\",\"events\":[]}"), 400, "bad vid")
+    let not_list = "{\"v\":1,\"vid\":\"{{one}}\",\"events\":{\"a\":1}}"
+    expect_eq(track(s, not_list), 400, "events is not a list")
+    expect_eq(beacon(s, batch(1, ""), "https://evil.test"), 403, "another site")
+    expect_eq(beacon(s, batch(1, ""), ""), 204, "no Origin is not a browser on another site")
+    expect_eq(track(s, str.repeat("x", 70000)), 413, "too large")
+
+    let now = server.wall_ms()
+    let short = "{\"k\":\"page\",\"sid\":\"short\",\"pv\":\"{{one}}\",\"path\":\"/\"}"
+    let junk = list(ev("drop", 1, 1, "/", now, ""), ev("page", 1, 1, "no-slash", now, ""), short, "null", "7")
+    expect_eq(track(s, batch(1, junk)), 204, "a junk batch is not an error")
+    expect_eq(rows_stored(), 0, "nothing bad reached the table")
+}
+
+fn fixture(s: &mut Server, now: i64) {
+    // Visitor 1: bounces off /, 4 seconds.
+    let one = list(
+        ev("page", 11, 101, "/", now, ",\"w\":1400,\"ref\":\"news.example\""),
+        ev("leave", 11, 101, "/", now, ",\"ms\":3000"),
+        ev("leave", 11, 101, "/", now, ",\"ms\":1000"),
+    )
+    expect_eq(track(s, batch(1, one)), 204, "first batch")
+    // Visitor 2: reads two pages and clicks. Reloads /language, so two views of it.
+    let two = list(
+        ev("page", 22, 201, "/", now, ",\"w\":500,\"ref\":\"\""),
+        ev("click", 22, 201, "/", now, ",\"name\":\"Language\",\"data\":\"/language\""),
+        ev("leave", 22, 201, "/", now, ",\"ms\":20000"),
+        ev("page", 22, 202, "/language", now + 1, ",\"w\":500"),
+        ev("page", 22, 203, "/language", now + 2, ",\"w\":500"),
+        ev("leave", 22, 202, "/language", now, ",\"ms\":40000"),
+        ev("event", 22, 203, "/language", now, ",\"name\":\"run\",\"data\":\"fib\""),
+    )
+    expect_eq(track(s, batch(2, two)), 204, "second batch")
+    // Visitor 1 returns: a one page session with an action is not a bounce.
+    let three = list(
+        ev("page", 12, 102, "/language", now, ",\"w\":800"),
+        ev("click", 12, 102, "/language", now, ",\"name\":\"Run\""),
+    )
+    expect_eq(track(s, batch(1, three)), 204, "third batch")
+    // A wrong browser clock falls back to the server's time.
+    expect_eq(track(s, batch(3, ev("page", 33, 301, "/types", i64(1000), ",\"w\":1400"))), 204, "a wrong clock")
+    // Older than the window asked for.
+    let old = []EventRow {
+        EventRow {
+            vid: i64(4),
+            sid: i64(44),
+            pv: i64(401),
+            kind: "page",
+            path: "/old",
+            name: "",
+            data: "",
+            ms: -1,
+            width: -1,
+            ref: "",
+            ts: now - DAY * 40,
+        },
+    }
+    expect(result.is_ok(db.insert(old)), "an old row")
+}
+
+fn report_matches(s: &mut Server, cookie: string) {
+    let r = stats(s, 30, cookie)
+    expect_eq(r.status, api.OK, "report status")
+    expect_eq(r.days, 30, "days")
+    expect_eq(r.visitors, 3, "visitors")
+    expect_eq(r.page_views, 6, "page views")
+    expect_eq(r.unique_page_visits, 5, "unique page visits")
+    expect_eq(r.clicks, 2, "clicks")
+    expect_eq(r.events, 1, "events")
+    expect_eq(r.sessions, 4, "sessions")
+    expect_eq(r.bounces, 2, "bounces")
+
+    expect(r.page_paths[0] == "/language", "top page")
+    expect_eq(r.page_view_counts[0], 3, "its views")
+    expect_eq(r.page_visitors[0], 2, "its visitors")
+    expect_eq(r.page_avg_ms[0], 40000, "its time")
+    let home = index_of(r.page_paths, "/")
+    expect_eq(r.page_view_counts[home], 2, "home views")
+    expect_eq(r.page_visitors[home], 2, "home visitors")
+    expect_eq(r.page_avg_ms[home], 12000, "home time")
+    expect_eq(index_of(r.page_paths, "/old"), -1, "outside the window")
+
+    expect_eq(r.entry_sessions[index_of(r.entry_paths, "/")], 2, "entries")
+    expect_eq(r.exit_sessions[index_of(r.exit_paths, "/language")], 2, "exits")
+    expect(index_of(r.click_names, "Language") >= 0 && index_of(r.click_names, "Run") >= 0, "clicks table")
+    expect_eq(r.click_names.len, 2, "click rows")
+    expect(r.event_names.len == 1 && r.event_names[0] == "run" && r.event_data[0] == "fib", "events table")
+    expect_eq(r.event_counts[0], 1, "event count")
+    expect(r.referrer_hosts.len == 1 && r.referrer_hosts[0] == "news.example", "referrers")
+    expect_eq(r.referrer_sessions[0], 1, "referrer count")
+
+    expect_eq(r.daily_days.len, 30, "a 30-day report has 30 rows")
+    expect_eq(r.daily_page_views.len, 30, "with a count for each")
+    expect_eq(sum(r.daily_page_views), 6, "daily total")
+    expect_eq(r.daily_page_views[0], 0, "a quiet day is zero")
+    expect(r.daily_days[29].len == 10, "days as dates")
+
+    let leaving = []int { 3, 0, 0, 1, 0 }
+    let screens = []int { 3, 1, 2 }
+    for i in 0..5 {
+        expect_eq(r.leaving[i], leaving[i], "leaving")
+    }
+    for i in 0..3 {
+        expect_eq(r.screens[i], screens[i], "screens")
+    }
+
+    let year = stats(s, 99999, cookie)
+    expect_eq(year.days, 90, "days are capped")
+    expect_eq(year.daily_days.len, 90, "and so is the chart")
+    expect_eq(year.visitors, 4, "the wider window sees the old row")
+    expect_eq(stats(s, 0, cookie).days, 30, "the default window")
+}
+
+fn sessions_and_login(s: &mut Server, a: Auth) -> string {
+    let now = server.wall_ms()
+    expect_eq(stats(s, 30, "").status, api.SIGN_IN, "no cookie")
+    expect_eq(stats(s, 30, "").visitors, 0, "and no numbers")
+    expect_eq(stats(s, 30, "vault=9999999999999.forged").status, api.SIGN_IN, "forged")
+    let exp = "{{now - DAY}}"
+    let old_tag = auth.sign(a, exp)
+    expect_eq(stats(s, 30, "vault={{exp}}.{{old_tag}}").status, api.SIGN_IN, "expired")
+    let far = "{{now + DAY * 999}}"
+    expect_eq(stats(s, 30, "vault={{far}}.{{old_tag}}").status, api.SIGN_IN, "a tag from another expiry")
+    let other = Auth { email: EMAIL, password_hash: "", session_secret: "another secret another secret 12", secure_cookie: true }
+    let foreign = auth.sign(other, far)
+    expect_eq(stats(s, 30, "vault={{far}}.{{foreign}}").status, api.SIGN_IN, "signed with another secret")
+
+    expect_eq(login_status(s, EMAIL, "wrong"), api.WRONG_LOGIN, "wrong password")
+    expect_eq(login_status(s, "other@example.com", PASSWORD), api.WRONG_LOGIN, "wrong email")
+    expect_eq(login_status(s, "", ""), api.WRONG_LOGIN, "empty form")
+    let bad = call(s, "/Vault/Login", string_from_bytes([]int { 255, 255 }), "")
+    expect(!str.contains(bad, "Set-Cookie"), "garbage does not sign in")
+
+    let good = call(s, "/Vault/Login", api.encode_LoginReq(LoginReq { email: " Owner@Example.com ", password: PASSWORD }), "")
+    expect_eq(api.decode_LoginResp(http.unframe_str(body_of(good))).status, api.OK, "right login")
+    let at = str.index_of(good, "Set-Cookie: ")
+    expect(at > 0, "a cookie is set")
+    expect(str.contains(good, "Path=/Vault; SameSite=Strict; Max-Age=604800; HttpOnly; Secure"), "cookie flags")
+    expect(!str.contains(good, "argon2"), "the hash stays home")
+    let from = at + 12
+    let line = str.slice_from(good, from)
+    return str.slice(line, 0, str.index_of(line, ";"))
+}
+
+fn logs_out(s: &mut Server) {
+    let raw = call(s, "/Vault/Logout", api.encode_LogoutReq(LogoutReq { unused: 0 }), "")
+    expect_eq(api.decode_LogoutResp(http.unframe_str(body_of(raw))).status, api.OK, "logout")
+    expect(str.contains(raw, "Set-Cookie: vault=; Path=/Vault; SameSite=Strict; Max-Age=0"), "cookie cleared")
+}
+
+fn locks_after_failures(s: &mut Server) {
+    let now = server.wall_ms()
+    // Failures older than the window do not count.
+    for i in 0..25 {
+        expect(result.is_ok(db.add_failure(now - 960000)), "old failure")
+    }
+    expect_eq(login_status(s, EMAIL, PASSWORD), api.OK, "old failures have expired")
+    for i in 0..20 {
+        expect(result.is_ok(db.add_failure(now)), "failure")
+    }
+    expect_eq(login_status(s, EMAIL, PASSWORD), api.TOO_MANY_TRIES, "locked, even with the right password")
+}
+
+fn hostile_values(s: &mut Server, cookie: string) {
+    let now = server.wall_ms()
+    // Sums that overflow an `int` must not crash the dashboard.
+    for b in 0..3 {
+        let mut many = ev("page", 900, 900, "/sum", now, "")
+        let leave = ev("leave", 900, 900, "/sum", now, ",\"ms\":86400000")
+        for i in 0..49 {
+            many = "{{many}},{{leave}}"
+        }
+        expect_eq(track(s, batch(9, many)), 204, "a large batch")
+    }
+    let r = stats(s, 30, cookie)
+    expect_eq(r.status, api.OK, "a report over huge sums")
+    expect(r.avg_session_ms > 0, "held to the range")
+
+    // Numbers past what is allowed are dropped, and nothing else about the event.
+    let before = rows_stored()
+    let big = ev("page", 901, 901, "/big", now, ",\"ms\":99999999999999999999999,\"w\":-5")
+    expect_eq(track(s, batch(9, big)), 204, "absurd numbers")
+    expect_eq(rows_stored(), before + 1, "the event stays")
+
+    // Only the first 50 events of a batch count.
+    let mut lots = ev("page", 902, 902, "/lots", now, "")
+    let next = ev("page", 902, 902, "/lots", now, "")
+    for i in 0..79 {
+        lots = "{{lots}},{{next}}"
+    }
+    expect_eq(track(s, batch(9, lots)), 204, "too many events")
+    expect_eq(rows_stored(), before + 51, "cut to 50")
+
+    // Text is cut on a character, never inside one.
+    let mut wide = ""
+    for i in 0..150 {
+        wide = "{{wide}}é"
+    }
+    let long_path = "/{{wide}}"
+    expect_eq(track(s, batch(9, ev("page", 903, 903, long_path, now, ""))), 204, "long text")
+    let cut = stats(s, 30, cookie)
+    let mut found = false
+    for i in 0..cut.page_paths.len {
+        if str.starts_with(cut.page_paths[i], "/é") {
+            found = true
+            expect_eq(cut.page_paths[i].len, 199, "cut to size on a boundary")
+        }
+    }
+    expect(found, "the long path was stored")
+
+    // Control characters do not reach the dashboard.
+    let ctrl = list(ev("page", 904, 904, "/ctrl\\u0000x", now, ""), ev("page", 905, 905, "/fine", now, ",\"name\":\"a\\nb\""))
+    let was = rows_stored()
+    expect_eq(track(s, batch(9, ctrl)), 204, "control characters")
+    expect_eq(rows_stored(), was + 1, "the bad path is dropped")
+
+    // Stored markup comes back as data. Escaping is the page's job in Zeus text.
+    let quotes = ev("page", 906, 906, "/o'brien", now, ",\"name\":\"x'); DROP TABLE events; --\"")
+    expect_eq(track(s, batch(9, quotes)), 204, "quotes")
+    expect(rows_stored() > was, "the table survived")
+}
+
+fn prunes_old_rows() {
+    let now = server.wall_ms()
+    let row = EventRow {
+        vid: i64(5),
+        sid: i64(55),
+        pv: i64(501),
+        kind: "page",
+        path: "/ancient",
+        name: "",
+        data: "",
+        ms: -1,
+        width: -1,
+        ref: "",
+        ts: now - DAY * 400,
+    }
+    expect(result.is_ok(db.insert([]EventRow { row })), "an ancient row")
+    let before = rows_stored()
+    expect(result.is_ok(db.prune(now)), "prune")
+    expect_eq(rows_stored(), before - 1, "13 months on, it is gone")
+}
+
+fn behind_a_rewrite(a: Auth) {
+    let c = Config { auth: a, site_origin: "https://example.com" }
+    let mut s = server_start(server.build(c), 0, ListenProps {})
+    expect_eq(beacon(&mut s, batch(1, ""), "https://example.com"), 204, "the site, through a rewrite")
+    expect_eq(beacon(&mut s, batch(1, ""), "https://{{HOST}}"), 403, "the Host no longer counts")
+    expect_eq(beacon(&mut s, batch(1, ""), "https://example.com.evil.test"), 403, "a longer name")
+    server_stop(&mut s)
+}
+
+fn not_configured() {
+    let missing = Auth { email: "", password_hash: "", session_secret: "", secure_cookie: true }
+    let mut s = server_start(server.build(Config { auth: missing }), 0, ListenProps {})
+    expect_eq(login_status(&mut s, EMAIL, PASSWORD), api.UNAVAILABLE, "no secrets, no sign in")
+    expect_eq(stats(&mut s, 30, "").status, api.SIGN_IN, "and no report")
+    server_stop(&mut s)
+}
+
+fn other_routes(s: &mut Server) {
+    let fd = dial(s)
+    net.tcp_write(fd, "GET /healthz HTTP/1.1\r\nHost: t\r\n\r\n")
+    let health = read_reply(s, fd)
+    expect_eq(status_of(health), 200, "health")
+    expect(str.contains(health, "{\"ok\":true}"), "health body")
+
+    let off = dial(s)
+    net.tcp_write(off, "GET /Vault/Stats HTTP/1.1\r\nHost: t\r\n\r\n")
+    expect_eq(status_of(read_reply(s, off)), 404, "a GET cannot read the report")
+}
+
+/// A gRPC-Web body as it arrives, with no framing added.
+fn call_raw(s: &mut Server, path: string, bytes: []int) -> int {
+    let body = string_from_bytes(bytes)
+    let fd = dial(s)
+    net.tcp_write(fd, "POST {{path}} HTTP/1.1\r\nHost: {{HOST}}\r\nContent-Type: application/grpc-web+proto\r\nContent-Length: {{body.len}}\r\n\r\n{{body}}")
+    return status_of(read_reply(s, fd))
+}
+
+/// A frame's length comes from the client, before anyone has signed in. One that
+/// lies must not spin the only thread, and must not overflow and stop the server.
+fn lying_frames(s: &mut Server) {
+    let start = async.now_ms()
+    expect_eq(call_raw(s, "/Vault/Stats", []int { 0, 127, 255, 255, 255 }), 200, "a frame claiming 2 GB")
+    expect_eq(call_raw(s, "/Vault/Stats", []int { 0, 128, 0, 0, 0 }), 200, "a length past an int")
+    expect_eq(call_raw(s, "/Vault/Login", []int { 0, 255, 255, 255, 255 }), 200, "the longest length")
+    expect(int(async.now_ms() - start) < 1000, "answered at once")
+}
+
+fn clock() {
+    let now = server.wall_ms()
+    // 2026 onward, and a real clock rather than time since boot.
+    expect(now > i64(1767225600000), "wall clock")
+    expect(now < i64(4102444800000), "wall clock is in milliseconds")
+    expect_eq(int(server.wall_ms() / 1000 - now / 1000) / 2, 0, "and it stays put")
+}
+
+fn main() {
+    clock()
+    let opened = db.open(":memory:")
+    expect(result.is_ok(opened), "open")
+    let a = the_auth()
+    let mut s = server_start(server.build(Config { auth: a }), 0, ListenProps {})
+    expect(s.fd >= 0, "bind")
+
+    bad_input_is_refused(&mut s)
+    fixture(&mut s, server.wall_ms())
+    let cookie = sessions_and_login(&mut s, a)
+    report_matches(&mut s, cookie)
+    logs_out(&mut s)
+    hostile_values(&mut s, cookie)
+    prunes_old_rows()
+    other_routes(&mut s)
+    lying_frames(&mut s)
+    locks_after_failures(&mut s)
+    server_stop(&mut s)
+
+    behind_a_rewrite(a)
+    not_configured()
+    let closed = db.close()
+    expect(result.is_ok(closed), "close")
+    fmt.println("www analytics ok")
+}

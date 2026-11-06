@@ -1,0 +1,157 @@
+//! The analytics database. Native only: the wasm never imports this.
+
+import "std:result"
+import "std:sqlite"
+import "std:str"
+
+const DAY_MS: i64 = 86400000
+/// Events are kept 13 months, so the table cannot fill the disk.
+const KEEP_MS: i64 = DAY_MS * 395
+
+/// One event, checked by `track`. An empty `name`, `data`, or `ref` and a negative
+/// `ms` or `width` are stored as NULL. The ids are `track.short_id`s: integers keep
+/// the table small and make the reports' grouping about twice as fast.
+struct EventRow {
+    vid: i64,
+    sid: i64,
+    pv: i64,
+    kind: string,
+    path: string,
+    name: string,
+    data: string,
+    ms: int,
+    width: int,
+    ref: string,
+    ts: i64,
+}
+
+let mut store = Db {}
+let mut insert_event = Stmt {}
+
+/// Open the database at `path`, and make its tables.
+fn open(path: string) -> Result<bool> {
+    sqlite.open(path, OpenProps {}, &mut store)?
+    sqlite.exec(store, "CREATE TABLE IF NOT EXISTS events (
+        id INTEGER PRIMARY KEY,
+        vid INTEGER NOT NULL,
+        sid INTEGER NOT NULL,
+        pv INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        path TEXT NOT NULL,
+        name TEXT,
+        data TEXT,
+        ms INTEGER,
+        width INTEGER,
+        ref TEXT,
+        ts INTEGER NOT NULL
+    )")?
+    // Covers what the reports read, so most of them never touch the table.
+    sqlite.exec(
+        store,
+        "CREATE INDEX IF NOT EXISTS events_report ON events (ts, kind, sid, vid, pv, path, ms, width)",
+    )?
+    sqlite.exec(store, "CREATE TABLE IF NOT EXISTS login_failures (at INTEGER NOT NULL)")?
+    return sqlite.prepare(
+        store,
+        "INSERT INTO events (vid, sid, pv, kind, path, name, data, ms, width, ref, ts)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        &mut insert_event,
+    )
+}
+
+fn close() -> Result<bool> {
+    sqlite.finalize(&mut insert_event)
+    return sqlite.close(&mut store)
+}
+
+/// The connection, for the report queries.
+fn connection() -> Db {
+    return store
+}
+
+fn bind_text_or_null(st: Stmt, i: int, v: string) -> Result<bool> {
+    if v.len == 0 {
+        return st.bind_null(i)
+    }
+    return st.bind_text(i, v)
+}
+
+fn bind_int_or_null(st: Stmt, i: int, v: int) -> Result<bool> {
+    if v < 0 {
+        return st.bind_null(i)
+    }
+    return st.bind_int(i, v)
+}
+
+fn write_rows(rows: []EventRow) -> Result<bool> {
+    let st = insert_event
+    for i in 0..rows.len {
+        let r = rows[i]
+        st.bind_i64(1, r.vid)?
+        st.bind_i64(2, r.sid)?
+        st.bind_i64(3, r.pv)?
+        st.bind_text(4, r.kind)?
+        st.bind_text(5, r.path)?
+        bind_text_or_null(st, 6, r.name)?
+        bind_text_or_null(st, 7, r.data)?
+        bind_int_or_null(st, 8, r.ms)?
+        bind_int_or_null(st, 9, r.width)?
+        bind_text_or_null(st, 10, r.ref)?
+        st.bind_i64(11, r.ts)?
+        st.run()?
+    }
+    return result.res_ok(true)
+}
+
+/// Store a batch in one transaction: all of it, or none.
+fn insert(rows: []EventRow) -> Result<bool> {
+    sqlite.begin(store)?
+    return sqlite.finish(store, write_rows(rows))
+}
+
+/// Delete what has aged out, as of `now`.
+fn prune(now: i64) -> Result<bool> {
+    let mut st = Stmt {}
+    sqlite.prepare(store, "DELETE FROM events WHERE ts < ?", &mut st)?
+    st.bind_i64(1, now - KEEP_MS)?
+    let outcome = st.run()
+    sqlite.finalize(&mut st)
+    return outcome
+}
+
+
+/// How many logins failed since `since`. A negative number means it could not be
+/// read, which callers treat as over the limit.
+fn failures_since(since: i64) -> int {
+    let mut st = Stmt {}
+    if result.is_err(sqlite.prepare(store, "SELECT count(*) FROM login_failures WHERE at > ?", &mut st)) {
+        return -1
+    }
+    let mut count = -1
+    if result.is_ok(st.bind_i64(1, since)) {
+        let row = st.step()
+        if result.is_ok(row) && row.val {
+            count = st.column_int(0)
+        }
+    }
+    sqlite.finalize(&mut st)
+    return count
+}
+
+/// Note a failed login at `now`, and forget those over a day old.
+fn add_failure(now: i64) -> Result<bool> {
+    let mut add = Stmt {}
+    sqlite.prepare(store, "INSERT INTO login_failures (at) VALUES (?)", &mut add)?
+    add.bind_i64(1, now)?
+    let outcome = add.run()
+    sqlite.finalize(&mut add)
+    if result.is_err(outcome) {
+        return outcome
+    }
+    let mut old = Stmt {}
+    sqlite.prepare(store, "DELETE FROM login_failures WHERE at < ?", &mut old)?
+    old.bind_i64(1, now - DAY_MS)?
+    let done = old.run()
+    sqlite.finalize(&mut old)
+    return done
+}
