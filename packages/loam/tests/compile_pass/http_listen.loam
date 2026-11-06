@@ -1,0 +1,358 @@
+// The non-blocking server, driven one `server_step` at a time: a stalled client
+// costs nobody else anything, requests can arrive in any pieces, and the limits and
+// cookies hold.
+
+import "std:async"
+import "std:fmt"
+import "std:http"
+import "std:net"
+import "std:str"
+import "std:sys"
+
+fn expect(good: bool, what: string) {
+    if !good {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn expect_has(hay: string, needle: string, what: string) {
+    if !str.contains(hay, needle) {
+        fmt.println("FAIL", what, "got:", str.slice(hay, 0, 300))
+        sys.exit(1)
+    }
+}
+
+fn dial(s: &Server) -> int {
+    let fd = net.tcp_connect("127.0.0.1", s.port)
+    expect(fd >= 0, "connect")
+    return fd
+}
+
+fn get(path: string) -> string {
+    return "GET {{path}} HTTP/1.1\r\nHost: t\r\n\r\n"
+}
+
+/// Step the server until `fd` has its whole reply and is closed.
+fn reply(s: &mut Server, fd: int) -> string {
+    let mut out = ""
+    let start = async.now_ms()
+    while int(async.now_ms() - start) < 5000 {
+        server_step(s, 5)
+        if net.tcp_poll(fd, 1, 0) != 0 {
+            let chunk = net.tcp_read(fd, 65536)
+            if chunk.len == 0 {
+                net.tcp_close(fd)
+                return out
+            }
+            out = "{{out}}{{chunk}}"
+        }
+    }
+    fmt.println("FAIL no reply, so far:", str.slice(out, 0, 200))
+    sys.exit(1)
+    return out
+}
+
+fn ask(s: &mut Server, path: string) -> string {
+    let fd = dial(s)
+    expect(net.tcp_write(fd, get(path)) > 0, "send")
+    return reply(s, fd)
+}
+
+fn pump(s: &mut Server, n: int) {
+    for i in 0..n {
+        server_step(s, 1)
+    }
+}
+
+fn test_app() -> App {
+    let app = http.app()
+    app.json("/ping", |body| { "{\"pong\":true}" })
+    app.json("/size", |body| { "{{body.len}}" })
+    app.json("/big", |body| { str.repeat("0123456789abcdef", 200000) })
+    app.json("/who", |body| {
+        let sid = http.req_cookie("sid")
+        let probe = http.req_header("x-probe")
+        "[{{sid}}][{{probe}}]"
+    })
+    app.json("/login", |body| {
+        let good = http.set_cookie("sid", "abc123", CookieProps { max_age: 3600 })
+        let bad = http.set_cookie("x", "a\r\nSet-Cookie: evil=1", CookieProps {})
+        "{{good}} {{bad}}"
+    })
+    app.json("/logout", |body| {
+        let done = http.clear_cookie("sid")
+        "{{done}}"
+    })
+    app.rpc("Echo.Ping", |body| { body })
+    return app
+}
+
+fn stalled_client_blocks_nobody() {
+    let mut s = server_start(test_app(), 0, ListenProps {})
+    expect(s.fd >= 0, "bind")
+
+    // Half a request, and silence. The old loop stopped here.
+    let stalled = dial(&s)
+    expect(net.tcp_write(stalled, "GET /ping HT") > 0, "partial send")
+    pump(&mut s, 3)
+    expect(s.conns.len == 1, "stalled client is held")
+
+    let mut crowd = []int {}
+    for i in 0..20 {
+        let fd = dial(&s)
+        net.tcp_write(fd, "GET /pi")
+        crowd.push(fd)
+    }
+    pump(&mut s, 3)
+
+    for i in 0..10 {
+        expect_has(ask(&mut s, "/ping"), "{\"pong\":true}", "served while others stall")
+    }
+    expect(s.conns.len == 21, "the stalled are still held")
+
+    // Everyone it waited on can still finish.
+    net.tcp_write(stalled, "TP/1.1\r\nHost: t\r\n\r\n")
+    expect_has(reply(&mut s, stalled), "200 OK", "stalled client finishes")
+    for i in 0..crowd.len {
+        net.tcp_write(crowd[i], "ng HTTP/1.1\r\nHost: t\r\n\r\n")
+    }
+    for i in 0..crowd.len {
+        expect_has(reply(&mut s, crowd[i]), "pong", "crowd finishes")
+    }
+    pump(&mut s, 3)
+    expect(s.conns.len == 0, "all closed")
+    server_stop(&mut s)
+}
+
+fn requests_arrive_in_pieces() {
+    let mut s = server_start(test_app(), 0, ListenProps {})
+    let body = str.repeat("x", 30000)
+    let req = "POST /size HTTP/1.1\r\nHost: t\r\nContent-Type: application/json\r\nContent-Length: {{body.len}}\r\n\r\n{{body}}"
+    let fd = dial(&s)
+    let mut at = 0
+    while at < req.len {
+        let end = if at + 7000 < req.len { at + 7000 } else { req.len }
+        net.tcp_write(fd, str.slice(req, at, end))
+        at = end
+        pump(&mut s, 2)
+    }
+    expect_has(reply(&mut s, fd), "\r\n\r\n30000", "body in pieces")
+
+    // One byte at a time, past the point it could still be h2c.
+    let bytes = dial(&s)
+    let text = get("/ping")
+    for i in 0..text.len {
+        net.tcp_write(bytes, str.slice(text, i, i + 1))
+        pump(&mut s, 1)
+    }
+    expect_has(reply(&mut s, bytes), "pong", "byte at a time")
+    server_stop(&mut s)
+}
+
+fn timeouts() {
+    let mut s = server_start(test_app(), 0, ListenProps { timeout_ms: 60 })
+    let silent = dial(&s)
+    let partial = dial(&s)
+    net.tcp_write(partial, "GET /ping")
+    pump(&mut s, 2)
+    expect_has(reply(&mut s, silent), "408", "silent client times out")
+    expect_has(reply(&mut s, partial), "408", "partial request times out")
+    pump(&mut s, 3)
+    expect(s.conns.len == 0, "timed out sockets close")
+
+    // A client that never reads its reply is dropped too.
+    let reader = dial(&s)
+    net.tcp_write(reader, get("/big"))
+    pump(&mut s, 3)
+    expect(s.conns.len == 1, "a big reply is waiting on its reader")
+    async.sleep(90)
+    pump(&mut s, 3)
+    expect(s.conns.len == 0, "a reader that stalls is dropped")
+    net.tcp_close(reader)
+    server_stop(&mut s)
+}
+
+fn gone_client_is_dropped() {
+    let mut s = server_start(test_app(), 0, ListenProps {})
+    let fd = dial(&s)
+    net.tcp_write(fd, "GET /pi")
+    pump(&mut s, 3)
+    expect(s.conns.len == 1, "held")
+    net.tcp_close(fd)
+    pump(&mut s, 3)
+    expect(s.conns.len == 0, "a client that left is closed")
+    server_stop(&mut s)
+}
+
+fn slow_reader_blocks_nobody() {
+    let mut s = server_start(test_app(), 0, ListenProps {})
+    let reader = dial(&s)
+    net.tcp_write(reader, get("/big"))
+    pump(&mut s, 3)
+    expect(s.conns.len == 1, "reply waits on the socket")
+    expect_has(ask(&mut s, "/ping"), "pong", "served during a slow download")
+    let whole = reply(&mut s, reader)
+    expect(whole.len > 3200000, "the whole reply arrives")
+    server_stop(&mut s)
+}
+
+fn size_limits() {
+    let mut s = server_start(test_app(), 0, ListenProps { max_body: 1000 })
+    let declared = dial(&s)
+    net.tcp_write(declared, "POST /size HTTP/1.1\r\nHost: t\r\nContent-Length: 5000\r\n\r\n")
+    expect_has(reply(&mut s, declared), "413", "refused from Content-Length alone")
+
+    let headers = dial(&s)
+    let junk = str.repeat("a", 30000)
+    net.tcp_write(headers, "GET /ping HTTP/1.1\r\nX-Junk: {{junk}}")
+    expect_has(reply(&mut s, headers), "413", "endless headers")
+
+    let fits = dial(&s)
+    let body = str.repeat("y", 800)
+    net.tcp_write(
+        fits,
+        "POST /size HTTP/1.1\r\nHost: t\r\nContent-Type: application/json\r\nContent-Length: 800\r\n\r\n{{body}}",
+    )
+    expect_has(reply(&mut s, fits), "\r\n\r\n800", "a request under the limit")
+    server_stop(&mut s)
+
+    // The limit can also be raised past the old fixed one.
+    let mut large = server_start(test_app(), 0, ListenProps { max_body: 300000 })
+    let fd = dial(&large)
+    let big = str.repeat("z", 200000)
+    net.tcp_write(
+        fd,
+        "POST /size HTTP/1.1\r\nHost: t\r\nContent-Type: application/json\r\nContent-Length: 200000\r\n\r\n{{big}}",
+    )
+    expect_has(reply(&mut large, fd), "\r\n\r\n200000", "a raised limit")
+    server_stop(&mut large)
+}
+
+fn connection_cap() {
+    let mut s = server_start(test_app(), 0, ListenProps { max_conns: 2 })
+    let a = dial(&s)
+    let b = dial(&s)
+    let c = dial(&s)
+    net.tcp_write(a, "GET /p")
+    net.tcp_write(b, "GET /p")
+    net.tcp_write(c, get("/ping"))
+    pump(&mut s, 5)
+    expect(s.conns.len == 2, "held at the cap")
+    expect(net.tcp_poll(c, 1, 0) == 0, "the third waits")
+
+    // At the cap the waiting client must not make the loop spin.
+    let before = async.now_ms()
+    server_step(&mut s, 30)
+    expect(int(async.now_ms() - before) >= 20, "a full server sleeps")
+
+    net.tcp_write(a, "ing HTTP/1.1\r\nHost: t\r\n\r\n")
+    expect_has(reply(&mut s, a), "pong", "first finishes")
+    expect_has(reply(&mut s, c), "pong", "the third gets its turn")
+    net.tcp_close(b)
+    server_stop(&mut s)
+}
+
+fn other_protocols() {
+    let mut s = server_start(test_app(), 0, ListenProps {})
+
+    let web = dial(&s)
+    net.tcp_write(web, http.client_post("127.0.0.1", s.port, "/Echo/Ping", http.frame_str("hi")))
+    pump(&mut s, 5)
+    expect(http.eq(http.h1_read_unary(web), "hi"), "gRPC-Web")
+    net.tcp_close(web)
+
+    // h2c, split inside the preface and again inside a frame.
+    let raw = http.client_h2("/Echo/Ping", http.frame_str("hi"))
+    let h2 = dial(&s)
+    net.tcp_write(h2, str.slice(raw, 0, 10))
+    pump(&mut s, 2)
+    net.tcp_write(h2, str.slice(raw, 10, 30))
+    pump(&mut s, 2)
+    net.tcp_write(h2, str.slice(raw, 30, raw.len))
+    pump(&mut s, 5)
+    expect(http.eq(http.h2_read_unary(h2), "hi"), "h2c")
+    net.tcp_close(h2)
+    server_stop(&mut s)
+
+    // A timed out h2c client is closed, not sent an HTTP/1.1 reply.
+    let mut quick = server_start(test_app(), 0, ListenProps { timeout_ms: 40 })
+    let idle = dial(&quick)
+    net.tcp_write(idle, str.slice(raw, 0, 30))
+    expect(reply(&mut quick, idle).len == 0, "h2c timeout")
+    server_stop(&mut quick)
+}
+
+fn binding() {
+    let mut any = server_start(test_app(), 0, ListenProps { host: "0.0.0.0" })
+    expect(any.fd >= 0, "bind 0.0.0.0")
+    expect_has(ask(&mut any, "/ping"), "pong", "served on 0.0.0.0")
+    server_stop(&mut any)
+
+    let bad = server_start(test_app(), 0, ListenProps { host: "not an address" })
+    expect(bad.fd < 0, "a bad host fails")
+    let taken = server_start(test_app(), 0, ListenProps {})
+    let again = server_start(test_app(), taken.port, ListenProps {})
+    expect(again.fd < 0, "a taken port fails")
+    let mut stop = taken
+    server_stop(&mut stop)
+}
+
+fn cookie_header(s: &mut Server, cookie: string) -> string {
+    let fd = dial(s)
+    net.tcp_write(fd, "GET /who HTTP/1.1\r\nHost: t\r\nCookie: {{cookie}}\r\nX-Probe: seen\r\n\r\n")
+    return reply(s, fd)
+}
+
+fn cookies() {
+    let mut s = server_start(test_app(), 0, ListenProps {})
+
+    expect_has(cookie_header(&mut s, "sid=abc"), "[abc][seen]", "cookie and header")
+    expect_has(cookie_header(&mut s, "a=1; sid=abc; b=2"), "[abc]", "among others")
+    expect_has(cookie_header(&mut s, "a=1;sid=abc"), "[abc]", "no space")
+    expect_has(cookie_header(&mut s, "sid=\"abc\""), "[abc]", "quoted")
+    expect_has(cookie_header(&mut s, "xsid=no; sid2=no; sid=yes"), "[yes]", "only the exact name")
+    expect_has(cookie_header(&mut s, "other=1"), "[][seen]", "absent")
+    expect_has(ask(&mut s, "/who"), "[][]", "no state from the last request")
+
+    let login = ask(&mut s, "/login")
+    expect_has(
+        login,
+        "Set-Cookie: sid=abc123; Path=/; SameSite=Lax; Max-Age=3600; HttpOnly; Secure\r\n",
+        "set",
+    )
+    expect_has(login, "Cache-Control: no-store", "a reply with a cookie is not cached")
+    expect_has(login, "\r\n\r\ntrue false", "a value with a line break is refused")
+    expect(!str.contains(login, "evil"), "nothing injected")
+
+    expect(!str.contains(ask(&mut s, "/ping"), "Set-Cookie"), "cookies do not carry over")
+
+    // Not even onto a reply that runs no handler, such as a malformed request.
+    let _ = http.set_cookie("stale", "v", CookieProps {})
+    let garbled = dial(&s)
+    net.tcp_write(garbled, "NOT HTTP\r\n\r\n")
+    let refused = reply(&mut s, garbled)
+    expect_has(refused, "HTTP/1.1 501", "malformed request")
+    expect(!str.contains(refused, "stale"), "a cookie left over reaches a refused request")
+    expect_has(ask(&mut s, "/logout"), "Set-Cookie: sid=; Path=/; SameSite=Lax; Max-Age=0", "clear")
+
+    expect(!http.set_cookie("a b", "v", CookieProps {}), "name with a space")
+    expect(!http.set_cookie("a", "v;w", CookieProps {}), "value with a semicolon")
+    expect(!http.set_cookie("a", "v", CookieProps { path: "/;x" }), "path with a semicolon")
+    expect(!http.set_cookie("a", "v", CookieProps { same_site: "x\r\ny" }), "bad same_site")
+    server_stop(&mut s)
+}
+
+fn main() {
+    stalled_client_blocks_nobody()
+    requests_arrive_in_pieces()
+    timeouts()
+    gone_client_is_dropped()
+    slow_reader_blocks_nobody()
+    size_limits()
+    connection_cap()
+    other_protocols()
+    binding()
+    cookies()
+    fmt.println("http listen ok")
+}

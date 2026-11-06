@@ -40,13 +40,13 @@ Checked in this repo on 2026-11-06.
 |---|---|---|
 | gRPC and JSON routes | `http.app`, `rpc`, `app.json`, gRPC-Web | None for the routes themselves |
 | Async client | `call_async` over wasm fetch slots | None |
-| Async server | `http.listen` accepts and serves one connection at a time | A slow client blocks everyone |
-| Public binding | `listen` binds 127.0.0.1 only | Fly needs 0.0.0.0, so this needs a bind option |
+| Async server | `http.listen` is a non-blocking `poll` loop on one thread, with timeouts and limits | A long handler still holds everyone up |
+| Public binding | `ListenProps.host`, 127.0.0.1 by default | None |
 | C FFI | `#[c]`, `#![c_source]`, and `#![c_link]`, native builds only. See `docs/boundary.md` | None |
 | SQLite | `std:sqlite`, vendored 3.54.1 in `packages/sqlite`, WAL by default | None |
 | Closures | A capturing closure's environment is never freed | Avoid them on per-request paths, or fix the language |
 | Crypto | SHA-1 in `httpcore/ws.loam`, nothing else | Needs password hashing, a MAC, and secure random |
-| Sessions | `req_token()` reads a Bearer token. No cookie handling | Needs `Cookie` and `Set-Cookie` |
+| Sessions | `req_cookie`, `req_header`, `set_cookie`, and `clear_cookie` on HTTP/1.1 | None |
 | Environment | `sys.env` reads a variable | None |
 | Linux build | `zeus_plat.c` has Linux branches, but a server build on Linux is untested. `loamc` has no Linux cross target | Build on a Linux runner, and prove it in phase 7 |
 | Deploy tools | `flyctl` is installed | None |
@@ -81,12 +81,18 @@ recursive CTE and window functions that phase 5 needs, and `VACUUM INTO`. Writin
 
 ### 3. Server work in `std:http`
 
-- Make `listen` async: non-blocking sockets on `tcp_poll`, so one slow client
-  cannot stall the rest. Add read timeouts and a body size limit.
-- Add a bind address option. The default stays 127.0.0.1, and the server opts in
-  to 0.0.0.0.
-- Add `Cookie` reading and `Set-Cookie` on a reply.
-- Done when a test holds one connection open while others are served.
+Done. `http_listen.loam` holds stalled clients open while others are served. In a
+real process on the dev Mac, 50 stalled clients left about 7,600 requests a second,
+and 127.0.0.1 was not reachable from the LAN unless the server opted in to 0.0.0.0.
+
+- `app.listen(port, ListenProps { ... })` takes `host`, `max_body`, `timeout_ms`,
+  and `max_conns`. A slow client gets 408, and a large body gets 413.
+- `server_start` and `server_step` run the same loop one turn at a time, for tests.
+- Cookies work on HTTP/1.1, which is what gRPC-Web uses here, not on h2c. Cookies
+  default to `HttpOnly`, `Secure`, and `SameSite=Lax`.
+- Replies still close the connection: there is no keep-alive.
+- Non-blocking accepted sockets rely on an explicit call on Linux, where they do
+  not inherit it from the listener. Prove the server on Linux in phase 7.
 
 ### 4. Crypto
 
