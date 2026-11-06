@@ -543,6 +543,8 @@ struct TextInputProps {
     style: Option<fn() -> Style> = none,
     /// Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`).
     keys: []KeyBind = no_keys(),
+    /// Enter in the field, with its text.
+    on_submit: Option<fn(string)> = none,
 }
 
 /// A field's accessible name: `label` when set, else the placeholder.
@@ -649,6 +651,11 @@ fn TextInput(value: Signal<string>, placeholder: string, p: TextInputProps) -> N
             style = Style(grow = 1, font = control_font(p.size), padding = 0, color = ink()),
             restyle = text_of(p.style),
             label = field_name(p.label, placeholder),
+            on_key_down = fn() {
+                if current_key().key == Key.Enter {
+                    emit_with(p.on_submit, value.get())
+                }
+            },
         )
         InputClear(value, field)
     }
@@ -2204,6 +2211,8 @@ struct PasswordInputProps {
     /// Accessible name. Empty uses the placeholder.
     label: string = "",
     style: Option<fn() -> Style> = none,
+    /// Enter in the field, with its text.
+    on_submit: Option<fn(string)> = none,
 }
 
 /// Masked text field with a reveal toggle. The bound `value` is the real
@@ -2228,6 +2237,11 @@ fn PasswordInput(value: Signal<string>, p: PasswordInputProps) -> Node {
             style = Style(grow = 1, font = control_font(p.size), padding = 0, color = ink()),
             secure = !reveal.get(),
             label = field_name(p.label, p.placeholder),
+            on_key_down = fn() {
+                if current_key().key == Key.Enter {
+                    emit_with(p.on_submit, value.get())
+                }
+            },
         )
         Box(
             style = Style(

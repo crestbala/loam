@@ -3366,6 +3366,67 @@ fn call_async(c: Client, name: string, body: string, cb: fn(string)) {
     cb("")
 }
 
+struct PostCall {
+    slot: int,
+    at: i64,
+}
+
+let mut posts: []PostCall = []PostCall {}
+let mut post_cbs: []fn(int, string) = []fn(int, string) {}
+let mut post_step_on = 0
+
+fn post_finish(idx: int, status: int, out: string) {
+    let cb = post_cbs[idx]
+    let mut calls = []PostCall {}
+    let mut cbs = []fn(int, string) {}
+    for i in 0..posts.len {
+        if i != idx {
+            push(calls, posts[i])
+            push(cbs, post_cbs[i])
+        }
+    }
+    posts = calls
+    post_cbs = cbs
+    async.io_close()
+    cb(status, out)
+}
+
+fn post_pump() {
+    let mut i = 0
+    while i < posts.len {
+        let slot = posts[i].slot
+        if net.fetch_slot_done(slot) != 0 {
+            let status = net.fetch_slot_status(slot)
+            post_finish(i, status, net.fetch_slot_take(slot))
+        } else if async.now_ms() > posts[i].at {
+            net.fetch_slot_drop(slot)
+            post_finish(i, 0, "")
+        } else {
+            i = i + 1
+        }
+    }
+}
+
+/// POST `body` to a same-origin `path` from wasm, as is, and run
+/// `cb(status, reply)` on a later frame. For an endpoint that is not gRPC, so a
+/// caller can tell 401 from 503: `reply` is the body on 200 and empty otherwise,
+/// and `status` is 0 when nothing answered. The browser sends the site's
+/// cookies. Replies are cut at 64 KB. Native has no such fetch and gets status 0.
+fn post_async(path: string, body: string, cb: fn(int, string)) {
+    let slot = net.fetch_start(path, body, 0)
+    if slot < 0 {
+        cb(0, "")
+        return
+    }
+    if post_step_on == 0 {
+        post_step_on = 1
+        async.add_step(|| { post_pump() })
+    }
+    push(posts, PostCall { slot: slot, at: async.now_ms() + i64(FETCH_TIMEOUT_MS) })
+    push(post_cbs, cb)
+    async.io_open()
+}
+
 /// One `http.client` log line for a finished call. An empty reply is a
 /// warning: it is what a down server or a proxy error looks like, though an
 /// all-default message also encodes to nothing.
