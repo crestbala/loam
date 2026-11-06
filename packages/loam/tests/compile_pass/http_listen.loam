@@ -253,6 +253,32 @@ fn connection_cap() {
     server_stop(&mut s)
 }
 
+/// A request with `count` headers, the first `size` bytes long.
+fn with_headers(count: int, size: int) -> string {
+    let framed = http.frame_str("hi")
+    let long = str.repeat("x", size)
+    let mut head = "x-first: {{long}}\r\n"
+    for i in 1..count {
+        head = "{{head}}x-more-{{i}}: 1\r\n"
+    }
+    return "POST /Echo/Ping HTTP/1.1\r\nHost: t\r\n{{head}}Content-Type: application/grpc-web+proto\r\nContent-Length: {{framed.len}}\r\n\r\n{{framed}}"
+}
+
+/// A browser sends about 20 headers, and Vercel adds as many, some of them long.
+fn proxied_requests() {
+    let mut s = server_start(test_app(), 0, ListenProps {})
+    let busy = dial(&s)
+    net.tcp_write(busy, with_headers(60, 2000))
+    expect_has(reply(&mut s, busy), "200 OK", "a proxied browser's headers")
+    let many = dial(&s)
+    net.tcp_write(many, with_headers(200, 1))
+    expect_has(reply(&mut s, many), "431", "too many headers")
+    let long = dial(&s)
+    net.tcp_write(long, with_headers(2, 9000))
+    expect_has(reply(&mut s, long), "431", "a header too long")
+    server_stop(&mut s)
+}
+
 fn other_protocols() {
     let mut s = server_start(test_app(), 0, ListenProps {})
 
@@ -350,6 +376,7 @@ fn main() {
     gone_client_is_dropped()
     slow_reader_blocks_nobody()
     size_limits()
+    proxied_requests()
     connection_cap()
     other_protocols()
     binding()

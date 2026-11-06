@@ -150,6 +150,11 @@ let mut json_ctype: string = "application/json; charset=utf-8"
 let mut last_status: int = 0
 /// Bytes allowed for the request line and headers, on top of the body.
 const HEAD_ROOM: int = 24576
+/// Headers in one request. A browser sends about 20, and a proxy such as Vercel adds
+/// as many again, so a low limit refuses real visitors and only them.
+const MAX_HEADERS: int = 128
+/// One header's value. Proxies send signed tokens, and cookies run long.
+const MAX_HEADER_VALUE: int = 8192
 /// The largest body `parse_http11` takes, and the most it reads for one request.
 let mut body_cap: int = 65536
 let mut request_cap: int = 65536 + HEAD_ROOM
@@ -1712,7 +1717,7 @@ fn parse_http11(raw: string) -> ParsedReq {
     let mut nh = 0
     let mut has_host = 0
     let hend = hdr_end + 2
-    for h in 0..42 {
+    for h in 0..(MAX_HEADERS + 2) {
         if err == 0 {
             if line < hend {
                 let eol = find_char(raw, line, hend, 10)
@@ -1775,10 +1780,10 @@ fn parse_http11(raw: string) -> ParsedReq {
                                     }
                                 }
                                 let vl = llen - vs
-                                if vl >= 256 {
-                                    err = 400
+                                if vl >= MAX_HEADER_VALUE {
+                                    err = 431
                                 }
-                                if nh >= 40 {
+                                if nh >= MAX_HEADERS {
                                     err = 431
                                 }
                                 if err == 0 {
@@ -1880,7 +1885,7 @@ fn header_cl(raw: string, hdr_end: int) -> int {
     let mut line = first_nl + 1
     let hend = hdr_end + 2
     let mut cl = -1
-    for h in 0..42 {
+    for h in 0..(MAX_HEADERS + 2) {
         if line < hend {
             let eol = find_char(raw, line, hend, 10)
             if eol < 0 {
