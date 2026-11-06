@@ -33,5 +33,14 @@ fn main() {
     let payload = http.unframe(framed)
     must(payload.len == 2)
     must(payload[0] == 172)
+
+    // The length comes from the client. A claim past the end stops at what arrived,
+    // at once, and the top byte must not overflow.
+    let liar = []int { 0, 127, 255, 255, 255, 9 }
+    must(http.unframe(liar).len == 1)
+    let huge = []int { 0, 255, 255, 255, 255, 9 }
+    must(http.unframe(huge).len == 1)
+    let trailing = []int { 0, 0, 0, 0, 1, 9, 8 }
+    must(http.unframe(trailing).len == 1)
     fmt.println(g.val, payload.len)
 }

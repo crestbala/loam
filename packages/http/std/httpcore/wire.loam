@@ -82,24 +82,15 @@ fn frame(payload: &[]int) -> []int {
     return out
 }
 
-/// Strip a gRPC data frame header. Short input yields an empty buffer.
+/// Strip a gRPC data frame header. Short input yields an empty buffer. The length
+/// comes off the wire, so a frame claiming more than arrived stops at what did.
 fn unframe(buf: &[]int) -> []int {
     let mut out = []int {}
     if buf.len >= 5 {
-        let n = buf[1] * 16777216 + buf[2] * 65536 + buf[3] * 256 + buf[4]
-        let mut i = 5
-        let mut left = n
-        for k in 0..n {
-            if left > 0 {
-                if i < buf.len {
-                    out.push(buf[i])
-                    i += 1
-                    left -= 1
-                }
-                if i >= buf.len {
-                    left = 0
-                }
-            }
+        let n = i64(buf[1]) * 16777216 + i64(buf[2] * 65536 + buf[3] * 256 + buf[4])
+        let end = if n < i64(buf.len - 5) { 5 + int(n) } else { buf.len }
+        for i in 5..end {
+            out.push(buf[i])
         }
     }
     return out
