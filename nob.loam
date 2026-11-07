@@ -1221,9 +1221,8 @@ fn test_batched(t0: int) -> int {
     // Longest first: `xargs` starts jobs in order, so anything queued behind the
     // hundred quick rejections below would run after them, not beside the build.
     let mut setup = []Job {
-        stanza_job("suite_zeus"), stanza_job("wasm_smoke"), stanza_job("wasm_trap"),
-        stanza_job("ir_zeus"), stanza_job("suite_plain"), stanza_job("ir_plain"),
-        stanza_job("suite_tests"),
+        stanza_job("ir_zeus"), stanza_job("wasm_smoke"), stanza_job("wasm_trap"),
+        stanza_job("suite_tests"), stanza_job("ir_plain"),
     }
     let hosts = host_stanzas()
     for i in 0..hosts.len {
@@ -1261,7 +1260,7 @@ fn test_batched(t0: int) -> int {
         }
         sys.remove_path(suite_path(class, ".built"))
         sys.remove_path(suite_path(class, "_serve"))
-        sys.write_file(suite_path(class, ".loam"), suite_source(files))
+        write_if_changed(suite_path(class, ".loam"), suite_source(files))
         let mut served = []string {}
         for i in 0..jobs.len {
             let j = jobs[i]
@@ -1280,7 +1279,7 @@ fn test_batched(t0: int) -> int {
             push(imports, "import \"{{js[i].src}}\" as t{{g}}_{{i}}")
         }
     }
-    sys.write_file(suite_path("tests", ".loam"), unlines(imports))
+    write_if_changed(suite_path("tests", ".loam"), unlines(imports))
     let groups = [][]Job { fail_jobs(), irgolden_jobs() }
     for g in 0..groups.len {
         let js = groups[g]
@@ -1288,13 +1287,27 @@ fn test_batched(t0: int) -> int {
             push(setup, js[i])
         }
     }
-    let mut failed = pool("setup", setup)
+    // Compiling the two batches is the long pole, so nothing else runs then.
+    // Serving them forks hundreds of cases and overlaps the other checks.
+    let heavy = []Job { stanza_job("suite_zeus"), stanza_job("suite_plain") }
+    let mut failed = pool("batch", heavy)
+    let built_zeus = split_lines(sys.read_file(suite_path("zeus", ".built")))
+    let built_plain = split_lines(sys.read_file(suite_path("plain", ".built")))
+    // Serving forks one process per fixture. It runs before the other checks
+    // so those compilers are not on the machine while the forks are.
+    failed += pool("serve", []Job { stanza_job("serve_zeus"), stanza_job("serve_plain") })
+    for i in 0..jobs.len {
+        let j = jobs[i]
+        if servable(j) || has_str(lone, j.src) {
+            continue
+        }
+        push(setup, batched_case(j, built_zeus, built_plain))
+    }
+    failed += pool("setup", setup)
 
     // A suite that could not hold a fixture left it out of `.built`, and with no
     // `.built` at all every fixture compiles alone: slower, never wrong. What a
     // suite served and passed is done; the rest goes through a case script.
-    let built_zeus = split_lines(sys.read_file(suite_path("zeus", ".built")))
-    let built_plain = split_lines(sys.read_file(suite_path("plain", ".built")))
     let mut done = []bool {}
     for i in 0..jobs.len {
         push(done, false)
@@ -1317,21 +1330,28 @@ fn test_batched(t0: int) -> int {
     }
     for i in 0..jobs.len {
         let j = jobs[i]
-        if done[i] || has_str(lone, j.src) {
+        if !servable(j) || done[i] || has_str(lone, j.src) {
             continue
         }
-        let z = index_of(built_zeus, j.src)
-        let p = index_of(built_plain, j.src)
-        if z >= 0 {
-            push(cases, Job { kind: j.kind, src: j.src, out: j.out, want: j.want, desc: j.desc, bin: suite_path("zeus", ""), case_id: z })
-        } else if p >= 0 {
-            push(cases, Job { kind: j.kind, src: j.src, out: j.out, want: j.want, desc: j.desc, bin: suite_path("plain", ""), case_id: p })
-        } else {
-            push(cases, j)
-        }
+        push(cases, batched_case(j, built_zeus, built_plain))
     }
-    failed += pool("cases", cases)
+    if cases.len > 0 {
+        failed += pool("cases", cases)
+    }
     return report(t0, failed)
+}
+
+/// `j` run from its batch binary when that batch kept it, and on its own when not.
+fn batched_case(j: Job, built_zeus: []string, built_plain: []string) -> Job {
+    let z = index_of(built_zeus, j.src)
+    let p = index_of(built_plain, j.src)
+    if z >= 0 {
+        return Job { kind: j.kind, src: j.src, out: j.out, want: j.want, desc: j.desc, bin: suite_path("zeus", ""), case_id: z }
+    }
+    if p >= 0 {
+        return Job { kind: j.kind, src: j.src, out: j.out, want: j.want, desc: j.desc, bin: suite_path("plain", ""), case_id: p }
+    }
+    return j
 }
 
 /// Compile one batch. A fixture the compiler rejects is left out, so it reports
@@ -1354,7 +1374,6 @@ fn ig_suite(class: string) {
         if sh("{{env}} {{shq(LOAMC)}} {{shq(source)}} -o {{shq(bin)}} > {{shq(log)}} 2>&1") {
             sys.write_file(suite_path(class, ".built"), unlines(files))
             ok("batch {{class}} ({{files.len}} fixtures, one binary)")
-            serve_suite(class, files)
             return
         }
         let text = sys.read_file(log)
@@ -1370,11 +1389,22 @@ fn ig_suite(class: string) {
             break
         }
         files = rest
-        sys.write_file(source, suite_source(files))
+        write_if_changed(source, suite_source(files))
     }
     fmt.println("warn batch: {{class}} did not build, so its fixtures compile alone")
     catlog(log)
     N_RETRIED += 1
+}
+
+/// Fork every case the batch binary can judge. A case it does not pass is left
+/// for the caller to rerun; this stanza does not fail the run on its own.
+fn ig_serve(class: string) {
+    mark("serve {{class}}")
+    let builtp = suite_path(class, ".built")
+    if sys.exists(builtp) == 0 {
+        return
+    }
+    serve_suite(class, split_lines(sys.read_file(builtp)))
 }
 
 /// The files a generated suite imports.
@@ -1402,7 +1432,8 @@ fn ig_suite_tests() {
     mark("suite tests")
     let log = suite_path("tests", ".log")
     let source = suite_path("tests", ".loam")
-    if sh("{{shq(LOAMC)}} test {{shq(source)}} > {{shq(log)}} 2>&1") {
+    let bin = suite_path("tests", "")
+    if sh("{{shq(LOAMC)}} test {{shq(source)}} -o {{shq(bin)}} > {{shq(log)}} 2>&1") {
         ok("in-language tests ({{suite_files_tests(source)}} files, one binary)")
         return
     }
@@ -1422,7 +1453,7 @@ fn suite_files_tests(source: string) -> int {
 fn ig_suite_ir(class: string) {
     mark("ir {{class}}")
     let source = tmpf("nob/suite_{{class}}_ir.loam")
-    cp(suite_path(class, ".loam"), source)
+    write_if_changed(source, sys.read_file(suite_path(class, ".loam")))
     let out = suite_path(class, ".ir")
     let log = suite_path(class, ".irlog")
     if !sh("{{shq(LOAMC)}} --emit-ir {{shq(source)}} -o {{shq(out)}} > {{shq(log)}} 2>&1") {
@@ -1570,6 +1601,14 @@ fn git_clean(p: string, log: string) -> bool {
 
 fn write_text(p: string, body: string) -> bool {
     return sys.write_file(p, body) == 0
+}
+
+/// Leave `p` untouched when it already holds `body`, so a later compile can see
+/// that this input did not change.
+fn write_if_changed(p: string, body: string) {
+    if sys.read_file(p) != body {
+        sys.write_file(p, body)
+    }
 }
 
 fn append_text(p: string, body: string) -> bool {
@@ -2525,6 +2564,10 @@ fn stanza_dispatch(name: string) -> bool {
         ig_suite("zeus")
     } else if name == "suite_plain" {
         ig_suite("plain")
+    } else if name == "serve_zeus" {
+        ig_serve("zeus")
+    } else if name == "serve_plain" {
+        ig_serve("plain")
     } else if name == "suite_tests" {
         ig_suite_tests()
     } else if name == "ir_zeus" {

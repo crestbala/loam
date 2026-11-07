@@ -687,6 +687,193 @@ static void app_input(const char *dir, const char *cpath, const char *cc, const 
     snprintf(out, n, "-x c \"%s\"", cpath);
 }
 
+/* A finished build records what it read in `<output>.fresh`. The next run of
+   the same command reuses the output when the compiler, the flags, the runtime
+   tree, and every module still match, and does the frontend again when any of
+   them does not. `LOAM_NO_FRESH=1` turns the reuse off. */
+static int fresh_off(void) { return env_on("LOAM_NO_FRESH"); }
+
+static void stamp_times(const struct stat *st, long long *sec, long *nsec) {
+#if defined(__APPLE__)
+    *sec = (long long)st->st_mtimespec.tv_sec;
+    *nsec = (long)st->st_mtimespec.tv_nsec;
+#else
+    *sec = (long long)st->st_mtim.tv_sec;
+    *nsec = (long)st->st_mtim.tv_nsec;
+#endif
+}
+
+static uint64_t dir_fp(const char *dir, uint64_t h) {
+    DIR *d = opendir(dir);
+    h = fnv_str(dir ? dir : "", h);
+    if (!d) return fnv("0", 1, h);
+    uint64_t sum = 0;
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        char path[1536];
+        struct stat st;
+        snprintf(path, sizeof path, "%s/%s", dir, e->d_name);
+        if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) continue;
+        long long sec = 0;
+        long nsec = 0;
+        stamp_times(&st, &sec, &nsec);
+        uint64_t one = fnv_str(e->d_name, 14695981039346656037ULL);
+        one = fnv(&sec, sizeof sec, one);
+        one = fnv(&nsec, sizeof nsec, one);
+        one = fnv(&st.st_size, sizeof st.st_size, one);
+        sum += one;
+    }
+    closedir(d);
+    return fnv(&sum, sizeof sum, h);
+}
+
+static uint64_t fresh_key_hash(char **argv, int argc, const char *in_path) {
+    uint64_t h = fnv_str("loam-fresh-1", 14695981039346656037ULL);
+    for (int i = 1; i < argc; i++) h = fnv_str(argv[i], h);
+    static const char *envs[] = {
+        "ZEUS_HEADLESS", "LOAM_HEADLESS", "MAYA_HEADLESS", "LOAM_DEV",
+        "LOAM_BATCH",    "LOAM_SHARD",    "LOAM_DEBUG",    "ZEUS_MEM_STATS",
+        "LOAM_HOST",     "LOAM_SERVER_SPLIT", "LOAM_WASM_CC", "LOAM_NO_DCE",
+    };
+    for (size_t i = 0; i < sizeof envs / sizeof envs[0]; i++) {
+        const char *v = getenv(envs[i]);
+        h = fnv_str(envs[i], h);
+        h = fnv_str(v ? v : "", h);
+    }
+    struct stat st;
+    if (argv[0] && stat(argv[0], &st) == 0) {
+        long long sec = 0;
+        long nsec = 0;
+        stamp_times(&st, &sec, &nsec);
+        h = fnv(&sec, sizeof sec, h);
+        h = fnv(&nsec, sizeof nsec, h);
+        h = fnv(&st.st_size, sizeof st.st_size, h);
+    }
+    h = dir_fp(LOAM_RUNTIME_DIR, h);
+    char sub[1024];
+    snprintf(sub, sizeof sub, "%s/wasm_inc", LOAM_RUNTIME_DIR);
+    h = dir_fp(sub, h);
+    snprintf(sub, sizeof sub, "%s/hosts/web", LOAM_ZEUS_DIR);
+    h = dir_fp(sub, h);
+    snprintf(sub, sizeof sub, "%s/hosts/desktop", LOAM_ZEUS_DIR);
+    h = dir_fp(sub, h);
+    snprintf(sub, sizeof sub, "%s/hosts/apple", LOAM_ZEUS_DIR);
+    h = dir_fp(sub, h);
+    if (in_path) {
+        char *dir = dir_of(in_path);
+        snprintf(sub, sizeof sub, "%s/runtime", dir);
+        free(dir);
+        h = dir_fp(sub, h);
+    }
+    return h;
+}
+
+static void fresh_stamp_path(const char *out, char *stamp, size_t n) {
+    snprintf(stamp, n, "%s.fresh", out);
+}
+
+/* 1 when `out` was built from these exact inputs. */
+static int fresh_match(const char *out, const char *key) {
+    char stamp[1200], line[8192];
+    fresh_stamp_path(out, stamp, sizeof stamp);
+    FILE *f = fopen(stamp, "r");
+    if (!f) return 0;
+    if (!fgets(line, sizeof line, f)) {
+        fclose(f);
+        return 0;
+    }
+    size_t kn = strlen(key);
+    if (strncmp(line, "K ", 2) != 0 || strlen(line) < kn + 3 ||
+        strncmp(line + 2, key, kn) != 0 || line[2 + kn] != '\n') {
+        fclose(f);
+        return 0;
+    }
+    struct stat cur;
+    if (stat(out, &cur) != 0 || !S_ISREG(cur.st_mode) || cur.st_size <= 0) {
+        fclose(f);
+        return 0;
+    }
+    int saw_out = 0, saw_file = 0, bad = 0;
+    while (fgets(line, sizeof line, f)) {
+        char kind = line[0];
+        long long sec = 0, sz = 0;
+        long nsec = 0;
+        char *path = NULL;
+        if ((kind != 'O' && kind != 'F') || line[1] != ' ') {
+            bad = 1;
+            break;
+        }
+        char *at = line + 2;
+        sec = strtoll(at, &at, 10);
+        if (*at != ' ') {
+            bad = 1;
+            break;
+        }
+        nsec = strtol(at + 1, &at, 10);
+        if (*at != ' ') {
+            bad = 1;
+            break;
+        }
+        sz = strtoll(at + 1, &at, 10);
+        if (*at != ' ') {
+            bad = 1;
+            break;
+        }
+        path = at + 1;
+        size_t pn = strlen(path);
+        if (pn && path[pn - 1] == '\n') path[pn - 1] = 0;
+        if (kind == 'O') {
+            long long csec = 0;
+            long cnsec = 0;
+            stamp_times(&cur, &csec, &cnsec);
+            if (csec != sec || cnsec != nsec || (long long)cur.st_size != sz) bad = 1;
+            saw_out = 1;
+        } else {
+            struct stat st;
+            long long csec = 0;
+            long cnsec = 0;
+            if (!path[0] || stat(path, &st) != 0 || !S_ISREG(st.st_mode)) {
+                bad = 1;
+                break;
+            }
+            stamp_times(&st, &csec, &cnsec);
+            if (csec != sec || cnsec != nsec || (long long)st.st_size != sz) bad = 1;
+            saw_file = 1;
+        }
+        if (bad) break;
+    }
+    fclose(f);
+    return !bad && saw_out && saw_file;
+}
+
+static void fresh_save(const char *out, const char *key, const LoamSession *sess) {
+    char stamp[1200], tmp[1300];
+    struct stat st;
+    fresh_stamp_path(out, stamp, sizeof stamp);
+    snprintf(tmp, sizeof tmp, "%s.%ld", stamp, (long)getpid());
+    if (stat(out, &st) != 0) return;
+    for (int i = 0; i < sess->nmods; i++)
+        if (!sess->mods[i].path) return;
+    FILE *f = fopen(tmp, "w");
+    if (!f) return;
+    fprintf(f, "K %s\n", key);
+    long long sec = 0;
+    long nsec = 0;
+    stamp_times(&st, &sec, &nsec);
+    fprintf(f, "O %lld %ld %lld %s\n", sec, nsec, (long long)st.st_size, out);
+    for (int i = 0; i < sess->nmods; i++) {
+        if (stat(sess->mods[i].path, &st) != 0) {
+            fclose(f);
+            unlink(tmp);
+            return;
+        }
+        stamp_times(&st, &sec, &nsec);
+        fprintf(f, "F %lld %ld %lld %s\n", sec, nsec, (long long)st.st_size,
+                sess->mods[i].path);
+    }
+    if (fclose(f) != 0 || rename(tmp, stamp) != 0) unlink(tmp);
+}
+
 static int copy_file(const char *src, const char *dst) {
     FILE *in, *out;
     char buf[4096];
@@ -1320,6 +1507,31 @@ int main(int argc, char **argv) {
     type_set_string_owns(string_owns);
 
     int show_time = env_on("LOAM_TIME");
+    char fresh_buf[32];
+    const char *fresh_key = NULL;
+    if (out_path && in_path && !check_only && !cost && !emit_c &&
+        !target_ios && !target_android && !fresh_off()) {
+        snprintf(fresh_buf, sizeof fresh_buf, "%016llx",
+                 (unsigned long long)fresh_key_hash(argv, argc, in_path));
+        fresh_key = fresh_buf;
+        if (fresh_match(out_path, fresh_key)) {
+            if (show_time) fprintf(stderr, "loam: fresh\n");
+            if (emit_ir) return 0;
+            if (!test_mode) {
+                if (target_wasm)
+                    printf("loam: %s -> %s (Canvas2D wasm)\n", in_path, out_path);
+                else
+                    printf("loam: %s -> %s\n", in_path, out_path);
+            }
+            if (!run) return 0;
+            char rcmd[1200];
+            if (out_path[0] == '/' || (out_path[0] == '.' && out_path[1] == '/'))
+                snprintf(rcmd, sizeof rcmd, "\"%s\"", out_path);
+            else
+                snprintf(rcmd, sizeof rcmd, "\"./%s\"", out_path);
+            return system(rcmd) == 0 ? 0 : 1;
+        }
+    }
     double t0 = now_sec();
     LoamSession sess;
     loam_session_init(&sess);
@@ -1399,6 +1611,7 @@ int main(int argc, char **argv) {
         }
         ir_print(ir_out, ir);
         if (out_path) fclose(ir_out);
+        if (!bad && fresh_key && out_path) fresh_save(out_path, fresh_key, &sess);
         ir_free(ir);
         loam_session_free(&sess);
         return bad ? 1 : 0;
@@ -1440,9 +1653,11 @@ int main(int argc, char **argv) {
         }
         close(fd);
         cpath_is_temp = 1;
-        if (test_mode) {
+        if (test_mode && !out_path) {
             /* The runner binary is a throwaway; never write it into the app's
-               build/ tree. `cc` overwrites the mkstemp'd empty file. */
+               build/ tree. `cc` overwrites the mkstemp'd empty file.
+               `loam test -o <bin>` keeps that path so the next identical run
+               can reuse it. */
             char tb[1024];
             snprintf(tb, sizeof tb, "%s/loam_test_XXXXXX",
                      (tmpdir && tmpdir[0]) ? tmpdir : "/tmp");
@@ -1707,6 +1922,7 @@ int main(int argc, char **argv) {
             if (system(keep) != 0) fprintf(stderr, "loam: could not keep the C for splitting\n");
         }
         if (cpath_is_temp) unlink(cpath);
+        if (fresh_key) fresh_save(binpath, fresh_key, &sess);
         printf("loam: %s -> %s (Canvas2D wasm)\n", in_path, binpath);
         free(outdir);
         free(stem);
@@ -2192,6 +2408,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     unlink(cpath);
+    if (fresh_key) fresh_save(binpath, fresh_key, &sess);
     if (!test_mode) printf("loam: %s -> %s\n", in_path, binpath);
 
     int run_rc = 0;
@@ -2204,7 +2421,7 @@ int main(int argc, char **argv) {
         run_rc = system(rcmd);
         if (run_rc != 0) run_rc = 1;
     }
-    if (test_mode) unlink(binpath);
+    if (test_mode && !out_path) unlink(binpath);
 
     free(stem);
     loam_session_free(&sess);
