@@ -2,7 +2,7 @@
 
 Full-stack UI for Loam. Theme, layout, and the draw list live in Loam.
 Hosts only replay that list: Cocoa, iOS, and Android use their native 2D
-APIs; the browser uses **Canvas2D**. Backend APIs stay `std:http`.
+APIs; the browser uses **Canvas2D**. Backend APIs stay `http`.
 
 This is not GPUI-on-the-web. GPUI's `gpui_web` crate talks **WebGPU** (wgpu)
 with a WebGL2 fallback. Zeus does **not** use WebGPU or WebGL. The scene list
@@ -18,17 +18,17 @@ use Material widgets or system colors.
 | Text | `fillText` / `measureText` in the loader (v1). Native Core Text will not match pixel-for-pixel. |
 | Reactivity | **Signals**, retained tree. `zeus.mount` builds once. `zeus.view` (rebuild every frame) is the VDOM alternative and is not the Zeus default. |
 | View type | `zeus.Node`. Loam has no traits / `impl View`. |
-| Imports | `import "std:zeus"`. No glob prelude. |
+| Imports | `import "zeus"`. No glob prelude. |
 | Events | `on_click = handler` on `Box` / `Button`. Intern copies the closure env (`loam_fn.env_size`). Captures stay Copy-only. `bind` on `Input` writes a `Signal<string>`. |
 | HTTP types | Shared `.loam` module with `#[proto]` structs + `*_rpc()` name helpers. `http.client()` fills the addr per `--target` (wasm same-origin, mac/iOS loopback, Android emulator `10.0.2.2:8080`). |
 | Wire protocol | gRPC-first: first-party traffic is always gRPC-Web / h2c. REST + JSON (`std:json`, `http.rest_*`, `app.json`) exist only as third-party interop, reachable from `#[server]` code. |
-| Routing | `std:router`: a `[]Route` table in a retained shell; loaders registered with `on_load` start before paint. |
-| Data | `std:res` resource signals (`Loading`/`Ready`/`Error`); `std:cache` over `std:kv` for `revalidate` + `invalidate`. |
+| Routing | `zeus:router`: a `[]Route` table in a retained shell; loaders registered with `on_load` start before paint. |
+| Data | `zeus:res` resource signals (`Loading`/`Ready`/`Error`); `zeus:cache` over `std:kv` for `revalidate` + `invalidate`. |
 | SSR | Out of scope. First paint is client WASM. |
 
 ## Routing and data
 
-`import "std:router"` mounts a route table into a retained shell; only the
+`import "zeus:router"` mounts a route table into a retained shell; only the
 page slot rebuilds on navigation, so shell state survives. The current path is
 a `Signal<string>`, and each page builds under `zeus.Boundary`.
 
@@ -51,9 +51,9 @@ router.on_load("/post/:slug", fn(p) {
 })
 ```
 
-Async data is a resource signal (`std:res`): a `Signal` holding
+Async data is a resource signal (`zeus:res`): a `Signal` holding
 `Loading | Ready | Error`, re-runnable with `reload` (stale completions are
-dropped). `std:cache` adds a route/params-keyed cache over `std:kv` —
+dropped). `zeus:cache` adds a route/params-keyed cache over `std:kv` —
 `revalidate` is the `ttl` in seconds, `invalidate` forces a recompute, and the
 cache is file-backed on native (offline) and memory-only on wasm.
 
@@ -261,7 +261,7 @@ anything else is a git URL, cloned and pinned to a SHA.
 For the devtools, two core dumps read the arena directly:
 `zeus.engine_tree_dump()` (one `id,parent,x,y,w,h,role,label` line per visible
 node — the tree with its layout boxes) and `zeus.engine_signals_dump()` (one
-`id,value` line per signal slot). `std:devtools` is the inspector itself: it
+`id,value` line per signal slot). `zeus:devtools` is the inspector itself: it
 parses both into display lines (`tree_lines`, `signal_lines`) and `Panel()`
 renders them as a scrollable list you drop into a dev build. It is a Zeus app
 reading the same arena everything else uses, so it needs no second renderer.
@@ -635,8 +635,8 @@ itself, in the toolchain's own words, and the last install stays on the device.
 ## Layout
 
 ```
-packages/zeus/std/zeus.loam         public API + design system
-packages/zeus/std/zeuscore/         layout, paint, hit-test (shared)
+packages/zeus/src/zeus.loam         public API + design system
+packages/zeus/src/zeuscore/         layout, paint, hit-test (shared)
 examples/zeus/                 same apps on every host
 packages/zeus/hosts/desktop/mac.m        Cocoa present
 packages/zeus/hosts/ios/ios.m            iOS Simulator present (paint only)
@@ -645,7 +645,7 @@ packages/zeus/hosts/web/loader.js        Canvas2D host
 packages/zeus/hosts/web/wasm.c           WASM entry / JS imports
 runtime/zeus_plat.c        shared C seam
 runtime/zeus_key.c         keyboard
-runtime/net.c              TCP trampolines (`packages/http/std/http` is Loam)
+runtime/net.c              TCP trampolines (`packages/http/src/http` is Loam)
 examples/zeus/counter/frontend   wasm UI (`http.client("").call`)
 examples/zeus/counter/macos      Cocoa UI (`http.client(api.native_addr())`)
 examples/zeus/counter/ios        Simulator UI (`http.client(api.native_addr())`)

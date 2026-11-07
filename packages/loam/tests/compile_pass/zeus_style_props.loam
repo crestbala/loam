@@ -2,8 +2,8 @@
 // to the widget. Omitted props keep the recipe's own look.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn expect(ok: bool, what: string) {
     if ok {

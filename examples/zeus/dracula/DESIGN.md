@@ -17,8 +17,8 @@ the tree as it exists, not against an assumed tree.
 
 ## 1. What the repo provides, and what it does not
 
-Verified by reading `packages/loam/std/`, `packages/zeus/std/`,
-`packages/http/std/`, `docs/loam.md`, `docs/boundary.md`,
+Verified by reading `packages/loam/std/`, `packages/zeus/src/`,
+`packages/http/src/`, `docs/loam.md`, `docs/boundary.md`,
 `docs/numeric-widths.md`, and `examples/zeus/myapp/`.
 
 ### Present
@@ -31,14 +31,14 @@ Verified by reading `packages/loam/std/`, `packages/zeus/std/`,
 | File seam: `read_file`, `write_file`, `mkdir`, `rename`, `exists`, `list_dir`, `remove_path` | `std:sys` |
 | Shell seam: `exec` (captures stdout), `exec_status` | `std:sys` |
 | `open` / `close` / `listen` / `accept` / `read` / `write` | `std:net` |
-| gRPC over `#[proto]`, `app.rpc(...)`, `http.client().call_async(...)` | `std:http` |
+| gRPC over `#[proto]`, `app.rpc(...)`, `http.client().call_async(...)` | `http` |
 | File-backed string store, `open` / `get` / `set` / `list` | `std:kv` |
 | Detached OS threads + Send-disciplined `channel<T>` | `std:thread` |
 | Timers, `now_ms` (i64), `tick`, `future<T>` / `await_value` | `std:async` |
-| `App`, `Box`, `Text`, `Button`, `Input`, signals, `engine_layout`, `engine_find_text`, `snapshot` | `std:zeus` |
-| `Table`, `VirtualTable`, `LineChart`, `AreaChart`, `BarChart`, `Sparkline`, `Stat`, `Card`, `Tabs`, `DatePicker`, `Dialog`, `Alert`, `Badge`, `Empty`, `Skeleton`, `Pagination`, `Segmented`, `Select` | `std:zui` (`packages/zeus-components/`) |
-| Route table, `navigate`, `param`, `param_live` | `std:router` |
-| `Loading` / `Ready` / `Error` resource signals, route cache | `std:res`, `std:cache` |
+| `App`, `Box`, `Text`, `Button`, `Input`, signals, `engine_layout`, `engine_find_text`, `snapshot` | `zeus` |
+| `Table`, `VirtualTable`, `LineChart`, `AreaChart`, `BarChart`, `Sparkline`, `Stat`, `Card`, `Tabs`, `DatePicker`, `Dialog`, `Alert`, `Badge`, `Empty`, `Skeleton`, `Pagination`, `Segmented`, `Select` | `zui` (`packages/zeus-components/`) |
+| Route table, `navigate`, `param`, `param_live` | `zeus:router` |
+| `Loading` / `Ready` / `Error` resource signals, route cache | `zeus:res`, `zeus:cache` |
 
 ### Absent — Phase 0 has to build these
 
@@ -47,7 +47,7 @@ Verified by reading `packages/loam/std/`, `packages/zeus/std/`,
 | `sqrt`, `ln`, `exp`, `pow`, `abs`, `floor` | There is no math library. `docs/loam.md` names a `math` module in the std *list*, but no `packages/loam/std/math.loam` exists. |
 | Calendar arithmetic | `async.now_ms()` is a monotonic i64 and nothing else. No y/m/d type, no date parse, no civil-from-days. |
 | Sort | No `sort` anywhere; `std:map` is a keyed container, not an order-by. |
-| HTTP client | `std:http` is gRPC-only over `#[proto]`. `std:net` has TCP/TLS but no HTTP/1.1 framing. |
+| HTTP client | `http` is gRPC-only over `#[proto]`. `std:net` has TCP/TLS but no HTTP/1.1 framing. |
 | Delimited parsing | No CSV module. |
 
 Two documentation traps worth recording, because both mislead a reader of the
@@ -217,7 +217,7 @@ listing is now true, and `date` joins it.
 
 **UI**
 
-- `std:zeus` for primitives, `std:zui` for components. The components already
+- `zeus` for primitives, `zui` for components. The components already
   exist; none are rebuilt.
 - `zui.LineChart(labels, names, vals, w, h)` takes flat `[]int`. A ten-year
   daily NAV series is ~2,500 points: it is downsampled to roughly 200 before it

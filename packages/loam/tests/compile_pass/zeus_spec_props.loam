@@ -2,7 +2,7 @@
 // constants — never a zero-argument function. A prop may be a conditional
 // expression as long as each branch is still a constant.
 import "std:fmt"
-import "std:zeus"
+import "zeus"
 
 let ACCENT: string = "#89b4fa"
 let MUTED: string = "#6c7086"

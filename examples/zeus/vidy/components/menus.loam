@@ -1,12 +1,12 @@
 //! The speed and aspect popovers above the control panel.
 
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 import "../player/store.loam" as player
 import "../lib/timecode.loam" as timecode
 import "../lib/aspect.loam" as ar
 import "icons.loam"
-import { WHITE, SOFT, FAINT, GLASS, ACCENT } from "../theme.loam"
+import { WHITE, SOFT, FAINT, GLASS, ACCENT } "../theme.loam"
 
 /// A glass list panel pinned above the control panel's right side.
 fn Popover(which: int, title: string, right: int, build: fn()) -> Node {

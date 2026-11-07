@@ -1,8 +1,8 @@
 //! Root shell: the title bar, then the player filling the rest. Dark theme,
 //! whatever the system appearance — a video wants a black room.
 
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 import "../theme.loam" as theme
 
 fn Layout(build: fn()) -> Node {

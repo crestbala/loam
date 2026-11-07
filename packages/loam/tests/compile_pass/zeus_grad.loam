@@ -1,7 +1,7 @@
 // Linear gradient draw op (kind 11). Headless dumps `grad`.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
+import "zeus"
 
 fn main() {
     zeus.snapshot(80, 40, fn() -> Node {

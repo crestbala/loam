@@ -1,8 +1,8 @@
 //! The studio: a header, the recordings and the piece on the left, the
 //! sound on the right, and the player bar pinned under both.
 
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 import "../studio/store.loam" as store
 import "../theme.loam" as theme
 import "kit.loam" as kit

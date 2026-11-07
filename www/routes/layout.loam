@@ -4,9 +4,9 @@
 //! the footer. Under `shell.WIDE` the sidebar folds away; the top bar's links
 //! still reach every section.
 
-import "std:zeus"
-import "std:zui"
-import "std:router"
+import "zeus"
+import "zui"
+import "zeus:router"
 import "../theme.loam" as theme
 import "../components/shell.loam" as shell
 

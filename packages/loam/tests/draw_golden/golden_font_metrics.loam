@@ -9,8 +9,8 @@
 // the bind fails and both revert — so this golden also guards the external-font
 // path. Keep this file free of prints: stdout is the golden.
 
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn main() {
     zeus.use_font("packages/loam/tests/fonts/tiny.ttf")

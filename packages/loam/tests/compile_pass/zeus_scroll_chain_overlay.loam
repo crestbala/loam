@@ -2,8 +2,8 @@
 // keeps the leftover wheel instead of sliding the page behind the overlay.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 let open = zeus.signal(true)
 

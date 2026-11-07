@@ -1,4 +1,4 @@
-import "std:maya"
+import "maya"
 import "std:fmt"
 
 fn main() {

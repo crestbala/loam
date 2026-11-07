@@ -6,7 +6,7 @@
 // value a signal already holds is a **no-op**, which for a `string` is a fix
 // (the old `memcmp` compared the `loam_str {ptr,len,own}` struct, so equal text
 // in a different buffer always counted as a write and re-ran every effect).
-import "std:zeus"
+import "zeus"
 import "std:fmt"
 
 fn main() {

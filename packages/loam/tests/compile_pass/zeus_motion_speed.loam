@@ -2,8 +2,8 @@
 // and each spring gets most of the way there within its budget.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn must(ok: bool, what: string) {
     if !ok {

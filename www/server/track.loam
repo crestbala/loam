@@ -1,4 +1,4 @@
-//! Receives the batches `std:analytics` sends. Everything here came from a browser,
+//! Receives the batches `zeus:analytics` sends. Everything here came from a browser,
 //! so it is checked and cut to size before it is stored. Native only.
 
 import "std:json"

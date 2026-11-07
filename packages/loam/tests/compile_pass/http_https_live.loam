@@ -7,7 +7,7 @@
 // (`http_h1_live` etc.) need a network too.
 
 import "std:fmt"
-import "std:http"
+import "http"
 import "std:net"
 import "std:sys"
 

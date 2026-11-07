@@ -1,7 +1,7 @@
 # Site analytics plan
 
 Analytics for the www site, moving from Vercel Functions to a Loam backend on
-Fly.io: async gRPC and HTTP on `std:http`, with C SQLite reached through FFI.
+Fly.io: async gRPC and HTTP on `http`, with C SQLite reached through FFI.
 
 Live since 2026-11-06. The site is on Vercel at https://loam-lang.vercel.app, which
 rewrites `/api/*` and `/Vault/*` to the server on Fly.io. What is left is at the end
@@ -25,7 +25,7 @@ an async server, and crypto.
 
 | Piece | State |
 |---|---|
-| `std:analytics` and the web host | Done |
+| `zeus:analytics` and the web host | Done |
 | Vercel functions, API test, password tool | Removed. The server replaces them |
 | Vault page, footer door, `analytics.start` in www | Done. The page uses the gRPC calls |
 | `on_submit` on inputs | Done |
@@ -45,9 +45,9 @@ Checked in this repo on 2026-11-06.
 | Async server | `http.listen` is a non-blocking `poll` loop on one thread, with timeouts and limits | A long handler still holds everyone up |
 | Public binding | `ListenProps.host`, 127.0.0.1 by default | None |
 | C FFI | `#[c]`, `#![c_source]`, and `#![c_link]`, native builds only. See `docs/boundary.md` | None |
-| SQLite | `std:sqlite`, vendored 3.54.1 in `packages/sqlite`, WAL by default | None |
+| SQLite | `sqlite`, vendored 3.54.1 in `packages/sqlite`, WAL by default | None |
 | Closures | A capturing closure's environment is never freed | Avoid them on per-request paths, or fix the language |
-| Crypto | `std:crypto`, vendored Monocypher 4.0.3 in `packages/crypto` | None |
+| Crypto | `crypto`, vendored Monocypher 4.0.3 in `packages/crypto` | None |
 | Sessions | `req_cookie`, `req_header`, `set_cookie`, and `clear_cookie` on HTTP/1.1 | None |
 | Environment | `sys.env` reads a variable | None |
 | Linux build | A static x86-64 server, built by `analytics-server.yml`, which runs its tests on Linux. `loamc` has no Linux cross target | None |
@@ -71,14 +71,14 @@ Done. A compile_pass test calls vendored C, and a client build refuses a reachab
 phases 2 and 4 need. Calls from C back into Loam were left out, as nothing needs
 them yet. The `std:objc` and Loam host work in the stash was not taken.
 
-### 2. `std:sqlite`
+### 2. `sqlite`
 
 Done. `packages/sqlite` vendors the amalgamation, and a compile_pass test covers
 round trips, transactions, and text with quotes and NULs. It also covers the
 recursive CTE and window functions that phase 5 needs, and `VACUUM INTO`. Writing
 500,000 rows in one transaction and reading them back took 0.72 s on the dev Mac.
 
-### 3. Server work in `std:http`
+### 3. Server work in `http`
 
 Done. `http_listen.loam` holds stalled clients open while others are served. In a
 real process on the dev Mac, 50 stalled clients left about 7,600 requests a second,

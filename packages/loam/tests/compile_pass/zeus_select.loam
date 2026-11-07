@@ -2,8 +2,8 @@
 // the highlight, Enter picks, Escape or an outside click closes.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn must(ok: bool, what: string) {
     if !ok {

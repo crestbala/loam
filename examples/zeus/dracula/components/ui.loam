@@ -1,11 +1,11 @@
-//! Screen pieces the pages share, built from `std:zui`. Nothing here is a
+//! Screen pieces the pages share, built from `zui`. Nothing here is a
 //! widget of its own: stat cards from label, value, caption triples, the
 //! server-down state, and a table row with an action beside it.
 
-import "std:router"
-import "std:spacing"
-import "std:zeus"
-import "std:zui"
+import "zeus:router"
+import "zui:spacing"
+import "zeus"
+import "zui"
 
 /// Label, value, caption triples as stat cards that wrap across the row.
 fn StatGrid(cells: []string) -> Node {

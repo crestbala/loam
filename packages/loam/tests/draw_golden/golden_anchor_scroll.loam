@@ -2,10 +2,10 @@
 // painted in window coordinates. Open the menu *after* scrolling — the real
 // sequence — so the placement is computed against the live scroll. Painting the
 // floater through the scroller's offset would put it at 102 - 152 = -50 here.
-import "std:zeus"
-import "std:colors"
-import "std:spacing"
-import "std:zui"
+import "zeus"
+import "zui:colors"
+import "zui:spacing"
+import "zui"
 
 fn main() {
     zeus.window("anchor-scroll", 320, 180)

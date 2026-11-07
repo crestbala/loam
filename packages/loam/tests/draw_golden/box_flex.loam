@@ -5,7 +5,7 @@
 // text in a fixed-width column; aspect ratio. Keep this file free of prints:
 // stdout is the golden.
 
-import "std:zeus"
+import "zeus"
 
 fn main() {
     zeus.window("box", 480, 640)

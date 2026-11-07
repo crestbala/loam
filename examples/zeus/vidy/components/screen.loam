@@ -2,16 +2,16 @@
 //! floating over it. Each layer lives in its own file; every one reads
 //! `player/store.loam` and none talks to the host player directly.
 
-import "std:zeus"
+import "zeus"
 import "../player/store.loam" as player
 import "../player/keys.loam" as shortcuts
-import { Picture, Empty, Busy, Osd, TapBubble, ErrorCard, CenterPlay } from "overlays.loam"
-import { TopBar } from "topbar.loam"
-import { Panel } from "controls.loam"
-import { SpeedMenu, AspectMenu } from "menus.loam"
-import { Playlist } from "playlist.loam"
-import { Help } from "help.loam"
-import { UrlDialog } from "url_dialog.loam"
+import { Picture, Empty, Busy, Osd, TapBubble, ErrorCard, CenterPlay } "overlays.loam"
+import { TopBar } "topbar.loam"
+import { Panel } "controls.loam"
+import { SpeedMenu, AspectMenu } "menus.loam"
+import { Playlist } "playlist.loam"
+import { Help } "help.loam"
+import { UrlDialog } "url_dialog.loam"
 
 /// The whole window.
 fn Player() -> Node {

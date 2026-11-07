@@ -1,7 +1,7 @@
 import "std:fmt"
 import "std:sys"
-import "std:http"
-import "std:zeus"
+import "http"
+import "zeus"
 
 #[proto]
 struct HelloReq {

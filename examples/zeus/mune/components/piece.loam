@@ -1,7 +1,7 @@
 //! The shape of the piece: length, energy, tempo, pitch, and voices.
 
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 import "../core/sound.loam" as sound
 import "../core/styles.loam" as styles
 import "../studio/controls.loam" as controls

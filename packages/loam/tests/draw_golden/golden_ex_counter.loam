@@ -2,7 +2,7 @@
 // built from fixed RPC results (the hosts fetch them from the backend), so no
 // server runs. Keep this file free of prints: stdout is the golden.
 
-import "std:zeus"
+import "zeus"
 import "../../../../examples/zeus/counter/screen.loam" as screen
 
 fn main() {

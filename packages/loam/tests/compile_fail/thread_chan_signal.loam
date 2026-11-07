@@ -1,5 +1,5 @@
 import "std:thread"
-import "std:zeus"
+import "zeus"
 
 // Phase 3 exit (channel half): a `Chan<Signal<int>>` is rejected for the same
 // reason a spawn capture is — the payload would hand UI-thread signal state to

@@ -8,9 +8,9 @@
 //! The store uses this on every target except native — where it keeps its
 //! in-process path — so the same UI drives either. `remote()` is the switch.
 
-import "std:http"
+import "http"
 import "std:sys"
-import "std:zeus"
+import "zeus"
 import "../server/api.loam" as api
 
 /// Whether to make the piece through the engine rather than in this process.

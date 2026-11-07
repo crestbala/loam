@@ -2,12 +2,12 @@
 //! controls do not — the empty state, the spinner, the big play button, the
 //! on-screen feedback, the double-tap ripples and the error card.
 
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 import "../player/store.loam" as player
 import "icons.loam"
-import { WHITE, SOFT, FAINT, GLASS, ACCENT } from "../theme.loam"
-import { Centered, Glyph, Pill } from "kit.loam"
+import { WHITE, SOFT, FAINT, GLASS, ACCENT } "../theme.loam"
+import { Centered, Glyph, Pill } "kit.loam"
 
 /// The host paints the current frame into this `Image` (`media:<slot>`). Its
 /// box follows the aspect mode; `fit` does the rest. `fit` is read once, so

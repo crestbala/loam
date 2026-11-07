@@ -4,8 +4,8 @@
 
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn Row(i: int, s: string) -> Node {
     return zeus.Box(style = Style(direction = Direction.Row, gap = 4)) {

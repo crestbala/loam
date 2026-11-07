@@ -1,0 +1,5 @@
+import { small } "wide"
+
+fn main() {
+    let n = small()
+}

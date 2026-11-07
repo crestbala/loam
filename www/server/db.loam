@@ -1,7 +1,7 @@
 //! The analytics database. Native only: the wasm never imports this.
 
 import "std:result"
-import "std:sqlite"
+import "sqlite"
 import "std:str"
 
 const DAY_MS: i64 = 86400000

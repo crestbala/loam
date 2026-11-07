@@ -2,7 +2,7 @@
 //!
 //! Wasm (`frontend/app.loam`), iOS (`ios/app.loam`), macOS (`macos/app.loam`),
 //! Android (`android/app.loam`), and this backend all import this file.
-//! `#[proto]` injects `encode_*` / `decode_*` that call `std:http`. A renamed
+//! `#[proto]` injects `encode_*` / `decode_*` that call `http`. A renamed
 //! method or field is a compile error.
 
 /// Empty request for `Counter.Hello`. Encodes to zero protobuf bytes.

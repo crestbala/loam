@@ -1,0 +1,5 @@
+[package]
+name = "zeus"
+version = "0.4.0"
+description = "Zeus UI"
+entry = "src/zeus.loam"

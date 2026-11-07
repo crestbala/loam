@@ -3,8 +3,8 @@
 // layout stay at the authored size. Desktop overlay-scroll=0 is unchanged.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:colors"
+import "zeus"
+import "zui:colors"
 
 fn must(ok: bool, what: string) {
     if !ok {

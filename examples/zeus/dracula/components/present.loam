@@ -8,7 +8,7 @@
 
 import "std:date"
 import "std:math"
-import "std:zui"
+import "zui"
 import "../core/backtest.loam"
 import "../core/indicators.loam"
 import "../core/series.loam"

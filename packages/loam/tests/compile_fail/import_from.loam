@@ -1,0 +1,4 @@
+import { add } from "std:math"
+
+fn main() {
+}

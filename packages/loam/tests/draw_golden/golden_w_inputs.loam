@@ -3,8 +3,8 @@
 // prefix and suffix, NumberInput, Stepper, PinInput and TagInput. Keep this
 // file free of prints: stdout is the golden.
 
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn main() {
     let name = zeus.signal("Ada")

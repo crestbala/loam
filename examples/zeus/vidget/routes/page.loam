@@ -1,7 +1,7 @@
 //! The one screen: paste a link, see what it holds, watch it download.
 
-import "std:zeus"
-import "std:router"
+import "zeus"
+import "zeus:router"
 import "../components/views.loam" as views
 
 fn Page(p: Params) -> Node {

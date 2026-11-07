@@ -1,4 +1,4 @@
-import "std:maya"
+import "maya"
 
 // log2(n) in Q10 (times 1024). Used for a log-AU ring so Mercury and Neptune fit.
 fn log2q(n: int) -> int {

@@ -2,9 +2,9 @@
 // does not schedule HoverAmt tracks or set StHovered. Desktop still does.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:colors"
-import "std:zui"
+import "zeus"
+import "zui:colors"
+import "zui"
 
 fn must(ok: bool, what: string) {
     if !ok {

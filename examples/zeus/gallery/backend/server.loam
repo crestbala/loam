@@ -3,7 +3,7 @@
 //! The gallery catalog is a client-only UI (no RPCs yet). This process exists so
 //! the example matches the counter layout: `backend/` + `frontend/`.
 
-import "std:http"
+import "http"
 import "std:fmt"
 
 fn main() {

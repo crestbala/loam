@@ -1,11 +1,11 @@
 //! The playlist drawer on the right.
 
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 import "../player/store.loam" as player
 import "icons.loam"
-import { WHITE, FAINT, GLASS, ACCENT } from "../theme.loam"
-import { Glyph, Pill } from "kit.loam"
+import { WHITE, FAINT, GLASS, ACCENT } "../theme.loam"
+import { Glyph, Pill } "kit.loam"
 
 fn Playlist() -> Node {
     return zeus.Box(

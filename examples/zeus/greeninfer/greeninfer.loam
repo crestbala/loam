@@ -1,4 +1,4 @@
-//! greeninfer.loam — GreenInfer desktop (macOS Cocoa via std:zeus).
+//! greeninfer.loam — GreenInfer desktop (macOS Cocoa via zeus).
 //!
 //! Clean, three-step flow: 1) point at a folder, 2) ask your code, 3) get a
 //! model answer. Everything else (stats, watch toggle, key/model) is tucked
@@ -6,10 +6,10 @@
 //! microsecond-fast; models are optional (Grok cloud or a local Ollama).
 
 import "std:async"
-import "std:zeus"
-import "std:colors"
-import "std:spacing"
-import "std:zui"
+import "zeus"
+import "zui:colors"
+import "zui:spacing"
+import "zui"
 import "agent.loam"
 import "engine.loam"
 import "watcher.loam"

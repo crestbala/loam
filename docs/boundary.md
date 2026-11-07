@@ -8,7 +8,7 @@ event loop and call back into `engine_*` trampolines.
 
 ## Convention
 
-A **boundary module** (today: `packages/zeus/std/zeuscore/platform.loam`, empty `fn`s in
+A **boundary module** (today: `packages/zeus/src/zeuscore/platform.loam`, empty `fn`s in
 `packages/loam/std/fmt.loam` / `packages/loam/std/net.loam` / `packages/loam/std/sys.loam`) declares plain, **bodyless** functions:
 
 ```loam
@@ -88,7 +88,7 @@ can reach, and one only a `#[server]` body calls leaves nothing in that build.
 | net (`packages/loam/std/net`) | TCP connect/read/write/close, listen/accept/peek, wasm `fetch_rpc` | — |
 | Zeus | Host event loop + replay of the draw list; `runtime.intern_fn` memcpy's a `loam_fn` env so click/styled handlers outlive the interned value | Tree, layout, signals, design system, `platform.loam` signatures |
 | Maya | Host event loop + present (Cocoa blit / 2D discs) | Scene, orbits, camera, CPU tracer, 2D map layout, `sin`/`cos` |
-| raygui | Host window + event pump (raylib) and a thin raygui trampoline (`runtime/raygui_plat.c`); no widget logic | API, frame loop, and all retained state (`packages/raygui/std/raygui.loam`) |
+| raygui | Host window + event pump (raylib) and a thin raygui trampoline (`runtime/raygui_plat.c`); no widget logic | API, frame loop, and all retained state (`packages/raygui/src/raygui.loam`) |
 | http | — | unary gRPC: `#[proto]`, dispatch, path/frame, HTTP/1.1 parse, h2c, `listen`, client `rt_call` / `h2_call`, loopback `h1_read_unary` / `h2_read_unary`, HEADLESS selftest |
 
 A new `*_rt.c` outside `loam_rt`, or a `loam_rt` stub that knows Zeus widgets

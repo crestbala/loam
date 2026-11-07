@@ -1,9 +1,9 @@
-// `std:sqlite`: round trips of every type, text with quotes and NULs, transactions,
+// `sqlite`: round trips of every type, text with quotes and NULs, transactions,
 // a file reopened in WAL mode, lock timeouts, and the SQL the analytics reports need.
 
 import "std:fmt"
 import "std:result"
-import "std:sqlite"
+import "sqlite"
 import "std:str"
 import "std:sys"
 

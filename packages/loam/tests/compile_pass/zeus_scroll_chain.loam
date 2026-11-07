@@ -1,9 +1,9 @@
 // Nested scroll chaining: leftover wheel at an inner bound goes to the page.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:colors"
-import "std:zui"
+import "zeus"
+import "zui:colors"
+import "zui"
 
 fn expect(ok: bool, what: string) {
     if ok {

@@ -1,19 +1,19 @@
 # zeus-components
 
-The Zeus **design system**, split out of `packages/zeus/std/zeus.loam` so that
+The Zeus **design system**, split out of `packages/zeus/src/zeus.loam` so that
 three concerns with three different rates of change stop sharing one ~11k-line
 file:
 
 | Layer | Where | Rate of change |
 |---|---|---|
-| Reactive core + layout | `packages/zeus/std/zeuscore/*` | almost never |
-| Primitives + public vocabulary | `packages/zeus/std/zeusbase.loam` | rarely |
-| Control flow (`Each`, `Match`, `Show`, `Boundary`, `Scope`, `VirtualList*`) | `packages/zeus/std/flow.loam` | rarely |
-| **Design system** (this package) | `packages/zeus-components/std/*` | constantly (restyle / re-theme) |
+| Reactive core + layout | `packages/zeus/src/zeuscore/*` | almost never |
+| Primitives + public vocabulary | `packages/zeus/src/zeusbase.loam` | rarely |
+| Control flow (`Each`, `Match`, `Show`, `Boundary`, `Scope`, `VirtualList*`) | `packages/zeus/src/flow.loam` | rarely |
+| **Design system** (this package) | `packages/zeus-components/src/*` | constantly (restyle / re-theme) |
 
 Dependency direction is one-way: `zeuscore` ← `zeusbase` / `flow` ←
 `zeus-components` ← `zeus` (facade). Components import `zeus:zeusbase` and
-`zeus:flow`; they never import `std:zeus` or `zeuscore/*` (the `nob` arena lint
+`zeus:flow`; they never import `zeus` or `zeuscore/*` (the `nob` arena lint
 fails the build if they do). `atoms` imports `flow`, so `zui.Each` /
 `zui.Match` resolve through the facade as before.
 
@@ -108,19 +108,19 @@ accessible name; empty falls back to the placeholder).
 ## Public entry
 
 Loam has **no re-export**: a symbol declared in module `M` is only reachable as
-`M.name`, and a call also requires importing `M`. `std:zui`
-(`packages/zeus-components/std/zui.loam`) is the facade. It imports the three
+`M.name`, and a call also requires importing `M`. `zui`
+(`packages/zeus-components/src/zui.loam`) is the facade. It imports the three
 tiers and declares nothing, so one import reaches every widget:
 
 ```
-import "std:zui"
+import "zui"
 zui.Button("Save", look = zeus.Look.Solid)
 zui.Tree(items, selected, open)
 ```
 
-`packages/zeus/std/zeus.loam` is the runtime (signals, `Box`, `Text`, layout,
+`packages/zeus/src/zeus.loam` is the runtime (signals, `Box`, `Text`, layout,
 input). It does not forward the design-system widgets. `Look`, `Size`, `Tint`,
-and the `IC_*` icon strings stay on `std:zeus`, because those declarations live
+and the `IC_*` icon strings stay on `zeus`, because those declarations live
 in the modules that file imports.
 
 Struct type names used by the widgets (`TreeItem`, `Notice`, `CommandItem`,

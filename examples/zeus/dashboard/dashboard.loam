@@ -1,10 +1,10 @@
-// Zeus dashboard. Themed chrome from `std:zeus`; ticks, load, and alerts
+// Zeus dashboard. Themed chrome from `zeus`; ticks, load, and alerts
 // are signals. The look follows the shadcn/ui default theme: zinc palette,
 // white page, primary-fill buttons, hairline cards.
-import "std:zeus"
-import "std:colors"
-import "std:spacing"
-import "std:zui"
+import "zeus"
+import "zui:colors"
+import "zui:spacing"
+import "zui"
 
 let mut req_labs: []string = []string {}
 let mut req_series: []string = []string {}

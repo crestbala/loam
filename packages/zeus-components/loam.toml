@@ -1,0 +1,5 @@
+[package]
+name = "zui"
+version = "0.1.0"
+description = "Zeus components"
+entry = "src/zui.loam"

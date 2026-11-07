@@ -1,5 +1,5 @@
 import "std:thread"
-import "std:zeus"
+import "zeus"
 
 // Phase 3 exit: a spawned fn may not capture UI state. `Signal<T>` is plain
 // bytes (`{ id: int }`), so the old Send test would have let it through; the

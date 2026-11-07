@@ -1,4 +1,4 @@
-import "std:zeus"
+import "zeus"
 
 fn NotFound() -> Node {
     return zeus.Text("nf")

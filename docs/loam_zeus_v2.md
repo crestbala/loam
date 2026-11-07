@@ -783,7 +783,7 @@ Zeus client  ──gRPC──►  Your Loam server  ──REST/JSON──►  Th
 
 ### `std:json` — codec, separate from transport
 
-Keep the codec in its own module. `std:json` parses and emits; `std:http` moves
+Keep the codec in its own module. `std:json` parses and emits; `http` moves
 bytes. They compose, and the codec is testable without a socket.
 
 Deserializing into a struct is the real design problem, because Loam has no
@@ -849,7 +849,7 @@ default: typed `#[json]` structs are what people should reach for.
 
 ### Streaming
 
-`std:http` is unary today. Live first-party data — progress, notifications, a
+`http` is unary today. Live first-party data — progress, notifications, a
 tailing log — should use **server-streaming gRPC**, not WebSockets or SSE carrying
 JSON. A stream maps cleanly onto a `Signal` that updates per message, which is the
 shape the resource layer already wants. Third-party streaming formats (SSE from an
@@ -968,7 +968,7 @@ a compile error. Fonts are assets too, which fits §1.4 exactly.
   you don't have an edge runtime and shouldn't pretend to.
 - **Metadata** = a `meta()` fn per route (§5.7) feeding the HTML `<head>` on web and
   the window/app title on native.
-- **API surface** = `#[proto]` methods on `std:http`. There are no "API routes" in
+- **API surface** = `#[proto]` methods on `http`. There are no "API routes" in
   the Next.js sense, because there are no URL-shaped JSON endpoints to define —
   a service method *is* the API (§5.6).
 
@@ -1037,7 +1037,7 @@ loam/
       web/                  loader.js, wasm.c, Canvas2D, a11y mirror
     docs/
 
-  http/                     std:http — gRPC-Web / h2c, #[proto]; REST client and
+  http/                     http — gRPC-Web / h2c, #[proto]; REST client and
                             #[json] codec for third-party interop (§5.6)
   maya/                     3D/2D engine
 
@@ -1056,7 +1056,7 @@ loam/
 
 Consequences worth noting:
 
-- `import "std:zeus"` now resolves outside the compiler tree. Module resolution
+- `import "zeus"` now resolves outside the compiler tree. Module resolution
   needs a real search-path notion (`LOAM_PATH`, or a workspace manifest at the
   root) instead of "`std/` next to the compiler." Do this properly once; it's the
   same machinery `import "pkg:name"` (§1.8) needs.

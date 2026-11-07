@@ -1,11 +1,11 @@
 //! The title pill and the round buttons along the top edge.
 
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 import "../player/store.loam" as player
 import "icons.loam"
-import { WHITE, FAINT, GLASS, ACCENT } from "../theme.loam"
-import { Round } from "kit.loam"
+import { WHITE, FAINT, GLASS, ACCENT } "../theme.loam"
+import { Round } "kit.loam"
 
 fn TopBar() -> Node {
     return zeus.Box(

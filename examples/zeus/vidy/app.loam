@@ -11,7 +11,7 @@
 //!   components/  the widgets; each reads the store
 //!   tests/       unit tests, the headless e2e, layout probes
 
-import "std:zeus"
+import "zeus"
 import "std:str"
 import "std:sys"
 import "app_routes.loam" as approutes

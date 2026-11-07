@@ -9,7 +9,7 @@
 //! Clients reach this through `http.client()`: gRPC-Web from wasm, h2c from
 //! native, with `LOAM_RPC_ADDR` overriding the address on native.
 
-import "std:http"
+import "http"
 // Bare (no `as`): a struct literal cannot be qualified — `api.HelloResp { .. }`
 // is a parse error — so types must be in scope unqualified. The module still
 // answers to its stem, which is how `api.hello_rpc()` below resolves.

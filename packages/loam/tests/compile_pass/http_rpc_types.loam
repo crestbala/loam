@@ -1,4 +1,4 @@
-import "std:http"
+import "http"
 import "std:fmt"
 
 #[proto]

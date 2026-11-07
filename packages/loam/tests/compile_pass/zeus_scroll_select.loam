@@ -8,8 +8,8 @@
 
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 const W: int = 400
 const H: int = 300

@@ -1,10 +1,11 @@
 /**
  * dce.h — reachability-based dead decl elimination for codegen.
  *
- * Only std-module declarations that the program can actually reach are
- * emitted as C: the entry module and everything it calls, everything the
- * C runtime/hosts call by name, and module-level initializers. Widgets,
- * codecs, and helpers a program never touches stop inflating generated C,
+ * Only declarations the program can actually reach are emitted as C: the
+ * entry module, a user package the entry fully imports, everything those
+ * call, everything the C runtime/hosts call by name, and module-level
+ * initializers. A selective import does not root the rest of that package.
+ * Widgets, codecs, and helpers a program never touches stop inflating generated C,
  * `cc` wall time, and wasm bundle size (per-widget opt-in, Phase 7).
  *
  * Runs after typecheck (bindings are resolved) and before codegen emission.

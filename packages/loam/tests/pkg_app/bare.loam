@@ -1,0 +1,17 @@
+// Bare package name: the same vendored `greet` as `import "pkg:greet"`.
+
+import "std:fmt"
+import "std:sys"
+import "greet"
+
+fn fail(what: string) {
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn main() {
+    if !fmt.eq(greet.hello(), "hello from pkg") {
+        fail("bare package import")
+    }
+    fmt.println("pkg bare ok")
+}

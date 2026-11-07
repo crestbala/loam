@@ -8,8 +8,8 @@
 //! `call_async` state it allocates is not owned by a `Match` / `Each` rebuild.
 
 import "std:async"
-import "std:http"
-import "std:zeus"
+import "http"
+import "zeus"
 import "../server/api.loam"
 
 /// `probe_state` values.

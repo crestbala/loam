@@ -4,10 +4,10 @@
 // (fourth dump).
 // Keep this file free of prints: stdout is the golden.
 
-import "std:zeus"
-import "std:spacing"
-import "std:colors"
-import "std:zui"
+import "zeus"
+import "zui:spacing"
+import "zui:colors"
+import "zui"
 
 fn settle() {
     let mut i = 0

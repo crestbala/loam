@@ -2,8 +2,8 @@
 //! sections in colour, the playhead, press to seek), the energy arc the
 //! chain walked, play, and save.
 
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 import "../core/arrange.loam" as arrange
 import "../core/time.loam" as time
 import "../studio/files.loam" as files

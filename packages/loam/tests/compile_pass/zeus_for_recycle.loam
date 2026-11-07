@@ -5,8 +5,8 @@
 
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn Row(i: int, s: string) -> Node {
     // Row-owned state: created on every rebuild. If it is not freed when the

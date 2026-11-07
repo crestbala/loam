@@ -1,10 +1,10 @@
 //! The core of zeus-components, live, each next to the call that builds it.
 //! This is a curated set, not the whole library.
 
-import "std:zeus"
-import "std:spacing"
-import "std:colors"
-import "std:zui"
+import "zeus"
+import "zui:spacing"
+import "zui:colors"
+import "zui"
 import "prose.loam" as prose
 
 struct LangRow {

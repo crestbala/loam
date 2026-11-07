@@ -1,6 +1,6 @@
 //! Download a URL to a string, via curl.
 //!
-//! `std:http` speaks gRPC, not an AMFI text file, and `std:net` has TCP with
+//! `http` speaks gRPC, not an AMFI text file, and `std:net` has TCP with
 //! no HTTP/1.1 framing. The daily NAV file is a plain GET. curl already does
 //! that, including TLS, so this is a thin seam over
 //! `curl -sS --max-time 90` rather than a second HTTP stack. A week of the

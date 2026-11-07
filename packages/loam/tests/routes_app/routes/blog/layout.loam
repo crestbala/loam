@@ -1,4 +1,4 @@
-import "std:zeus"
+import "zeus"
 
 fn Layout(build: fn()) -> Node {
     let box = zeus.Box(style = Style(direction = Direction.Column, gap = 4, padding = 8))

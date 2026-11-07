@@ -7,9 +7,9 @@
 import "std:async"
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:colors"
-import "std:zui"
+import "zeus"
+import "zui:colors"
+import "zui"
 
 const N: int = 40
 const FRAMES: int = 300

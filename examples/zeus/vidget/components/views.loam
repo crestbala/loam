@@ -2,10 +2,10 @@
 //! Every piece reads `store.loam`; none talks to the engine directly. Logs go
 //! to the terminal running `zeli serve`, not the window.
 
-import "std:zeus"
-import "std:zui"
-import "std:colors"
-import "std:spacing"
+import "zeus"
+import "zui"
+import "zui:colors"
+import "zui:spacing"
 import "../server/api.loam"
 import "store.loam"
 

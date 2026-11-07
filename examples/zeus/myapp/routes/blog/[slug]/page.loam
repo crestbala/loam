@@ -1,5 +1,5 @@
-import "std:zeus"
-import "std:router"
+import "zeus"
+import "zeus:router"
 import "loader.loam" as post_loader
 
 // `page_live`, not `page(p)`: the slug is read live, so going from one post

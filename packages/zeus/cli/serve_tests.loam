@@ -25,7 +25,7 @@ fn watches_app_and_framework_sources() {
     test.assert(zeli.is_watched_source("examples/zeus/myapp/app.loam", none))
     test.assert(zeli.is_watched_source("examples/zeus/myapp/routes/blog/page.loam", none))
     test.assert(zeli.is_watched_source("examples/zeus/myapp/routes/pricing/page.loam", none))
-    test.assert(zeli.is_watched_source("packages/zeus/std/zeus.loam", none))
+    test.assert(zeli.is_watched_source("packages/zeus/src/zeus.loam", none))
 }
 
 #[test]

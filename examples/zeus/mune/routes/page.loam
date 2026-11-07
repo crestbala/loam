@@ -1,5 +1,5 @@
-import "std:router"
-import "std:zeus"
+import "zeus:router"
+import "zeus"
 import "../components/screen.loam" as screen
 
 fn Page(p: Params) -> Node {

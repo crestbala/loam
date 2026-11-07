@@ -3,8 +3,8 @@
 
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn Item(i: int, s: string) -> Node {
     return zeus.Text(s)

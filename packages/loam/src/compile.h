@@ -10,22 +10,58 @@
 #include "module.h"
 #include "diagnostics.h"
 
-/** Upper bound on language-std + LOAM_PATH roots searched for `std:` modules. */
+/** Upper bound on language-std directories. `std:` does not search LOAM_PATH. */
 #define LOAM_MAX_STD_DIRS 8
 
-/** Directories searched for `std:` modules, in order (language std first).
+/** Directories searched for `std:` modules. Language standard library only.
  *  Pointers alias static storage; valid until the next call. Returns the count. */
 int loam_std_dirs(const char **out, int max);
 
-/** 1 if `path` lives under any directory returned by loam_std_dirs(). */
+/** 1 if `path` lives under the language std or a framework package's `src/`
+ *  (LOAM_PATH; a leftover `std/` still counts). Those files stay on the
+ *  runtime-seam path even though `std:` no longer names them. */
 int loam_is_std_path(const char *path);
 
-/** Resolve the `package:module` spec form to a path, or 0. The package is the
- *  LOAM_PATH root whose directory is named `package`; the module is looked up in
- *  that root's `std` dir, and may itself be a path (`zeus:zeuscore/arena`).
- *  Writes `out` only on success, so the language server can offer exactly the
- *  package-qualified specs that resolve. */
+/** Load package roots for `anchor` (the entry file). Vendor + lock first, then
+ *  the nearest `loam.toml` workspace, then `LOAM_PATH` as an override for names
+ *  still missing. Call once per compile, before resolving imports. */
+void loam_packages_discover(const char *anchor);
+
+/** 1 if a discovered package is named `name`. */
+int loam_package_known(const char *name);
+
+/** Entry file of package `name`, or 0. On failure a vendor checksum mismatch
+ *  is reported by `loam_package_error`. */
+int loam_package_entry(const char *name, char *out, size_t outsz);
+
+/** Resolve `package:module` (`zeus:zeuscore/arena`) to a path, or 0. */
 int loam_package_module(const char *pkg, const char *mod, char *out, size_t outsz);
+
+/** Message from the last failed package lookup, or "". */
+const char *loam_package_error(void);
+
+/** Fill `buf` with why `name` did not resolve. */
+void loam_package_missing(const char *name, char *buf, size_t sz);
+
+/** 1 if `pkgdir` (a `vendor/<name>` directory) matches `loam.lock`. A missing
+ *  checksum column passes. Mismatch returns 0 and sets `loam_package_error`. */
+int loam_vendor_check(const char *pkgdir);
+
+/** Package name owning `path` ("std" for the language library), or NULL.
+ *  Pointer aliases static storage from the last discover. */
+const char *loam_package_label(const char *path);
+
+/** Discovered package names, in registration order. */
+int loam_package_count(void);
+const char *loam_package_name(int i);
+/** Directory of discovered package `i`, or NULL. Aliases static storage. */
+const char *loam_package_dir(int i);
+
+/** Drop the last package-lookup message. */
+void loam_package_clear_error(void);
+
+/** When set, a full package import in the entry file warns. Release builds. */
+void loam_set_release_imports(int on);
 
 /** All modules of one compile, plus diagnostics from the last check. */
 typedef struct {

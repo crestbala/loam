@@ -2,9 +2,9 @@
 // closes on Escape (batch 7); this file re-checks that and adds the trap.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:colors"
-import "std:zui"
+import "zeus"
+import "zui:colors"
+import "zui"
 
 fn must(ok: bool, what: string) {
     if !ok {

@@ -1,4 +1,4 @@
-import "std:zeus"
+import "zeus"
 
 struct Row {
     a: string,

@@ -3,8 +3,8 @@
 // TableCols, and a Tree with its folder open. Keep this file free of prints:
 // stdout is the golden.
 
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 struct Member {
     name: string,

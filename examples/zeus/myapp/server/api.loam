@@ -14,7 +14,7 @@
 //! `repeated` — encoded as one key per element. Nested messages are not
 //! supported yet, so a list of structs still has nowhere to go.
 
-import "std:http"
+import "http"
 
 #[proto]
 struct HelloReq {

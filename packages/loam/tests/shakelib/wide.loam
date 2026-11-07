@@ -1,0 +1,7 @@
+fn small() -> int {
+    return 1
+}
+
+fn bulky() -> string {
+    return "BULKY_MARKER_TREE_SHAKE"
+}

@@ -2,8 +2,8 @@
 // build traps during startup, one whose click handler traps later, and a
 // sibling outside both. Wasm has no setjmp, so both traps unwind to the host.
 
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn bad_index(n: int) -> int {
     let a = []int { 1, 2 }

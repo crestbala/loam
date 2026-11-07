@@ -5,7 +5,7 @@
 // stale id then collided with the first local signal).
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
+import "zeus"
 
 let mut dark = zeus.signal(0)
 let mut repaints: int = 0

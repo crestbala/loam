@@ -3,8 +3,8 @@
 // single-line vs multiline fields. Roles/focus order = Phase 7 exit test.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn expect(ok: bool, what: string) {
     if ok {

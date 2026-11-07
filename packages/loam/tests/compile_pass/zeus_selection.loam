@@ -4,9 +4,9 @@
 // series 0 must take the first brand colour, not the last.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:colors"
-import "std:zui"
+import "zeus"
+import "zui:colors"
+import "zui"
 
 let mut labels: []string = []string {}
 

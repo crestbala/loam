@@ -1,10 +1,10 @@
 //! Loam token colors. A span is one string: the first byte is a kind marker
 //! and the rest is the text, so a line stays a slice of strings.
 
-import "std:zeus"
-import "std:colors"
-import "std:spacing"
-import "std:zui"
+import "zeus"
+import "zui:colors"
+import "zui:spacing"
+import "zui"
 import "std:str"
 
 /// Font size of code, in the editor and in code blocks.

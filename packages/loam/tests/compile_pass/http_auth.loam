@@ -3,7 +3,7 @@
 // `req_token()` to `app.before` middleware, which can `reject()` — dispatch
 // then skips the handler and answers grpc-status 16 (unauthenticated).
 
-import "std:http"
+import "http"
 import "std:net"
 import "std:fmt"
 import "std:sys"

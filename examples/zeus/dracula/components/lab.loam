@@ -4,7 +4,7 @@
 //! cannot carry one. The series is already in memory, and the run stays
 //! on the UI thread.
 
-import "std:zeus"
+import "zeus"
 import "../core/backtest.loam"
 import "../core/costs.loam"
 import "../core/strategy.loam"

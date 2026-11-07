@@ -12,10 +12,10 @@
 //! does not end.
 
 import "std:date"
-import "std:http"
+import "http"
 import "std:kv"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 import "../server/api.loam"
 import "../core/series.loam"
 // The C backend emits a module's structs before it walks that module's

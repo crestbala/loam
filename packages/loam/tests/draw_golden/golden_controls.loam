@@ -3,8 +3,8 @@
 // the skeleton token. Any change that moves a pixel or a palette value shows
 // up here first. Keep this file free of prints: stdout is the golden.
 
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn main() {
     zeus.snapshot(560, 360, fn() -> Node {

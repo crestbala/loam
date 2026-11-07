@@ -461,7 +461,7 @@ mac.m / ios.m / android.c).
 `image` and `svg` moved from `zeuscore/` to `zeusraster/`, the scene's raster
 pass to `zeusraster/pass.loam` (it reads only `scene.draws`), and the
 `zeus.raster_*` / `image_*` / `atlas_*` / `scene_raster*` / `damage_tiles_*`
-wrappers to `std:zeusraster` (`zeusraster.*`, listed in `api-freeze.md`).
+wrappers to `zeus:zeusraster` (`zeusraster.*`, listed in `api-freeze.md`).
 Nothing in the core imports it. `zeuscore` is 16.2k lines; the rasterizer is
 10.2k beside it. The 96 `zeus_rt.h` prototypes with no definition (the old
 `loam_zeus_raw_*` / `pad*` builder ABI) are deleted.

@@ -4,9 +4,9 @@
 // unchanged. Reduced motion and zero-ms still jump.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:colors"
-import "std:colors"
+import "zeus"
+import "zui:colors"
+import "zui:colors"
 
 fn must(ok: bool, what: string) {
     if !ok {

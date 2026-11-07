@@ -9,7 +9,7 @@
 //     generations).
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
+import "zeus"
 
 struct Pair {
     a: int,

@@ -1,6 +1,6 @@
-import "std:zeus"
-import "std:zui"
-import "std:spacing"
+import "zeus"
+import "zui"
+import "zui:spacing"
 
 fn Layout(build: fn()) -> Node {
     return zeus.Box(style = Style(direction = Direction.Column, gap = 4, padding = 8)) {

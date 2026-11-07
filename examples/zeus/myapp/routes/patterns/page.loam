@@ -1,7 +1,7 @@
-import "std:zeus"
-import "std:spacing"
-import "std:zui"
-import "std:router"
+import "zeus"
+import "zui:spacing"
+import "zui"
+import "zeus:router"
 import "../../components/patterns.loam" as patterns
 
 // `zui.Match` (what the router mounts pages into) is a Column with no

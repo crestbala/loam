@@ -3,8 +3,8 @@
 // repaints on its own when the signal changes — no tree rebuild.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn expect(ok: bool, what: string) {
     if ok {

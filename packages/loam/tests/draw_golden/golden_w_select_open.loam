@@ -3,8 +3,8 @@
 // shows its floating list below the trigger with the picked row marked. Keep
 // this file free of prints: stdout is the golden.
 
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn main() {
     let size = zeus.signal(1)

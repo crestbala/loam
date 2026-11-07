@@ -1,6 +1,6 @@
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
+import "zeus"
 
 /// A user's own Copy struct. `Signal<T>` claims `T` may be "a Copy struct"
 /// (structs.loam), so this is the case the API promises and the one worth

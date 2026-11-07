@@ -1,10 +1,10 @@
 //! Components page: the standard widget catalogue — actions, display, forms,
 //! choice, controls, people, media, and data. One section per widget family.
 
-import "std:zeus"
-import "std:colors"
-import "std:spacing"
-import "std:zui"
+import "zeus"
+import "zui:colors"
+import "zui:spacing"
+import "zui"
 import "std:kv"
 
 fn ButtonScale() -> Node {

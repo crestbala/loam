@@ -2,8 +2,8 @@
 // selected item is a tab stop (roving tabindex). Arrows clamp at both ends.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn must(ok: bool, what: string) {
     if !ok {

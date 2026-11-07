@@ -97,7 +97,7 @@ release flags.
 | top element under the pointer | `zeus.engine_hit(x, y)`; `zeus.is_under(id, top)` |
 | scroll input (drag, momentum) | built in: wheel, smooth wheel, pan with momentum, thumb drag, nested chaining |
 | culling of off-screen elements | built in (see below) |
-| debug view | `std:devtools` |
+| debug view | `zeus:devtools` |
 
 Not covered yet: `letterSpacing` and `lineHeight` need each host's text
 renderer to take them (Canvas2D, Core Text, Android), and `textAlign` applies

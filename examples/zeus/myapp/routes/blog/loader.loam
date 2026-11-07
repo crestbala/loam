@@ -3,7 +3,7 @@
 //!
 //! On module state: some of it is unavoidable — a signal has to outlive a page
 //! build, and there is nowhere else to keep one — but it is kept to two *zero*
-//! handles, created on first use, with no separate flag. This is `std:router`'s
+//! handles, created on first use, with no separate flag. This is `zeus:router`'s
 //! own idiom (`ensure_path`, router.loam:300):
 //!
 //!     let mut cur_path: Signal<string> = Signal { id: 0 }
@@ -31,16 +31,16 @@
 //! `Match` / `Each` rebuild belongs to that host, which frees it on its next
 //! rebuild.
 
-import "std:http"
-import "std:zeus"
-import "std:zui"
+import "http"
+import "zeus"
+import "zui"
 // Bare (no `as`), so `PostsReq` is in scope unqualified — a struct literal
 // cannot be qualified (`api.PostsReq { }` is a parse error) — while
 // `api.posts_rpc()` and the injected codecs resolve through the module stem.
 // Import paths are relative to this file, hence the climb to the app root.
 import "../../server/api.loam"
 
-/// In flight, or answered. `std:res`'s RES.Loading / RES.Ready.
+/// In flight, or answered. `zeus:res`'s RES.Loading / RES.Ready.
 let STATE_LOADING = 0
 let STATE_READY = 1
 

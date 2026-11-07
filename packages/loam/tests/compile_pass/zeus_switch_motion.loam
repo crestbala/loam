@@ -2,8 +2,8 @@
 // track's colour moves with it instead of flipping halfway.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn must(ok: bool, what: string) {
     if !ok {

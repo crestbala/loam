@@ -8,8 +8,8 @@
 
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:router"
+import "zeus"
+import "zeus:router"
 import "../app_routes.loam" as approutes
 
 fn fail(what: string) {

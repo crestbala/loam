@@ -7,9 +7,9 @@
 
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
-import "std:router"
+import "zeus"
+import "zui"
+import "zeus:router"
 import "../components/stocks.loam" as stocks
 import "../routes/stocks/[symbol]/page.loam" as stock_page
 import "../routes/stocks/page.loam" as search_page

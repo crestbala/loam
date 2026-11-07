@@ -2,7 +2,7 @@
 //!
 //! Bodyless `fn`s resolve to `loam_net_<name>`. Implementations are generic
 //! trampolines (POSIX sockets, or a wasm `fetch` for `fetch_rpc`). No HTTP
-//! parsing lives here — that stays in `packages/http/std/http.loam`.
+//! parsing lives here — that stays in `packages/http/src/http.loam`.
 
 /// Connect to `host`:`port`. Returns a fd, or `-1`.
 fn tcp_connect(host: string, port: int) -> int {}

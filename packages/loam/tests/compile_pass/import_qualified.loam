@@ -1,9 +1,9 @@
-// Qualified imports: `package:module` names the package outright instead of
-// relying on LOAM_PATH search order, and the module may be a path inside the
-// package (`zeus:zeuscore/arena`). `std:` still works, additively.
+// Qualified imports: `package:module` names the package outright, and the module
+// may be a path inside the package (`zeus:zeuscore/arena`). `std:` is the
+// language library. `zeus` is a package.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
+import "zeus"
 import "zeus:zeuscore/arena"
 
 fn main() {

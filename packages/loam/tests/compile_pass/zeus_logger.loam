@@ -3,11 +3,11 @@
 // is, and nothing is recorded until the mode is set.
 import "std:fmt"
 import "std:log"
-import "std:router"
+import "zeus:router"
 import "std:str"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 let mut fails: int = 0
 

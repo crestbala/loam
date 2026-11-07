@@ -2,7 +2,7 @@
 // Skipped when offline, same as `http_https_live.loam`.
 
 import "std:fmt"
-import "std:http"
+import "http"
 import "std:net"
 import "std:sys"
 import "std:async"

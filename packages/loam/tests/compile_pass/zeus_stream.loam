@@ -6,10 +6,10 @@
 
 import "std:async"
 import "std:fmt"
-import "std:http"
+import "http"
 import "std:net"
 import "std:sys"
-import "std:zeus"
+import "zeus"
 
 fn fail(what: string) {
     fmt.println("FAIL", what)

@@ -7,8 +7,8 @@
 // Sources are paths the host will not decode; the boxes are sized explicitly.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn must(ok: bool, what: string) {
     if !ok {

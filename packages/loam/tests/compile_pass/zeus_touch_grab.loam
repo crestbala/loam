@@ -3,8 +3,8 @@
 // gesture. 2 is an on_drag region. Asking does not fire the click.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn must(ok: bool, what: string) {
     if !ok {

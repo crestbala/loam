@@ -1,8 +1,8 @@
 //! Compiler, formatter, language server, tests, and the zeli CLI.
 
-import "std:zeus"
-import "std:spacing"
-import "std:zui"
+import "zeus"
+import "zui:spacing"
+import "zui"
 import "prose.loam" as prose
 
 fn Tooling() -> Node {

@@ -4,7 +4,7 @@
 //! gRPC-Web through the dev server's proxy, because a browser cannot run
 //! ffmpeg or the voice tools.
 
-import "std:zeus"
+import "zeus"
 import "../app_routes.loam" as approutes
 import "../studio/store.loam" as store
 

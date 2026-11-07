@@ -7,7 +7,7 @@
  *
  * macOS also gets a blocking TLS client (`loam_net_tls_connect`,
  * SecureTransport): the returned handle drives `tcp_write` / `tcp_read` /
- * `tcp_close` exactly like a plain socket, so `packages/http/std/http.loam` runs an HTTPS
+ * `tcp_close` exactly like a plain socket, so `packages/http/src/http.loam` runs an HTTPS
  * request over the same read path as HTTP. Wasm keeps browser TLS (nothing
  * to add); other hosts return -1.
  */

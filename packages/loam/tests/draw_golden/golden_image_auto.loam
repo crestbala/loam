@@ -4,8 +4,8 @@
 // same ratio. The host reports the intrinsic size (macOS ImageIO: a 400x200
 // PNG below). Hosts that report nothing (0) leave the box empty instead.
 
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn main() {
     zeus.snapshot(200, 200, fn() -> Node {

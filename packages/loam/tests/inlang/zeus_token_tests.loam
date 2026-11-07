@@ -8,8 +8,8 @@
 // found here, not by eye.
 
 import "std:test"
-import "std:zeus"
-import "std:colors"
+import "zeus"
+import "zui:colors"
 
 /// Every ink the system can draw, against every surface it can draw it on,
 /// for one appearance. Traps naming the offending pair.

@@ -1,9 +1,9 @@
 // DRAW-list golden: zui.TextArea after a short compose (hi + newline + t).
 // Keep stdout as the golden; no extra prints.
 
-import "std:zeus"
-import "std:colors"
-import "std:zui"
+import "zeus"
+import "zui:colors"
+import "zui"
 
 fn main() {
     let draft = zeus.signal("")

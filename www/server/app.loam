@@ -1,7 +1,7 @@
 //! The analytics server's routes. `main.loam` starts it, and tests drive it. The
 //! wasm never imports this.
 
-import "std:http"
+import "http"
 import "std:log"
 import "api.loam" as api
 import "auth.loam" as auth

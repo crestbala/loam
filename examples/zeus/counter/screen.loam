@@ -1,13 +1,13 @@
 //! Shared counter UI. Wasm, iOS, macOS, and Android all pass RPC results in.
 //!
-//! Themed chrome comes from `std:zeus` (design system merged in). `users` /
+//! Themed chrome comes from `zeus` (design system merged in). `users` /
 //! `jobs` / `uptime` are static strings from `Counter.Stats`; `count0` /
 //! `load0` seed signals.
 
-import "std:zeus"
-import "std:colors"
-import "std:spacing"
-import "std:zui"
+import "zeus"
+import "zui:colors"
+import "zui:spacing"
+import "zui"
 
 const TILE: int = 36
 const BAR_H: int = 4

@@ -1,6 +1,6 @@
 # sqlite
 
-`std:sqlite`: SQLite for native Loam programs, through `#[c]`. Server builds do not
+`sqlite`: SQLite for native Loam programs, through `#[c]`. Server builds do not
 depend on the machine: the amalgamation is vendored and compiled with the program.
 
 `std/vendor/` holds `sqlite3.c` and `sqlite3.h` from SQLite 3.54.1, unmodified.

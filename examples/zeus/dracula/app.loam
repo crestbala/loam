@@ -3,7 +3,7 @@
 //! `zeli routes` generates app_routes.loam from routes/; this file
 //! mounts it. `zeli build` emits all five targets from here.
 
-import "std:zeus"
+import "zeus"
 import "app_routes.loam" as approutes
 import "server/api.loam" as api
 import "components/book.loam" as book

@@ -1,0 +1,5 @@
+[package]
+name = "maya"
+version = "0.1.0"
+description = "Maya 3D"
+entry = "src/maya.loam"

@@ -1082,7 +1082,7 @@ fn test() -> int {
 /// seams the driver only finds beside its entry file.
 fn class_of(src: string) -> string {
     let text = sys.read_file(src)
-    if contains_str(text, "\"std:maya\"") || contains_str(text, "\"std:raygui\"") {
+    if contains_str(text, "\"std:maya\"") || contains_str(text, "import \"maya\"") || contains_str(text, "\"std:raygui\"") || contains_str(text, "import \"raygui\"") {
         return "alone"
     }
     if sys.is_dir(join(dir_of(src), "runtime")) == 1 {
@@ -1091,7 +1091,7 @@ fn class_of(src: string) -> string {
     if contains_str(src, "/examples/zeus/") || contains_str(text, "import \"../") {
         return "zeus"
     }
-    let zeus = []string { "\"std:zeus", "\"std:zui", "\"zeus:", "\"std:router", "\"std:colors", "\"std:devtools" }
+    let zeus = []string { "\"std:zeus", "\"std:zui", "\"zeus:", "\"std:router", "\"std:colors", "\"std:devtools", "\"zeus\"", "\"zui\"", "\"zui:", "\"zeus-components" }
     for i in 0..zeus.len {
         if contains_str(text, zeus[i]) {
             return "zeus"
@@ -2443,7 +2443,7 @@ fn ig_arena_lint() {
     // The library: a function may touch the arena only if it is element layer
     // (an element, a list / match host, a chart internal, a native control).
     // Everything else in these files is a component and must not.
-    let lib = "packages/zeus-components/std"
+    let lib = "packages/zeus-components/src"
     // Layering: the design system builds on `zeusbase` and `zeus:flow` only.
     // Engine internals (`zeuscore/*`: the arena, the platform seam) are not
     // public API, so no allow-list reaches them.
@@ -2491,8 +2491,8 @@ fn ig_arena_lint() {
 fn ig_api_freeze() {
     mark("api freeze")
     let doc = "packages/zeus/docs/api-freeze.md"
-    let zs = "packages/zeus/std"
-    let cs = "packages/zeus-components/std"
+    let zs = "packages/zeus/src"
+    let cs = "packages/zeus-components/src"
     let l = tmpf("api_freeze.log")
     let prog = tmpf("api_freeze.awk")
     sys.write_file(prog, "FNR == 1 { st = \"\"; cat = \"zeus\"; if (FILENAME ~ /api-freeze[.]md$/) cat = \"doc\"; else if (FILENAME ~ /zeus-components/) cat = \"zui\"; else if (FILENAME ~ /zeusraster[.]loam$/) cat = \"zeusraster\"; else if (FILENAME ~ /style[.]loam$/) cat = \"value\" }\ncat != \"doc\" && /^(pub )?fn [A-Za-z_]/ { n = $0; sub(/^(pub )?fn /, \"\", n); match(n, /^[A-Za-z0-9_]+/); have[cat \".\" substr(n, 1, RLENGTH)] = 1 }\ncat == \"value\" && /^struct [A-Za-z]+ [{]/ { st = $2; next }\ncat == \"value\" && st != \"\" && /^[}]/ { st = \"\" }\ncat == \"value\" && st != \"\" && /^    [A-Za-z_][A-Za-z0-9_]*:/ { k = $1; sub(/:.*/, \"\", k); have[st \".\" k] = 1 }\ncat == \"doc\" && /^- `[A-Za-z]+[.][A-Za-z0-9_]+`$/ { e = $0; sub(/^- `/, \"\", e); sub(/`$/, \"\", e); seen++; if (!(e in have)) print \"api-freeze.md:\" FNR \": \" e \" is listed but no longer defined\" }\nEND { if (seen == 0) print \"api-freeze.md: no entries found\" }\n")
@@ -2511,6 +2511,101 @@ fn ig_api_freeze() {
 fn ig_myapp() {
     ig_myapp_routes()
     ig_myapp_build()
+}
+
+/// Package resolution, selective imports, and a reproducible vendor tree.
+fn ig_modules() {
+    mark("modules")
+    let tests = "{{ROOT}}/packages/loam/tests"
+    let src = tmpf("stdzeus.loam")
+    let outc = tmpf("stdzeus.c")
+    if !write_text(src, "import \"std:zeus\"\nfn main() {}\n") {
+        bad("modules (setup std:zeus)", "")
+        return
+    }
+    let o = sys.exec("{{shq(LOAMC)}} --emit-c {{shq(src)}} -o {{shq(outc)}} 2>&1")
+    if sys.exec_status() == 0 {
+        bad("modules (std:zeus should fail)", o)
+        return
+    }
+    if !contains_str(o, "import \"zeus\"") || !contains_str(o, "language standard library") {
+        bad("modules (std:zeus message)", o)
+        return
+    }
+    let miss = tmpf("missing_pkg.loam")
+    let missc = tmpf("missing_pkg.c")
+    if !write_text(miss, "import \"no_such_pkg_zz\"\nfn main() {}\n") {
+        bad("modules (setup missing package)", "")
+        return
+    }
+    let mo = sys.exec("{{shq(LOAMC)}} --emit-c {{shq(miss)}} -o {{shq(missc)}} 2>&1")
+    if sys.exec_status() == 0 {
+        bad("modules (missing package should fail)", mo)
+        return
+    }
+    if !contains_str(mo, "add it to loam.toml") || !contains_str(mo, "zeli pkg sync") {
+        bad("modules (missing package message)", mo)
+        return
+    }
+    let fullp = "{{tests}}/shake_app/app_full.loam"
+    let selp = "{{tests}}/shake_app/app_sel.loam"
+    let cf = tmpf("shake_full.c")
+    let cs = tmpf("shake_sel.c")
+    let fo = sys.exec("{{shq(LOAMC)}} --emit-c {{shq(fullp)}} -o {{shq(cf)}} 2>&1")
+    if sys.exec_status() != 0 {
+        bad("modules (full import emit)", fo)
+        return
+    }
+    let so = sys.exec("{{shq(LOAMC)}} --emit-c {{shq(selp)}} -o {{shq(cs)}} 2>&1")
+    if sys.exec_status() != 0 {
+        bad("modules (selective import emit)", so)
+        return
+    }
+    let full = sys.read_file(cf)
+    let sel = sys.read_file(cs)
+    if !contains_str(full, "BULKY_MARKER_TREE_SHAKE") {
+        bad("modules (full import dropped the bulky fn)", full)
+        return
+    }
+    if contains_str(sel, "BULKY_MARKER_TREE_SHAKE") {
+        bad("modules (selective import kept the bulky fn)", sel)
+        return
+    }
+    if full.len <= sel.len {
+        bad("modules (selective C was not smaller)", "")
+        return
+    }
+    let app = "{{tests}}/pkg_app/app.loam"
+    let ca = tmpf("pkg_a.c")
+    let cb = tmpf("pkg_b.c")
+    let ao = sys.exec("LOAM_PATH=/tmp/loam-no-a {{shq(LOAMC)}} --emit-c {{shq(app)}} -o {{shq(ca)}} 2>&1")
+    if sys.exec_status() != 0 {
+        bad("modules (pkg_app under LOAM_PATH a)", ao)
+        return
+    }
+    let bo = sys.exec("LOAM_PATH=/tmp/loam-no-b {{shq(LOAMC)}} --emit-c {{shq(app)}} -o {{shq(cb)}} 2>&1")
+    if sys.exec_status() != 0 {
+        bad("modules (pkg_app under LOAM_PATH b)", bo)
+        return
+    }
+    let ca_txt = sys.read_file(ca)
+    let cb_txt = sys.read_file(cb)
+    if ca_txt != cb_txt {
+        bad("modules (C changed when LOAM_PATH changed)", "")
+        return
+    }
+    if contains_str(ca_txt, "/tmp/loam-no-a") || contains_str(ca_txt, "/tmp/loam-no-b") {
+        bad("modules (LOAM_PATH leaked into C)", "")
+        return
+    }
+    let bare = "{{tests}}/pkg_app/bare.loam"
+    let bc = tmpf("pkg_bare.c")
+    let bao = sys.exec("{{shq(LOAMC)}} --emit-c {{shq(bare)}} -o {{shq(bc)}} 2>&1")
+    if sys.exec_status() != 0 {
+        bad("modules (bare import greet)", bao)
+        return
+    }
+    ok("modules (std:, packages, tree-shake, lock reproducibility)")
 }
 
 /// `nob integration <name>` runs exactly one stanza; unknown names are refused.
@@ -2560,6 +2655,8 @@ fn stanza_dispatch(name: string) -> bool {
         ig_arena_lint()
     } else if name == "api_freeze" {
         ig_api_freeze()
+    } else if name == "modules" {
+        ig_modules()
     } else if name == "suite_zeus" {
         ig_suite("zeus")
     } else if name == "suite_plain" {
@@ -2606,6 +2703,7 @@ fn stanza_names() -> []string {
     push(v, "one_surface")
     push(v, "arena_lint")
     push(v, "api_freeze")
+    push(v, "modules")
     return v
 }
 
@@ -2674,7 +2772,7 @@ fn integration() -> int {
 /// app. The wasm module's entry points, the server/client split, and the
 /// language server all sit next to the compiler.
 fn host_stanzas() -> []string {
-    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "api_freeze" }
+    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "api_freeze", "modules" }
 }
 
 /// One after another, for an `--isolated` run; a batched run pools them.

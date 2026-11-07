@@ -6,9 +6,9 @@
 // line each. Between them the screens below use every op kind. Keep this file
 // free of prints: stdout is the golden.
 
-import "std:zeus"
-import "std:spacing"
-import "std:zui"
+import "zeus"
+import "zui:spacing"
+import "zui"
 import "zeus:zeuscore/runtime"
 import "../../../../examples/zeus/gallery/screen.loam" as screen
 

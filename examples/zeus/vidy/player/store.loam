@@ -10,7 +10,7 @@
 //! never drops them. The pure pieces (time labels, aspect boxes, names, the
 //! ffmpeg job) live in `lib/`; the key bindings in `keys.loam`.
 
-import "std:zeus"
+import "zeus"
 import "std:async"
 import "std:str"
 import "std:sys"

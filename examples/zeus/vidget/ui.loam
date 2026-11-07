@@ -1,7 +1,7 @@
 //! The app, as every host starts it: the store first (signals and the job
 //! stream live outside any rebuild), then the generated route table.
 
-import "std:zeus"
+import "zeus"
 import "app_routes.loam" as approutes
 import "components/store.loam" as store
 

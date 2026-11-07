@@ -1,10 +1,13 @@
 /**
  * compile.c — load modules from disk and run lexer/parser/sema.
  *
- * Import `"std:name"` → `<std dir>/name.<ext>`, searched across LOAM_STD_DIR
- * and each LOAM_PATH root's `std/` subdir. Relative paths are from the
- * importing file. Cycles and missing files are errors. After all modules
- * parse, typecheck → borrowck → boundscheck.
+ * `std:name` is the language library only (`LOAM_STD_DIR`). A bare
+ * `import "name"` or `import "name:module"` is a package from the manifest,
+ * lockfile, and vendor tree (`pkgresolve.c`); `LOAM_PATH` is an override for
+ * names still missing. Relative paths are from the importing file. There is
+ * no `export` keyword: every top-level declaration can be named. Cycles and
+ * missing files are errors. After all modules parse, typecheck → borrowck →
+ * boundscheck.
  */
 #include "compile.h"
 #include "ext.h"
@@ -23,9 +26,9 @@
 #define LOAM_STD_DIR "std"
 #endif
 
-/* Colon-separated framework roots searched for `std:` modules after the
-   language std. Build-time default; a non-empty LOAM_PATH env variable is
-   prepended to it (see std_search_path). */
+/* Framework roots. Not used for `std:` lookup. A non-empty LOAM_PATH env
+   variable is prepended (see framework_search_path). `loam_is_std_path` still
+   treats each root's `src/` (and a leftover `std/`) as a runtime seam. */
 #ifndef LOAM_PATH
 #define LOAM_PATH ""
 #endif
@@ -33,6 +36,9 @@
 static LoamSession *CUR;
 static const char *main_override_src;
 static const char *main_override_path;
+static int g_release_imports;
+
+void loam_set_release_imports(int on) { g_release_imports = on ? 1 : 0; }
 
 /** Read the whole file into a malloc'd NUL-terminated buffer. NULL on fail. */
 static char *read_file(const char *path) {
@@ -61,9 +67,24 @@ static int path_under(const char *path, const char *dir) {
     return strncmp(path, dir, d) == 0 && (path[d] == '/' || path[d] == '\0');
 }
 
+/** `path_under`, plus a relative path against an absolute directory.
+ *  `packages/zeus/src/foo.loam` matches `/…/packages/zeus/src`. */
+static int path_under_flex(const char *path, const char *dir) {
+    const char *s;
+    if (path_under(path, dir)) return 1;
+    if (!path || !dir || path[0] == '/' || dir[0] != '/') return 0;
+    s = dir;
+    while ((s = strchr(s, '/'))) {
+        s++;
+        if (!strchr(s, '/')) break;
+        if (path_under(path, s)) return 1;
+    }
+    return 0;
+}
+
 /* Env LOAM_PATH (if set) followed by the build-time default, so a custom path
    adds roots without dropping zeus/http/maya. */
-static const char *std_search_path(char *buf, size_t sz) {
+static const char *framework_search_path(char *buf, size_t sz) {
     const char *env = getenv("LOAM_PATH");
     if (env && env[0] && strlen(LOAM_PATH) > 0) snprintf(buf, sz, "%s:%s", env, LOAM_PATH);
     else if (env && env[0]) snprintf(buf, sz, "%s", env);
@@ -72,32 +93,45 @@ static const char *std_search_path(char *buf, size_t sz) {
 }
 
 int loam_std_dirs(const char **out, int max) {
-    static char buf[1024];
-    static char dirs[LOAM_MAX_STD_DIRS][1024];
-    int n = 0;
-    if (n < max) out[n++] = LOAM_STD_DIR;
-    const char *roots = std_search_path(buf, sizeof buf);
-    const char *p = roots;
-    while (*p && n < max) {
+    if (!out || max <= 0) return 0;
+    out[0] = LOAM_STD_DIR;
+    return 1;
+}
+
+int loam_is_std_path(const char *path) {
+    char buf[1024];
+    const char *roots;
+    const char *p;
+    if (path_under(path, LOAM_STD_DIR)) return 1;
+    roots = framework_search_path(buf, sizeof buf);
+    p = roots;
+    while (*p) {
+        const char *end;
+        size_t len;
+        char dir[1100];
         while (*p == ':') p++;
         if (!*p) break;
-        const char *end = strchr(p, ':');
-        size_t len = end ? (size_t)(end - p) : strlen(p);
-        if (len > 0 && len + 5 < sizeof dirs[0]) {
-            int k = snprintf(dirs[n], sizeof dirs[0], "%.*s/std", (int)len, p);
-            if (k > 0 && k < (int)sizeof dirs[0]) { out[n] = dirs[n]; n++; }
+        end = strchr(p, ':');
+        len = end ? (size_t)(end - p) : strlen(p);
+        if (len > 0 && len + 5 < sizeof dir) {
+            static const char *leaves[] = {"src", "std"};
+            for (int leaf = 0; leaf < 2; leaf++) {
+                char *rp;
+                snprintf(dir, sizeof dir, "%.*s/%s", (int)len, p, leaves[leaf]);
+                if (path_under_flex(path, dir)) return 1;
+                /* Package dirs are realpath'd. A `LOAM_PATH` root may still be the
+                   build-time spelling, so compare the canonical directory too. */
+                rp = realpath(dir, NULL);
+                if (rp) {
+                    int ok = path_under_flex(path, rp);
+                    free(rp);
+                    if (ok) return 1;
+                }
+            }
         }
         if (!end) break;
         p = end + 1;
     }
-    return n;
-}
-
-int loam_is_std_path(const char *path) {
-    const char *dirs[LOAM_MAX_STD_DIRS];
-    int n = loam_std_dirs(dirs, LOAM_MAX_STD_DIRS);
-    for (int i = 0; i < n; i++)
-        if (path_under(path, dirs[i])) return 1;
     return 0;
 }
 
@@ -114,49 +148,19 @@ static int std_module_lookup(const char *name, char *out, size_t outsz) {
     return 0;
 }
 
-/** Resolve `package:module` — a module in the package rooted at the LOAM_PATH
- *  entry named `package`. The module may be a path inside that package's `std`
- *  dir (`zeus:zeuscore/arena`). Matching on the root's basename is what makes
- *  the spec name the package it means, instead of relying on search order the
- *  way a bare `std:name` does. Public so the language server can offer the form
- *  in import completion. */
-int loam_package_module(const char *pkg, const char *mod, char *out, size_t outsz) {
-    if (!pkg || !pkg[0] || !mod || !mod[0]) return 0;
-    if (strchr(pkg, '/') || strchr(pkg, '\\')) return 0;
-    char buf[1024];
-    const char *roots = std_search_path(buf, sizeof buf);
-    const char *p = roots;
-    while (*p) {
-        while (*p == ':') p++;
-        if (!*p) break;
-        const char *end = strchr(p, ':');
-        size_t len = end ? (size_t)(end - p) : strlen(p);
-        const char *base = p;
-        for (const char *q = p; q < p + len; q++)
-            if (*q == '/') base = q + 1;
-        size_t blen = (size_t)((p + len) - base);
-        if (blen == strlen(pkg) && strncmp(base, pkg, blen) == 0) {
-            for (size_t e = 0; e < LOAM_EXT_COUNT; e++) {
-                int k = snprintf(out, outsz, "%.*s/std/%s%s", (int)len, p, mod, loam_ext_name(e));
-                if (k > 0 && (size_t)k < outsz && file_exists(out)) return 1;
-            }
-        }
-        if (!end) break;
-        p = end + 1;
-    }
-    return 0;
-}
-
 /*
  * `import "pkg:name"` — a vendored package. Walk up from the entry file to the
  * nearest directory holding `vendor/name/`, then take `name.<ext>` (or
- * `main.<ext>`). `zeus pkg sync` materializes that tree from `loam.deps`.
+ * `main.<ext>`). `zeli pkg sync` materializes that tree. The lock checksum is
+ * checked when the column is present.
  */
 static int pkg_module_lookup(const char *name, char *out, size_t outsz) {
-    if (!name[0] || strchr(name, '/') || strchr(name, '\\') || strchr(name, ':')) return 0;
-    const char *anchor = (CUR && CUR->nmods > 0) ? CUR->mods[0].path : NULL;
-    if (!anchor) return 0;
+    const char *anchor;
     char dir[1024];
+    loam_package_clear_error();
+    if (!name[0] || strchr(name, '/') || strchr(name, '\\') || strchr(name, ':')) return 0;
+    anchor = (CUR && CUR->nmods > 0) ? CUR->mods[0].path : NULL;
+    if (!anchor) return 0;
     snprintf(dir, sizeof dir, "%s", anchor);
     for (int depth = 0; depth < 64; depth++) {
         char *slash = strrchr(dir, '/');
@@ -167,11 +171,23 @@ static int pkg_module_lookup(const char *name, char *out, size_t outsz) {
             const char *file = which ? "main" : name;
             for (size_t e = 0; e < LOAM_EXT_COUNT; e++) {
                 char cand[1200];
+                char pkgdir[1200];
+                const char *file_slash;
+                size_t n;
                 if (dir[0])
                     snprintf(cand, sizeof cand, "%s/vendor/%s/%s%s", dir, name, file, loam_ext_name(e));
                 else
                     snprintf(cand, sizeof cand, "vendor/%s/%s%s", name, file, loam_ext_name(e));
-                if (file_exists(cand)) { snprintf(out, outsz, "%s", cand); return 1; }
+                if (!file_exists(cand)) continue;
+                file_slash = strrchr(cand, '/');
+                if (!file_slash || file_slash == cand) return 0;
+                n = (size_t)(file_slash - cand);
+                if (n >= sizeof pkgdir) return 0;
+                memcpy(pkgdir, cand, n);
+                pkgdir[n] = '\0';
+                if (!loam_vendor_check(pkgdir)) return 0;
+                snprintf(out, outsz, "%s", cand);
+                return 1;
             }
         }
         if (dir[0] == '\0') break;
@@ -239,24 +255,51 @@ static char *stem_of(const char *path) {
     return loam_dupn(base, loam_stem_len(base, strlen(base)));
 }
 
+/** A package name: no slash, colon, or source extension. `fmt.loam` stays relative. */
+static int is_bare_package_spec(const char *spec) {
+    size_t n;
+    if (!spec || !spec[0]) return 0;
+    if (strchr(spec, '/') || strchr(spec, '\\') || strchr(spec, ':')) return 0;
+    n = strlen(spec);
+    if (n >= 5 && strcmp(spec + n - 5, ".loam") == 0) return 0;
+    if (n >= 4 && strcmp(spec + n - 4, ".loa") == 0) return 0;
+    return 1;
+}
+
+static void report_package_failure(SourceLoc loc, const char *name) {
+    const char *err = loam_package_error();
+    char why[512];
+    if (err && err[0]) {
+        loam_error(loc, "%s", err);
+        return;
+    }
+    loam_package_missing(name, why, sizeof why);
+    loam_error(loc, "%s", why);
+}
+
 /** Map an import spec to a filesystem path, or NULL and an error. */
 static char *resolve_import(const char *importer, AstNode *im) {
     char path[1024];
     const char *spec = im->as.import.path;
     if (!spec) {
-        loam_error(im->loc, "import requires a quoted path, e.g. import \"std:zeus\"");
+        loam_error(im->loc, "import requires a quoted path, e.g. import \"std:fmt\"");
         return NULL;
     }
     if (strncmp(spec, "std:", 4) == 0) {
         if (!std_module_lookup(spec + 4, path, sizeof path)) {
-            loam_error(im->loc, "cannot find std module '%s'", spec + 4);
+            if (loam_package_known(spec + 4))
+                loam_error(im->loc,
+                           "cannot find std module '%s' (std: is the language standard library; import \"%s\")",
+                           spec + 4, spec + 4);
+            else
+                loam_error(im->loc, "cannot find std module '%s'", spec + 4);
             return NULL;
         }
         return normalize_path(path);
     }
     if (strncmp(spec, "pkg:", 4) == 0) {
         if (!pkg_module_lookup(spec + 4, path, sizeof path)) {
-            loam_error(im->loc, "cannot find package '%s' (run `zeus pkg sync`)", spec + 4);
+            report_package_failure(im->loc, spec + 4);
             return NULL;
         }
         return normalize_path(path);
@@ -264,21 +307,34 @@ static char *resolve_import(const char *importer, AstNode *im) {
     {
         const char *colon = strchr(spec, ':');
         if (colon) {
+            char pkg[256];
+            size_t plen;
+            const char *err;
             if (colon == spec || colon[1] == '\0') {
                 loam_error(im->loc, "import spec '%s' needs a package and a module", spec);
                 return NULL;
             }
-            char pkg[256];
-            size_t plen = (size_t)(colon - spec);
+            plen = (size_t)(colon - spec);
             if (plen >= sizeof pkg) plen = sizeof pkg - 1;
             memcpy(pkg, spec, plen);
             pkg[plen] = '\0';
             if (!loam_package_module(pkg, colon + 1, path, sizeof path)) {
-                loam_error(im->loc, "cannot find module '%s' in package '%s'", colon + 1, pkg);
+                err = loam_package_error();
+                if (err && err[0])
+                    loam_error(im->loc, "%s", err);
+                else
+                    loam_error(im->loc, "cannot find module '%s' in package '%s'", colon + 1, pkg);
                 return NULL;
             }
             return normalize_path(path);
         }
+    }
+    if (is_bare_package_spec(spec)) {
+        if (!loam_package_entry(spec, path, sizeof path)) {
+            report_package_failure(im->loc, spec);
+            return NULL;
+        }
+        return normalize_path(path);
     }
     if (spec[0] == '/')
         snprintf(path, sizeof path, "%s", spec);
@@ -329,6 +385,24 @@ static char *unique_module_name(const char *name, const char *path) {
         break;
     }
     return loam_dup(name);
+}
+
+/** Release builds: a full bare-package import in the entry keeps every decl. */
+static void warn_full_package_imports(LoamModule *m) {
+    AstNode *p;
+    if (!g_release_imports || !CUR || !m || m != &CUR->mods[0]) return;
+    p = m->ast;
+    if (!p) return;
+    for (size_t i = 0; i < p->as.program.import_count; i++) {
+        AstNode *im = p->as.program.imports[i];
+        const char *spec;
+        if (!im || im->as.import.name_count != 0) continue;
+        spec = im->as.import.path;
+        if (!is_bare_package_spec(spec)) continue;
+        loam_warning(im->loc,
+                     "full import of \"%s\"; prefer import { Name } \"%s\" to drop unused declarations",
+                     spec, spec);
+    }
 }
 
 static int load_imports(LoamModule *m) {
@@ -385,6 +459,9 @@ static int load_module(const char *path, const char *name) {
     CUR->mods[idx].ast = parser_parse(&p);
     if (p.had_error || !CUR->mods[idx].ast) return 1;
     CUR->mods[idx].ast->as.program.mod_name = loam_dup(unique);
+    /* Before `#[proto]` injects `import "http"`, so that implicit import does
+       not warn. The user can still write the import themselves. */
+    warn_full_package_imports(&CUR->mods[idx]);
     if (name && strcmp(name, "http") != 0) {
         AstNode *ast = CUR->mods[idx].ast;
         int has_proto = 0, has_http = 0;
@@ -396,12 +473,14 @@ static int load_module(const char *path, const char *name) {
         }
         for (size_t i = 0; i < ast->as.program.import_count; i++) {
             const char *spec = ast->as.program.imports[i]->as.import.path;
-            if (spec && strcmp(spec, "std:http") == 0) has_http = 1;
+            if (spec && (strcmp(spec, "http") == 0 || strcmp(spec, "std:http") == 0 ||
+                         strcmp(spec, "pkg:http") == 0))
+                has_http = 1;
             if (spec && strcmp(spec, "std:json") == 0) has_std_json = 1;
         }
         if (has_proto && !has_http) {
             SourceLoc loc = ast->loc;
-            AstNode *im = ast_import(loam_dup("http"), loam_dup("std:http"), loc);
+            AstNode *im = ast_import(loam_dup("http"), loam_dup("http"), loc);
             size_t ni = ast->as.program.import_count;
             AstNode **imps = (AstNode **)realloc(ast->as.program.imports, (ni + 1) * sizeof(AstNode *));
             if (!imps) loam_fatal("out of memory");
@@ -468,6 +547,7 @@ int loam_session_check(LoamSession *s, const char *path, const char *src) {
     main_override_path = src ? path : NULL;
     loam_diag_capture(1);
     loam_diag_clear();
+    loam_packages_discover(path);
 
     char *stem = stem_of(path);
     int load_err = load_module(path, stem);

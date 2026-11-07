@@ -1,8 +1,8 @@
 //! Language tour: ownership, control flow, errors, modules, closures.
 
-import "std:zeus"
-import "std:spacing"
-import "std:zui"
+import "zeus"
+import "zui:spacing"
+import "zui"
 import "prose.loam" as prose
 
 fn Language() -> Node {
@@ -79,18 +79,21 @@ fn Language() -> Node {
             zui.SectionHeader(
                 "Modules",
                 "Three import forms",
-                "No globs. A selective import names the declarations you want. The module name is the file stem.",
+                "No globs and no export keyword. A selective import names the declarations you want. The module name is the file stem.",
             )
             zui.DescriptionList(
                 []DescItem {
                     DescItem {
                         term: "std:fmt",
-                        detail: "Language standard library, then each search root.",
+                        detail: "Language standard library, shipped with the compiler.",
                     },
-                    DescItem { term: "math.loam", detail: "A file next to the importer." },
                     DescItem {
-                        term: "pkg:name",
-                        detail: "Vendored code, searched upward from the entry.",
+                        term: "zeus",
+                        detail: "A package from the workspace, or from vendor/ and loam.lock.",
+                    },
+                    DescItem {
+                        term: "{ println } \"std:fmt\"",
+                        detail: "Selective import. Every top-level declaration can be named.",
                     },
                 },
                 divided = true,

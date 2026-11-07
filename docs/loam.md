@@ -96,35 +96,46 @@ loam/
   bin/loam-fmt     formatter (one style, no options)
 ```
 
-Std modules today: `fmt` (print), `math` (`f64` elementary functions), `date`
-(`YYYYMMDD` calendar and day numbers), `zeus`
-(UI), `http`, `maya` (tiny 3D),
+Language std modules today: `fmt` (print), `math` (`f64` elementary functions), `date`
+(`YYYYMMDD` calendar and day numbers),
 `thread` (OS threads + `Chan<T>` for CPU-bound work; Send discipline keeps
 workers off module state — native/iOS/Android only, wasm `spawn` is a no-op).
+`zeus` (UI), `http`, and `maya` (tiny 3D) are packages, imported as
+`import "zeus"`, not `import "zeus"`.
 
 Document them with `///` above each `fn` / `struct` and `//!` at the top of the
 file. Hover in the editor shows those comments plus the type.
 
 ### Module resolution
 
-Three import forms, one per kind of dependency:
+There is no `export` keyword. Every top-level `fn`, `struct`, `const`, and
+`enum` can be imported. The importer chooses the names.
 
 | Form | Resolves to | Use for |
 |---|---|---|
-| `import "std:name"` | `packages/loam/std/name.loam`, then each `LOAM_PATH` root's `std/name.loam` | language std and frameworks |
+| `import "std:name"` | `packages/loam/std/name.loam` only | language standard library |
+| `import "pkg"` / `import "pkg:module"` | package entry, or `src/<module>.loam` inside that package | workspace members, `vendor/` + `loam.lock` |
+| `import "pkg:name"` | `vendor/name/name.loam`, searched upward from the entry | explicit vendored form |
 | `import "path.loam"` | relative to the importing file | files shipped with this module |
-| `import "pkg:name"` | `vendor/name/name.loam`, searched upward from the entry | vendored third-party code |
+| `import { Name } "path"` | the same file as a full import of `path` | the declarations you name |
 
-The `std:` search path is a real path, not "`std/` next to the compiler".
+`std:` does not search `LOAM_PATH`. That variable is an override for package
+roots that are not in the nearest `loam.toml` workspace or in `vendor/`. A
+shipped app is the entry file, `vendor/`, and `loam.lock`. A `std:` import of
+zeus is an error; the package is `import "zeus"`. `import "fmt"` is not the
+language module; that is `import "std:fmt"`.
+
 `packages/loam/std/` holds the language core (`async`, `date`, `fmt`, `font`,
-`json`, `kv`, `map`, `math`, `net`, `result`, `sys`, `test`, `thread`,
-`unicode`);
-`zeus`, `http`, and `maya` are
-**frameworks** that live outside `loam/` and are found because `LOAM_PATH`
-names their roots (`packages/zeus/std/zeus.loam`, `packages/http/std/http.loam`, …). Language std
-is searched first, so a framework cannot shadow `std:fmt`. Relative imports
-are for a module's own siblings (`packages/zeus/std/router.loam` →
-`"zeuscore/platform.loam"`), never for dependencies.
+`json`, `kv`, `log`, `map`, `math`, `net`, `result`, `str`, `sys`, `test`,
+`thread`, `unicode`). `zeus`, `zui`, `http`, and `maya` are packages. Their
+manifests point at `src/<name>.loam`. Relative imports are for a module's own
+siblings (`packages/zeus/src/router.loam` → `"zeuscore/platform.loam"`).
+
+`zeli pkg sync` reads `loam.toml` `[dependencies]` when that section lists
+anything, otherwise `loam.deps`, and writes `vendor/` plus `loam.lock` with a
+checksum. There is no package registry and no package site. A dependency is a
+path in the manifest or in `loam.deps`. A registry, `loam pkg publish`, and
+precompiled package caches wait until a site exists.
 
 ## How to use the language
 
@@ -410,28 +421,34 @@ stay 64-bit (clocks, hashes, large byte counts) are listed in
 
 ### 4. Modules
 
-Quoted imports only. No glob. A full import brings the whole module in under
-its alias; a selective import names just the declarations you want.
+Quoted imports only. No glob. No `export` keyword: every top-level declaration
+can be named. A full import brings the whole module in under its alias; a
+selective import names just the declarations you want. The selective form has
+no `from`.
 
 | Spec | Loads | Call as |
 |---|---|---|
-| `import "std:fmt"` | `std/fmt.loam` | `fmt.println(...)` |
+| `import "std:fmt"` | language `fmt.loam` | `fmt.println(...)` |
+| `import "zeus"` | the zeus package entry | `zeus.App(...)` |
+| `import "zeus:router"` | that module of the package | `router.open(...)` |
 | `import "math.loam"` | `math.loam` next to this file | `math.add(2, 40)` |
 | `import "../mod/math.loam"` | relative to the importer | `math.add(...)` |
-| `import { add } from "math.loam"` | the same file | `add(2, 40)` — bare |
-| `import { add as plus } from "math.loam"` | the same file | `plus(2, 40)` |
+| `import { add } "math.loam"` | the same file | `add(2, 40)` — bare |
+| `import { add as plus } "math.loam"` | the same file | `plus(2, 40)` |
 
-The module name is the file stem (`math`), or `bar` from `std:bar`. `as` after
-the path (`import "img.loam" as pic`) renames the module itself.
+The module name is the file stem (`math`), or the name after `std:` / `pkg:`.
+For `package:module` the alias is the module stem (`router` from
+`zeus:router`). `as` after the path (`import "img.loam" as pic`) renames the
+module itself.
 
 A selective import binds only the names listed, and only for bare use; the
-module is still loaded under its alias, so `math.add(...)` keeps working. Names
-resolve through the imported module's own re-exports, so
-`import { Card } from "std:ui"` finds `Card` when `ui` re-exports it, and each
-listed name must exist there or the compiler errors at the import rather than
-at the use site. Struct type names are already visible in every loaded module,
-so listing one is documentation more than necessity; enums, `let`/`const`s, and
-functions are what a selective import actually scopes.
+module is still loaded under its alias, so `math.add(...)` keeps working. A
+listed name must be declared in that module, or in a module it imports, or the
+compiler errors at the import rather than at the use site. Struct type names
+are already visible in every loaded module, so listing one is documentation
+more than necessity; enums, `let`/`const`s, and functions are what a selective
+import actually scopes. A full import of a package in a release build warns;
+`import { Name } "pkg"` is what lets unused declarations drop out of the binary.
 
 Functions: `mod.fn(...)`. Module-level `let` bindings are places:
 `counter.n += 1`.
@@ -461,7 +478,7 @@ fn main() {
 
 Method call `node.w(32)` looks up `w` in the current file, then in imported
 modules, and rewrites to `zeus.w(node, 32)` when `w` lives in `zeus`. That is why
-`import "std:zeus"` is enough for widgets and trailing blocks.
+`import "zeus"` is enough for widgets and trailing blocks.
 
 ### 5. Closures
 
@@ -595,9 +612,9 @@ callers should not assume the face is present.
 |---|---|
 | A CLI or algorithm | `import "std:fmt"`, `fn main()` |
 | CPU-bound work off the UI thread | `import "std:thread"` — `spawn` a closure, return results through a `Chan<T>` drained on the UI thread |
-| A desktop UI | [packages/zeus/README.md](../packages/zeus/README.md) — `import "std:zeus"` |
-| A tiny RPC server | `import "std:http"` (`examples/language/http_server.loam`) |
-| A 3D/2D toy scene | `import "std:maya"` (`examples/language/solar.loam`) |
+| A desktop UI | [packages/zeus/README.md](../packages/zeus/README.md) — `import "zeus"` |
+| A tiny RPC server | `import "http"` (`examples/language/http_server.loam`) |
+| A 3D/2D toy scene | `import "maya"` (`examples/language/solar.loam`) |
 | Grapheme-correct text | `import "std:unicode"` for cluster boundaries; `import "std:font"` for in-tree metrics |
 
 Corpus you can compile as examples:

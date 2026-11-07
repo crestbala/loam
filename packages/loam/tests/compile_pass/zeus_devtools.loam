@@ -3,9 +3,9 @@
 
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
-import "std:devtools"
+import "zeus"
+import "zui"
+import "zeus:devtools"
 
 fn must(ok: bool, what: string) {
     if !ok {

@@ -19,8 +19,8 @@ and style/type values. 64-bit is reserved for the cases in
 | `async.now_ms`, `async.Timer.at` | `i64` | monotonic / epoch millis overflow i32 in ~24 days |
 | `http` call deadlines (`at` fields in the async/ws call records) | `i64` | same clock |
 | `maya.plat_now_ms`, `mayacore.scene.t0_ms`, `scene.frame` | `i64` | same clock |
-| SHA-1 in `packages/http/std/httpcore/ws.loam` | `u64` | 32-bit hash bit patterns with headroom before the mask |
-| HPACK Huffman accumulator in `packages/http/std/httpcore/huff.loam` | `i64` | the bit buffer holds up to ~37 bits between codewords |
+| SHA-1 in `packages/http/src/httpcore/ws.loam` | `u64` | 32-bit hash bit patterns with headroom before the mask |
+| HPACK Huffman accumulator in `packages/http/src/httpcore/huff.loam` | `i64` | the bit buffer holds up to ~37 bits between codewords |
 | FNV / LCG in `examples/zeus/greeninfer/engine.loam` | `u64` | same |
 | `zeus.scaled` intermediate product | `i64` | `v * scale` before the `/ 100`; the result is `int` |
 | C seam: file sizes, mmap offsets, byte counts, `loam_str.len` storage | `int64_t` | 2 GB is not a limit worth baking in |

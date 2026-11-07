@@ -2,8 +2,8 @@
 // moves, a click in the window must still hit it (click-outside dismiss).
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn expect(ok: bool, what: string) {
     if ok {

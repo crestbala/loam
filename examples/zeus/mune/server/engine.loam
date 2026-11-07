@@ -23,7 +23,7 @@
 import "std:async"
 import "std:str"
 import "std:sys"
-import "std:zeus"
+import "zeus"
 import "api.loam"
 import "../core/arrange.loam" as arrange
 import "../core/graph.loam" as graph

@@ -3,7 +3,7 @@
 //!     ./run.sh raygui                  # window (needs raylib; brew install raylib)
 //!     RAYGUI_HEADLESS=1 ./run.sh raygui # 3 frames, prints the RAM summary
 //!
-//! `std:raygui` is the raygui immediate-mode GUI (raysan5/raygui) on raylib.
+//! `raygui` is the raygui immediate-mode GUI (raysan5/raygui) on raylib.
 //! Immediate mode means nothing is retained: every frame re-issues every
 //! control, and the only state is the handful of `let mut` values below. That
 //! is what makes it a fair RAM test — if the footprint climbs while this panel
@@ -15,7 +15,7 @@
 //! Linux/Android resident set — and the program prints first/min/max/growth on
 //! exit so a run can be compared or scripted.
 
-import "std:raygui"
+import "raygui"
 import "std:fmt"
 
 // ── retained state: the whole of it (immediate mode lives here) ───────────

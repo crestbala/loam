@@ -1,10 +1,10 @@
 //! Opening page: what Loam is, a sample, the compile pipeline, and where to go next.
 
-import "std:zeus"
-import "std:spacing"
-import "std:colors"
-import "std:zui"
-import "std:router"
+import "zeus"
+import "zui:spacing"
+import "zui:colors"
+import "zui"
+import "zeus:router"
 import "prose.loam" as prose
 import "shell.loam" as shell
 

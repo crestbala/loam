@@ -4,10 +4,10 @@
 
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:colors"
-import "std:spacing"
-import "std:zui"
+import "zeus"
+import "zui:colors"
+import "zui:spacing"
+import "zui"
 
 fn must(ok: bool, what: string) {
     if !ok {

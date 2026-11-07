@@ -3,9 +3,9 @@
 // arena size, layout time, binary size, and wasm size.
 import "std:async"
 import "std:fmt"
-import "std:zeus"
-import "std:colors"
-import "std:zui"
+import "zeus"
+import "zui:colors"
+import "zui"
 
 fn row(label: string) {
     zeus.Box(style = Style(direction = Direction.Row, gap = 4, padding = 2)) {

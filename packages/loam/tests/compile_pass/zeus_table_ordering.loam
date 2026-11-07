@@ -3,9 +3,9 @@
 // instead of the byte-wise "Banana" < "apple" < "cherry". Numbers still sort by value.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:colors"
-import "std:zui"
+import "zeus"
+import "zui:colors"
+import "zui"
 
 struct Item {
     label: string,

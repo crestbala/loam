@@ -1,15 +1,15 @@
 //! The floating glass control panel: seek bar over one row of transport,
 //! volume, time, and the loop / speed / aspect / open / full screen buttons.
 
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 import "../player/store.loam" as player
 import "../lib/timecode.loam" as timecode
 import "../lib/aspect.loam" as ar
 import "icons.loam"
-import { SeekBar } from "seekbar.loam"
-import { WHITE, SOFT, GLASS, ACCENT, TRACK } from "../theme.loam"
-import { Glyph, When } from "kit.loam"
+import { SeekBar } "seekbar.loam"
+import { WHITE, SOFT, GLASS, ACCENT, TRACK } "../theme.loam"
+import { Glyph, When } "kit.loam"
 
 /// Narrow windows drop the least-used controls instead of overflowing:
 /// below `WIDE` the secondary transport and the volume slider go, below

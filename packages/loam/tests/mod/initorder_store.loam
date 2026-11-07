@@ -1,7 +1,7 @@
 //! Module-level signals of different types. Their initializers must run after
 //! zeus's own module state (the signal arena) is set up.
 
-import "std:zeus"
+import "zeus"
 
 let name = zeus.signal("vidget")
 let count = zeus.signal(7)
