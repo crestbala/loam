@@ -1,21 +1,21 @@
-//! The dashboard's numbers, for a signed in owner only. Native only.
-//!
-//! Each query reads the events since `?1`, in integer milliseconds. They run one
-//! after another and block other requests, so keep an eye on `Stats` in the logs.
+// The dashboard's numbers, for a signed in owner only. Native only.
+//
+// Each query reads the events since `?1`, in integer milliseconds. They run one
+// after another and block other requests, so keep an eye on `Stats` in the logs.
 
 import "std:result"
 import "sqlite"
 import "api.loam" as api
 
 const DAY_MS: i64 = 86400000
-/// The widest the page offers. A year of a busy site takes tens of seconds to
-/// report, and nothing else is served meanwhile, so that is not on offer.
+/** *The widest the page offers. A year of a busy site takes tens of seconds to */
+/** *report, and nothing else is served meanwhile, so that is not on offer. */
 const MAX_DAYS: int = 90
 const DEFAULT_DAYS: int = 30
 const INT_MAX: i64 = 2147483647
 
-/// The column as an `int`, held to the range. `int()` traps on overflow, and these
-/// sums come from what browsers sent.
+/** *The column as an `int`, held to the range. `int()` traps on overflow, and these */
+/** *sums come from what browsers sent. */
 fn count(st: Stmt, i: int) -> int {
     let v = st.column_i64(i)
     if v > INT_MAX {
@@ -142,7 +142,7 @@ fn read_pages(db: Db, since: i64, r: &mut StatsResp) -> Result<bool> {
     return more
 }
 
-/// Rows of a name and a count, into `names` and `counts`.
+/** *Rows of a name and a count, into `names` and `counts`. */
 fn read_ranked(db: Db, since: i64, sql: string, names: &mut []string, counts: &mut []int) -> Result<bool> {
     let mut st = Stmt {}
     prepared(db, sql, since, &mut st)?
@@ -177,7 +177,7 @@ fn read_events(db: Db, since: i64, r: &mut StatsResp) -> Result<bool> {
     return more
 }
 
-/// Every day of the window, so a quiet day shows as zero, not as a gap.
+/** *Every day of the window, so a quiet day shows as zero, not as a gap. */
 fn read_daily(db: Db, since: i64, days: int, now: i64, r: &mut StatsResp) -> Result<bool> {
     let mut st = Stmt {}
     prepared(
@@ -260,8 +260,8 @@ fn empty() -> StatsResp {
     return decode_StatsResp("")
 }
 
-/// Every number the dashboard shows, for the last `days` days. On failure `status`
-/// says so, and nothing else in the reply counts.
+/** *Every number the dashboard shows, for the last `days` days. On failure `status` */
+/** *says so, and nothing else in the reply counts. */
 fn stats(db: Db, days: int, now: i64) -> StatsResp {
     let mut r = empty()
     r.days = clamp_days(days)

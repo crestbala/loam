@@ -1,4 +1,4 @@
-//! The framework: signals, hosts, routing, and the zeli CLI.
+// The framework: signals, hosts, routing, and the zeli CLI.
 
 import "zeus"
 import "zui:spacing"

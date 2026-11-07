@@ -1,8 +1,8 @@
-//! Backtest and walk-forward runs for the screens.
-//!
-//! A worker cannot take the series: a slice is not Send, and a channel
-//! cannot carry one. The series is already in memory, and the run stays
-//! on the UI thread.
+// Backtest and walk-forward runs for the screens.
+//
+// A worker cannot take the series: a slice is not Send, and a channel
+// cannot carry one. The series is already in memory, and the run stays
+// on the UI thread.
 
 import "zeus"
 import "../core/backtest.loam"
@@ -12,13 +12,13 @@ import "../core/walkforward.loam"
 import "book.loam" as book
 import "present.loam" as present
 
-/// What the backtest screen shows. One value per run: the screen reads the
-/// signal that holds it, so a run repaints the result and nothing else.
+/** *What the backtest screen shows. One value per run: the screen reads the */
+/** *signal that holds it, so a run repaints the result and nothing else. */
 struct BacktestView {
-    /// A run finished; false while idle, loading, or after a failure.
+    /** *A run finished; false while idle, loading, or after a failure. */
     have: bool = false,
     note: string = "",
-    /// Label, value, caption triples: the selected rule, buy and hold, SIP.
+    /** *Label, value, caption triples: the selected rule, buy and hold, SIP. */
     ending: []string,
     score: string = "",
     labels: []string,
@@ -27,7 +27,7 @@ struct BacktestView {
     trades: []string,
 }
 
-/// What the walk-forward screen shows.
+/** *What the walk-forward screen shows. */
 struct WalkView {
     have: bool = false,
     note: string = "",
@@ -58,12 +58,12 @@ fn rule_signal() -> Signal<int> {
     return rule
 }
 
-/// Index into the watchlist of the scheme a run uses.
+/** *Index into the watchlist of the scheme a run uses. */
 fn pick_signal() -> Signal<int> {
     return pick
 }
 
-/// Watchlist entries for the scheme picker: name, then code.
+/** *Watchlist entries for the scheme picker: name, then code. */
 fn pick_labels() -> []string {
     let mut out = []string {}
     let n = book.watch_count()
@@ -81,12 +81,12 @@ fn pick_labels() -> []string {
     return out
 }
 
-/// The backtest result. The screen matches on it.
+/** *The backtest result. The screen matches on it. */
 fn backtest() -> Signal<BacktestView> {
     return bt
 }
 
-/// The walk-forward result.
+/** *The walk-forward result. */
 fn walk() -> Signal<WalkView> {
     return wf
 }
@@ -105,7 +105,7 @@ fn rule_labels() -> []string {
     return labels
 }
 
-/// An empty result carrying only a note (idle, loading, failed).
+/** *An empty result carrying only a note (idle, loading, failed). */
 fn bt_note(msg: string) -> BacktestView {
     return BacktestView {
         note: msg,
@@ -200,8 +200,8 @@ fn watch_settled() -> bool {
     return true
 }
 
-/// Loaded watchlist names, in the order they were added. An open gap on
-/// one name stays on that name; the others keep their own acknowledgement.
+/** *Loaded watchlist names, in the order they were added. An open gap on */
+/** *one name stays on that name; the others keep their own acknowledgement. */
 fn take_watch() -> Panel {
     let mut p = backtest.empty_panel()
     let mut acks = []int {}

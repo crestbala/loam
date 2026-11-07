@@ -1,24 +1,24 @@
-//! json — a JSON codec: parse, stringify, and path-aware access.
-//!
-//! `parse` returns a `JsonDoc` that **owns** its node pool (`doc.nodes`), so any
-//! number of documents are live at once and ids never alias across them. Every
-//! accessor takes the document (or its `nodes` pool) as its first argument.
-//! Parsing uses a module-global accumulator only for the duration of one
-//! `parse` call; the finished pool moves into the returned doc.
-//!
-//! Errors never trap: `parse` sets `ok == 0` with a message and byte offset,
-//! and the accessors return a small result naming the **field path** that
-//! failed (missing key, wrong type, integer out of range). Parsing enforces a
-//! nesting-depth limit, so a deeply nested document is an error, not a stack
-//! overflow.
-//!
-//! ```
-//! import "std:json"
-//! let d = json.parse(text)
-//! if d.ok == 0 { fmt.println("bad json:", d.err); }
-//! let name = json.field(d, d.root, "name", "user.name")
-//! if name.ok == 1 { let s = json.as_str(d, name.id, "user.name") }
-//! ```
+// json — a JSON codec: parse, stringify, and path-aware access.
+//
+// `parse` returns a `JsonDoc` that **owns** its node pool (`doc.nodes`), so any
+// number of documents are live at once and ids never alias across them. Every
+// accessor takes the document (or its `nodes` pool) as its first argument.
+// Parsing uses a module-global accumulator only for the duration of one
+// `parse` call; the finished pool moves into the returned doc.
+//
+// Errors never trap: `parse` sets `ok == 0` with a message and byte offset,
+// and the accessors return a small result naming the **field path** that
+// failed (missing key, wrong type, integer out of range). Parsing enforces a
+// nesting-depth limit, so a deeply nested document is an error, not a stack
+// overflow.
+//
+// ```
+// import "std:json"
+// let d = json.parse(text)
+// if d.ok == 0 { fmt.println("bad json:", d.err); }
+// let name = json.field(d, d.root, "name", "user.name")
+// if name.ok == 1 { let s = json.as_str(d, name.id, "user.name") }
+// ```
 
 import "std:fmt"
 
@@ -31,8 +31,8 @@ enum JSON_KIND {
     Obj = 5,
 }
 
-/// One node. `num` keeps the raw number text so integer range is checked
-/// exactly at conversion time; `keys[i]` is the key for object child `kids[i]`.
+/** *One node. `num` keeps the raw number text so integer range is checked */
+/** *exactly at conversion time; `keys[i]` is the key for object child `kids[i]`. */
 struct Json {
     kind: int,
     b: bool,
@@ -42,8 +42,8 @@ struct Json {
     keys: []string,
 }
 
-/// The result of `parse`. `root` indexes `nodes`, the document's own pool;
-/// several documents may be live at once.
+/** *The result of `parse`. `root` indexes `nodes`, the document's own pool; */
+/** *several documents may be live at once. */
 struct JsonDoc {
     ok: int,
     err: string,
@@ -76,7 +76,7 @@ struct JBool {
     err: string,
 }
 
-/// Nesting limit: deeper than this is an error (defeats nesting bombs).
+/** *Nesting limit: deeper than this is an error (defeats nesting bombs). */
 const JSON_MAX_DEPTH: int = 64
 
 const I64_MAX: i64 = 9223372036854775807
@@ -531,9 +531,9 @@ fn jobject(depth: int) -> int {
     return jpush(j)
 }
 
-/// Parse `text`. Check `doc.ok`; on failure `doc.err` names the problem and
-/// `doc.at` is the byte offset. The document owns its tree (`doc.nodes`), so it
-/// stays valid no matter how many further `parse` calls follow.
+/** *Parse `text`. Check `doc.ok`; on failure `doc.err` names the problem and */
+/** *`doc.at` is the byte offset. The document owns its tree (`doc.nodes`), so it */
+/** *stays valid no matter how many further `parse` calls follow. */
 fn parse(text: string) -> JsonDoc {
     P_text = text
     P_i = 0
@@ -571,7 +571,7 @@ fn kind(nodes: []Json, id: int) -> int {
     return nodes[id].kind
 }
 
-/// Number of children (array elements / object members).
+/** *Number of children (array elements / object members). */
 fn child_count(nodes: []Json, id: int) -> int {
     if in_pool(nodes, id) == 0 {
         return 0
@@ -587,7 +587,7 @@ fn wrong(path: string, want: string) -> string {
     return jcat(jcat(path, ": expected "), want)
 }
 
-/// Object member by name. Pass the path to this key as `path`.
+/** *Object member by name. Pass the path to this key as `path`. */
 fn field(nodes: []Json, id: int, name: string, path: string) -> JVal {
     if in_pool(nodes, id) == 0 {
         return JVal { ok: 0, id: 0, err: missing(path) }
@@ -644,8 +644,8 @@ fn as_bool(nodes: []Json, id: int, path: string) -> JBool {
     return JBool { ok: 1, b: nodes[id].b, err: "" }
 }
 
-/// Integer from a number node. Non-integers, non-numbers, and values outside
-/// the `i64` range are errors naming `path` — never a trap.
+/** *Integer from a number node. Non-integers, non-numbers, and values outside */
+/** *the `i64` range are errors naming `path` — never a trap. */
 fn as_int(nodes: []Json, id: int, path: string) -> JInt {
     if in_pool(nodes, id) == 0 {
         return JInt { ok: 0, n: 0, err: wrong(path, "number") }
@@ -803,7 +803,7 @@ fn jwrite(nodes: []Json, id: int, depth: int) {
     }
 }
 
-/// Serialize a node back to a compact JSON string.
+/** *Serialize a node back to a compact JSON string. */
 fn stringify(nodes: []Json, id: int) -> string {
     S_out = []int {}
     jwrite(nodes, id, 0)
@@ -812,8 +812,8 @@ fn stringify(nodes: []Json, id: int) -> string {
 
 // --- helpers for `#[json]` derives ---
 
-/// Join a field onto a JSON path: `child("user", "name")` -> `user.name`;
-/// an empty base yields just the name.
+/** *Join a field onto a JSON path: `child("user", "name")` -> `user.name`; */
+/** *an empty base yields just the name. */
 fn child(base: string, name: string) -> string {
     if base.len == 0 {
         return name
@@ -821,9 +821,9 @@ fn child(base: string, name: string) -> string {
     return jcat(jcat(base, "."), name)
 }
 
-/// Error channel for generated decoders (no `Res` yet): a decoder that fails
-/// stores the field-path error and returns a zero value; the caller checks
-/// `take_err`.
+/** *Error channel for generated decoders (no `Res` yet): a decoder that fails */
+/** *stores the field-path error and returns a zero value; the caller checks */
+/** *`take_err`. */
 let mut D_err: string = ""
 
 fn set_err(e: string) {

@@ -18,7 +18,7 @@ fn frame() {
     zeus.engine_paint()
 }
 
-/// Index of the track's fill in the draw list.
+/** *Index of the track's fill in the draw list. */
 fn track_op(x: int, w: int) -> int {
     for i in 0..zeus.draw_count() {
         if zeus.draw_x(i) == x && zeus.draw_w(i) == w {

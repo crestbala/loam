@@ -1,9 +1,9 @@
-//! In-language tests for `mathf` (`mathf_tests.loam`).
-//!
-//! The expected values are the reference libm results, rounded to 7 decimals.
-//! `loam test` runs them:
-//!
-//!     ./bin/loamc test examples/language/ppm/mathf_tests.loam
+// In-language tests for `mathf` (`mathf_tests.loam`).
+//
+// The expected values are the reference libm results, rounded to 7 decimals.
+// `loam test` runs them:
+//
+//     ./bin/loamc test examples/language/ppm/mathf_tests.loam
 
 import "std:test"
 import "mathf.loam"
@@ -12,7 +12,7 @@ fn near(got: float, want: float, eps: float) -> bool {
     return mathf.abs(got - want) <= eps
 }
 
-/// Relative comparison, for values whose magnitude differs from 1.
+/** *Relative comparison, for values whose magnitude differs from 1. */
 fn near_rel(got: float, want: float, eps: float) -> bool {
     return mathf.abs(got - want) <= mathf.abs(want) * eps
 }

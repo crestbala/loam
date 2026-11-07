@@ -69,7 +69,7 @@ fn body_of(reply: string) -> string {
     return http.http_payload(reply)
 }
 
-/// POST a beacon as a browser would, and return the status.
+/** *POST a beacon as a browser would, and return the status. */
 fn beacon(s: &mut Server, body: string, origin: string) -> int {
     let fd = dial(s)
     let head = if origin.len > 0 { "Origin: {{origin}}\r\n" } else { "" }
@@ -81,7 +81,7 @@ fn track(s: &mut Server, body: string) -> int {
     return beacon(s, body, "https://{{HOST}}")
 }
 
-/// A gRPC-Web call. Returns the raw reply.
+/** *A gRPC-Web call. Returns the raw reply. */
 fn call(s: &mut Server, path: string, message: string, cookie: string) -> string {
     let framed = http.frame_str(message)
     let head = if cookie.len > 0 { "Cookie: {{cookie}}\r\n" } else { "" }
@@ -106,14 +106,14 @@ fn id(n: int) -> string {
     return "{{zeros}}{{t}}"
 }
 
-/// One event, as JSON. `extra` is any more fields, each with a leading comma.
+/** *One event, as JSON. `extra` is any more fields, each with a leading comma. */
 fn ev(k: string, sid: int, pv: int, path: string, ts: i64, extra: string) -> string {
     let a = id(sid)
     let b = id(pv)
     return "{\"k\":\"{{k}}\",\"sid\":\"{{a}}\",\"pv\":\"{{b}}\",\"path\":\"{{path}}\",\"ts\":{{ts}}{{extra}}}"
 }
 
-/// Events joined for a batch. Up to seven, as Loam has no rest parameters.
+/** *Events joined for a batch. Up to seven, as Loam has no rest parameters. */
 fn list(a: string, b: string = "", c: string = "", d: string = "", e: string = "", f: string = "", g: string = "") -> string {
     let parts = []string { a, b, c, d, e, f, g }
     let mut out = ""
@@ -441,7 +441,7 @@ fn other_routes(s: &mut Server) {
     expect_eq(status_of(read_reply(s, off)), 404, "a GET cannot read the report")
 }
 
-/// A gRPC-Web body as it arrives, with no framing added.
+/** *A gRPC-Web body as it arrives, with no framing added. */
 fn call_raw(s: &mut Server, path: string, bytes: []int) -> int {
     let body = string_from_bytes(bytes)
     let fd = dial(s)
@@ -449,8 +449,8 @@ fn call_raw(s: &mut Server, path: string, bytes: []int) -> int {
     return status_of(read_reply(s, fd))
 }
 
-/// A frame's length comes from the client, before anyone has signed in. One that
-/// lies must not spin the only thread, and must not overflow and stop the server.
+/** *A frame's length comes from the client, before anyone has signed in. One that */
+/** *lies must not spin the only thread, and must not overflow and stop the server. */
 fn lying_frames(s: &mut Server) {
     let start = async.now_ms()
     expect_eq(call_raw(s, "/Vault/Stats", []int { 0, 127, 255, 255, 255 }), 200, "a frame claiming 2 GB")

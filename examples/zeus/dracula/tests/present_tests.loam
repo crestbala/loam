@@ -1,5 +1,5 @@
-//! Paise text, the rank order, and the chart downsample. A bucket keeps
-//! the last published price. A marked date is kept too, at that bar's price.
+// Paise text, the rank order, and the chart downsample. A bucket keeps
+// the last published price. A marked date is kept too, at that bar's price.
 
 import "std:date"
 import "std:test"

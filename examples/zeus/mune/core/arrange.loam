@@ -1,52 +1,52 @@
-//! Roles, the form, and the score.
-//!
-//! The piece takes its tempo and key from the rhythm recording (or the
-//! listener's choice). Every recording is moved onto that grid and key:
-//! a phrase is stretched by at most 25% and shifted by at most six
-//! semitones plus the pitch control. The form is intro, verse, build,
-//! drop, break, (verse, build, drop,) outro, scaled to the length asked
-//! for.
-//!
-//! The harmony comes from the recordings. The hook — the strongest,
-//! most tonal four bars the rhythm and motif recordings offer — keeps the
-//! chords its recording was decoded to as a sequence (`key.chord_path`,
-//! one Viterbi path over the whole file), and they become the progression
-//! the synths play. Only when nothing is tonal enough does the style's own
-//! progression stand in. A phrase whose recording is quieter than that, or
-//! silent, cadences: the last bar of an open phrase becomes the dominant,
-//! and a closed phrase's last two bars move dominant then tonic. Under a
-//! tonal recording the chords stay as heard and only the melody cadences.
-//! The same free bars take the tension curve: a colour (triad, seventh,
-//! sus4, add9), a slower or faster harmonic rhythm, and two chords in the
-//! last bar of a build. That bar also drops the kick and the bass. The
-//! drop's first downbeat, when it is free, is the tonic.
-//!
-//! Which phrase plays where is concatenative synthesis: every phrase is a
-//! unit, every bus is a row of slots on the bar grid, and a Markov chain
-//! (`chain.loam`) walks the units slot by slot. The target is an energy
-//! arc: a quiet intro, a verse, a build that climbs, a full drop, a break
-//! that falls away, an outro that settles. Units that clash with the
-//! progression cost, so the recordings and the instruments agree. A slot
-//! loops its unit to fill four bars, because repetition is what makes a
-//! groove; the chain prefers to play on as the recording did, and a phrase
-//! label heard before brings that phrase's unit back. Several walks are
-//! drawn and the one that best fits the arc, the labels, and the other
-//! buses is kept.
-//!
-//! One recording is never played against itself: a bus only draws from
-//! recordings in its own role, and air that has to borrow the rhythm
-//! recording only plays where the rhythm bus is silent. Where a recording
-//! already carries a drum groove, the synth drums thin to hats; where it
-//! carries a bass, the synth bass stays out.
-//!
-//! Which layer plays where is one table (`entry`): the phrase of each
-//! section a layer comes in on, recorded buses included, and an entry
-//! tension that orders them, so a verse builds a phrase at a time and the
-//! outro lets the last layer in go first.
-//!
-//! With voices removed, a phrase is only taken where the voice map says
-//! nobody sings or speaks. A recording that has almost no such phrase gives
-//! its least-voiced ones, cleaned hard (`CLEAN_HARD`).
+// Roles, the form, and the score.
+//
+// The piece takes its tempo and key from the rhythm recording (or the
+// listener's choice). Every recording is moved onto that grid and key:
+// a phrase is stretched by at most 25% and shifted by at most six
+// semitones plus the pitch control. The form is intro, verse, build,
+// drop, break, (verse, build, drop,) outro, scaled to the length asked
+// for.
+//
+// The harmony comes from the recordings. The hook — the strongest,
+// most tonal four bars the rhythm and motif recordings offer — keeps the
+// chords its recording was decoded to as a sequence (`key.chord_path`,
+// one Viterbi path over the whole file), and they become the progression
+// the synths play. Only when nothing is tonal enough does the style's own
+// progression stand in. A phrase whose recording is quieter than that, or
+// silent, cadences: the last bar of an open phrase becomes the dominant,
+// and a closed phrase's last two bars move dominant then tonic. Under a
+// tonal recording the chords stay as heard and only the melody cadences.
+// The same free bars take the tension curve: a colour (triad, seventh,
+// sus4, add9), a slower or faster harmonic rhythm, and two chords in the
+// last bar of a build. That bar also drops the kick and the bass. The
+// drop's first downbeat, when it is free, is the tonic.
+//
+// Which phrase plays where is concatenative synthesis: every phrase is a
+// unit, every bus is a row of slots on the bar grid, and a Markov chain
+// (`chain.loam`) walks the units slot by slot. The target is an energy
+// arc: a quiet intro, a verse, a build that climbs, a full drop, a break
+// that falls away, an outro that settles. Units that clash with the
+// progression cost, so the recordings and the instruments agree. A slot
+// loops its unit to fill four bars, because repetition is what makes a
+// groove; the chain prefers to play on as the recording did, and a phrase
+// label heard before brings that phrase's unit back. Several walks are
+// drawn and the one that best fits the arc, the labels, and the other
+// buses is kept.
+//
+// One recording is never played against itself: a bus only draws from
+// recordings in its own role, and air that has to borrow the rhythm
+// recording only plays where the rhythm bus is silent. Where a recording
+// already carries a drum groove, the synth drums thin to hats; where it
+// carries a bass, the synth bass stays out.
+//
+// Which layer plays where is one table (`entry`): the phrase of each
+// section a layer comes in on, recorded buses included, and an entry
+// tension that orders them, so a verse builds a phrase at a time and the
+// outro lets the last layer in go first.
+//
+// With voices removed, a phrase is only taken where the voice map says
+// nobody sings or speaks. A recording that has almost no such phrase gives
+// its least-voiced ones, cleaned hard (`CLEAN_HARD`).
 
 import "chain.loam" as chain
 import "key.loam" as key
@@ -78,72 +78,72 @@ const L_ARP: int = 3
 const L_BELLS: int = 4
 const L_RISER: int = 5
 const L_IMPACT: int = 6
-/// A second line under the lead, on the pad's timbre.
+/** *A second line under the lead, on the pad's timbre. */
 const L_COUNTER: int = 7
 
-/// Highest note a sung line may reach (A6, 1.76 kHz). The bell is an FM
-/// voice whose partials run to about seven times the note; above this they
-/// pass half the sample rate and fold back as whistles.
+/** *Highest note a sung line may reach (A6, 1.76 kHz). The bell is an FM */
+/** *voice whose partials run to about seven times the note; above this they */
+/** *pass half the sample rate and fold back as whistles. */
 const LEAD_TOP: int = 93
 
-/// How a phrase is cleaned before it plays.
+/** *How a phrase is cleaned before it plays. */
 const CLEAN_NONE: int = 0
-/// Spectral centre removal (no voice map, stereo).
+/** *Spectral centre removal (no voice map, stereo). */
 const CLEAN_CENTER: int = 1
-/// Voice stem removed, centre removed, and the voice band lowered.
+/** *Voice stem removed, centre removed, and the voice band lowered. */
 const CLEAN_HARD: int = 2
 
-/// A recording phrase with this much low band (0..100) already has a bass
-/// line; the synth bass stays out of its section.
+/** *A recording phrase with this much low band (0..100) already has a bass */
+/** *line; the synth bass stays out of its section. */
 const BASS_FULL: int = 55
 
-/// A recording whose pulse (0..100) is this clear carries a drum kit.
+/** *A recording whose pulse (0..100) is this clear carries a drum kit. */
 const GROOVE_PULSE: int = 30
 
-/// A unit at least this tonal (0..1000) keeps the chords under it. Below
-/// it, or where nothing plays, the phrase may cadence. The same line the
-/// hook uses when it decides a recording has harmony at all.
+/** *A unit at least this tonal (0..1000) keeps the chords under it. Below */
+/** *it, or where nothing plays, the phrase may cadence. The same line the */
+/** *hook uses when it decides a recording has harmony at all. */
 const TONAL_MIN: int = 300
 
 const TONE_NONE: int = 0
-/// Low-passed, for an outro.
+/** *Low-passed, for an outro. */
 const TONE_DARK: int = 1
-/// A rising high-pass across the section, for a build.
+/** *A rising high-pass across the section, for a build. */
 const TONE_RISE: int = 2
-/// A low-pass opening across the section, for an intro.
+/** *A low-pass opening across the section, for an intro. */
 const TONE_OPEN: int = 3
 
-/// One recording as the arranger sees it.
+/** *One recording as the arranger sees it. */
 struct Source {
     heard: Heard,
     key: Tonality,
     role: int,
-    /// Integrated loudness in centi-LUFS, 0 when unknown.
+    /** *Integrated loudness in centi-LUFS, 0 when unknown. */
     lufs_c: int,
     mono: bool,
     has_map: bool,
-    /// A voice-free stem was written for this recording.
+    /** *A voice-free stem was written for this recording. */
     has_split: bool,
 }
 
-/// The arranged piece. Loop and part columns are parallel. Positions are
-/// bar indexes; lengths are samples unless named otherwise.
+/** *The arranged piece. Loop and part columns are parallel. Positions are */
+/** *bar indexes; lengths are samples unless named otherwise. */
 struct Score {
     bpm_c: int,
     bar_s: int,
     bars: int,
-    /// Phrase length in bars (two or four). Drum loops are this long, so
-    /// the breath at the end of the loop is the end of every phrase.
+    /** *Phrase length in bars (two or four). Drum loops are this long, so */
+    /** *the breath at the end of the loop is the end of every phrase. */
     unit: int,
     total_s: int,
     tonic: int,
     minor: bool,
-    /// Four chords, one a bar, as `key.chord_code`s. The hook, looping.
+    /** *Four chords, one a bar, as `key.chord_code`s. The hook, looping. */
     prog: []int,
-    /// The progression was heard in a recording, not the style's.
+    /** *The progression was heard in a recording, not the style's. */
     prog_heard: bool,
-    /// The chord that actually plays on each bar: `prog`, with a cadence
-    /// written on phrases where no tonal recording is playing.
+    /** *The chord that actually plays on each bar: `prog`, with a cadence */
+    /** *written on phrases where no tonal recording is playing. */
     bar_ch: []int,
     sec_kind: []int,
     sec_bar: []int,
@@ -157,90 +157,90 @@ struct Score {
     lp_db: []int,
     lp_bus: []int,
     lp_semis: []int,
-    /// Tempo factor ×1e6 (1000000 is unchanged).
+    /** *Tempo factor ×1e6 (1000000 is unchanged). */
     lp_tempo: []int,
     lp_clean: []int,
     lp_split: []int,
     lp_tone: []int,
-    /// 0 for a seamless loop, else a fade in and out of this many ms.
+    /** *0 for a seamless loop, else a fade in and out of this many ms. */
     lp_fade: []int,
     sy_layer: []int,
     sy_variant: []int,
     sy_bar: []int,
     sy_bars: []int,
     sy_db: []int,
-    /// Index into the line columns, or -1 when the part is a looped generator.
+    /** *Index into the line columns, or -1 when the part is a looped generator. */
     sy_line: []int,
-    /// Index into `pg`, or -1 to loop `prog` with the style's voicing. A
-    /// phrase whose chords, colours, or split differ gets its own row.
+    /** *Index into `pg`, or -1 to loop `prog` with the style's voicing. A */
+    /** *phrase whose chords, colours, or split differ gets its own row. */
     sy_pg: []int,
-    /// 0 when this drum part leaves the kick out. Other layers keep 1.
+    /** *0 when this drum part leaves the kick out. Other layers keep 1. */
     sy_kick: []int,
-    /// Interned rows, nine ints each: four chord codes, four colours, and
-    /// the split chord of the row's last bar (−1 when the bar is one chord).
+    /** *Interned rows, nine ints each: four chord codes, four colours, and */
+    /** *the split chord of the row's last bar (−1 when the bar is one chord). */
     pg: []int,
-    /// Target energy of each bar, 0..1000 (`plan.arc`).
+    /** *Target energy of each bar, 0..1000 (`plan.arc`). */
     path: []int,
-    /// Tension, one value a bar. Register is semitones (0..12, whole
-    /// tones). Density and dissonance are 0..1000. Dynamics is the synth
-    /// bed in centi-dB. Harmonic rhythm is the sixteenths one chord is held.
+    /** *Tension, one value a bar. Register is semitones (0..12, whole */
+    /** *tones). Density and dissonance are 0..1000. Dynamics is the synth */
+    /** *bed in centi-dB. Harmonic rhythm is the sixteenths one chord is held. */
     tn_reg: []int,
     tn_den: []int,
     tn_diss: []int,
     tn_dyn: []int,
     tn_harm: []int,
-    /// Voicing colour of each bar (`plan.tension_color`). Below 0 keeps
-    /// the style's own voice. 0 forces a triad.
+    /** *Voicing colour of each bar (`plan.tension_color`). Below 0 keeps */
+    /** *the style's own voice. 0 forces a triad. */
     bar_col: []int,
-    /// Chord code for the first half of the bar, or −1 when it holds one.
-    /// `bar_ch` stays the second half, which is where a cadence lands.
+    /** *Chord code for the first half of the bar, or −1 when it holds one. */
+    /** *`bar_ch` stays the second half, which is where a cadence lands. */
     bar_split: []int,
-    /// Energy of the phrase heard at each bar, 0..1000, or -1 for none.
+    /** *Energy of the phrase heard at each bar, 0..1000, or -1 for none. */
     heard: []int,
-    /// Per section: a recording plays a drum groove there, and how much
-    /// low band (bass and kick, 0..100) it carries.
+    /** *Per section: a recording plays a drum groove there, and how much */
+    /** *low band (bass and kick, 0..100) it carries. */
     sec_groove: []bool,
     sec_low: []int,
-    /// Phrases. `ph_label` 0 is a, 1 is b. `ph_var` is how many times that
-    /// label was heard. `ph_end` is open or closed (`plan`).
+    /** *Phrases. `ph_label` 0 is a, 1 is b. `ph_var` is how many times that */
+    /** *label was heard. `ph_end` is open or closed (`plan`). */
     ph_bar: []int,
     ph_bars: []int,
     ph_sec: []int,
     ph_label: []int,
     ph_var: []int,
     ph_end: []int,
-    /// Bars `[lift_from, lift_to)` play a whole step up: the last drop,
-    /// recordings and synths together. `lift_from` -1 when nothing moved.
+    /** *Bars `[lift_from, lift_to)` play a whole step up: the last drop, */
+    /** *recordings and synths together. `lift_from` -1 when nothing moved. */
     lift_from: int,
     lift_to: int,
-    /// The hook the progression was heard in, or `hook_src` -1.
+    /** *The hook the progression was heard in, or `hook_src` -1. */
     hook_src: int,
     hook_in: int,
     hook_len: int,
-    /// The motif, in scale degrees and sixteenths.
+    /** *The motif, in scale degrees and sixteenths. */
     mo_deg: []int,
     mo_at: []int,
     mo_len: []int,
-    /// Melody hits, concatenated. `ln_from[line]` and `ln_n[line]` slice them.
+    /** *Melody hits, concatenated. `ln_from[line]` and `ln_n[line]` slice them. */
     ln_at: []f64,
     ln_vel: []f64,
     ln_freq: []f64,
     ln_gate: []f64,
     ln_from: []int,
     ln_n: []int,
-    /// Grid sixteenth of each line's highest note, or −1. Humanize reads
-    /// this so the arch peaks with the melody, not with a nudged time.
+    /** *Grid sixteenth of each line's highest note, or −1. Humanize reads */
+    /** *this so the arch peaks with the melody, not with a nudged time. */
     ln_peak: []int,
-    /// Winning melody score per phrase, or -1 when that phrase has no line.
-    /// `ph_term` is nine terms per phrase: steps, leaps, range, chord,
-    /// record, contour, rhythm, motif, fresh.
+    /** *Winning melody score per phrase, or -1 when that phrase has no line. */
+    /** *`ph_term` is nine terms per phrase: steps, leaps, range, chord, */
+    /** *record, contour, rhythm, motif, fresh. */
     ph_mel: []int,
     ph_term: []int,
-    /// Winning counter-line score per phrase, or -1 when no counter plays.
-    /// `ph_cterm` is four terms per phrase: motion, consonance, fill, steps.
+    /** *Winning counter-line score per phrase, or -1 when no counter plays. */
+    /** *`ph_cterm` is four terms per phrase: motion, consonance, fill, steps. */
     ph_ctr: []int,
     ph_cterm: []int,
-    /// The three best walks per bus: bus, walk index, score. Best first.
+    /** *The three best walks per bus: bus, walk index, score. Best first. */
     wk_bus: []int,
     wk_n: []int,
     wk_score: []int,
@@ -291,9 +291,9 @@ fn empty_score() -> Score {
     }
 }
 
-/// Most onsets with a pulse is rhythm, fewest (or no pulse) is air, the
-/// rest motif. One recording is rhythm. Of two, the second is motif when it
-/// has a pulse (it can play along on the grid) and air when it has none.
+/** *Most onsets with a pulse is rhythm, fewest (or no pulse) is air, the */
+/** *rest motif. One recording is rhythm. Of two, the second is motif when it */
+/** *has a pulse (it can play along on the grid) and air when it has none. */
 fn roles_for(heard: []Heard) -> []int {
     let n = heard.len
     let mut out = []int {}
@@ -344,8 +344,8 @@ fn roles_for(heard: []Heard) -> []int {
     return out
 }
 
-/// `bpm_c` doubled or halved to the octave nearest `range` (inside it
-/// when one fits), so 110 BPM stays 110 for lo-fi rather than 55.
+/** *`bpm_c` doubled or halved to the octave nearest `range` (inside it */
+/** *when one fits), so 110 BPM stays 110 for lo-fi rather than 55. */
 fn fold_into(bpm_c: int, range: []int) -> int {
     let mut best = bpm_c
     let mut best_d: f64 = 1000.0
@@ -386,7 +386,7 @@ fn piece_bpm_c(srcs: []Source, s: Sound) -> int {
     return styles.default_bpm_c(s.style)
 }
 
-/// The rhythm recording's key, or the surest one, or A minor.
+/** *The rhythm recording's key, or the surest one, or A minor. */
 fn piece_key(srcs: []Source) -> Tonality {
     for i in 0..srcs.len {
         if srcs[i].role == RHYTHM && srcs[i].key.tonic >= 0 && srcs[i].key.sure >= 20 {
@@ -406,8 +406,8 @@ fn piece_key(srcs: []Source) -> Tonality {
     return Tonality { tonic: 9, minor: true, sure: 0 }
 }
 
-/// Semitones that move recording `src` into the piece key, plus the pitch
-/// control.
+/** *Semitones that move recording `src` into the piece key, plus the pitch */
+/** *control. */
 fn shift_for(src: Source, piece: Tonality, pitch: int) -> int {
     let mut d = 0
     if src.key.tonic >= 0 && src.key.sure >= 20 {
@@ -416,8 +416,8 @@ fn shift_for(src: Source, piece: Tonality, pitch: int) -> int {
     return num.clampi(d + pitch, -12, 12)
 }
 
-/// How a recording sits on the piece grid: octave fold `k` (its beat
-/// counts 2^k piece beats) and the stretch, ×1e6. 0 stretch: no grid.
+/** *How a recording sits on the piece grid: octave fold `k` (its beat */
+/** *counts 2^k piece beats) and the stretch, ×1e6. 0 stretch: no grid. */
 fn grid_fit(src: Source, piece_bpm: int) -> []int {
     let b = src.heard.bpm_c
     if b <= 0 {
@@ -443,7 +443,7 @@ fn grid_fit(src: Source, piece_bpm: int) -> []int {
     return []int { best_k, num.roundi(f64(piece_bpm) / eff * 1000000.0) }
 }
 
-/// Bars a source phrase fills in the piece, given its octave fold.
+/** *Bars a source phrase fills in the piece, given its octave fold. */
 fn piece_bars(ph_bars: int, k: int) -> int {
     if ph_bars <= 0 {
         return 0
@@ -460,7 +460,7 @@ fn piece_bars(ph_bars: int, k: int) -> int {
     return ph_bars
 }
 
-/// Phrases one bus may use. Parallel columns.
+/** *Phrases one bus may use. Parallel columns. */
 struct Cands {
     src: []int,
     ph: []int,
@@ -490,9 +490,9 @@ fn cand_add(c: &mut Cands, src: int, ph: int, bars: int, tempo: int, score: int,
     push(c.clean, clean)
 }
 
-/// Sources a bus draws from: those in its role. Rhythm and air fall back
-/// to every source when none has their role; motif does not, because a
-/// motif from the rhythm recording would play it against itself.
+/** *Sources a bus draws from: those in its role. Rhythm and air fall back */
+/** *to every source when none has their role; motif does not, because a */
+/** *motif from the rhythm recording would play it against itself. */
 fn bus_sources(srcs: []Source, bus: int) -> []int {
     let mut out = []int {}
     for i in 0..srcs.len {
@@ -509,7 +509,7 @@ fn bus_sources(srcs: []Source, bus: int) -> []int {
     return out
 }
 
-/// Does `bus` borrow a recording that also plays on `other`?
+/** *Does `bus` borrow a recording that also plays on `other`? */
 fn borrows(srcs: []Source, bus: int, other: int) -> bool {
     let a = bus_sources(srcs, bus)
     let b = bus_sources(srcs, other)
@@ -521,9 +521,9 @@ fn borrows(srcs: []Source, bus: int, other: int) -> bool {
     return false
 }
 
-/// Phrases for `bus`. Looped buses (rhythm, motif) need the grid and whole
-/// bars; air takes anything and is placed with long fades. `strict` keeps
-/// only voice-free phrases; otherwise voiced ones come in, cleaned hard.
+/** *Phrases for `bus`. Looped buses (rhythm, motif) need the grid and whole */
+/** *bars; air takes anything and is placed with long fades. `strict` keeps */
+/** *only voice-free phrases; otherwise voiced ones come in, cleaned hard. */
 fn gather(srcs: []Source, bus: int, piece_bpm: int, s: Sound, strict: bool) -> Cands {
     let mut c = no_cands()
     let from = bus_sources(srcs, bus)
@@ -601,7 +601,7 @@ fn gather(srcs: []Source, bus: int, piece_bpm: int, s: Sound, strict: bool) -> C
     return c
 }
 
-/// Strict first; voiced phrases only when strict leaves fewer than two.
+/** *Strict first; voiced phrases only when strict leaves fewer than two. */
 fn candidates(srcs: []Source, bus: int, piece_bpm: int, s: Sound) -> Cands {
     let strict = gather(srcs, bus, piece_bpm, s, true)
     if strict.src.len >= 2 || s.voices == sound.VOICES_KEEP {
@@ -610,7 +610,7 @@ fn candidates(srcs: []Source, bus: int, piece_bpm: int, s: Sound) -> Cands {
     return gather(srcs, bus, piece_bpm, s, false)
 }
 
-/// Candidate indexes, best first.
+/** *Candidate indexes, best first. */
 fn ranked(c: Cands) -> []int {
     let mut order = []int {}
     for i in 0..c.score.len {
@@ -630,22 +630,22 @@ fn ranked(c: Cands) -> []int {
     return order
 }
 
-/// Section kinds, lengths, and the phrase unit. See `plan.form`.
+/** *Section kinds, lengths, and the phrase unit. See `plan.form`. */
 fn form(length_ms: int, bar_s: int) -> [][]int {
     return plan.form(length_ms, bar_s)
 }
 
-/// Rows of the entry table for the recorded buses: `REC + RHYTHM`, and so on.
+/** *Rows of the entry table for the recorded buses: `REC + RHYTHM`, and so on. */
 const REC: int = 10
 
-/// The entry table. One row per layer (`L_*`, or `REC + bus` for a
-/// recorded bus), one column per section kind: the phrase of the section
-/// the layer comes in on (0 is the first), or -1 when it sits the section
-/// out. A verse opens on drums, bass, and pad, and the arp joins on its
-/// second phrase; a drop starts full and adds the counter-melody on its
-/// second; a break strips to pad and the lead; the outro lets layers go
-/// in reverse order of entry (`entry_tension`). The style only decides
-/// which cells are filled.
+/** *The entry table. One row per layer (`L_*`, or `REC + bus` for a */
+/** *recorded bus), one column per section kind: the phrase of the section */
+/** *the layer comes in on (0 is the first), or -1 when it sits the section */
+/** *out. A verse opens on drums, bass, and pad, and the arp joins on its */
+/** *second phrase; a drop starts full and adds the counter-melody on its */
+/** *second; a break strips to pad and the lead; the outro lets layers go */
+/** *in reverse order of entry (`entry_tension`). The style only decides */
+/** *which cells are filled. */
 fn entry(row: int, kind: int, s: Sound) -> int {
     let st = s.style
     let drive = s.energy == styles.DRIVE
@@ -712,9 +712,9 @@ fn entry(row: int, kind: int, s: Sound) -> int {
     return r[kind]
 }
 
-/// The order layers come in, as the lowest path (0..1000) a layer holds
-/// out to. The outro lets a layer go once its phrase starts below this, so
-/// the last in is the first out.
+/** *The order layers come in, as the lowest path (0..1000) a layer holds */
+/** *out to. The outro lets a layer go once its phrase starts below this, so */
+/** *the last in is the first out. */
 fn entry_tension(row: int) -> int {
     if row == L_PAD || row == REC + AIR {
         return 0
@@ -737,7 +737,7 @@ fn entry_tension(row: int) -> int {
     return 600
 }
 
-/// Drum pattern for a section the drums play, or -1 for none.
+/** *Drum pattern for a section the drums play, or -1 for none. */
 fn drums_in(kind: int, s: Sound) -> int {
     if entry(L_DRUMS, kind, s) < 0 {
         return -1
@@ -761,7 +761,7 @@ fn drums_in(kind: int, s: Sound) -> int {
     return synth.LIGHT
 }
 
-/// Phrase `p`'s place in its section: 0 is the first.
+/** *Phrase `p`'s place in its section: 0 is the first. */
 fn phrase_index(sc: &mut Score, p: int) -> int {
     let mut n = 0
     for i in 0..p {
@@ -772,8 +772,8 @@ fn phrase_index(sc: &mut Score, p: int) -> int {
     return n
 }
 
-/// Does `row` play phrase `p`? From its entry phrase on; in the outro,
-/// after the first phrase, only while the path holds its entry tension.
+/** *Does `row` play phrase `p`? From its entry phrase on; in the outro, */
+/** *after the first phrase, only while the path holds its entry tension. */
 fn layer_on(sc: &mut Score, s: Sound, row: int, p: int) -> bool {
     if p < 0 || p >= sc.ph_sec.len {
         return false
@@ -793,8 +793,8 @@ fn layer_on(sc: &mut Score, s: Sound, row: int, p: int) -> bool {
     return true
 }
 
-/// Bars `[from, to)` of section `sec` that `row` plays: from the phrase it
-/// enters on to the phrase it leaves on. `from == to` when it sits out.
+/** *Bars `[from, to)` of section `sec` that `row` plays: from the phrase it */
+/** *enters on to the phrase it leaves on. `from == to` when it sits out. */
 fn layer_span(sc: &mut Score, s: Sound, row: int, sec: int) -> []int {
     let mut from = -1
     let mut to = -1
@@ -829,9 +829,9 @@ fn part(sc: &mut Score, layer: int, variant: int, bar: int, bars: int, db: int) 
     push(sc.sy_kick, 1)
 }
 
-/// Centi-dB that brings a recording to about -17.9 LUFS, which puts a
-/// looped phrase at the premaster level the synths are trimmed to
-/// (`tests/stems.loam`).
+/** *Centi-dB that brings a recording to about -17.9 LUFS, which puts a */
+/** *looped phrase at the premaster level the synths are trimmed to */
+/** *(`tests/stems.loam`). */
 fn norm_db(src: Source) -> int {
     if src.lufs_c == 0 {
         return 0
@@ -839,7 +839,7 @@ fn norm_db(src: Source) -> int {
     return num.clampi(-1790 - src.lufs_c, -1200, 1200)
 }
 
-/// One looped phrase across `bars` from `bar`.
+/** *One looped phrase across `bars` from `bar`. */
 fn place_loop(
     sc: &mut Score,
     srcs: []Source,
@@ -878,9 +878,9 @@ fn place_loop(
     push(sc.lp_fade, 0)
 }
 
-/// One air phrase from `bar`, given `room_bars` before the next one ends.
-/// Free-time phrases keep their own length (stretch 1.0); each fades
-/// slowly in and out and overlaps the next by a bar.
+/** *One air phrase from `bar`, given `room_bars` before the next one ends. */
+/** *Free-time phrases keep their own length (stretch 1.0); each fades */
+/** *slowly in and out and overlaps the next by a bar. */
 fn place_air_one(
     sc: &mut Score,
     srcs: []Source,
@@ -922,11 +922,11 @@ fn place_air_one(
     return true
 }
 
-/// The best `cap` candidates of a bus, skipping audio another bus already
-/// plays (unless that would leave fewer than two). Phrases of different
-/// lengths overlap — a one-bar phrase can sit inside a four-bar one — so a
-/// candidate is taken when its span shares any audio with a played phrase
-/// of the same recording, not only when it is that phrase.
+/** *The best `cap` candidates of a bus, skipping audio another bus already */
+/** *plays (unless that would leave fewer than two). Phrases of different */
+/** *lengths overlap — a one-bar phrase can sit inside a four-bar one — so a */
+/** *candidate is taken when its span shares any audio with a played phrase */
+/** *of the same recording, not only when it is that phrase. */
 fn pool(srcs: []Source, c: Cands, cap: int, used: []int) -> []int {
     let order = ranked(c)
     let mut fresh = []int {}
@@ -956,7 +956,7 @@ fn pool(srcs: []Source, c: Cands, cap: int, used: []int) -> []int {
     return all
 }
 
-/// Do phrases `a` and `b` of one recording play any of the same audio?
+/** *Do phrases `a` and `b` of one recording play any of the same audio? */
 fn shares_audio(h: Heard, a: int, b: int) -> bool {
     if a == b {
         return true
@@ -968,9 +968,9 @@ fn shares_audio(h: Heard, a: int, b: int) -> bool {
         h.ph_start[b] < h.ph_start[a] + h.ph_len[a]
 }
 
-/// Energy of every phrase of every recording on one scale, 0..1000:
-/// `out[src][ph]`. One scale for all buses means a quiet pad and a quiet
-/// groove both read as quiet.
+/** *Energy of every phrase of every recording on one scale, 0..1000: */
+/** *`out[src][ph]`. One scale for all buses means a quiet pad and a quiet */
+/** *groove both read as quiet. */
 fn all_energy(srcs: []Source) -> [][]int {
     let mut lv = []int {}
     let mut dn = []int {}
@@ -997,10 +997,10 @@ fn all_energy(srcs: []Source) -> [][]int {
     return out
 }
 
-/// The four blocks of a phrase's chroma as the piece will hear them: moved
-/// by the phrase's shift, and with a recording folded an octave (`k`), a
-/// piece bar mapped back onto its own bar. Flattened, 48 values; empty
-/// when the phrase has no chroma.
+/** *The four blocks of a phrase's chroma as the piece will hear them: moved */
+/** *by the phrase's shift, and with a recording folded an octave (`k`), a */
+/** *piece bar mapped back onto its own bar. Flattened, 48 values; empty */
+/** *when the phrase has no chroma. */
 fn piece_chroma(src: Source, p: int, piece_bars_n: int, semis: int) -> []int {
     let h = src.heard
     let mut out = []int {}
@@ -1033,7 +1033,7 @@ fn piece_chroma(src: Source, p: int, piece_bars_n: int, semis: int) -> []int {
     return out
 }
 
-/// How tonal a phrase is, 0..1000: the mean over its blocks.
+/** *How tonal a phrase is, 0..1000: the mean over its blocks. */
 fn tonal_of(ch: []int) -> int {
     if ch.len < key.BLOCKS * 12 {
         return 0
@@ -1045,8 +1045,8 @@ fn tonal_of(ch: []int) -> int {
     return t / key.BLOCKS
 }
 
-/// How far a phrase strays from `prog`, 0..1000, each bar weighted by how
-/// tonal it is: a drum bar clashes with nothing.
+/** *How far a phrase strays from `prog`, 0..1000, each bar weighted by how */
+/** *tonal it is: a drum bar clashes with nothing. */
 fn clash_of(ch: []int, prog: []int, tonic: int, minor: bool) -> int {
     if ch.len < key.BLOCKS * 12 || prog.len == 0 {
         return 0
@@ -1059,10 +1059,10 @@ fn clash_of(ch: []int, prog: []int, tonic: int, minor: bool) -> int {
     return c / key.BLOCKS
 }
 
-/// The four chords phrase `p` plays as the piece hears it, mapped the way
-/// `piece_chroma` maps its bars and moved by `semis`. They come from the
-/// decoded sequence (`Heard.ph_chord`); a recording known only by its
-/// chroma (`ch`, the phrase's `piece_chroma`) names each bar alone.
+/** *The four chords phrase `p` plays as the piece hears it, mapped the way */
+/** *`piece_chroma` maps its bars and moved by `semis`. They come from the */
+/** *decoded sequence (`Heard.ph_chord`); a recording known only by its */
+/** *chroma (`ch`, the phrase's `piece_chroma`) names each bar alone. */
 fn heard_chords(
     src: Source,
     p: int,
@@ -1094,7 +1094,7 @@ fn heard_chords(
     return out
 }
 
-/// How many different chords `chords` names.
+/** *How many different chords `chords` names. */
 fn chord_changes(chords: []int) -> int {
     let mut seen = []int {}
     for b in 0..chords.len {
@@ -1106,7 +1106,7 @@ fn chord_changes(chords: []int) -> int {
     return if seen.len > 0 { seen.len } else { 1 }
 }
 
-/// The chords, and the phrase they were heard in.
+/** *The chords, and the phrase they were heard in. */
 struct Prog {
     chords: []int,
     heard: bool,
@@ -1115,11 +1115,11 @@ struct Prog {
     hook_len: int,
 }
 
-/// The piece's four chords. The hook is the candidate of the rhythm and
-/// motif buses that loops best, is fullest, and is most tonal; its bars are
-/// heard as chords. A bar too vague to name keeps the chord before it.
-/// When nothing is tonal enough, the style's progression stands in and
-/// `hook_src` is -1.
+/** *The piece's four chords. The hook is the candidate of the rhythm and */
+/** *motif buses that loops best, is fullest, and is most tonal; its bars are */
+/** *heard as chords. A bar too vague to name keeps the chord before it. */
+/** *When nothing is tonal enough, the style's progression stands in and */
+/** *`hook_src` is -1. */
 fn progression_for(
     srcs: []Source,
     s: Sound,
@@ -1198,8 +1198,8 @@ fn progression_for(
     }
 }
 
-/// The chain's view of a pool: descriptors per unit. A one- or two-bar
-/// unit cut from inside the hook is marked, so a build can favour it.
+/** *The chain's view of a pool: descriptors per unit. A one- or two-bar */
+/** *unit cut from inside the hook is marked, so a build can favour it. */
 fn units_of(
     srcs: []Source,
     c: Cands,
@@ -1246,7 +1246,7 @@ fn units_of(
     return u
 }
 
-/// Label and variation of the phrase that covers `bar`, or -1, 0.
+/** *Label and variation of the phrase that covers `bar`, or -1, 0. */
 fn phrase_at(sc: &mut Score, bar: int) -> []int {
     for i in 0..sc.ph_bar.len {
         if bar >= sc.ph_bar[i] && bar < sc.ph_bar[i] + sc.ph_bars[i] {
@@ -1256,10 +1256,10 @@ fn phrase_at(sc: &mut Score, bar: int) -> []int {
     return []int { -1, 0 }
 }
 
-/// Sections cut into slots of four bars (the last may be shorter), over
-/// the bars the entry table gives the bus (`layer_span`). An intro, a
-/// build, or an outro is one slot, so its sweep or its fade spans it. The
-/// slot carries the phrase that starts it.
+/** *Sections cut into slots of four bars (the last may be shorter), over */
+/** *the bars the entry table gives the bus (`layer_span`). An intro, a */
+/** *build, or an outro is one slot, so its sweep or its fade spans it. The */
+/** *slot carries the phrase that starts it. */
 fn loop_slots(sc: &mut Score, s: Sound, bus: int, wants: []bool) -> Slots {
     let mut out = chain.no_slots()
     for i in 0..sc.sec_kind.len {
@@ -1298,7 +1298,7 @@ fn loop_slots(sc: &mut Score, s: Sound, bus: int, wants: []bool) -> Slots {
     return out
 }
 
-/// Index of the section that holds `bar`.
+/** *Index of the section that holds `bar`. */
 fn section_of(starts: []int, bar: int) -> int {
     let mut at = 0
     for i in 0..starts.len {
@@ -1317,8 +1317,8 @@ fn mark_heard(sc: &mut Score, bar: int, bars: int, h: int, over: bool) {
     }
 }
 
-/// The arc of a typical 3 min piece in `cols` columns, for the strip
-/// before the first take.
+/** *The arc of a typical 3 min piece in `cols` columns, for the strip */
+/** *before the first take. */
 fn sketch(cols: int) -> []int {
     let f = form(180000, time.bar_samples(12000))
     let a = plan.arc(f[0], f[1])
@@ -1329,7 +1329,7 @@ fn sketch(cols: int) -> []int {
     return out
 }
 
-/// Audio already on the score, so the next bus can be scored for sharing it.
+/** *Audio already on the score, so the next bus can be scored for sharing it. */
 fn avoid_of(sc: &mut Score) -> Avoid {
     let mut a = chain.no_avoid()
     for i in 0..sc.lp_src.len {
@@ -1351,8 +1351,8 @@ fn note_walks(sc: &mut Score, bus: int, c: Choice) {
     }
 }
 
-/// Walk one looped bus along its slots and place what it picks. Returns
-/// the (src, ph) pairs it played. Several walks are drawn; the best is kept.
+/** *Walk one looped bus along its slots and place what it picks. Returns */
+/** *the (src, ph) pairs it played. Several walks are drawn; the best is kept. */
 fn place_bus(
     sc: &mut Score,
     srcs: []Source,
@@ -1433,7 +1433,7 @@ fn place_bus(
     return played
 }
 
-/// Air: a phrase every four bars of its sections, walked like the others.
+/** *Air: a phrase every four bars of its sections, walked like the others. */
 fn place_air_bus(
     sc: &mut Score,
     srcs: []Source,
@@ -1515,11 +1515,11 @@ fn last_drop(sc: &mut Score) -> int {
     return last
 }
 
-/// The final drop moves up a whole step when every loop there can take it
-/// and stay within six semitones. No loops still lifts the synths. A loop
-/// that cannot blocks the lift, synths included. The synths change key
-/// with the recordings (`lift_from`, read by the graph and the melody);
-/// only moving the voicing centre would leave them a tone under.
+/** *The final drop moves up a whole step when every loop there can take it */
+/** *and stay within six semitones. No loops still lifts the synths. A loop */
+/** *that cannot blocks the lift, synths included. The synths change key */
+/** *with the recordings (`lift_from`, read by the graph and the melody); */
+/** *only moving the voicing centre would leave them a tone under. */
 fn maybe_lift_last_drop(sc: &mut Score) -> bool {
     let last = last_drop(sc)
     if last < 0 {
@@ -1559,7 +1559,7 @@ fn push_mel(sc: &mut Score, total: int, term: []int) {
     }
 }
 
-/// Bars of the piece loop `i` fills.
+/** *Bars of the piece loop `i` fills. */
 fn placed_bars(sc: &mut Score, i: int) -> int {
     if sc.bar_s <= 0 || i < 0 || i >= sc.lp_unit.len || i >= sc.lp_reps.len {
         return 0
@@ -1567,8 +1567,8 @@ fn placed_bars(sc: &mut Score, i: int) -> int {
     return sc.lp_unit[i] * sc.lp_reps[i] / sc.bar_s
 }
 
-/// Chroma of loop `i`, already shifted by its semis. Empty when the loop
-/// is not a phrase of a recording.
+/** *Chroma of loop `i`, already shifted by its semis. Empty when the loop */
+/** *is not a phrase of a recording. */
 fn loop_chroma(sc: &mut Score, srcs: []Source, i: int) -> []int {
     if i < 0 || i >= sc.lp_bus.len {
         return []int {}
@@ -1591,8 +1591,8 @@ fn loop_chroma(sc: &mut Score, srcs: []Source, i: int) -> []int {
     return piece_chroma(src, p, if nb > 0 { nb } else { 4 }, sc.lp_semis[i])
 }
 
-/// Chroma of a rhythm or motif loop under `bar`, already shifted by the
-/// loop's semis. The first covering loop wins.
+/** *Chroma of a rhythm or motif loop under `bar`, already shifted by the */
+/** *loop's semis. The first covering loop wins. */
 fn chroma_under(sc: &mut Score, srcs: []Source, bar: int) -> []int {
     for i in 0..sc.lp_bar.len {
         if sc.lp_bus[i] != RHYTHM && sc.lp_bus[i] != MOTIF {
@@ -1610,8 +1610,8 @@ fn chroma_under(sc: &mut Score, srcs: []Source, bar: int) -> []int {
     return []int {}
 }
 
-/// A tonal recording covers `bar`. Air counts: a tonal pad keeps its
-/// chords, a hiss does not.
+/** *A tonal recording covers `bar`. Air counts: a tonal pad keeps its */
+/** *chords, a hiss does not. */
 fn bar_tonal(sc: &mut Score, srcs: []Source, bar: int) -> bool {
     for i in 0..sc.lp_bar.len {
         let nb = placed_bars(sc, i)
@@ -1625,9 +1625,9 @@ fn bar_tonal(sc: &mut Score, srcs: []Source, bar: int) -> bool {
     return false
 }
 
-/// Write the progression onto every bar, then cadence the phrases that
-/// have no tonal recording under the bars that would move. An open phrase's
-/// last bar becomes V. A closed phrase's last two bars become V then I.
+/** *Write the progression onto every bar, then cadence the phrases that */
+/** *have no tonal recording under the bars that would move. An open phrase's */
+/** *last bar becomes V. A closed phrase's last two bars become V then I. */
 fn lay_cadence(sc: &mut Score, srcs: []Source) {
     if sc.prog.len == 0 || sc.bars <= 0 {
         return
@@ -1661,8 +1661,8 @@ fn lay_cadence(sc: &mut Score, srcs: []Source) {
     }
 }
 
-/// Four chords starting at `bar`, repeating the phrase's own bars to fill
-/// the loop. The synth renders at most four.
+/** *Four chords starting at `bar`, repeating the phrase's own bars to fill */
+/** *the loop. The synth renders at most four. */
 fn phrase_chords(sc: &mut Score, bar: int, bars: int) -> []int {
     let n = if bars > 0 { bars } else { 1 }
     let mut out = []int {}
@@ -1679,8 +1679,8 @@ fn phrase_chords(sc: &mut Score, bar: int, bars: int) -> []int {
     return out
 }
 
-/// True when these bars still play `prog` in the style's own voice, so the
-/// phrase can share that looping generator.
+/** *True when these bars still play `prog` in the style's own voice, so the */
+/** *phrase can share that looping generator. */
 fn same_prog(sc: &mut Score, bar: int, bars: int) -> bool {
     if bars != 4 || sc.prog.len == 0 || bar < 0 {
         return false
@@ -1700,8 +1700,8 @@ fn same_prog(sc: &mut Score, bar: int, bars: int) -> bool {
     return true
 }
 
-/// Nine ints for the synth: four chords, four colours, and the split on
-/// the chunk's last bar.
+/** *Nine ints for the synth: four chords, four colours, and the split on */
+/** *the chunk's last bar. */
 fn phrase_row(sc: &mut Score, bar: int, bars: int) -> []int {
     let chords = phrase_chords(sc, bar, bars)
     let n = if bars > 0 { bars } else { 1 }
@@ -1726,7 +1726,7 @@ fn phrase_row(sc: &mut Score, bar: int, bars: int) -> []int {
     return row
 }
 
-/// Row of nine ints in `pg`, interned.
+/** *Row of nine ints in `pg`, interned. */
 fn prog_row_id(sc: &mut Score, row: []int) -> int {
     let n = sc.pg.len / 9
     for i in 0..n {
@@ -1748,8 +1748,8 @@ fn prog_row_id(sc: &mut Score, row: []int) -> int {
     return n
 }
 
-/// One harmony part. A phrase that still plays `prog` shares the looping
-/// generator; a cadence, a colour, or a split gets its own row.
+/** *One harmony part. A phrase that still plays `prog` shares the looping */
+/** *generator; a cadence, a colour, or a split gets its own row. */
 fn place_harmony(sc: &mut Score, layer: int, variant: int, bar: int, bars: int, db: int) {
     let mut at = 0
     let span = if bars > 0 { bars } else { 1 }
@@ -1768,7 +1768,7 @@ fn place_harmony(sc: &mut Score, layer: int, variant: int, bar: int, bars: int, 
     }
 }
 
-/// The five tension channels, one value a bar, from the arc and the section.
+/** *The five tension channels, one value a bar, from the arc and the section. */
 fn lay_channels(sc: &mut Score) {
     for b in 0..sc.bars {
         let sec = section_of(sc.sec_bar, b)
@@ -1789,7 +1789,7 @@ fn lay_channels(sc: &mut Score) {
     }
 }
 
-/// True when `b` is the first bar of a drop.
+/** *True when `b` is the first bar of a drop. */
 fn drop_downbeat(sc: &mut Score, b: int) -> bool {
     for i in 0..sc.sec_kind.len {
         if sc.sec_kind[i] == DROP && sc.sec_bar[i] == b {
@@ -1799,8 +1799,8 @@ fn drop_downbeat(sc: &mut Score, b: int) -> bool {
     return false
 }
 
-/// True when a phrase cadences on `b`: the last bar of an open phrase, or
-/// either of the last two bars of a closed one.
+/** *True when a phrase cadences on `b`: the last bar of an open phrase, or */
+/** *either of the last two bars of a closed one. */
 fn cadence_at(sc: &mut Score, b: int) -> bool {
     for p in 0..sc.ph_bar.len {
         let n = sc.ph_bars[p]
@@ -1820,9 +1820,9 @@ fn cadence_at(sc: &mut Score, b: int) -> bool {
     return false
 }
 
-/// Colour, harmonic rhythm, and the drop's tonic, only where no tonal
-/// recording is playing. `bar_ch` stays the bar's chord (the second half,
-/// when the bar splits). A tonal bar keeps colour −1 and no split.
+/** *Colour, harmonic rhythm, and the drop's tonic, only where no tonal */
+/** *recording is playing. `bar_ch` stays the bar's chord (the second half, */
+/** *when the bar splits). A tonal bar keeps colour −1 and no split. */
 fn lay_tension(sc: &mut Score, srcs: []Source) {
     for b in 0..sc.bars {
         let sec = section_of(sc.sec_bar, b)
@@ -1898,10 +1898,10 @@ fn take_motif(sc: &mut Score, s: Sound) {
     }
 }
 
-/// Hits for notes `from .. from+n` of the cached line, still on the grid.
-/// `humanize` softens a closed phrase's last note. Notes that fall outside
-/// the phrase are dropped. The last half-bar rests: only the cadence, the
-/// latest note, is allowed to speak there.
+/** *Hits for notes `from .. from+n` of the cached line, still on the grid. */
+/** *`humanize` softens a closed phrase's last note. Notes that fall outside */
+/** *the phrase are dropped. The last half-bar rests: only the cadence, the */
+/** *latest note, is allowed to speak there. */
 fn line_hits(
     g: Groove,
     deg: []int,
@@ -1916,8 +1916,8 @@ fn line_hits(
     return line_hits_on(g, deg, at, len, from, n, base, loop)
 }
 
-/// `line_hits` over the tonic note `base` (`motif.anchor`), so a counter
-/// can share its lead's octave.
+/** *`line_hits` over the tonic note `base` (`motif.anchor`), so a counter */
+/** *can share its lead's octave. */
 fn line_hits_on(
     g: Groove,
     deg: []int,
@@ -1995,8 +1995,8 @@ fn cache_hit(
     return -1
 }
 
-/// The phrase's chords packed into one int, so two phrases that cadence
-/// differently do not share a snapped line.
+/** *The phrase's chords packed into one int, so two phrases that cadence */
+/** *differently do not share a snapped line. */
 fn chord_key(sc: &mut Score, bar: int, bars: int) -> int {
     let mut k = 0
     let n = if bars > 0 { bars } else { 1 }
@@ -2024,10 +2024,10 @@ fn slice_of(xs: []int, from: int, n: int) -> []int {
     return out
 }
 
-/// The counter-line under phrase `i`'s lead, placed as its own part, on
-/// the lead's tonic note `base`, so it sits within an octave under it. It
-/// is seeded by the lead's cache entry `lead_key`, so a lead line that
-/// returns brings its counter back with it.
+/** *The counter-line under phrase `i`'s lead, placed as its own part, on */
+/** *the lead's tonic note `base`, so it sits within an octave under it. It */
+/** *is seeded by the lead's cache entry `lead_key`, so a lead line that */
+/** *returns brings its counter back with it. */
 fn lay_counter(
     sc: &mut Score,
     s: Sound,
@@ -2068,10 +2068,10 @@ fn lay_counter(
     return true
 }
 
-/// One bell line per phrase that sings, and a counter-line under it where
-/// the entry table brings one in. The same label and variation, in the
-/// same kind of section and the same length, share a line; the last drop
-/// renders that line from a higher centre.
+/** *One bell line per phrase that sings, and a counter-line under it where */
+/** *the entry table brings one in. The same label and variation, in the */
+/** *same kind of section and the same length, share a line; the last drop */
+/** *renders that line from a higher centre. */
 fn lay_melody(sc: &mut Score, srcs: []Source, s: Sound, lifted: bool) {
     let base = motif.from(sc.mo_deg, sc.mo_at, sc.mo_len)
     let drop_i = last_drop(sc)
@@ -2232,8 +2232,8 @@ fn lay_melody(sc: &mut Score, srcs: []Source, s: Sound, lifted: bool) {
     }
 }
 
-/// The piece for these recordings and this sound. An empty score (no
-/// loops, no parts) means there was nothing to play.
+/** *The piece for these recordings and this sound. An empty score (no */
+/** *loops, no parts) means there was nothing to play. */
 fn arrange(srcs: []Source, s: Sound) -> Score {
     let mut sc = empty_score()
     let bpm = piece_bpm_c(srcs, s)
@@ -2452,8 +2452,8 @@ fn arrange(srcs: []Source, s: Sound) -> Score {
     return sc
 }
 
-/// One recording, heard: its envelope, voice map text, decoded length, and
-/// the 5512 Hz copy (`pcm`) its key and chords are read from.
+/** *One recording, heard: its envelope, voice map text, decoded length, and */
+/** *the 5512 Hz copy (`pcm`) its key and chords are read from. */
 fn source_of(
     env: string,
     voice: string,
@@ -2479,7 +2479,7 @@ fn source_of(
     }
 }
 
-/// The progression as chord names: "Bm F♯m Bm Bm".
+/** *The progression as chord names: "Bm F♯m Bm Bm". */
 fn chords_text(sc: Score) -> string {
     let mut out = ""
     for i in 0..sc.prog.len {
@@ -2493,7 +2493,7 @@ fn has_sound(sc: Score) -> bool {
     return sc.lp_src.len + sc.sy_layer.len > 0
 }
 
-/// Recording indexes the score reads, lowest first.
+/** *Recording indexes the score reads, lowest first. */
 fn used_sources(sc: Score) -> []int {
     let mut out = []int {}
     for i in 0..sc.lp_src.len {
@@ -2505,7 +2505,7 @@ fn used_sources(sc: Score) -> []int {
     return out
 }
 
-/// How many phrases of each recording were voice-free.
+/** *How many phrases of each recording were voice-free. */
 fn voice_free_count(sc: Score, src: int) -> int {
     let mut n = 0
     for i in 0..sc.lp_src.len {

@@ -1,7 +1,7 @@
-//! myapp — application entry. One entry, every host.
-//!
-//! `zeus routes` generates app_routes.loam from routes/; this file
-//! mounts it. `zeus build` emits all five targets from here.
+// myapp — application entry. One entry, every host.
+//
+// `zeus routes` generates app_routes.loam from routes/; this file
+// mounts it. `zeus build` emits all five targets from here.
 
 import "zeus"
 import "app_routes.loam" as approutes

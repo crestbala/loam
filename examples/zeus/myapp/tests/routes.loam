@@ -1,10 +1,10 @@
-//! Drives myapp's generated route table headlessly and asserts every route
-//! actually paints. `zeus build` only proves the targets link; this proves the
-//! nav reaches each page and the retained root shell survives navigation.
-//!
-//! Run via `make test`, or directly:
-//!
-//!     ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/myapp/tests/routes.loam -o /tmp/r && /tmp/r
+// Drives myapp's generated route table headlessly and asserts every route
+// actually paints. `zeus build` only proves the targets link; this proves the
+// nav reaches each page and the retained root shell survives navigation.
+//
+// Run via `make test`, or directly:
+//
+//     ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/myapp/tests/routes.loam -o /tmp/r && /tmp/r
 
 import "std:fmt"
 import "std:sys"
@@ -17,9 +17,9 @@ fn fail(what: string) {
     sys.exit(1)
 }
 
-/// Navigate, relayout, and assert the page painted its marker text. The root
-/// shell is checked every time: it is mounted outside the page slot, so losing
-/// it means navigation rebuilt too much.
+/** *Navigate, relayout, and assert the page painted its marker text. The root */
+/** *shell is checked every time: it is mounted outside the page slot, so losing */
+/** *it means navigation rebuilt too much. */
 fn visit(path: string, want: string) {
     router.navigate(path)
     zeus.engine_layout(400, 300)

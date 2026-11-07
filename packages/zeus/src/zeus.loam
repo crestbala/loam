@@ -1,97 +1,97 @@
-//! `zeus` — UI toolkit. Native Cocoa and WASM/Canvas2D run the same source.
-//!
-//! Widgets are `Box` / `Text` / `Button` / `Input` / `Grid` / `Overlay` /
-//! `Scroll` / `Svg` / `Show` / `Each` / `VirtualList` / `VirtualTable` /
-//! `App`. Hierarchy is a trailing block. Lists: one `Each(items, build)` for
-//! fixed arrays and signal reads alike (`Each(todos.get(), Row)`),
-//! with `push_item` / `insert_item` on a `zeus.signal([]T {})`. Windowed lists
-//! (`VirtualList`, `VirtualTable`) render visible rows only; table rows and
-//! columns are structs.
-//!
-//! Reactivity is fine-grained, and the whole model is five rules:
-//!
-//!   1. A `signal` is a value with `get` / `set`. Reading one inside a
-//!      reactive scope subscribes that scope to it — dependencies are
-//!      discovered, never declared. `peek` reads without subscribing.
-//!   2. An `effect` runs once, then re-runs whenever a signal it read
-//!      changes. Effects are the edges of the graph.
-//!   3. A `computed<T>` is a cached derivation, generic over its value type
-//!      (a struct, a list, a string — not just int). It is lazy: an input
-//!      change only marks it stale, and its body re-runs when something reads
-//!      it. Each input's generation is recorded, so a recompute that does not
-//!      actually change the value propagates no further.
-//!   4. Components disappear. A widget fn is a *setup* function: it runs
-//!      once, wires bindings to signals, and is never called again. There
-//!      is no render loop and no component re-execution.
-//!   5. Updates are surgical. Every dynamic prop (`Text("n = {{n.get()}}")`,
-//!      `Image(photo.get())`) is its own effect over one node attribute, so a
-//!      `set` repaints exactly the attributes that read it — no virtual
-//!      DOM, no diffing, no tree walk.
-//!
-//! `scope` groups derivations that must not outlive the run that made them: a
-//! re-run disposes everything the body created — effect rows, output cells and
-//! stored bodies alike.
-//!
-//! Every element is a `Component`: element props (`ref`, `role`, `label`,
-//! `keys`, events, `bind`, `visible`), one `style`, then attach. Trailing blocks
-//! are the children. Components are `View` components (see
-//! `docs/component-model.md`); they do not touch the arena.
-//! Named props fill a last-param struct. Look is one `style` prop, the CSS
-//! subset in `zeuscore/style.loam`, on elements and components alike:
-//! `Button("Go", style = Style(radius = 4))`,
-//! `Card(style = Style(padding = Space.Xs))`. A component merges it over its
-//! own look, so any key can be overridden. Write values as plain data; a
-//! signal read inside a style re-applies just the keys that changed. Text is
-//! a thunk: write `Text("n = {{n.get()}}")` and the compiler lifts the
-//! expression, so a signal read inside it repaints just that label. Closures
-//! are for events: `on_click = fn() => ...`.
-//! A component's own dynamic props are `Signal<T>` (`label: Signal<string>`).
-//! Callers pass a signal or a plain value: a literal becomes `signal(v)`, an
-//! expression (`"n = {{n.get()}}"`) becomes `computed(|| expr)`. The body
-//! reads it like any signal: `label = "Remove {{label.get()}}"`,
-//! `if open.get() { ... }`. A read inside a node prop is tracked by that
-//! prop, so it stays live. Passing the signal itself on (`Text(label)`,
-//! `Chip(label)`) forwards it.
-//! `Comp` is a `Box` that presses like a button when clicked.
-//! One UI-scale knob (`set_scale` percent) scales type and control chrome.
-//! It is applied centrally, where a prop lands on a node, so widgets and
-//! callers alike write plain design px — nothing calls a scale helper.
-//! It is the identity at 100, so goldens hold at 1.0.
-//! `Button` paints the themed chrome when you pass `look = Look.*` and
-//! `size = Size.*`; without them it is a plain clickable label whose
-//! look comes from `style` and `enabled` / `on_click` from the props. Keyboard: every click target is a tab stop; Tab walks the
-//! focus ring in document order (Shift-Tab back), Enter/Space activate, and
-//! the focused control paints a 2px ring (keyboard focus only — pointer
-//! clicks clear it).
-//!
-//! Example:
-//! ```
-//! import "zeus"
-//!
-//! fn main() {
-//!     let n = zeus.signal(0)
-//!     zeus.App("Count", fn() {
-//!         zeus.Box(style = Style(padding = Space.Sm, gap = Space.Exs)) {
-//!             zeus.Text("Count", style = Style(font = 22))
-//!             zeus.Text("{{n.get()}}", style = Style(font = 28))
-//!             zeus.Box(style = Style(direction = Direction.Row, gap = Space.Exs)) {
-//!                 zui.Button("-", look = zeus.Look.Ghost, size = zeus.Size.Md,
-//!                             on_click = fn() => n.set(n.get() - 1))
-//!                 zui.Button("+", look = zeus.Look.Solid, size = zeus.Size.Md,
-//!                             on_click = fn() => n.set(n.get() + 1))
-//!             }
-//!         }
-//!     })
-//! }
-//! ```
-//!
-//! `zeus.App(title, build)` is the entry: retained tree, view size from
-//! the host (`window_size`); pass trailing `width`/`height` only to pin a
-//! macOS/wasm window. Per-frame rebuild is `zeus.view` / `zeus.app`.
-//! Reactive presence is `Show(when = cond) { ... }` (`lazy = true` builds on
-//! demand); a reactive `Style(display = ...)` hides one element. Internals: `packages/zeus/src/zeuscore/*.loam`.
-//! C is host FFI (`platform.loam`). `Node` is `{ id: int }`.
-//! See `docs/boundary.md`. `ZEUS_HEADLESS=1` layouts once and exits.
+// `zeus` — UI toolkit. Native Cocoa and WASM/Canvas2D run the same source.
+//
+// Widgets are `Box` / `Text` / `Button` / `Input` / `Grid` / `Overlay` /
+// `Scroll` / `Svg` / `Show` / `Each` / `VirtualList` / `VirtualTable` /
+// `App`. Hierarchy is a trailing block. Lists: one `Each(items, build)` for
+// fixed arrays and signal reads alike (`Each(todos.get(), Row)`),
+// with `push_item` / `insert_item` on a `zeus.signal([]T {})`. Windowed lists
+// (`VirtualList`, `VirtualTable`) render visible rows only; table rows and
+// columns are structs.
+//
+// Reactivity is fine-grained, and the whole model is five rules:
+//
+//   1. A `signal` is a value with `get` / `set`. Reading one inside a
+//      reactive scope subscribes that scope to it — dependencies are
+//      discovered, never declared. `peek` reads without subscribing.
+//   2. An `effect` runs once, then re-runs whenever a signal it read
+//      changes. Effects are the edges of the graph.
+//   3. A `computed<T>` is a cached derivation, generic over its value type
+//      (a struct, a list, a string — not just int). It is lazy: an input
+//      change only marks it stale, and its body re-runs when something reads
+//      it. Each input's generation is recorded, so a recompute that does not
+//      actually change the value propagates no further.
+//   4. Components disappear. A widget fn is a *setup* function: it runs
+//      once, wires bindings to signals, and is never called again. There
+//      is no render loop and no component re-execution.
+//   5. Updates are surgical. Every dynamic prop (`Text("n = {{n.get()}}")`,
+//      `Image(photo.get())`) is its own effect over one node attribute, so a
+//      `set` repaints exactly the attributes that read it — no virtual
+//      DOM, no diffing, no tree walk.
+//
+// `scope` groups derivations that must not outlive the run that made them: a
+// re-run disposes everything the body created — effect rows, output cells and
+// stored bodies alike.
+//
+// Every element is a `Component`: element props (`ref`, `role`, `label`,
+// `keys`, events, `bind`, `visible`), one `style`, then attach. Trailing blocks
+// are the children. Components are `View` components (see
+// `docs/component-model.md`); they do not touch the arena.
+// Named props fill a last-param struct. Look is one `style` prop, the CSS
+// subset in `zeuscore/style.loam`, on elements and components alike:
+// `Button("Go", style = Style(radius = 4))`,
+// `Card(style = Style(padding = Space.Xs))`. A component merges it over its
+// own look, so any key can be overridden. Write values as plain data; a
+// signal read inside a style re-applies just the keys that changed. Text is
+// a thunk: write `Text("n = {{n.get()}}")` and the compiler lifts the
+// expression, so a signal read inside it repaints just that label. Closures
+// are for events: `on_click = fn() => ...`.
+// A component's own dynamic props are `Signal<T>` (`label: Signal<string>`).
+// Callers pass a signal or a plain value: a literal becomes `signal(v)`, an
+// expression (`"n = {{n.get()}}"`) becomes `computed(|| expr)`. The body
+// reads it like any signal: `label = "Remove {{label.get()}}"`,
+// `if open.get() { ... }`. A read inside a node prop is tracked by that
+// prop, so it stays live. Passing the signal itself on (`Text(label)`,
+// `Chip(label)`) forwards it.
+// `Comp` is a `Box` that presses like a button when clicked.
+// One UI-scale knob (`set_scale` percent) scales type and control chrome.
+// It is applied centrally, where a prop lands on a node, so widgets and
+// callers alike write plain design px — nothing calls a scale helper.
+// It is the identity at 100, so goldens hold at 1.0.
+// `Button` paints the themed chrome when you pass `look = Look.*` and
+// `size = Size.*`; without them it is a plain clickable label whose
+// look comes from `style` and `enabled` / `on_click` from the props. Keyboard: every click target is a tab stop; Tab walks the
+// focus ring in document order (Shift-Tab back), Enter/Space activate, and
+// the focused control paints a 2px ring (keyboard focus only — pointer
+// clicks clear it).
+//
+// Example:
+// ```
+// import "zeus"
+//
+// fn main() {
+//     let n = zeus.signal(0)
+//     zeus.App("Count", fn() {
+//         zeus.Box(style = Style(padding = Space.Sm, gap = Space.Exs)) {
+//             zeus.Text("Count", style = Style(font = 22))
+//             zeus.Text("{{n.get()}}", style = Style(font = 28))
+//             zeus.Box(style = Style(direction = Direction.Row, gap = Space.Exs)) {
+//                 zui.Button("-", look = zeus.Look.Ghost, size = zeus.Size.Md,
+//                             on_click = fn() => n.set(n.get() - 1))
+//                 zui.Button("+", look = zeus.Look.Solid, size = zeus.Size.Md,
+//                             on_click = fn() => n.set(n.get() + 1))
+//             }
+//         }
+//     })
+// }
+// ```
+//
+// `zeus.App(title, build)` is the entry: retained tree, view size from
+// the host (`window_size`); pass trailing `width`/`height` only to pin a
+// macOS/wasm window. Per-frame rebuild is `zeus.view` / `zeus.app`.
+// Reactive presence is `Show(when = cond) { ... }` (`lazy = true` builds on
+// demand); a reactive `Style(display = ...)` hides one element. Internals: `packages/zeus/src/zeuscore/*.loam`.
+// C is host FFI (`platform.loam`). `Node` is `{ id: int }`.
+// See `docs/boundary.md`. `ZEUS_HEADLESS=1` layouts once and exits.
 
 import "zeuscore/geometry.loam"
 import "zeuscore/platform.loam"
@@ -118,25 +118,25 @@ import "zeus-components:colors"
 
 let mut has_view: int = 0
 let mut view_fn: fn() -> Node = empty_view
-/// 1 while `view_fn` runs, and whether that build read `window_size()`: only
-/// then does a resize rebuild the view (layout already follows a resize).
+/** *1 while `view_fn` runs, and whether that build read `window_size()`: only */
+/** *then does a resize rebuild the view (layout already follows a resize). */
 let mut view_building: int = 0
 let mut view_reads_size: int = 0
-/// Times a `view` app rebuilt its tree (diagnostics for tests).
+/** *Times a `view` app rebuilt its tree (diagnostics for tests). */
 let mut view_builds: int = 0
 
-/// Open a window and build the tree once. The tree is retained: signals
-/// update the props that read them, never a whole subtree.
-/// Size comes from the host (`window_size`): on desktop that is the device
-/// screen's work area and on iOS/Android the full screen, so an app opens
-/// screen-filling. Trailing `width` / `height` pin an exact macOS/wasm window
-/// instead (a first size before the view exists, and headless draw tests).
-/// The desktop host bounds what a screen-sized window costs with its backing
-/// scale (`ZEUS_BACKING_SCALE`), never by shrinking the window.
-/// The root is a vertical scroller: children keep their intrinsic height and
-/// a bar appears when they overflow. A full-bleed `VirtualList` inside should
-/// `grow = 1` so it is the scrolling pane — nested momentum chaining is not
-/// this function.
+/** *Open a window and build the tree once. The tree is retained: signals */
+/** *update the props that read them, never a whole subtree. */
+/** *Size comes from the host (`window_size`): on desktop that is the device */
+/** *screen's work area and on iOS/Android the full screen, so an app opens */
+/** *screen-filling. Trailing `width` / `height` pin an exact macOS/wasm window */
+/** *instead (a first size before the view exists, and headless draw tests). */
+/** *The desktop host bounds what a screen-sized window costs with its backing */
+/** *scale (`ZEUS_BACKING_SCALE`), never by shrinking the window. */
+/** *The root is a vertical scroller: children keep their intrinsic height and */
+/** *a bar appears when they overflow. A full-bleed `VirtualList` inside should */
+/** *`grow = 1` so it is the scrolling pane — nested momentum chaining is not */
+/** *this function. */
 fn App(title: string, build: fn() -> Node, width: int = 0, height: int = 0) {
     init()
     let mut w = width
@@ -189,10 +189,10 @@ fn raw_run() {
     mem_stats_report()
 }
 
-/// Phase 0 memory report: arena buckets (arena side), the retained draw list,
-/// and the host's process footprint. Printed once, on exit, and only when
-/// `ZEUS_MEM_STATS` is on (build `-DZEUS_MEM_STATS`, or the env var). With
-/// stats off this is a single host call that returns 0.
+/** *Phase 0 memory report: arena buckets (arena side), the retained draw list, */
+/** *and the host's process footprint. Printed once, on exit, and only when */
+/** *`ZEUS_MEM_STATS` is on (build `-DZEUS_MEM_STATS`, or the env var). With */
+/** *stats off this is a single host call that returns 0. */
 fn mem_stats_report() {
     if arena.mem_stats_on() == 0 {
         return
@@ -209,14 +209,14 @@ fn init() {
     ensure_role_colors()
 }
 
-/// Open a native window. Sizes are CSS-like points, not pixels.
-/// Prefer `zeus.App(...)` over calling this alone.
+/** *Open a native window. Sizes are CSS-like points, not pixels. */
+/** *Prefer `zeus.App(...)` over calling this alone. */
 fn window(title: string, width: int, height: int) {
     init()
     open_window(title, width, height)
 }
 
-/// Host view size in points: browser canvas, or the native content view.
+/** *Host view size in points: browser canvas, or the native content view. */
 struct WindowSize {
     width: int,
     height: int,
@@ -232,31 +232,31 @@ fn window_size() -> WindowSize {
     }
 }
 
-/// Host process memory in KB for diagnostics UI: Apple phys_footprint
-/// (Xcode's memory-gauge number), Linux/Android resident set, live wasm
-/// heap on the web host (0 = unknown).
-/// Window chrome (`window_chrome`): the host's own title bar, or one the app
-/// draws with `zui.TitleBar`.
+/** *Host process memory in KB for diagnostics UI: Apple phys_footprint */
+/** *(Xcode's memory-gauge number), Linux/Android resident set, live wasm */
+/** *heap on the web host (0 = unknown). */
+/** *Window chrome (`window_chrome`): the host's own title bar, or one the app */
+/** *draws with `zui.TitleBar`. */
 const CHROME_SYSTEM: int = 0
 const CHROME_CUSTOM: int = 1
 
-/// `CHROME_CUSTOM` hands the title bar to the app: on macOS the content runs
-/// up under a transparent bar, the system title goes, and the window buttons
-/// stay. Draw it with `zui.TitleBar`, which sizes itself from `titlebar()` and
-/// moves the window when dragged. Hosts without a title bar (web, iOS,
-/// Android) report a zero box, so the same tree is just a header-less page
-/// there. Call before `App`, or any time after.
+/** *`CHROME_CUSTOM` hands the title bar to the app: on macOS the content runs */
+/** *up under a transparent bar, the system title goes, and the window buttons */
+/** *stay. Draw it with `zui.TitleBar`, which sizes itself from `titlebar()` and */
+/** *moves the window when dragged. Hosts without a title bar (web, iOS, */
+/** *Android) report a zero box, so the same tree is just a header-less page */
+/** *there. Call before `App`, or any time after. */
 fn window_chrome(mode: int) {
     platform.plat_set_chrome(mode)
 }
 
-/// Test hook: the box a desktop host would report (see `titlebar`).
+/** *Test hook: the box a desktop host would report (see `titlebar`). */
 fn engine_set_titlebar(height: int, lead: int, trail: int) {
     platform.plat_set_titlebar_box(height, lead, trail)
 }
 
-/// Host call: 1 when a press at (`px`, `py`) should move the window — it is
-/// on a `TitleBar` (role "titlebar") and on no control inside it.
+/** *Host call: 1 when a press at (`px`, `py`) should move the window — it is */
+/** *on a `TitleBar` (role "titlebar") and on no control inside it. */
 fn engine_window_drag_at(px: int, py: int) -> int {
     if arena.root_id <= 0 {
         return 0
@@ -279,8 +279,8 @@ fn engine_window_drag_at(px: int, py: int) -> int {
     return 0
 }
 
-/// Enter (true) or leave (false) full screen; returns whether the window is
-/// full screen now. On the web the browser may refuse outside a user gesture.
+/** *Enter (true) or leave (false) full screen; returns whether the window is */
+/** *full screen now. On the web the browser may refuse outside a user gesture. */
 fn fullscreen(on: bool) -> bool {
     return platform.plat_fullscreen(if on { 1 } else { 0 }) != 0
 }
@@ -294,39 +294,39 @@ fn memory_kb() -> int {
     return platform.plat_mem_kb()
 }
 
-/// Enter the event loop with `node` as the tree root.
-/// `ZEUS_HEADLESS=1` layouts once and exits (tests). Prefer `zeus.App`.
+/** *Enter the event loop with `node` as the tree root. */
+/** *`ZEUS_HEADLESS=1` layouts once and exits (tests). Prefer `zeus.App`. */
 fn run(node: Node) {
     init()
     arena.root_id = node.id
     raw_run()
 }
 
-/// GPUI-style: each frame rebuilds the element tree from signals.
-///
-/// The rebuild is conditional. It runs when the tree can actually have changed —
-/// a structural or layout frame, or a resize — and is skipped on a frame whose
-/// dirt is purely attributable paint (an interaction state, a paint-only prop, a
-/// scroll, an animation track). Those frames keep the retained tree, so the
-/// effects the previous build created stay alive and update their own nodes: the
-/// same fine-grained model a retained `App` tree runs. Omit this and the tree is
-/// retained unconditionally (the `App` mode).
+/** *GPUI-style: each frame rebuilds the element tree from signals. */
+/** */
+/** *The rebuild is conditional. It runs when the tree can actually have changed — */
+/** *a structural or layout frame, or a resize — and is skipped on a frame whose */
+/** *dirt is purely attributable paint (an interaction state, a paint-only prop, a */
+/** *scroll, an animation track). Those frames keep the retained tree, so the */
+/** *effects the previous build created stay alive and update their own nodes: the */
+/** *same fine-grained model a retained `App` tree runs. Omit this and the tree is */
+/** *retained unconditionally (the `App` mode). */
 fn view(build: fn() -> Node) {
     init()
     view_fn = build
     has_view = 1
 }
 
-/// Open a window, install `build` as the per-frame view, and run.
-/// Rebuilds the tree only on a frame that can have changed it (see `view`).
-/// Prefer `zeus.App` for a retained tree.
-///
-/// Example:
-/// ```
-/// zeus.app("Demo", 400, 300, || {
-///     zeus.Text("frame")
-/// })
-/// ```
+/** *Open a window, install `build` as the per-frame view, and run. */
+/** *Rebuilds the tree only on a frame that can have changed it (see `view`). */
+/** *Prefer `zeus.App` for a retained tree. */
+/** */
+/** *Example: */
+/** *``` */
+/** *zeus.app("Demo", 400, 300, || { */
+/** *zeus.Text("frame") */
+/** *}) */
+/** *``` */
 fn app(title: string, width: int, height: int, build: fn() -> Node) {
     window(title, width, height)
     view(build)
@@ -378,35 +378,35 @@ fn engine_key_apply(signal_id: int, mode: int, value: int, lo: int, hi: int) {
     arena.store_sig(signal_id, next)
 }
 
-/// Run the host refresh hooks this frame needs (`arena.refresh_hosts`): the
-/// geometry hosts (refit, windowed lists, `on_resize`) are polled, and each
-/// decides for itself whether its window or width moved; the signal hosts
-/// (Match, Each) run only when a write to their bound signal queued
-/// them. A host that does rebuild marks the tree, which is what the caller keys
-/// the follow-up layout on.
+/** *Run the host refresh hooks this frame needs (`arena.refresh_hosts`): the */
+/** *geometry hosts (refit, windowed lists, `on_resize`) are polled, and each */
+/** *decides for itself whether its window or width moved; the signal hosts */
+/** *(Match, Each) run only when a write to their bound signal queued */
+/** *them. A host that does rebuild marks the tree, which is what the caller keys */
+/** *the follow-up layout on. */
 fn refresh_lists() {
     arena.refresh_hosts()
 }
 
-/// Web host: a trap unwound out of an export (wasm has no `setjmp`, so
-/// `Boundary` cannot catch it in-process). The innermost boundary that was
-/// building, or whose handler / effect / list refresh was running, takes the
-/// panic message and shows its fallback on the next frame; the transient state
-/// every entry point starts from (build stack, tracking stack, scope) is reset.
-/// Returns 1 when a boundary took the trap, 0 when none was at work.
+/** *Web host: a trap unwound out of an export (wasm has no `setjmp`, so */
+/** *`Boundary` cannot catch it in-process). The innermost boundary that was */
+/** *building, or whose handler / effect / list refresh was running, takes the */
+/** *panic message and shows its fallback on the next frame; the transient state */
+/** *every entry point starts from (build stack, tracking stack, scope) is reset. */
+/** *Returns 1 when a boundary took the trap, 0 when none was at work. */
 fn engine_recover() -> int {
     view_building = 0
     return arena.recover_trap(runtime.trap_msg())
 }
 
-/// Build-order number of the boundary the last `engine_recover` failed in its
-/// build, 0 when the trap was not in a boundary's build. The web loader reads
-/// it after a trap during startup, re-instantiates, and pre-seeds it.
+/** *Build-order number of the boundary the last `engine_recover` failed in its */
+/** *build, 0 when the trap was not in a boundary's build. The web loader reads */
+/** *it after a trap during startup, re-instantiates, and pre-seeds it. */
 fn engine_trap_seq() -> int {
     return arena.last_trap_seq
 }
 
-/// Most refresh-then-layout rounds one frame runs before it paints anyway.
+/** *Most refresh-then-layout rounds one frame runs before it paints anyway. */
 const HOST_SETTLE_ROUNDS: int = 4
 
 fn engine_layout(width: int, height: int) {
@@ -638,8 +638,8 @@ fn engine_focus_captures_text() -> int {
     return arena.focus_captures_text()
 }
 
-/// Node id that currently holds focus (0 = none). Stable across a keyed
-/// reorder, because the row's node is moved rather than rebuilt.
+/** *Node id that currently holds focus (0 = none). Stable across a keyed */
+/** *reorder, because the row's node is moved rather than rebuilt. */
 fn engine_focus_id() -> int {
     return arena.focus_id
 }
@@ -648,13 +648,13 @@ fn engine_key(key: int) -> int {
     return input.key(key)
 }
 
-/// Insert UTF-8 into the focused input (IME commit, paste). Headless tests
-/// can call this instead of synthesizing one key per byte.
+/** *Insert UTF-8 into the focused input (IME commit, paste). Headless tests */
+/** *can call this instead of synthesizing one key per byte. */
 fn engine_insert(text: string) -> int {
     return input.insert_text(text)
 }
 
-/// IME composition overlay on the focused input. Empty clears the mark.
+/** *IME composition overlay on the focused input. Empty clears the mark. */
 fn engine_marked(text: string) -> int {
     return input.mark_text(text)
 }
@@ -669,25 +669,25 @@ fn engine_key_ev(key: int, mods: int) -> int {
     return runtime.key_ev(key, mods)
 }
 
-/// Key release, from hosts that deliver it. Runs the focused node's
-/// `on_key_up`, then `on_key_press` — the down→up cycle.
+/** *Key release, from hosts that deliver it. Runs the focused node's */
+/** *`on_key_up`, then `on_key_press` — the down→up cycle. */
 fn engine_key_up(key: int, mods: int) -> int {
     arena.ensure()
     return input.key_handlers(key, mods, 1)
 }
 
 // --- engine trampolines ---
-/// Cocoa calls these through zeus_plat.c (`loam_zeus_engine_*`). Do not use
-/// from app code; use `App`, clicks, and signals instead.
+/** *Cocoa calls these through zeus_plat.c (`loam_zeus_engine_*`). Do not use */
+/** *from app code; use `App`, clicks, and signals instead. */
 
 fn engine_paint() {
     arena.damage_frame_begin()
     scene.paint()
 }
 
-/// One host frame with its own delta. `zeus_step(delta_ms)` in the runtime passes the
-/// delta here; the cap keeps a backgrounded app from jumping when it wakes.
-/// Tests and headless pumps call `engine_step()` (a nominal 16 ms).
+/** *One host frame with its own delta. `zeus_step(delta_ms)` in the runtime passes the */
+/** *delta here; the cap keeps a backgrounded app from jumping when it wakes. */
+/** *Tests and headless pumps call `engine_step()` (a nominal 16 ms). */
 fn engine_step_dt(dt_ms: int) -> int {
     let mut delta_ms = dt_ms
     if delta_ms <= 0 {
@@ -727,10 +727,10 @@ fn engine_step() -> int {
     return engine_step_dt(16)
 }
 
-/// Milliseconds until the next async timer is due (0 = none; -1 = a spawn
-/// waits). Native hosts that stop drawing when idle use this to schedule the
-/// next frame exactly at the deadline. Coasts at ~60 fps while a scroller
-/// is in motion.
+/** *Milliseconds until the next async timer is due (0 = none; -1 = a spawn */
+/** *waits). Native hosts that stop drawing when idle use this to schedule the */
+/** *next frame exactly at the deadline. Coasts at ~60 fps while a scroller */
+/** *is in motion. */
 fn engine_next_ms() -> int {
     if arena.physics_live() != 0 {
         return 16
@@ -756,9 +756,9 @@ fn engine_next_ms() -> int {
 }
 
 // --- Phase 3 proof harness ------------------------------------------------
-/// Component-function runs since boot. Flat across an animation.
-/// Advance the wall clock `plat_now_ms` reads, so a test can step a wall-clock
-/// timeline (the scrollbar's fades) without sleeping through it.
+/** *Component-function runs since boot. Flat across an animation. */
+/** *Advance the wall clock `plat_now_ms` reads, so a test can step a wall-clock */
+/** *timeline (the scrollbar's fades) without sleeping through it. */
 fn proof_clock_skip(ms: int) {
     platform.plat_clock_skip(ms)
 }
@@ -766,47 +766,47 @@ fn proof_clock_skip(ms: int) {
 fn proof_components() -> int {
     return arena.component_runs
 }
-/// Reactive-effect runs since boot. Flat across an animation.
+/** *Reactive-effect runs since boot. Flat across an animation. */
 fn proof_effects() -> int {
     return track.runs
 }
-/// Signal setters fired from inside the animation tick. Must stay 0.
+/** *Signal setters fired from inside the animation tick. Must stay 0. */
 fn proof_signal_writes() -> int {
     return arena.anim_signal_writes
 }
-/// Active animation tracks.
+/** *Active animation tracks. */
 fn proof_anim_live() -> int {
     return arena.anim_live_count()
 }
-/// 1 while an indeterminate spinner is visible and not reduced-motion-suppressed.
+/** *1 while an indeterminate spinner is visible and not reduced-motion-suppressed. */
 fn proof_spin_live() -> int {
     return arena.spin_live()
 }
-/// Allocations since boot (runtime allocator). A frame that only animates
-/// allocates nothing, so this must not move while a track is running.
+/** *Allocations since boot (runtime allocator). A frame that only animates */
+/** *allocates nothing, so this must not move while a track is running. */
 fn proof_allocs() -> int {
     return runtime.alloc_count()
 }
 
-/// High-water size of the effect table. A `scope` that re-runs must reuse the
-/// rows it disposed, so this stays flat across re-runs; exposed for tests.
+/** *High-water size of the effect table. A `scope` that re-runs must reuse the */
+/** *rows it disposed, so this stays flat across re-runs; exposed for tests. */
 fn reactive_rows() -> int {
     return track.effect_rows()
 }
-/// The paint value a bound signal currently resolves to: the interpolated
-/// overlay while `animate` runs, else the signal's state. Tests use it to see
-/// the animation without a component thunk re-running.
+/** *The paint value a bound signal currently resolves to: the interpolated */
+/** *overlay while `animate` runs, else the signal's state. Tests use it to see */
+/** *the animation without a component thunk re-running. */
 fn anim_paint(sig: Signal<int>) -> int {
     return arena.sig_val(sig.id)
 }
 
-/// Shape a 0..1000 linear progress into the named `EASE` curve. Same helper
-/// the track pool uses; tests lock samples so a control-point or solver
-/// change is visible.
+/** *Shape a 0..1000 linear progress into the named `EASE` curve. Same helper */
+/** *the track pool uses; tests lock samples so a control-point or solver */
+/** *change is visible. */
 fn anim_ease(easing: int, t: int) -> int {
     return arena.anim_ease(easing, t)
 }
-/// Host / app reduced-motion preference: animations jump to their final value.
+/** *Host / app reduced-motion preference: animations jump to their final value. */
 fn set_reduced_motion(on: bool) {
     arena.ensure()
     if on {
@@ -816,41 +816,41 @@ fn set_reduced_motion(on: bool) {
     }
 }
 
-/// Host trampoline: the OS reports a reduced-motion preference (Cocoa, iOS,
-/// web `prefers-reduced-motion`, Android animator scale).
+/** *Host trampoline: the OS reports a reduced-motion preference (Cocoa, iOS, */
+/** *web `prefers-reduced-motion`, Android animator scale). */
 fn engine_set_reduced_motion(on: int) {
     arena.ensure()
     arena.reduced = on
 }
 
-/// Host trampoline: the host's text metrics changed under the engine (a web
-/// font finished loading after the first frames measured with the fallback).
-/// Drops cached text measurements and re-lays out the whole tree.
+/** *Host trampoline: the host's text metrics changed under the engine (a web */
+/** *font finished loading after the first frames measured with the fallback). */
+/** *Drops cached text measurements and re-lays out the whole tree. */
 fn engine_fonts_changed() {
     arena.ensure()
     metrics.reset_cache()
     arena.mark_layout()
 }
 
-/// Host trampoline and test hook: set the safe-area insets the next layout
-/// pass will read (`plat_inset_*`). iOS / Android already call the C setter
-/// from the view; tests use this so a notched viewport is deterministic.
+/** *Host trampoline and test hook: set the safe-area insets the next layout */
+/** *pass will read (`plat_inset_*`). iOS / Android already call the C setter */
+/** *from the view; tests use this so a notched viewport is deterministic. */
 fn engine_set_insets(top: int, right: int, bottom: int, left: int) {
     arena.ensure()
     platform.plat_set_insets(top, right, bottom, left)
     arena.mark_layout()
 }
 
-/// Test hook: 1 = treat this process as an overlay-scroll (touch) host.
-/// iOS / Android already compile that way; desktop tests use this so a
-/// 44dp hit target can be asserted without a device.
+/** *Test hook: 1 = treat this process as an overlay-scroll (touch) host. */
+/** *iOS / Android already compile that way; desktop tests use this so a */
+/** *44dp hit target can be asserted without a device. */
 fn engine_set_overlay_scroll(on: int) {
     arena.ensure()
     platform.plat_set_overlay_scroll(on)
 }
 
-/// One headless host frame: async tick, rebuild + layout, then paint. Tests
-/// use this instead of calling `engine_layout` by hand.
+/** *One headless host frame: async tick, rebuild + layout, then paint. Tests */
+/** *use this instead of calling `engine_layout` by hand. */
 fn pump_frame() {
     engine_layout(arena.win_w, arena.win_h)
     engine_paint()
@@ -860,18 +860,18 @@ fn engine_click(px: int, py: int) -> int {
     return input.click(px, py)
 }
 
-/// What a finger at (`px`, `py`) grabs, without pressing it. The web host
-/// uses this so a pan can scroll and a tap can still click on release.
-/// 1 = slider or scrollbar thumb, 2 = `on_drag`, 0 = anything else.
+/** *What a finger at (`px`, `py`) grabs, without pressing it. The web host */
+/** *uses this so a pan can scroll and a tap can still click on release. */
+/** *1 = slider or scrollbar thumb, 2 = `on_drag`, 0 = anything else. */
 fn engine_grab(px: int, py: int) -> int {
     return input.grab(px, py)
 }
 
-/// The node a press at (`px`, `py`) would land on, without pressing: floaters
-/// first, top `zIndex` first, then the page — the order paint stacks them.
-/// Anchored popups that share a z-index and sit near each other break that
-/// tie by open order: the one opened later is on top. A popup far from them
-/// keeps tree order. 0 when nothing hit-testable is there.
+/** *The node a press at (`px`, `py`) would land on, without pressing: floaters */
+/** *first, top `zIndex` first, then the page — the order paint stacks them. */
+/** *Anchored popups that share a z-index and sit near each other break that */
+/** *tie by open order: the one opened later is on top. A popup far from them */
+/** *keeps tree order. 0 when nothing hit-testable is there. */
 fn engine_hit(px: int, py: int) -> int {
     if arena.root_id <= 0 {
         return 0
@@ -885,8 +885,8 @@ fn engine_hit(px: int, py: int) -> int {
     return input.hit_node(arena.root_id, px, py)
 }
 
-/// 1 while the pointer is over node `id`: inside its box and every clip above
-/// it, and not covered by a floater outside its subtree.
+/** *1 while the pointer is over node `id`: inside its box and every clip above */
+/** *it, and not covered by a floater outside its subtree. */
 fn pointer_over(id: int) -> int {
     if id <= 0 || id >= nodes.tree.len {
         return 0
@@ -894,9 +894,9 @@ fn pointer_over(id: int) -> int {
     return arena.ptr_in(id)
 }
 
-/// Node `id`'s on-screen position: its laid-out box minus every scroll above
-/// it. `node_x` / `node_y` are content
-/// coordinates; floaters and overlays are already in window space.
+/** *Node `id`'s on-screen position: its laid-out box minus every scroll above */
+/** *it. `node_x` / `node_y` are content */
+/** *coordinates; floaters and overlays are already in window space. */
 fn screen_x(id: int) -> int {
     if id <= 0 || id >= nodes.tree.len {
         return 0
@@ -911,7 +911,7 @@ fn screen_y(id: int) -> int {
     return layout.screen_origin(id).y
 }
 
-/// 1 when node `id` is `top` or one of its descendants.
+/** *1 when node `id` is `top` or one of its descendants. */
 fn is_under(id: int, top: int) -> int {
     if id <= 0 || top <= 0 || id >= nodes.tree.len {
         return 0
@@ -919,14 +919,14 @@ fn is_under(id: int, top: int) -> int {
     return nodes.is_or_under(id, top)
 }
 
-/// Secondary click (right button / ctrl-click): runs the nearest
-/// `on_context_menu` handler. The hosts call it; tests drive it directly.
+/** *Secondary click (right button / ctrl-click): runs the nearest */
+/** *`on_context_menu` handler. The hosts call it; tests drive it directly. */
 fn engine_context_click(px: int, py: int) -> int {
     return input.context_click(px, py)
 }
 
-/// Width in pixels of one line of `s` at font size `px`, as the host draws
-/// it. A code editor places its caret and maps clicks to columns with this.
+/** *Width in pixels of one line of `s` at font size `px`, as the host draws */
+/** *it. A code editor places its caret and maps clicks to columns with this. */
 fn text_width(s: string, px: int) -> int {
     let mut w = 0
     let mut h = 0
@@ -934,7 +934,7 @@ fn text_width(s: string, px: int) -> int {
     return w
 }
 
-/// The text the last `copy_text` put on the clipboard.
+/** *The text the last `copy_text` put on the clipboard. */
 fn clipboard_last() -> string {
     return platform.plat_clipboard_last()
 }
@@ -950,9 +950,9 @@ fn click_id(id: int) -> int {
     return click_node(id)
 }
 
-/// Click the centre of `id`, in *window* coordinates: `box[id].x/y` are
-/// content coordinates, so a scrolled node needs its scrollers' offsets
-/// removed or the point lands off screen.
+/** *Click the centre of `id`, in *window* coordinates: `box[id].x/y` are */
+/** *content coordinates, so a scrolled node needs its scrollers' offsets */
+/** *removed or the point lands off screen. */
 fn click_node(id: int) -> int {
     if id <= 0 {
         return 0
@@ -966,8 +966,8 @@ fn click_node(id: int) -> int {
     return input.click(x, y)
 }
 
-/// Node id whose `text` or `a11y_label` equals `label` (tests, headless
-/// hosts). 0 when nothing visible matches. Hidden nodes are skipped.
+/** *Node id whose `text` or `a11y_label` equals `label` (tests, headless */
+/** *hosts). 0 when nothing visible matches. Hidden nodes are skipped. */
 fn engine_find_text(label: string) -> int {
     let n = nodes.tree.len
     for i in 1..n {
@@ -984,9 +984,9 @@ fn engine_find_text(label: string) -> int {
     return 0
 }
 
-/// Ancestor-aware text presence for tests: 1 when a node whose ancestors are
-/// all visible carries `label`. `engine_find_text` only checks the node's own
-/// visibility, so it cannot see a child of a hidden container.
+/** *Ancestor-aware text presence for tests: 1 when a node whose ancestors are */
+/** *all visible carries `label`. `engine_find_text` only checks the node's own */
+/** *visibility, so it cannot see a child of a hidden container. */
 fn text_visible(label: string) -> bool {
     let n = nodes.tree.len
     for i in 1..n {
@@ -1003,8 +1003,8 @@ fn text_visible(label: string) -> bool {
     return false
 }
 
-/// Node id whose `a11y_role` equals `role` (tests, headless hosts); the
-/// first match in tree order, 0 when none is visible.
+/** *Node id whose `a11y_role` equals `role` (tests, headless hosts); the */
+/** *first match in tree order, 0 when none is visible. */
 fn engine_find_role(role: string) -> int {
     let n = nodes.tree.len
     for i in 1..n {
@@ -1035,8 +1035,8 @@ fn a11y_push(s: string) {
     }
 }
 
-/// Roles a user operates: their own label is what assistive tech announces,
-/// so the text drawn inside them is not listed again.
+/** *Roles a user operates: their own label is what assistive tech announces, */
+/** *so the text drawn inside them is not listed again. */
 fn a11y_control(role: string) -> bool {
     return fmt.eq(role, "button") ||
         fmt.eq(role, "checkbox") ||
@@ -1051,8 +1051,8 @@ fn a11y_control(role: string) -> bool {
         fmt.eq(role, "listitem")
 }
 
-/// true when `i` is plain text inside a labelled control (within three
-/// levels): the control's label already says it.
+/** *true when `i` is plain text inside a labelled control (within three */
+/** *levels): the control's label already says it. */
 fn a11y_redundant(i: int) -> bool {
     let mut p = nodes.tree[i].parent
     let mut up = 0
@@ -1066,9 +1066,9 @@ fn a11y_redundant(i: int) -> bool {
     return false
 }
 
-/// The state column: 1 focusable, 2 has an on/off state, 4 on, 8 disabled,
-/// 16 focused. On/off comes from the `checked` prop, else from a bound
-/// toggle (a switch's signal).
+/** *The state column: 1 focusable, 2 has an on/off state, 4 on, 8 disabled, */
+/** *16 focused. On/off comes from the `checked` prop, else from a bound */
+/** *toggle (a switch's signal). */
 fn a11y_state_bits(i: int) -> int {
     let mut b = 0
     if arena.is_focusable(i) != 0 {
@@ -1117,14 +1117,14 @@ fn a11y_num(v: int) {
     }
 }
 
-/// Counts layout passes. A host that mirrors the semantic tree (`engine_a11y_dump`)
-/// polls this and only re-dumps when it moved: the dump builds a fresh string
-/// every call and strings are never freed, so dumping per paint frame leaked
-/// ~16 KB a frame on the web host.
+/** *Counts layout passes. A host that mirrors the semantic tree (`engine_a11y_dump`) */
+/** *polls this and only re-dumps when it moved: the dump builds a fresh string */
+/** *every call and strings are never freed, so dumping per paint frame leaked */
+/** *~16 KB a frame on the web host. */
 let mut layout_gen: int = 0
-/// 1 when the last `engine_layout` was untargeted (solved and repainted the
-/// whole surface), 0 when it repainted only what moved. Exposed for tests as
-/// `layout_was_full`.
+/** *1 when the last `engine_layout` was untargeted (solved and repainted the */
+/** *whole surface), 0 when it repainted only what moved. Exposed for tests as */
+/** *`layout_was_full`. */
 let mut last_whole: int = 1
 
 fn engine_layout_gen() -> int {
@@ -1135,69 +1135,69 @@ fn layout_was_full() -> int {
     return last_whole
 }
 
-/// Untargeted layout frames over the session: a resize, or a structural or
-/// frame-wide mark. They repaint the whole surface. A targeted write (one
-/// that names its nodes) never counts here, and a scroll runs no layout at
-/// all. A patch test holds this flat across its targeted writes
-/// (diagnostics).
+/** *Untargeted layout frames over the session: a resize, or a structural or */
+/** *frame-wide mark. They repaint the whole surface. A targeted write (one */
+/** *that names its nodes) never counts here, and a scroll runs no layout at */
+/** *all. A patch test holds this flat across its targeted writes */
+/** *(diagnostics). */
 let mut full_layouts: int = 0
 
 fn full_layouts_count() -> int {
     return full_layouts
 }
 
-/// Targeted layout frames: solved from the root, but clean subtrees keep their
-/// measure and paint re-records only the nodes whose box moved.
+/** *Targeted layout frames: solved from the root, but clean subtrees keep their */
+/** *measure and paint re-records only the nodes whose box moved. */
 fn root_relayouts() -> int {
     return layout.root_relayouts
 }
 
-/// Always 0: the subtree re-solve that climbed past boundaries is gone
-/// (kept for the frozen API).
+/** *Always 0: the subtree re-solve that climbed past boundaries is gone */
+/** *(kept for the frozen API). */
 fn relayout_climbs() -> int {
     return layout.relayout_climbs
 }
 
-/// `layout_node` calls over the session (perf probes: a whole-tree layout
-/// stays within two visits per node).
+/** *`layout_node` calls over the session (perf probes: a whole-tree layout */
+/** *stays within two visits per node). */
 fn layout_visits() -> int {
     return layout.layout_visits
 }
 
-/// Nodes the measure pass measured over the session; cached subtrees it
-/// skipped are not counted.
+/** *Nodes the measure pass measured over the session; cached subtrees it */
+/** *skipped are not counted. */
 fn measure_visits() -> int {
     return layout.measure_visits
 }
 
-/// Nodes the last interaction-state (chrome) pass visited, then reset. A write
-/// that names the nodes it touched visits only them; a pointer / layout frame
-/// visits all of them. Exposed for tests.
+/** *Nodes the last interaction-state (chrome) pass visited, then reset. A write */
+/** *that names the nodes it touched visits only them; a pointer / layout frame */
+/** *visits all of them. Exposed for tests. */
 fn chrome_sync_count() -> int {
     return arena.take_chrome_sync_count()
 }
 
-/// Serialize the visible **semantic tree** for an accessibility mirror (§2.3):
-/// one `depth<TAB>role<TAB>label<TAB>x<TAB>y<TAB>w<TAB>h<TAB>id<TAB>state` line
-/// per node carrying a role, a label, or visible text (`state`: see
-/// `a11y_state_bits`; `id` is what `engine_a11y_activate` / `_focus` take).
-/// Decorative (`presentation`) nodes and the text inside a labelled control
-/// are left out — the control's label already says it. Geometry lets a native host
-/// place accessible frames; the web mirror uses role and label only. The UI
-/// stays canvas — hosts relay this to a visually-hidden DOM on web, or to
-/// `NSAccessibility` on native. A node with a label but no role is a `text`
-/// node; the label falls back to its visible text.
-///
-/// Builds a fresh string, and strings are never freed: a host that polls
-/// (the web mirror) reads `engine_a11y_bytes` instead, which hands back the
-/// refcounted byte buffer to copy and drop.
+/** *Serialize the visible **semantic tree** for an accessibility mirror (§2.3): */
+/** *one `depth<TAB>role<TAB>label<TAB>x<TAB>y<TAB>w<TAB>h<TAB>id<TAB>state` line */
+/** *per node carrying a role, a label, or visible text (`state`: see */
+/** *`a11y_state_bits`; `id` is what `engine_a11y_activate` / `_focus` take). */
+/** *Decorative (`presentation`) nodes and the text inside a labelled control */
+/** *are left out — the control's label already says it. Geometry lets a native host */
+/** *place accessible frames; the web mirror uses role and label only. The UI */
+/** *stays canvas — hosts relay this to a visually-hidden DOM on web, or to */
+/** *`NSAccessibility` on native. A node with a label but no role is a `text` */
+/** *node; the label falls back to its visible text. */
+/** */
+/** *Builds a fresh string, and strings are never freed: a host that polls */
+/** *(the web mirror) reads `engine_a11y_bytes` instead, which hands back the */
+/** *refcounted byte buffer to copy and drop. */
 fn engine_a11y_dump() -> string {
     a11y_build()
     return string_from_bytes(A11Y_out)
 }
 
-/// The semantic-tree lines as bytes (same content as `engine_a11y_dump`), in
-/// a `[]int` the host copies out and drops — no string, nothing leaks.
+/** *The semantic-tree lines as bytes (same content as `engine_a11y_dump`), in */
+/** *a `[]int` the host copies out and drops — no string, nothing leaks. */
 fn engine_a11y_bytes() -> []int {
     a11y_build()
     return A11Y_out
@@ -1259,7 +1259,7 @@ fn a11y_build() {
     }
 }
 
-/// The nearest `href` at or above node `id`, or "".
+/** *The nearest `href` at or above node `id`, or "". */
 fn link_of(id: int) -> string {
     let mut p = id
     while p > 0 {
@@ -1271,8 +1271,8 @@ fn link_of(id: int) -> string {
     return ""
 }
 
-/// The first text under `id`, depth first. Stops at input fields: what a user
-/// typed is not a control's name.
+/** *The first text under `id`, depth first. Stops at input fields: what a user */
+/** *typed is not a control's name. */
 fn click_text(id: int) -> string {
     let k = int(nodes.tree[id].kind)
     if k == 10 {
@@ -1291,7 +1291,7 @@ fn click_text(id: int) -> string {
     return ""
 }
 
-/// What to call control `id` in a report: its accessible label, else its text.
+/** *What to call control `id` in a report: its accessible label, else its text. */
 fn click_name(id: int) -> string {
     if nodes.ui[id].a11y_label.len > 0 {
         return nodes.ui[id].a11y_label
@@ -1299,17 +1299,17 @@ fn click_name(id: int) -> string {
     return click_text(id)
 }
 
-/// Run `watch(name, link)` for every click or key press on a control, before
-/// the control's own handler. `name` is `click_name`, `link` its `href` or "".
+/** *Run `watch(name, link)` for every click or key press on a control, before */
+/** *the control's own handler. `name` is `click_name`, `link` its `href` or "". */
 fn watch_clicks(watch: fn(string, string)) {
     arena.set_click_hook(fn(id: int) {
         watch(click_name(id), link_of(id))
     })
 }
 
-/// The text on the page, one `font<TAB>x<TAB>y<TAB>width<TAB>href<TAB>text` line
-/// per text node. `zeli build` turns it into the markup a page shows before its
-/// wasm arrives.
+/** *The text on the page, one `font<TAB>x<TAB>y<TAB>width<TAB>href<TAB>text` line */
+/** *per text node. `zeli build` turns it into the markup a page shows before its */
+/** *wasm arrives. */
 fn engine_text_outline() -> string {
     A11Y_out = []int {}
     for i in 1..nodes.tree.len {
@@ -1333,8 +1333,8 @@ fn engine_text_outline() -> string {
     return string_from_bytes(A11Y_out)
 }
 
-/// Assistive tech activated node `id` (a screen reader's "press"): focus it
-/// and run what Enter would. Returns 1 when something ran.
+/** *Assistive tech activated node `id` (a screen reader's "press"): focus it */
+/** *and run what Enter would. Returns 1 when something ran. */
 fn engine_a11y_activate(id: int) -> int {
     if id <= 0 || id >= nodes.tree.len {
         return 0
@@ -1351,8 +1351,8 @@ fn engine_a11y_activate(id: int) -> int {
     return input.press_focused()
 }
 
-/// Assistive tech moved focus to node `id`: follow it, so keys and the
-/// focus ring land where the screen reader is.
+/** *Assistive tech moved focus to node `id`: follow it, so keys and the */
+/** *focus ring land where the screen reader is. */
 fn engine_a11y_focus(id: int) {
     if id <= 0 || id >= nodes.tree.len {
         return
@@ -1365,9 +1365,9 @@ fn engine_a11y_focus(id: int) {
     arena.mark_paint()
 }
 
-/// Inspector dump of the retained tree (devtools §2.4): one
-/// `id<TAB>parent<TAB>x<TAB>y<TAB>w<TAB>h<TAB>role<TAB>label` line per visible
-/// node, in tree order. Geometry is what the last layout pass produced.
+/** *Inspector dump of the retained tree (devtools §2.4): one */
+/** *`id<TAB>parent<TAB>x<TAB>y<TAB>w<TAB>h<TAB>role<TAB>label` line per visible */
+/** *node, in tree order. Geometry is what the last layout pass produced. */
 fn engine_tree_dump() -> string {
     A11Y_out = []int {}
     let n = nodes.tree.len
@@ -1401,8 +1401,8 @@ fn engine_tree_dump() -> string {
     return string_from_bytes(A11Y_out)
 }
 
-/// Inspector dump of live signal values (devtools §2.4): one `id<TAB>value`
-/// line per int-mirrored signal slot.
+/** *Inspector dump of live signal values (devtools §2.4): one `id<TAB>value` */
+/** *line per int-mirrored signal slot. */
 fn engine_signals_dump() -> string {
     A11Y_out = []int {}
     let n = arena.sigs.len
@@ -1417,10 +1417,10 @@ fn engine_signals_dump() -> string {
     return string_from_bytes(A11Y_out)
 }
 
-/// Restore signal values from an `engine_signals_dump()` snapshot. Returns how
-/// many slots were applied. This is the hot-reload primitive (§2.5): save the
-/// arena before a rebuild, restore after. Ids are positional, so the dev loop
-/// should only restore when the new build's signal set still lines up.
+/** *Restore signal values from an `engine_signals_dump()` snapshot. Returns how */
+/** *many slots were applied. This is the hot-reload primitive (§2.5): save the */
+/** *arena before a rebuild, restore after. Ids are positional, so the dev loop */
+/** *should only restore when the new build's signal set still lines up. */
 fn engine_state_load(s: string) -> int {
     let mut i = 0
     let mut applied = 0
@@ -1475,8 +1475,8 @@ fn engine_state_load(s: string) -> int {
     return applied
 }
 
-/// Whether a node is currently shown by its own show binding (tests).
-/// Hidden ancestors still hide it from paint and hit tests.
+/** *Whether a node is currently shown by its own show binding (tests). */
+/** *Hidden ancestors still hide it from paint and hit tests. */
 fn node_visible(id: int) -> int {
     if id <= 0 {
         return 0
@@ -1487,8 +1487,8 @@ fn node_visible(id: int) -> int {
     return arena.want_show(id)
 }
 
-/// Click the control whose label or `a11y_label` is `label`. Tests use this
-/// instead of pixel coordinates.
+/** *Click the control whose label or `a11y_label` is `label`. Tests use this */
+/** *instead of pixel coordinates. */
 fn engine_click_text(label: string) -> int {
     let id = engine_find_text(label)
     if id <= 0 {
@@ -1497,14 +1497,14 @@ fn engine_click_text(label: string) -> int {
     return click_id(id)
 }
 
-/// What theme role `slot` paints right now, as packed rgb. `zeli build` reads
-/// the page colour here so the HTML can match it before the wasm arrives.
+/** *What theme role `slot` paints right now, as packed rgb. `zeli build` reads */
+/** *the page colour here so the HTML can match it before the wasm arrives. */
 fn engine_role_rgb(slot: int) -> int {
     ensure_role_colors()
     return arena.paint_rgb(role_color(slot))
 }
 
-/// What role `slot` paints in light (0) or dark (1), whichever is showing.
+/** *What role `slot` paints in light (0) or dark (1), whichever is showing. */
 fn engine_role_rgb_in(slot: int, dark: int) -> int {
     let was = arena.paint_dark
     arena.paint_dark = dark
@@ -1517,20 +1517,20 @@ fn engine_scroll(px: int, py: int, dx: int, dy: int) -> int {
     return input.scroll(px, py, dx, dy)
 }
 
-/// Discrete scroll step (mouse wheel notch / web line wheel): applies the
-/// delta with no momentum. Tests and hosts use this for input that must stop
-/// exactly where it lands.
+/** *Discrete scroll step (mouse wheel notch / web line wheel): applies the */
+/** *delta with no momentum. Tests and hosts use this for input that must stop */
+/** *exactly where it lands. */
 fn engine_scroll_step(px: int, py: int, dx: int, dy: int) -> int {
     return input.scroll_step(px, py, dx, dy)
 }
 
-/// Hold the scrollers under (`px`, `py`) for a touch gesture, so its pan and
-/// fling stay on them as content slides by. A negative point lets go.
+/** *Hold the scrollers under (`px`, `py`) for a touch gesture, so its pan and */
+/** *fling stay on them as content slides by. A negative point lets go. */
 fn engine_scroll_latch(px: int, py: int) {
     input.scroll_latch(px, py)
 }
 
-/// Mouse-wheel notch: eases to the target over ~150 ms (browser feel).
+/** *Mouse-wheel notch: eases to the target over ~150 ms (browser feel). */
 fn engine_scroll_smooth(px: int, py: int, dx: int, dy: int) -> int {
     return input.scroll_smooth(px, py, dx, dy)
 }
@@ -1547,8 +1547,8 @@ fn engine_hover(px: int, py: int) -> int {
     return input.hover(px, py)
 }
 
-/// Last pointer position the host reported (hover, press or drag), in dp.
-/// A player polls it to wake its controls on any mouse movement.
+/** *Last pointer position the host reported (hover, press or drag), in dp. */
+/** *A player polls it to wake its controls on any mouse movement. */
 fn pointer_x() -> int {
     return arena.ptr_x
 }
@@ -1561,13 +1561,13 @@ fn engine_over_button() -> int {
     return input.over_button()
 }
 
-/// CSS cursor name under the pointer: the most recently created node with an
-/// explicit `cursor` wins (children outrank parents). "" = default arrow.
+/** *CSS cursor name under the pointer: the most recently created node with an */
+/** *explicit `cursor` wins (children outrank parents). "" = default arrow. */
 fn engine_cursor() -> string {
     return input.cursor_at()
 }
 
-/// Set a cursor name directly on any node (native thumbs have no props).
+/** *Set a cursor name directly on any node (native thumbs have no props). */
 fn cursor(n: Node, s: string) -> Node {
     nodes.look[n.id].cursor = s
     return n
@@ -1577,73 +1577,73 @@ fn draw_count() -> int {
     return scene.draws.len
 }
 
-/// Clip-container children the paint pass skipped as wholly outside their
-/// clip, over the session (tests, perf checks).
+/** *Clip-container children the paint pass skipped as wholly outside their */
+/** *clip, over the session (tests, perf checks). */
 fn culled_count() -> int {
     return scene.paint_culled_count()
 }
 
-/// Op kind of draw `i` (tests): 1 fill, 2 text, 7 clip, 11 gradient, 12 shadow.
+/** *Op kind of draw `i` (tests): 1 fill, 2 text, 7 clip, 11 gradient, 12 shadow. */
 fn draw_op(i: int) -> int {
     return scene.draws[i].kind
 }
-/// Left edge of draw `i` (tests).
+/** *Left edge of draw `i` (tests). */
 fn draw_x(i: int) -> int {
     return scene.draws[i].x
 }
-/// Top edge of draw `i` (tests).
+/** *Top edge of draw `i` (tests). */
 fn draw_y(i: int) -> int {
     return scene.draws[i].y
 }
-/// Width of draw `i` (tests).
+/** *Width of draw `i` (tests). */
 fn draw_w(i: int) -> int {
     return scene.draws[i].w
 }
-/// Height of draw `i` (tests).
+/** *Height of draw `i` (tests). */
 fn draw_h(i: int) -> int {
     return scene.draws[i].h
 }
-/// Colour of draw `i` (tests).
+/** *Colour of draw `i` (tests). */
 fn draw_rgb(i: int) -> int {
     return scene.draws[i].rgb
 }
-/// Corner radius of draw `i` (tests).
+/** *Corner radius of draw `i` (tests). */
 fn draw_radius(i: int) -> int {
     return scene.draws[i].radius
 }
-/// Alpha of draw `i` (tests).
+/** *Alpha of draw `i` (tests). */
 fn draw_alpha(i: int) -> int {
     return scene.draws[i].alpha
 }
-/// The `font` field of draw `i`: pixel size for text, stroke width for a
-/// stroke, blur for a shadow, gradient axis for a gradient (tests).
+/** *The `font` field of draw `i`: pixel size for text, stroke width for a */
+/** *stroke, blur for a shadow, gradient axis for a gradient (tests). */
 fn draw_font(i: int) -> int {
     return scene.draws[i].font
 }
-/// The `value` field of draw `i` (tests).
+/** *The `value` field of draw `i` (tests). */
 fn draw_value(i: int) -> int {
     return scene.draws[i].value
 }
-/// The `text` field of draw `i` (tests).
+/** *The `text` field of draw `i` (tests). */
 fn draw_text(i: int) -> string {
     return scene.draws[i].text
 }
 
-/// Layout results for tests: the box of the node that matched
-/// `engine_find_text`. Positions are window-space after the last layout.
+/** *Layout results for tests: the box of the node that matched */
+/** *`engine_find_text`. Positions are window-space after the last layout. */
 fn node_x(id: int) -> int {
     return nodes.box[id].x
 }
 
-/// A node's fill as the paint pass sees it: a stored role token resolved
-/// against the current appearance. Tests use it to prove a theme switch
-/// repaints without re-running any prop.
+/** *A node's fill as the paint pass sees it: a stored role token resolved */
+/** *against the current appearance. Tests use it to prove a theme switch */
+/** *repaints without re-running any prop. */
 fn node_background_rgb(id: int) -> int {
     arena.ensure()
     return arena.paint_rgb(nodes.look[id].bg)
 }
 
-/// A node's accessible label (or its text when it has none), for tests.
+/** *A node's accessible label (or its text when it has none), for tests. */
 fn node_label(id: int) -> string {
     if nodes.ui[id].a11y_label.len > 0 {
         return nodes.ui[id].a11y_label
@@ -1651,56 +1651,56 @@ fn node_label(id: int) -> string {
     return nodes.look[id].text
 }
 
-/// Resolved foreground (text / icon tint) of a node id, as `node_background_rgb`.
+/** *Resolved foreground (text / icon tint) of a node id, as `node_background_rgb`. */
 fn node_color_rgb(id: int) -> int {
     arena.ensure()
     return arena.fg_of(id)
 }
 
-/// Laid-out top edge of a node id. The id-based accessors exist for tests
-/// and engine code that hold an id rather than a `Node`.
+/** *Laid-out top edge of a node id. The id-based accessors exist for tests */
+/** *and engine code that hold an id rather than a `Node`. */
 fn node_y(id: int) -> int {
     return nodes.box[id].y
 }
 
-/// Laid-out width of a node id; see `node_y`.
+/** *Laid-out width of a node id; see `node_y`. */
 fn node_width(id: int) -> int {
     return nodes.box[id].w
 }
 
-/// Laid-out height of a node id; see `node_y`.
+/** *Laid-out height of a node id; see `node_y`. */
 fn node_height(id: int) -> int {
     return nodes.box[id].h
 }
 
-/// Parent id in the retained tree (0 = root). Tests walk scroll chains with this.
+/** *Parent id in the retained tree (0 = root). Tests walk scroll chains with this. */
 fn node_parent(id: int) -> int {
     return nodes.tree[id].parent
 }
 
-/// Engine kind: 11 is a scroll pane.
+/** *Engine kind: 11 is a scroll pane. */
 fn node_kind(id: int) -> int {
     return int(nodes.tree[id].kind)
 }
 
-/// Current vertical scroll offset of node `id` (tests, `scroll_to`).
+/** *Current vertical scroll offset of node `id` (tests, `scroll_to`). */
 fn node_scroll_y(id: int) -> int {
     return nodes.scrl[id].scroll_y
 }
 
-/// Current horizontal scroll offset of node `id`.
+/** *Current horizontal scroll offset of node `id`. */
 fn node_scroll_x(id: int) -> int {
     return nodes.scrl[id].scroll_x
 }
 
-/// Max vertical scroll of node `id` (`content - viewport`, 0 if no overflow).
+/** *Max vertical scroll of node `id` (`content - viewport`, 0 if no overflow). */
 fn node_scroll_max(id: int) -> int {
     return arena.scroll_max(id)
 }
 
-/// Live slot counts (diagnostics for tests). `nodes` includes dead slots
-/// waiting to be recycled; `sigs` is the same for signals. A streaming `Each`
-/// that rebuilds without growing the tree keeps both constant.
+/** *Live slot counts (diagnostics for tests). `nodes` includes dead slots */
+/** *waiting to be recycled; `sigs` is the same for signals. A streaming `Each` */
+/** *that rebuilds without growing the tree keeps both constant. */
 fn arena_nodes() -> int {
     return nodes.tree.len
 }
@@ -1709,14 +1709,14 @@ fn arena_sigs() -> int {
     return arena.sigs.len
 }
 
-/// Live rows in the shared interned-handler table (diagnostics for tests). A
-/// streaming `Each` or a re-running `scope` recycles handlers, so this stays flat.
+/** *Live rows in the shared interned-handler table (diagnostics for tests). A */
+/** *streaming `Each` or a re-running `scope` recycles handlers, so this stays flat. */
 fn intern_count() -> int {
     return runtime.intern_live_count()
 }
 
-/// Polled host hooks run, and geometry-host hooks skipped because their box,
-/// scroll and bound signals held (diagnostics).
+/** *Polled host hooks run, and geometry-host hooks skipped because their box, */
+/** *scroll and bound signals held (diagnostics). */
 fn poll_runs() -> int {
     return arena.poll_runs
 }
@@ -1725,26 +1725,26 @@ fn geo_skips() -> int {
     return arena.geo_skips
 }
 
-/// Effect runs that reported no node, and so left no dirt (diagnostics).
+/** *Effect runs that reported no node, and so left no dirt (diagnostics). */
 fn silent_runs() -> int {
     return arena.silent_runs
 }
 
-/// Signal writes that fell back to a frame-wide mark: nothing consumed them
-/// (no effect, bound node or host), or layout reads the signal directly. A
-/// test that expects targeted updates holds this flat (diagnostics).
+/** *Signal writes that fell back to a frame-wide mark: nothing consumed them */
+/** *(no effect, bound node or host), or layout reads the signal directly. A */
+/** *test that expects targeted updates holds this flat (diagnostics). */
 fn frame_wide_writes() -> int {
     return arena.frame_wide_writes
 }
 
-/// Per effect id, the runs that reported no node (`track.silent_of`): the dev
-/// counter for finding an effect that touches the arena without reporting.
-/// Pair with `effect_owner_node` to find where it was created.
+/** *Per effect id, the runs that reported no node (`track.silent_of`): the dev */
+/** *counter for finding an effect that touches the arena without reporting. */
+/** *Pair with `effect_owner_node` to find where it was created. */
 fn silent_runs_by_effect() -> []int {
     return track.silent_of
 }
 
-/// The node an effect id is owned by (0 for a top-level effect).
+/** *The node an effect id is owned by (0 for a top-level effect). */
 fn effect_owner_node(eid: int) -> int {
     if eid <= 0 || eid >= track.node_ids.len {
         return 0
@@ -1752,47 +1752,47 @@ fn effect_owner_node(eid: int) -> int {
     return track.node_ids[eid]
 }
 
-/// Times a `view` app rebuilt its tree and reset the graph (diagnostics for
-/// tests): a frame whose dirt the retained tree follows leaves it flat.
+/** *Times a `view` app rebuilt its tree and reset the graph (diagnostics for */
+/** *tests): a frame whose dirt the retained tree follows leaves it flat. */
 fn view_rebuilds() -> int {
     return view_builds
 }
 
-/// Frames whose paint re-recorded only the dirty subtrees and reused the rest of
-/// the retained draw list (diagnostics for tests).
+/** *Frames whose paint re-recorded only the dirty subtrees and reused the rest of */
+/** *the retained draw list (diagnostics for tests). */
 fn paint_patch_frames() -> int {
     return scene.paint_patch_frames()
 }
 
-/// Frames whose paint re-recorded every op.
+/** *Frames whose paint re-recorded every op. */
 fn paint_full_frames() -> int {
     return scene.paint_full_frames()
 }
 
-/// Patched frames where a run changed length and was spliced into the
-/// retained list instead of forcing a full record.
+/** *Patched frames where a run changed length and was spliced into the */
+/** *retained list instead of forcing a full record. */
 fn paint_splice_frames() -> int {
     return scene.paint_splice_frames()
 }
 
-/// Floater runs a patched frame reused from the previous floaters section.
+/** *Floater runs a patched frame reused from the previous floaters section. */
 fn paint_floaters_reused() -> int {
     return scene.paint_floaters_reused()
 }
 
-/// Op runs re-recorded rather than reused, over the whole session.
+/** *Op runs re-recorded rather than reused, over the whole session. */
 fn paint_patch_runs() -> int {
     return scene.paint_patch_runs()
 }
 
-/// Force the next paint to re-record every op, so a test can compare a patched
-/// frame against a full one. Test / diagnostics only.
+/** *Force the next paint to re-record every op, so a test can compare a patched */
+/** *frame against a full one. Test / diagnostics only. */
 fn paint_force_full() {
     arena.mark_paint()
 }
 
-/// Byte size of one arena node record (diagnostics for the Phase 11 layout
-/// steps).
+/** *Byte size of one arena node record (diagnostics for the Phase 11 layout */
+/** *steps). */
 fn node_bytes() -> int {
     if nodes.tree.len == 0 {
         return 0
@@ -1800,7 +1800,7 @@ fn node_bytes() -> int {
     return nodes.node_record_bytes()
 }
 
-/// Total bytes held by live arena node records.
+/** *Total bytes held by live arena node records. */
 fn arena_bytes() -> i64 {
     if nodes.tree.len == 0 {
         return 0
@@ -1808,41 +1808,41 @@ fn arena_bytes() -> i64 {
     return i64(nodes.tree.len) * i64(nodes.node_record_bytes())
 }
 
-/// Phase 0 diagnostics: live (non-recycled) node count. Additive; no
-/// allocation behavior reads it. See `docs/mem-baseline.md`.
+/** *Phase 0 diagnostics: live (non-recycled) node count. Additive; no */
+/** *allocation behavior reads it. See `docs/mem-baseline.md`. */
 fn mem_live_nodes() -> int {
     return nodes.mem_live_nodes()
 }
 
-/// Phase 0 diagnostics: total arena bytes across every bucket (nodes, signals,
-/// interning, animation, misc). Additive; no allocation behavior reads it.
+/** *Phase 0 diagnostics: total arena bytes across every bucket (nodes, signals, */
+/** *interning, animation, misc). Additive; no allocation behavior reads it. */
 fn mem_bytes() -> i64 {
     return arena.mem_total_bytes()
 }
 
-/// Phase 0 diagnostics: print the full arena bucket report on demand. Same
-/// lines the on-exit report prints; for tests and probes that need to see which
-/// bucket moved between frames.
+/** *Phase 0 diagnostics: print the full arena bucket report on demand. Same */
+/** *lines the on-exit report prints; for tests and probes that need to see which */
+/** *bucket moved between frames. */
 fn mem_dump() {
     arena.mem_report()
 }
 
-/// Phase 1 damage diagnostics: 1 when the last frame repainted the whole
-/// surface (layout, tree rebuild, resize, or an unmarked global change).
-/// Additive; no paint behavior reads these.
+/** *Phase 1 damage diagnostics: 1 when the last frame repainted the whole */
+/** *surface (layout, tree rebuild, resize, or an unmarked global change). */
+/** *Additive; no paint behavior reads these. */
 fn damage_full() -> int {
     return arena.damage_full
 }
 
-/// Phase 1 damage diagnostics: rects contributed by the last frame's paint.
-/// Empty when `damage_full()` is 1. Additive.
+/** *Phase 1 damage diagnostics: rects contributed by the last frame's paint. */
+/** *Empty when `damage_full()` is 1. Additive. */
 fn damage_count() -> int {
     return arena.damage.len
 }
 
-/// Phase 2 node-arena ceiling (see `arena.alloc_node`). Default 65535, the
-/// `u16` id maximum. Additive diagnostics; `engine_set_node_cap` is a tuning /
-/// test hook.
+/** *Phase 2 node-arena ceiling (see `arena.alloc_node`). Default 65535, the */
+/** *`u16` id maximum. Additive diagnostics; `engine_set_node_cap` is a tuning / */
+/** *test hook. */
 fn node_cap() -> int {
     return arena.node_cap_get()
 }
@@ -1871,8 +1871,8 @@ fn damage_h(i: int) -> int {
     return arena.damage[i].h
 }
 
-/// Byte size of one draw-list record (diagnostics for the Phase 11 layout
-/// steps).
+/** *Byte size of one draw-list record (diagnostics for the Phase 11 layout */
+/** *steps). */
 fn draw_op_bytes() -> int {
     if scene.draws.len == 0 {
         return 0
@@ -1880,7 +1880,7 @@ fn draw_op_bytes() -> int {
     return __sizeof(scene.draws[0])
 }
 
-/// Total bytes held by the draw list at paint time.
+/** *Total bytes held by the draw list at paint time. */
 fn draw_bytes() -> i64 {
     if scene.draws.len == 0 {
         return 0
@@ -1888,8 +1888,8 @@ fn draw_bytes() -> i64 {
     return i64(scene.draws.len) * i64(__sizeof(scene.draws[0]))
 }
 
-/// Print the current draw list. The DRAW goldens diff this text, which is
-/// why the format is stable and why paint order is deterministic.
+/** *Print the current draw list. The DRAW goldens diff this text, which is */
+/** *why the format is stable and why paint order is deterministic. */
 fn dump_draw_list() {
     let n = scene.draws.len
     fmt.println("DRAW", n)
@@ -1955,8 +1955,8 @@ fn dump_draw_list() {
     }
 }
 
-/// 1 when `id` is live, it and every ancestor is shown, and the chain reaches
-/// the root (a built but unmounted subtree is not on screen).
+/** *1 when `id` is live, it and every ancestor is shown, and the chain reaches */
+/** *the root (a built but unmounted subtree is not on screen). */
 fn box_shown(id: int) -> bool {
     let mut cur = id
     let mut guard = 0
@@ -1973,9 +1973,9 @@ fn box_shown(id: int) -> bool {
     return false
 }
 
-/// Print each shown node's box after layout, one `id x y w h` line per node in
-/// id order. The box goldens diff this text, so layout refactors can prove
-/// they place every node where today's solver does.
+/** *Print each shown node's box after layout, one `id x y w h` line per node in */
+/** *id order. The box goldens diff this text, so layout refactors can prove */
+/** *they place every node where today's solver does. */
 fn dump_boxes() {
     let n = nodes.tree.len
     for i in 1..n {
@@ -1994,7 +1994,7 @@ fn snapshot(width: int, height: int, build: fn() -> Node) {
     dump_draw_list()
 }
 
-/// Host async completion for `pick_image` (file input, photo library).
+/** *Host async completion for `pick_image` (file input, photo library). */
 fn engine_picked_image(src: string, w: int, h: int) {
     if pick_dest.id > 0 {
         if src.len > 0 {

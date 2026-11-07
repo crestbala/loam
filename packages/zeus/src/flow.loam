@@ -1,13 +1,13 @@
-//! flow — the framework's control-flow primitives: `Each`, `Match` /
-//! `MatchKeep`, `Show`, `Boundary`, `Scope`, the windowed lists
-//! (`VirtualList*`), `refit`, `scroll_to`, and `animate`. They own arena
-//! bookkeeping (row keys, build scopes, adoption, exit transitions), so they
-//! live beside `zeusbase`, not in the design system.
-//!
-//! `zeus-components` reaches these through `atoms` (which imports this module),
-//! so callers keep writing `zui.Each` / `zui.Match`. A component library at the
-//! same level as `zeus-components` needs only `zeusbase` and this module; it
-//! never imports `zeuscore/*` (`nob check-layers` enforces that).
+// flow — the framework's control-flow primitives: `Each`, `Match` /
+// `MatchKeep`, `Show`, `Boundary`, `Scope`, the windowed lists
+// (`VirtualList*`), `refit`, `scroll_to`, and `animate`. They own arena
+// bookkeeping (row keys, build scopes, adoption, exit transitions), so they
+// live beside `zeusbase`, not in the design system.
+//
+// `zeus-components` reaches these through `atoms` (which imports this module),
+// so callers keep writing `zui.Each` / `zui.Match`. A component library at the
+// same level as `zeus-components` needs only `zeusbase` and this module; it
+// never imports `zeuscore/*` (`nob check-layers` enforces that).
 
 import "structs.loam"
 import "enums.loam"
@@ -21,19 +21,19 @@ import "zeuscore/arena.loam"
 import "zeuscore/nodes.loam"
 
 struct ShowProps {
-    /// Re-read when a signal it reads moves: `when = tab.get() == 2`.
+    /** *Re-read when a signal it reads moves: `when = tab.get() == 2`. */
     when: fn() -> bool,
-    /// false: the body is built once and kept; `when` toggles layout only.
-    /// true: the body is built on the first true and freed on each false.
+    /** *false: the body is built once and kept; `when` toggles layout only. */
+    /** *true: the body is built on the first true and freed on each false. */
     lazy: bool = false,
-    /// The trailing block: the body.
+    /** *The trailing block: the body. */
     children: fn() = noop,
-    /// Style, merged over the host column's own.
+    /** *Style, merged over the host column's own. */
     style: Option<fn() -> Style> = none,
 }
 
-/// Reactive presence. A column that skips layout (and takes no gap slot)
-/// while `when` is false. Unlike a build-time `if`, it follows `when`.
+/** *Reactive presence. A column that skips layout (and takes no gap slot) */
+/** *while `when` is false. Unlike a build-time `if`, it follows `when`. */
 fn Show(p: ShowProps) -> Node {
     // A plain signal, written by an effect: layout and the `Match` host read
     // `on` raw, and a `computed` is only refreshed when something pulls it.
@@ -61,42 +61,42 @@ fn Show(p: ShowProps) -> Node {
 }
 
 struct ScopeProps {
-    /// Appearance for the subtree: -1 inherit, 0 light, 1 dark. Role colors
-    /// inside resolve against it at paint time (a dark sidebar in a light app).
+    /** *Appearance for the subtree: -1 inherit, 0 light, 1 dark. Role colors */
+    /** *inside resolve against it at paint time (a dark sidebar in a light app). */
     dark: int = -1,
-    /// Density for the subtree (`Density.*`), -1 to inherit. Controls inside
-    /// size from it instead of the app-wide `density()`.
+    /** *Density for the subtree (`Density.*`), -1 to inherit. Controls inside */
+    /** *size from it instead of the app-wide `density()`. */
     density: int = -1,
-    /// Accent for the subtree (`ACCENT.*`), -1 to inherit: the accent ramp
-    /// and the roles on it (`accent()`, `on_accent()`, ...) as `set_accent`
-    /// would set them app-wide.
+    /** *Accent for the subtree (`ACCENT.*`), -1 to inherit: the accent ramp */
+    /** *and the roles on it (`accent()`, `on_accent()`, ...) as `set_accent` */
+    /** *would set them app-wide. */
     accent: int = -1,
-    /// Any role palette (`palette_new` + `palette_role`), 0 for none. Applied
-    /// over `accent`'s.
+    /** *Any role palette (`palette_new` + `palette_role`), 0 for none. Applied */
+    /** *over `accent`'s. */
     palette: int = 0,
-    /// The trailing block: the subtree.
+    /** *The trailing block: the subtree. */
     children: fn() = noop,
-    /// Style, merged over the host column's own.
+    /** *Style, merged over the host column's own. */
     style: Option<fn() -> Style> = none,
 }
 
-/// Scoped theme / density. A column whose subtree resolves role colors against
-/// `dark` (and `accent` / `palette`) and sizes controls from `density`, instead
-/// of the app-wide `appearance()` / `accent` / `density()`. Scopes nest; for
-/// each knob the nearest scope that sets it wins (a palette replaces an outer
-/// one whole).
-///
-/// ```
-/// zui.Scope(dark = 1) {
-///     Sidebar()
-/// }
-/// zui.Scope(density = Density.Compact) {
-///     zui.Table(...)
-/// }
-/// zui.Scope(accent = ACCENT.Graphite) {
-///     zui.Button("Save", on_click = save)
-/// }
-/// ```
+/** *Scoped theme / density. A column whose subtree resolves role colors against */
+/** *`dark` (and `accent` / `palette`) and sizes controls from `density`, instead */
+/** *of the app-wide `appearance()` / `accent` / `density()`. Scopes nest; for */
+/** *each knob the nearest scope that sets it wins (a palette replaces an outer */
+/** *one whole). */
+/** */
+/** *``` */
+/** *zui.Scope(dark = 1) { */
+/** *Sidebar() */
+/** *} */
+/** *zui.Scope(density = Density.Compact) { */
+/** *zui.Table(...) */
+/** *} */
+/** *zui.Scope(accent = ACCENT.Graphite) { */
+/** *zui.Button("Save", on_click = save) */
+/** *} */
+/** *``` */
 fn Scope(p: ScopeProps) -> Node {
     let host = raw_box()
     if p.dark >= 0 {
@@ -120,19 +120,19 @@ fn Scope(p: ScopeProps) -> Node {
     return host
 }
 
-/// Append `v` to a live list signal and notify. Use with `Each` / `VirtualList`.
-/// A windowed list only rebuilds the visible window, not every row.
-///
-/// The list mutators read with `peek`: called from an effect, they must not
-/// subscribe it to the list they write, or the write re-runs the effect that
-/// made it (an effect that appends a picked file would append it forever).
+/** *Append `v` to a live list signal and notify. Use with `Each` / `VirtualList`. */
+/** *A windowed list only rebuilds the visible window, not every row. */
+/** */
+/** *The list mutators read with `peek`: called from an effect, they must not */
+/** *subscribe it to the list they write, or the write re-runs the effect that */
+/** *made it (an effect that appends a picked file would append it forever). */
 fn push_item<T>(sig: Signal<[]T>, v: T) {
     let mut xs = sig.peek()
     push(xs, v)
     sig.set(xs)
 }
 
-/// Insert `v` at index `i` (clamped to `0..len`). Use with `Each` / `VirtualList`.
+/** *Insert `v` at index `i` (clamped to `0..len`). Use with `Each` / `VirtualList`. */
 fn insert_item<T>(sig: Signal<[]T>, i: int, v: T) {
     let xs = sig.peek()
     let n = xs.len
@@ -157,7 +157,7 @@ fn insert_item<T>(sig: Signal<[]T>, i: int, v: T) {
     sig.set(out)
 }
 
-/// Remove the item at index `i`. No-op if `i` is out of range.
+/** *Remove the item at index `i`. No-op if `i` is out of range. */
 fn remove_item<T>(sig: Signal<[]T>, i: int) {
     let xs = sig.peek()
     let n = xs.len
@@ -178,7 +178,7 @@ fn remove_item<T>(sig: Signal<[]T>, i: int) {
     sig.set(out)
 }
 
-/// Remove the last item from a live list signal. No-op if empty.
+/** *Remove the last item from a live list signal. No-op if empty. */
 fn pop_item<T>(sig: Signal<[]T>) {
     let mut xs = sig.peek()
     if xs.len > 0 {
@@ -246,8 +246,8 @@ fn virtual_refresh<T>(node_id: int, items: Signal<[]T>, build: fn(int, T) -> Nod
     arena.rebuild_end(previous)
 }
 
-/// A spacer row under `node_id` keyed by `k`, reused across shifts: only its
-/// height changes, so a scroll does not reallocate it. Returns the node id.
+/** *A spacer row under `node_id` keyed by `k`, reused across shifts: only its */
+/** *height changes, so a scroll does not reallocate it. Returns the node id. */
 fn keyed_spacer(node_id: int, k: string, px: int) -> int {
     let id = arena.key_node(node_id, k)
     if id > 0 {
@@ -261,7 +261,7 @@ fn keyed_spacer(node_id: int, k: string, px: int) -> int {
     return s.id
 }
 
-/// Free a spacer keyed `k` under `node_id` when the window reaches the end.
+/** *Free a spacer keyed `k` under `node_id` when the window reaches the end. */
 fn drop_keyed_spacer(node_id: int, k: string) {
     let id = arena.key_node(node_id, k)
     if id > 0 {
@@ -270,12 +270,12 @@ fn drop_keyed_spacer(node_id: int, k: string) {
     }
 }
 
-/// Keyed windowed refresh. Like `virtual_refresh`, but a one-row scroll shift
-/// **moves** the rows whose key is still in the window and builds only the row
-/// entering it, instead of rebuilding every visible row. That is what keeps a
-/// scroll from allocating a fresh closure per visible row per frame (the
-/// `docs/mem-baseline.md` §5.1 growth): the delta is O(rows entering/leaving),
-/// not O(window). `key(item)` must be stable and unique.
+/** *Keyed windowed refresh. Like `virtual_refresh`, but a one-row scroll shift */
+/** **moves** the rows whose key is still in the window and builds only the row */
+/** *entering it, instead of rebuilding every visible row. That is what keeps a */
+/** *scroll from allocating a fresh closure per visible row per frame (the */
+/** *`docs/mem-baseline.md` §5.1 growth): the delta is O(rows entering/leaving), */
+/** *not O(window). `key(item)` must be stable and unique. */
 fn virtual_refresh_keyed<T>(
     node_id: int,
     items: Signal<[]T>,
@@ -580,31 +580,31 @@ fn kfor_has_id(ids: []int, v: int) -> int {
     return 0
 }
 
-/// The list primitive — one row per item.
-///
-/// ```
-/// zui.Each(names, fn(i, s) {
-///     zeus.Text(s)
-/// })
-/// zui.Each(todos.get(), TodoRow)   // follows the signal
-/// ```
-///
-/// * `each` is any expression yielding the array: a plain `[]T` (fixed), or a
-///   read like `todos.get()` / `filtered()` — the list follows whatever it reads.
-/// * `build(index, item)` is the row. Return one root node per row.
-/// * A row's identity is the item's value. The same value **moves** (focus,
-///   scroll, and the row's own signals stay). A changed value replaces that
-///   row. Two equal values are not unique, so the list rebuilds.
-/// * No wrapper: rows are plain children of the node the `Each` sits in, so an
-///   `Each` in a row lays out as a row. Several roots are wrapped in a column,
-///   with a warning.
-///
-/// `For`, `ForLive`, and `Index` are not separate primitives. A fixed array
-/// and a signal read are the same call. A language `for` walks a slice; it
-/// does not mount a keyed row list.
-///
-/// A refresh runs only when something `each` reads is written, and costs
-/// O(rows) to tell the rows apart; an untouched list costs nothing.
+/** *The list primitive — one row per item. */
+/** */
+/** *``` */
+/** *zui.Each(names, fn(i, s) { */
+/** *zeus.Text(s) */
+/** *}) */
+/** *zui.Each(todos.get(), TodoRow)   // follows the signal */
+/** *``` */
+/** */
+/** * `each` is any expression yielding the array: a plain `[]T` (fixed), or a */
+/** *read like `todos.get()` / `filtered()` — the list follows whatever it reads. */
+/** * `build(index, item)` is the row. Return one root node per row. */
+/** * A row's identity is the item's value. The same value **moves** (focus, */
+/** *scroll, and the row's own signals stay). A changed value replaces that */
+/** *row. Two equal values are not unique, so the list rebuilds. */
+/** * No wrapper: rows are plain children of the node the `Each` sits in, so an */
+/** *`Each` in a row lays out as a row. Several roots are wrapped in a column, */
+/** *with a warning. */
+/** */
+/** *`For`, `ForLive`, and `Index` are not separate primitives. A fixed array */
+/** *and a signal read are the same call. A language `for` walks a slice; it */
+/** *does not mount a keyed row list. */
+/** */
+/** *A refresh runs only when something `each` reads is written, and costs */
+/** *O(rows) to tell the rows apart; an untouched list costs nothing. */
 fn Each<T>(each: fn() -> []T, build: fn(int, T) -> Node) -> Node {
     let items = computed(each)
     let marker = raw_box()
@@ -634,23 +634,23 @@ fn Each<T>(each: fn() -> []T, build: fn(int, T) -> Node) -> Node {
     return marker
 }
 
-/// `Each` with identity split from content: `key(item)` names the row, and a
-/// row whose key survives a refresh is **kept and patched**, never rebuilt.
-///
-/// ```
-/// zui.EachKeyed(todos.get(), fn(t: Todo) => "{{t.id}}", fn(i: Signal<int>, t: Signal<Todo>) {
-///     zeus.Text("{{i.get() + 1}}. {{t.get().title}}")
-/// })
-/// ```
-///
-/// * `build(index, item)` gets two signals the row owns. A refresh writes the
-///   item's current value into `item` and its position into `index`, so only
-///   the effects that read a moved field re-run; the row's own signals, its
-///   focus and its scroll stay. (A byte-equal item is a no-op write.)
-/// * New keys build rows, vanished keys free (or exit) theirs, and moved keys
-///   move their row — as in `Each`. Duplicate keys rebuild the list.
-/// * Read the item through `item.get()` inside effects (text thunks, props,
-///   `style`). A value copied out at build time is a snapshot.
+/** *`Each` with identity split from content: `key(item)` names the row, and a */
+/** *row whose key survives a refresh is **kept and patched**, never rebuilt. */
+/** */
+/** *``` */
+/** *zui.EachKeyed(todos.get(), fn(t: Todo) => "{{t.id}}", fn(i: Signal<int>, t: Signal<Todo>) { */
+/** *zeus.Text("{{i.get() + 1}}. {{t.get().title}}") */
+/** *}) */
+/** *``` */
+/** */
+/** * `build(index, item)` gets two signals the row owns. A refresh writes the */
+/** *item's current value into `item` and its position into `index`, so only */
+/** *the effects that read a moved field re-run; the row's own signals, its */
+/** *focus and its scroll stay. (A byte-equal item is a no-op write.) */
+/** * New keys build rows, vanished keys free (or exit) theirs, and moved keys */
+/** *move their row — as in `Each`. Duplicate keys rebuild the list. */
+/** * Read the item through `item.get()` inside effects (text thunks, props, */
+/** *`style`). A value copied out at build time is a snapshot. */
 fn EachKeyed<T>(
     each: fn() -> []T,
     key: fn(T) -> string,
@@ -711,14 +711,14 @@ fn kby_refresh<T>(host: int, items: Signal<[]T>, key: fn(T) -> string, build: fn
     kfor_rebuild(host, m, nk, mk)
 }
 
-/// Rows `EachKeyed` patched in place (item value moved, row kept). Tests.
+/** *Rows `EachKeyed` patched in place (item value moved, row kept). Tests. */
 let mut kby_patched: int = 0
 
 fn each_patched() -> int {
     return kby_patched
 }
 
-/// Write position `j` into `row`'s index cell (a no-op when it held).
+/** *Write position `j` into `row`'s index cell (a no-op when it held). */
 fn kby_index_set(row: int, j: int) {
     if row <= 0 || row >= live_index_sig.len {
         return
@@ -734,11 +734,11 @@ fn kby_index_set(row: int, j: int) {
 // every row as it mounts, so it is never stale for a row the key table names.
 let mut live_item_sig: []int = []int {}
 let mut live_pending_item: int = 0
-/// `EachKeyed`'s index cell per row, filed with the item cell.
+/** *`EachKeyed`'s index cell per row, filed with the item cell. */
 let mut live_index_sig: []int = []int {}
 let mut live_pending_index: int = 0
 
-/// File the item cell the row builder just created against `row`.
+/** *File the item cell the row builder just created against `row`. */
 fn live_note(row: int) {
     if row <= 0 {
         live_pending_item = 0
@@ -761,7 +761,7 @@ fn live_cell<T>(id: int, like: T) -> Signal<T> {
     return Signal { id: id }
 }
 
-/// Write `x` into `row`'s item cell; 1 when the value changed.
+/** *Write `x` into `row`'s item cell; 1 when the value changed. */
 fn kfor_item_changed<T>(row: int, x: T) -> int {
     if row <= 0 || row >= live_item_sig.len {
         return 0
@@ -778,12 +778,12 @@ fn kfor_item_changed<T>(row: int, x: T) -> int {
     return 0
 }
 
-/// Build row `i` (key `k`) into the host's parent, under the host's build
-/// scope, and key it. Returns the row id. `mk(i)` builds the row for item `i`.
-///
-/// The row machinery below is not generic: `kfor_refresh<T>` hands it `mk` and
-/// `changed`, the only two things that touch a `T`, so each item type adds one
-/// small `kfor_refresh` instance instead of a copy of all of it.
+/** *Build row `i` (key `k`) into the host's parent, under the host's build */
+/** *scope, and key it. Returns the row id. `mk(i)` builds the row for item `i`. */
+/** */
+/** *The row machinery below is not generic: `kfor_refresh<T>` hands it `mk` and */
+/** *`changed`, the only two things that touch a `T`, so each item type adds one */
+/** *small `kfor_refresh` instance instead of a copy of all of it. */
 fn kfor_build_row(host: int, i: int, k: string, mk: fn(int) -> Node) -> int {
     let parent = nodes.frag_parent(host)
     let previous = arena.scope_begin(host)
@@ -808,8 +808,8 @@ fn kfor_build_row(host: int, i: int, k: string, mk: fn(int) -> Node) -> int {
     return r
 }
 
-/// How many items `Each` has walked since startup. An untouched list does not
-/// add to this (`zeus_list_key_guard`).
+/** *How many items `Each` has walked since startup. An untouched list does not */
+/** *add to this (`zeus_list_key_guard`). */
 let mut kfor_derivations: int = 0
 
 fn each_scanned() -> int {
@@ -847,12 +847,12 @@ fn kfor_refresh<T>(host: int, items: Signal<[]T>, build: fn(int, T) -> Node) {
     kfor_rebuild(host, m, nk, mk)
 }
 
-/// Reconcile the host's `m` rows against the items (keyed by `nk`, already
-/// unique; `changed(row, j)` writes item `j` into the row's cell):
-/// keep the rows whose key survives (rebuilding any whose item changed),
-/// build the new keys, free (or exit) the vanished ones, then lay the rows
-/// into the parent in the new order. O(changes) in rows built or freed.
-/// Returns 0 when an existing key has no row, so the caller rebuilds.
+/** *Reconcile the host's `m` rows against the items (keyed by `nk`, already */
+/** *unique; `changed(row, j)` writes item `j` into the row's cell): */
+/** *keep the rows whose key survives (rebuilding any whose item changed), */
+/** *build the new keys, free (or exit) the vanished ones, then lay the rows */
+/** *into the parent in the new order. O(changes) in rows built or freed. */
+/** *Returns 0 when an existing key has no row, so the caller rebuilds. */
 fn kfor_reconcile(
     host: int,
     m: int,
@@ -924,10 +924,10 @@ fn kfor_reconcile(
 
 let mut multi_root_warned: int = 0
 
-/// A row builder mounted zero or several top-level nodes into `parent` after
-/// child `before`: move them into one new column, which becomes the row.
-/// Without it the row could not be keyed or moved. Warns once, because the
-/// wrapper is a layout node the author did not write.
+/** *A row builder mounted zero or several top-level nodes into `parent` after */
+/** *child `before`: move them into one new column, which becomes the row. */
+/** *Without it the row could not be keyed or moved. Warns once, because the */
+/** *wrapper is a layout node the author did not write. */
 fn kfor_wrap(parent: int, before: int) -> int {
     let n = nodes.tree[parent].kids.len - before
     if multi_root_warned == 0 {
@@ -959,8 +959,8 @@ fn kfor_wrap(parent: int, before: int) -> int {
     return w.id
 }
 
-/// Full rebuild: free every row and re-create them all. The fallback for
-/// duplicate keys, which cannot be matched one-to-one.
+/** *Full rebuild: free every row and re-create them all. The fallback for */
+/** *duplicate keys, which cannot be matched one-to-one. */
 fn kfor_rebuild(host: int, m: int, nk: []string, mk: fn(int) -> Node) {
     let olds = nodes.tree[host].frag
     arena.key_clear(host)
@@ -988,9 +988,9 @@ fn kfor_rebuild(host: int, m: int, nk: []string, mk: fn(int) -> Node) {
     arena.frag_set(host, order)
 }
 
-/// One arm mounted at a time. `on` is a live signal; `build(value)` rebuilds
-/// the host whenever `on` changes, so only the current arm is in the tree.
-/// Pair with an integer tag signal for a switch/match.
+/** *One arm mounted at a time. `on` is a live signal; `build(value)` rebuilds */
+/** *the host whenever `on` changes, so only the current arm is in the tree. */
+/** *Pair with an integer tag signal for a switch/match. */
 fn Match<T>(on: Signal<T>, build: fn(T) -> Node) -> Node {
     let n = raw_box()
     let node_id = n.id
@@ -1006,15 +1006,15 @@ fn Match<T>(on: Signal<T>, build: fn(T) -> Node) -> Node {
     })
 }
 
-/// Tear the subtree down and rebuild it for the current value of `on`.
-/// `list_gen` records the slot it was built from, so `match_refresh` can tell
-/// a real change from a bare refresh sweep.
+/** *Tear the subtree down and rebuild it for the current value of `on`. */
+/** *`list_gen` records the slot it was built from, so `match_refresh` can tell */
+/** *a real change from a bare refresh sweep. */
 fn match_build<T>(node_id: int, on: Signal<T>, build: fn(T) -> Node) {
     match_rebuild(node_id, on.id, || { build(on.get()) })
 }
 
-/// `match_build`'s body, shared with `MatchBy`: tear the arm down and run
-/// `body` under the host's rebuild scope, recording `on`'s generation.
+/** *`match_build`'s body, shared with `MatchBy`: tear the arm down and run */
+/** *`body` under the host's rebuild scope, recording `on`'s generation. */
 fn match_rebuild(node_id: int, on_id: int, body: fn()) {
     nodes.tree[node_id].list_gen = runtime.sig_gen(on_id)
     // The outgoing arm's roots that declare an exit transition leave the
@@ -1049,12 +1049,12 @@ fn match_rebuild(node_id: int, on_id: int, body: fn()) {
     }
 }
 
-/// A host hook can run when `on` has not moved (a queued refresh after a write
-/// that left the generation where the host built it). Rebuilding
-/// unconditionally once meant each refresh ran `rebuild_begin` — which calls
-/// `release_sigs` — and every `zeus.signal` the page declared was freed and re-created at its
-/// initial value. Page state reset on any repaint, which reads as "signals
-/// don't work" in a routed app. Rebuild only when `on` actually moved.
+/** *A host hook can run when `on` has not moved (a queued refresh after a write */
+/** *that left the generation where the host built it). Rebuilding */
+/** *unconditionally once meant each refresh ran `rebuild_begin` — which calls */
+/** *`release_sigs` — and every `zeus.signal` the page declared was freed and re-created at its */
+/** *initial value. Page state reset on any repaint, which reads as "signals */
+/** *don't work" in a routed app. Rebuild only when `on` actually moved. */
 fn match_refresh<T>(node_id: int, on: Signal<T>, build: fn(T) -> Node) {
     // Pull first: a `computed` is recomputed on read, and its generation only
     // moves once it is.
@@ -1065,21 +1065,21 @@ fn match_refresh<T>(node_id: int, on: Signal<T>, build: fn(T) -> Node) {
     match_build(node_id, on, build)
 }
 
-/// `Match` that updates an arm in place. `arm(value)` names the arm a value
-/// selects; while it keeps naming the same arm, a write to `on` lands in the
-/// arm's `payload` signal instead of rebuilding it, so only the effects that
-/// read the payload re-run and the arm's own signals, focus and scroll stay.
-/// A write that selects another arm tears the old one down and builds the new
-/// one, as `Match` does.
-///
-/// ```
-/// zui.MatchBy(state, fn(s: Load) => "{{s.tag}}", fn(p: Signal<Load>) {
-///     if p.peek().tag == 1 { zeus.Text("{{p.get().pct}}%") } else { zeus.Text("idle") }
-/// })
-/// ```
-///
-/// Branch on the arm at build time with `peek()` (the arm cannot change
-/// without a rebuild); read the fields that move with `get()` in effects.
+/** *`Match` that updates an arm in place. `arm(value)` names the arm a value */
+/** *selects; while it keeps naming the same arm, a write to `on` lands in the */
+/** *arm's `payload` signal instead of rebuilding it, so only the effects that */
+/** *read the payload re-run and the arm's own signals, focus and scroll stay. */
+/** *A write that selects another arm tears the old one down and builds the new */
+/** *one, as `Match` does. */
+/** */
+/** *``` */
+/** *zui.MatchBy(state, fn(s: Load) => "{{s.tag}}", fn(p: Signal<Load>) { */
+/** *if p.peek().tag == 1 { zeus.Text("{{p.get().pct}}%") } else { zeus.Text("idle") } */
+/** *}) */
+/** *``` */
+/** */
+/** *Branch on the arm at build time with `peek()` (the arm cannot change */
+/** *without a rebuild); read the fields that move with `get()` in effects. */
 fn MatchBy<T>(on: Signal<T>, arm: fn(T) -> string, build: fn(Signal<T>) -> Node) -> Node {
     let n = raw_box()
     let node_id = n.id
@@ -1092,10 +1092,10 @@ fn MatchBy<T>(on: Signal<T>, arm: fn(T) -> string, build: fn(Signal<T>) -> Node)
     })
 }
 
-/// The arm each `MatchBy` host has mounted and its payload cell, by host id.
+/** *The arm each `MatchBy` host has mounted and its payload cell, by host id. */
 let mut mby_arm: []string = []string {}
 let mut mby_cell: []int = []int {}
-/// Writes `MatchBy` landed in a mounted arm's payload instead of a rebuild.
+/** *Writes `MatchBy` landed in a mounted arm's payload instead of a rebuild. */
 let mut mby_patched: int = 0
 
 fn match_patched() -> int {
@@ -1141,20 +1141,20 @@ fn match_by_refresh<T>(
     })
 }
 
-/// `Match` that keeps its arms alive. Each arm is built the first time `on`
-/// selects it (named by `key(value)`) and is then hidden, not freed, when `on`
-/// moves away, so signals declared inside an arm, its scroll offset and its
-/// focus survive a switch. Every arm sits in its own column under the host.
-/// Arms are freed with the host. Use plain `Match` when an arm should start
-/// fresh on every visit, or when the arm set is unbounded. An arm whose root
-/// declares `exit_fade` / `exit_slide` / `exit_scale` plays it as it hides
-/// (switching back mid-exit snaps it in).
-///
-/// ```
-/// zui.MatchKeep(tab, fn(t) => "{{t}}", fn(t: int) {
-///     if t == 0 { Inbox() } else { Settings() }
-/// })
-/// ```
+/** *`Match` that keeps its arms alive. Each arm is built the first time `on` */
+/** *selects it (named by `key(value)`) and is then hidden, not freed, when `on` */
+/** *moves away, so signals declared inside an arm, its scroll offset and its */
+/** *focus survive a switch. Every arm sits in its own column under the host. */
+/** *Arms are freed with the host. Use plain `Match` when an arm should start */
+/** *fresh on every visit, or when the arm set is unbounded. An arm whose root */
+/** *declares `exit_fade` / `exit_slide` / `exit_scale` plays it as it hides */
+/** *(switching back mid-exit snaps it in). */
+/** */
+/** *``` */
+/** *zui.MatchKeep(tab, fn(t) => "{{t}}", fn(t: int) { */
+/** *if t == 0 { Inbox() } else { Settings() } */
+/** *}) */
+/** *``` */
 fn MatchKeep<T>(on: Signal<T>, key: fn(T) -> string, build: fn(T) -> Node) -> Node {
     let n = raw_box()
     let node_id = n.id
@@ -1226,21 +1226,21 @@ fn match_keep_refresh<T>(node_id: int, on: Signal<T>, key: fn(T) -> string, buil
     arena.mark_tree_at(node_id)
 }
 
-/// Error boundary. `build()` runs under a recoverable trap; if it traps, the
-/// partial subtree is discarded, the arena is rolled back to its entry mark,
-/// and `fallback(message)` is built in its place, so the rest of the app keeps
-/// running.
-///
-/// A trap *after* the build — in a handler, a key binding, an effect, or a list
-/// refresh owned by a node inside the boundary — is caught too: the whole
-/// subtree is replaced by `fallback(message)` at the next refresh pass. A trap
-/// in `fallback` itself goes to the next boundary up.
-///
-/// Recovers UI state only: C-seam side effects (I/O, network) are not undone.
-/// On wasm, where there is no `setjmp`, the trap unwinds to the web host, which
-/// calls `zeus_recover` (`engine_recover`): the boundary still gets its
-/// fallback, but the rest of the interrupted call (the remainder of an
-/// enclosing build, or of the event) is lost rather than resumed.
+/** *Error boundary. `build()` runs under a recoverable trap; if it traps, the */
+/** *partial subtree is discarded, the arena is rolled back to its entry mark, */
+/** *and `fallback(message)` is built in its place, so the rest of the app keeps */
+/** *running. */
+/** */
+/** *A trap *after* the build — in a handler, a key binding, an effect, or a list */
+/** *refresh owned by a node inside the boundary — is caught too: the whole */
+/** *subtree is replaced by `fallback(message)` at the next refresh pass. A trap */
+/** *in `fallback` itself goes to the next boundary up. */
+/** */
+/** *Recovers UI state only: C-seam side effects (I/O, network) are not undone. */
+/** *On wasm, where there is no `setjmp`, the trap unwinds to the web host, which */
+/** *calls `zeus_recover` (`engine_recover`): the boundary still gets its */
+/** *fallback, but the rest of the interrupted call (the remainder of an */
+/** *enclosing build, or of the event) is lost rather than resumed. */
 fn Boundary(build: fn() -> Node, fallback: fn(string) -> Node) -> Node {
     let host = raw_box()
     let hid = host.id
@@ -1286,8 +1286,8 @@ fn Boundary(build: fn() -> Node, fallback: fn(string) -> Node) -> Node {
     return host
 }
 
-/// The boundary host's refresh hook: a run-time trap recorded against it
-/// (`arena.boundary_fail`) replaces the subtree with `fallback(message)`.
+/** *The boundary host's refresh hook: a run-time trap recorded against it */
+/** *(`arena.boundary_fail`) replaces the subtree with `fallback(message)`. */
 fn boundary_refresh(hid: int, fallback: fn(string) -> Node) {
     let msg = arena.boundary_take(hid)
     if msg.len == 0 {
@@ -1303,8 +1303,8 @@ fn boundary_refresh(hid: int, fallback: fn(string) -> Node) {
     arena.rebuild_end(previous)
 }
 
-/// Jump `n` (a `Scroll` / `VirtualList`) to vertical offset `y`. Clears
-/// residual velocity so physics does not coast past the target. Clamped.
+/** *Jump `n` (a `Scroll` / `VirtualList`) to vertical offset `y`. Clears */
+/** *residual velocity so physics does not coast past the target. Clamped. */
 fn scroll_to(n: Node, y: int) -> Node {
     nodes.scrl[n.id].vel_y = 0
     nodes.scrl[n.id].scroll_y = y
@@ -1315,7 +1315,7 @@ fn scroll_to(n: Node, y: int) -> Node {
     return n
 }
 
-/// Jump `n` to horizontal offset `x`.
+/** *Jump `n` to horizontal offset `x`. */
 fn scroll_to_x(n: Node, x: int) -> Node {
     nodes.scrl[n.id].vel_x = 0
     nodes.scrl[n.id].scroll_x = x
@@ -1323,7 +1323,7 @@ fn scroll_to_x(n: Node, x: int) -> Node {
     return n
 }
 
-/// Jump a windowed list so item `i` is at the top of the viewport.
+/** *Jump a windowed list so item `i` is at the top of the viewport. */
 fn scroll_to_index(n: Node, i: int) -> Node {
     let mut rh = nodes.tree[n.id].row_h
     if rh < 1 {
@@ -1336,21 +1336,21 @@ fn scroll_to_index(n: Node, i: int) -> Node {
     return scroll_to(n, at * rh)
 }
 
-/// Live `scroll_y` of `n`.
+/** *Live `scroll_y` of `n`. */
 fn scroll_y(n: Node) -> int {
     return nodes.scrl[n.id].scroll_y
 }
 
-/// Width a node measured by the last layout pass (0 until the first one).
+/** *Width a node measured by the last layout pass (0 until the first one). */
 fn measured_width(n: Node) -> int {
     return nodes.box[n.id].w
 }
 
-/// Re-run `build` into `host` whenever the host's measured width changes
-/// (window resize, card reflow). `host` must be widthless so it stretches
-/// with its parent. Pixel-exact widgets — charts, plots — lay out their
-/// children from the measured width, so they stay glued to the container.
-/// Rebuilds happen on the layout after a size change.
+/** *Re-run `build` into `host` whenever the host's measured width changes */
+/** *(window resize, card reflow). `host` must be widthless so it stretches */
+/** *with its parent. Pixel-exact widgets — charts, plots — lay out their */
+/** *children from the measured width, so they stay glued to the container. */
+/** *Rebuilds happen on the layout after a size change. */
 fn refit_refresh(node_id: int, build: fn()) {
     let w = nodes.box[node_id].w
     if w == nodes.tree[node_id].list_gen {
@@ -1373,8 +1373,8 @@ fn refit_refresh(node_id: int, build: fn()) {
     arena.set_list_fn(node_id, refit_hook(node_id, build))
 }
 
-/// The host's refresh hook, owned by the host itself: freed with the host, and
-/// by each rebuild of it (which is why `refit_refresh` re-registers it).
+/** *The host's refresh hook, owned by the host itself: freed with the host, and */
+/** *by each rebuild of it (which is why `refit_refresh` re-registers it). */
 fn refit_hook(node_id: int, build: fn()) -> int {
     let id = runtime.intern_fn(|| {
         refit_refresh(node_id, build)
@@ -1392,12 +1392,12 @@ fn refit(host: Node, build: fn()) -> Node {
     return host
 }
 
-/// A signal of `host`'s laid-out width: `estimate` until the first layout
-/// measures it, then the measured width whenever the box moves. The reactive
-/// form of `refit`: a body that reads the signal inside effects (a `style`
-/// thunk, a text or svg thunk) follows the width through those effects, and
-/// nothing is torn down. A geometry host, so the hook runs only when the box
-/// moved.
+/** *A signal of `host`'s laid-out width: `estimate` until the first layout */
+/** *measures it, then the measured width whenever the box moves. The reactive */
+/** *form of `refit`: a body that reads the signal inside effects (a `style` */
+/** *thunk, a text or svg thunk) follows the width through those effects, and */
+/** *nothing is torn down. A geometry host, so the hook runs only when the box */
+/** *moved. */
 fn width_signal(host: Node, estimate: int) -> Signal<int> {
     arena.ensure()
     let out = signal(estimate)
@@ -1415,9 +1415,9 @@ fn width_signal(host: Node, estimate: int) -> Signal<int> {
     return out
 }
 
-/// Open a host file picker (PNG / JPEG / WebP / GIF). Writes the chosen src
-/// into `dest` and the image's intrinsic size into `dw` / `dh`. Native hosts
-/// return from the dialog; wasm and mobile finish via `engine_picked_image`.
+/** *Open a host file picker (PNG / JPEG / WebP / GIF). Writes the chosen src */
+/** *into `dest` and the image's intrinsic size into `dw` / `dh`. Native hosts */
+/** *return from the dialog; wasm and mobile finish via `engine_picked_image`. */
 fn pick_image(dest: Signal<string>, dw: Signal<int>, dh: Signal<int>) {
     pick_dest = dest
     pick_w = dw
@@ -1435,9 +1435,9 @@ fn pick_image(dest: Signal<string>, dw: Signal<int>, dh: Signal<int>) {
     }
 }
 
-/// Vertical scroller that window-renders `items`. `row_h` is the fixed row
-/// height in points (spacers use it so `scroll_max` matches the full list).
-/// `build(i, item)` is the row. 10k rows stay a few dozen nodes.
+/** *Vertical scroller that window-renders `items`. `row_h` is the fixed row */
+/** *height in points (spacers use it so `scroll_max` matches the full list). */
+/** *`build(i, item)` is the row. 10k rows stay a few dozen nodes. */
 fn VirtualList<T>(items: Signal<[]T>, row_h: int, build: fn(int, T) -> Node) -> Node {
     let n = raw_scroll()
     let node_id = n.id
@@ -1451,13 +1451,13 @@ fn VirtualList<T>(items: Signal<[]T>, row_h: int, build: fn(int, T) -> Node) -> 
     return c
 }
 
-/// Keyed windowed list: `VirtualList` with a stable `key(item)`. Scrolling
-/// **moves** the rows whose key stays in the window instead of rebuilding every
-/// visible row, so a scroll allocates only the rows entering it — the fix for
-/// the `docs/mem-baseline.md` §5.1 per-scroll growth. `key` must be stable and
-/// unique among the items. Row state that must follow the item should read a
-/// signal inside the row, not `i`. Falls back to the unkeyed path if a key is
-/// empty or duplicated.
+/** *Keyed windowed list: `VirtualList` with a stable `key(item)`. Scrolling */
+/** **moves** the rows whose key stays in the window instead of rebuilding every */
+/** *visible row, so a scroll allocates only the rows entering it — the fix for */
+/** *the `docs/mem-baseline.md` §5.1 per-scroll growth. `key` must be stable and */
+/** *unique among the items. Row state that must follow the item should read a */
+/** *signal inside the row, not `i`. Falls back to the unkeyed path if a key is */
+/** *empty or duplicated. */
 fn VirtualListKeyed<T>(
     items: Signal<[]T>,
     row_h: int,
@@ -1476,9 +1476,9 @@ fn VirtualListKeyed<T>(
     return c
 }
 
-/// Windowed list with per-row heights. `heights[i]` is row `i` in points
-/// (0 / missing uses `fallback`). Spacers use the prefix sum so `scroll_max`
-/// matches the real list.
+/** *Windowed list with per-row heights. `heights[i]` is row `i` in points */
+/** *(0 / missing uses `fallback`). Spacers use the prefix sum so `scroll_max` */
+/** *matches the real list. */
 fn VirtualListVar<T>(
     items: Signal<[]T>,
     heights: Signal<[]int>,
@@ -1502,19 +1502,19 @@ fn VirtualListVar<T>(
     return c
 }
 
-/// Move `sig` toward `to` over `ms` milliseconds.
-///
-/// **Behaviour change (Phase 3):** the signal's *state* moves to `to` once —
-/// every effect bound to `sig` re-runs once — and the moving value is a
-/// paint-only overlay interpolated on the animation track pool. Effects no
-/// longer re-run per frame, and nothing re-runs inside the tick at all. A new
-/// call retargets an in-flight animation from its current value. `ms == 0`
-/// jumps; before the first frame it jumps too (nothing animates at boot).
-///
-/// A layout prop the write lands on (width / height / a pin) does not jump
-/// to `to`: it stays at its current length and tweens on the same track,
-/// reflowing each frame. Paint-only readers (`Progress`, `anim_paint`) still
-/// use the overlay. Hover / press never reflow.
+/** *Move `sig` toward `to` over `ms` milliseconds. */
+/** */
+/** **Behaviour change (Phase 3):** the signal's *state* moves to `to` once — */
+/** *every effect bound to `sig` re-runs once — and the moving value is a */
+/** *paint-only overlay interpolated on the animation track pool. Effects no */
+/** *longer re-run per frame, and nothing re-runs inside the tick at all. A new */
+/** *call retargets an in-flight animation from its current value. `ms == 0` */
+/** *jumps; before the first frame it jumps too (nothing animates at boot). */
+/** */
+/** *A layout prop the write lands on (width / height / a pin) does not jump */
+/** *to `to`: it stays at its current length and tweens on the same track, */
+/** *reflowing each frame. Paint-only readers (`Progress`, `anim_paint`) still */
+/** *use the overlay. Hover / press never reflow. */
 fn animate(sig: Signal<int>, to: int, ms: int) {
     arena.anim_signal(sig.id, to, ms)
 }
@@ -1523,9 +1523,9 @@ struct VirtWin {
     first: int,
     last: int,
 }
-/// Visible index window for a windowed list. `row_h` is the fixed row height
-/// used to turn `scroll_y` into indices; overscan keeps a few extra rows
-/// mounted so a small flick does not rebuild.
+/** *Visible index window for a windowed list. `row_h` is the fixed row height */
+/** *used to turn `scroll_y` into indices; overscan keeps a few extra rows */
+/** *mounted so a small flick does not rebuild. */
 fn virtual_window(node_id: int, n: int, row_h: int) -> VirtWin {
     let mut first = 0
     let mut last = n
@@ -1588,8 +1588,8 @@ fn find_scroller(id: int) -> int {
     return 0
 }
 
-/// Builds the role palette for `Scope(accent = which)`. The theme registers it
-/// (`set_accent_palette_hook`); the framework does not know the accent ramps.
+/** *Builds the role palette for `Scope(accent = which)`. The theme registers it */
+/** *(`set_accent_palette_hook`); the framework does not know the accent ramps. */
 let mut accent_palette_hook: fn(int) -> int = no_palette
 
 fn no_palette(which: int) -> int {
@@ -1600,25 +1600,25 @@ fn set_accent_palette_hook(f: fn(int) -> int) {
     accent_palette_hook = f
 }
 
-/// A new, empty role palette for `Scope(palette = ...)`.
+/** *A new, empty role palette for `Scope(palette = ...)`. */
 fn palette_new() -> int {
     return arena.palette_new()
 }
 
-/// Palette `p` paints `role` (a `ROLE.*` slot) as `light` / `dark`, packed rgb
-/// (`parse_hex_color("#ff6308")`). Returns `p`, for chaining.
+/** *Palette `p` paints `role` (a `ROLE.*` slot) as `light` / `dark`, packed rgb */
+/** *(`parse_hex_color("#ff6308")`). Returns `p`, for chaining. */
 fn palette_role(p: int, role: int, light: int, dark: int) -> int {
     arena.palette_set(p, role, light, dark)
     return p
 }
 
-/// Height a node measured by the last layout pass (0 until the first one).
+/** *Height a node measured by the last layout pass (0 until the first one). */
 fn measured_height(n: Node) -> int {
     return nodes.box[n.id].h
 }
 
-/// The density signal a `Scope(density = ...)` sets for the node whose style
-/// is running (or the node being built), or 0 outside any scope.
+/** *The density signal a `Scope(density = ...)` sets for the node whose style */
+/** *is running (or the node being built), or 0 outside any scope. */
 fn scoped_density_sid() -> int {
     if arena.dens_scoped == 0 {
         return 0
@@ -1626,7 +1626,7 @@ fn scoped_density_sid() -> int {
     return arena.density_at(arena.effect_node_now(), current_slot())
 }
 
-/// Packed rgb a color handle paints as in the appearance now in effect.
+/** *Packed rgb a color handle paints as in the appearance now in effect. */
 fn paint_rgb(color: int) -> int {
     return arena.paint_rgb(color)
 }

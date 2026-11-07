@@ -1,40 +1,40 @@
-//! `log` — leveled, scoped log lines (std:log).
-//!
-//! One line per record on stdout, which is the terminal for a server or a
-//! native app. For wasm the web host posts it to the `zeli` terminal, and it
-//! never reaches the browser console:
-//!
-//! ```
-//! +12.345s INFO  http.server  Vidget.Jobs ok · 0 B -> 312 B · 4 ms
-//! ```
-//!
-//! The time is milliseconds since the first record (the hosts only expose a
-//! monotonic clock). `scope` names where the line comes from: `http.server`
-//! and `http.client` are written by `http` for every RPC; apps pick
-//! their own (`"engine"`, `"store"`).
-//!
-//! ```
-//! import "std:log"
-//!
-//! log.info("engine", "job 3 started")
-//! log.error("engine", "job 3 failed: {{why}}")
-//! ```
-//!
-//! The level comes from `LOAM_LOG` (`debug`, `info`, `success`, `warn`,
-//! `error`, `off`; default `info`) on hosts with an environment, or
-//! `log.set_level("debug")` from code. The last `KEEP` records stay in memory for `records()`, and
-//! `listen(cb)` sees each one as it is written (`devtools.LogPanel` does).
-//! Records are plain module state: write them from the UI / main thread, not
-//! from `std:thread` workers.
-//!
-//! A terminal gets the line in color, by level, unless `NO_COLOR` is set. A
-//! tool that reads an app's output through a pipe colors it with `paint`.
+// `log` — leveled, scoped log lines (std:log).
+//
+// One line per record on stdout, which is the terminal for a server or a
+// native app. For wasm the web host posts it to the `zeli` terminal, and it
+// never reaches the browser console:
+//
+// ```
+// +12.345s INFO  http.server  Vidget.Jobs ok · 0 B -> 312 B · 4 ms
+// ```
+//
+// The time is milliseconds since the first record (the hosts only expose a
+// monotonic clock). `scope` names where the line comes from: `http.server`
+// and `http.client` are written by `http` for every RPC; apps pick
+// their own (`"engine"`, `"store"`).
+//
+// ```
+// import "std:log"
+//
+// log.info("engine", "job 3 started")
+// log.error("engine", "job 3 failed: {{why}}")
+// ```
+//
+// The level comes from `LOAM_LOG` (`debug`, `info`, `success`, `warn`,
+// `error`, `off`; default `info`) on hosts with an environment, or
+// `log.set_level("debug")` from code. The last `KEEP` records stay in memory for `records()`, and
+// `listen(cb)` sees each one as it is written (`devtools.LogPanel` does).
+// Records are plain module state: write them from the UI / main thread, not
+// from `std:thread` workers.
+//
+// A terminal gets the line in color, by level, unless `NO_COLOR` is set. A
+// tool that reads an app's output through a pipe colors it with `paint`.
 
 import "std:async"
 import "std:fmt"
 import "std:sys"
 
-/// One log record. `ms` is milliseconds since the first record.
+/** *One log record. `ms` is milliseconds since the first record. */
 struct Record {
     seq: int,
     ms: int,
@@ -43,7 +43,7 @@ struct Record {
     msg: string,
 }
 
-/// Records kept in memory for `records()`.
+/** *Records kept in memory for `records()`. */
 const KEEP: int = 500
 
 const L_DEBUG: int = 0
@@ -62,7 +62,7 @@ let mut sinks: []fn(Record) = []fn(Record) {}
 let mut printing: bool = true
 let mut color: bool = false
 
-/// Level number for `name` (`"debug"` … `"off"`), or -1.
+/** *Level number for `name` (`"debug"` … `"off"`), or -1. */
 fn level_of(name: string) -> int {
     if fmt.eq(name, "debug") {
         return L_DEBUG
@@ -85,7 +85,7 @@ fn level_of(name: string) -> int {
     return -1
 }
 
-/// `"DEBUG"`, `"INFO"`, `"OK"`, `"WARN"`, `"ERROR"` for a record's `level`.
+/** *`"DEBUG"`, `"INFO"`, `"OK"`, `"WARN"`, `"ERROR"` for a record's `level`. */
 fn level_name(level: int) -> string {
     if level == L_DEBUG {
         return "DEBUG"
@@ -131,9 +131,9 @@ fn configure() {
     }
 }
 
-/// Lowest level written: `"debug"`, `"info"`, `"success"`, `"warn"`, `"error"`
-/// or `"off"`.
-/// Overrides `LOAM_LOG`. An unknown name is ignored.
+/** *Lowest level written: `"debug"`, `"info"`, `"success"`, `"warn"`, `"error"` */
+/** *or `"off"`. */
+/** *Overrides `LOAM_LOG`. An unknown name is ignored. */
 fn set_level(name: string) {
     configure()
     let l = level_of(name)
@@ -142,15 +142,15 @@ fn set_level(name: string) {
     }
 }
 
-/// Whether a record at `name`'s level would be written — check before
-/// building an expensive message.
+/** *Whether a record at `name`'s level would be written — check before */
+/** *building an expensive message. */
 fn enabled(name: string) -> bool {
     configure()
     let l = level_of(name)
     return l >= 0 && l >= threshold && threshold < L_OFF
 }
 
-/// Stop (or resume) printing; records are still kept and sent to listeners.
+/** *Stop (or resume) printing; records are still kept and sent to listeners. */
 fn set_print(on: bool) {
     printing = on
 }
@@ -175,7 +175,7 @@ fn error(scope: string, msg: string) {
     write(L_ERROR, scope, msg)
 }
 
-/// Write one record at `level` (0 debug, 1 info, 2 success, 3 warn, 4 error).
+/** *Write one record at `level` (0 debug, 1 info, 2 success, 3 warn, 4 error). */
 fn write(level: int, scope: string, msg: string) {
     configure()
     if level < threshold || threshold >= L_OFF {
@@ -204,7 +204,7 @@ fn write(level: int, scope: string, msg: string) {
     }
 }
 
-/// `+12.345s INFO  scope  msg`.
+/** *`+12.345s INFO  scope  msg`. */
 fn line(r: Record) -> string {
     let mut name = level_name(r.level)
     while name.len < 5 {
@@ -213,7 +213,7 @@ fn line(r: Record) -> string {
     return "{{stamp(r.ms)}} {{name}} {{r.scope}}  {{r.msg}}"
 }
 
-/// The ANSI color of a level's word in a `line`, or "" when `word` is not one.
+/** *The ANSI color of a level's word in a `line`, or "" when `word` is not one. */
 fn level_color(word: string) -> string {
     if fmt.eq(word, "DEBUG") {
         return "2"
@@ -241,9 +241,9 @@ fn part(s: string, a: int, b: int) -> string {
     return string_from_bytes(out)
 }
 
-/// A `line` in ANSI color: the level by its color, the time and scope dim, and
-/// a warning's or error's message in its level's color. Any other text comes
-/// back unchanged, so a tool can pass an app's whole output through this.
+/** *A `line` in ANSI color: the level by its color, the time and scope dim, and */
+/** *a warning's or error's message in its level's color. Any other text comes */
+/** *back unchanged, so a tool can pass an app's whole output through this. */
 fn paint(text: string) -> string {
     if text.len == 0 || text[0] != 43 /* + */ {
         return text
@@ -283,7 +283,7 @@ fn paint(text: string) -> string {
     return "{{esc}}[2m{{stamp_part}}{{esc}}[0m {{esc}}[1;{{color}}m{{word}}{{esc}}[0m{{pad}}{{esc}}[2m{{scope}}{{esc}}[0m{{body}}"
 }
 
-/// `+12.345s` for `ms` since the first record.
+/** *`+12.345s` for `ms` since the first record. */
 fn stamp(ms: int) -> string {
     let frac = ms % 1000
     let mut f = "{{frac}}"
@@ -293,7 +293,7 @@ fn stamp(ms: int) -> string {
     return "+{{ms / 1000}}.{{f}}s"
 }
 
-/// The most recent records (up to `KEEP`), oldest first.
+/** *The most recent records (up to `KEEP`), oldest first. */
 fn records() -> []Record {
     if kept.len <= KEEP {
         return kept
@@ -305,17 +305,17 @@ fn records() -> []Record {
     return out
 }
 
-/// Drop the kept records (listeners and the level are unchanged).
+/** *Drop the kept records (listeners and the level are unchanged). */
 fn clear() {
     kept = []Record {}
 }
 
-/// Call `cb` with every record written from now on.
+/** *Call `cb` with every record written from now on. */
 fn listen(cb: fn(Record)) {
     push(sinks, cb)
 }
 
-/// `n` bytes as `512 B`, `3.4 KB`, `1.2 MB`.
+/** *`n` bytes as `512 B`, `3.4 KB`, `1.2 MB`. */
 fn bytes(n: int) -> string {
     if n < 1024 {
         return "{{n}} B"

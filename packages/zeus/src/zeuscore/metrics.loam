@@ -1,20 +1,20 @@
-//! metrics — in-tree text measurement (`docs/loam_zeus_v2.md` §1.4, Phase 13).
-//!
-//! When a font is bound (`zeus.use_font` / `bind`), measurement parses its
-//! tables with `std:font`, so every host computes the same line box for the
-//! same (font, size, string) — the point of moving metrics in-tree. Unbound, it
-//! falls through to the host's own measurement (`platform.plat_measure`), which
-//! is exactly the behavior before Phase 13.
-//!
-//! Drawing is still the host's job (`platform.plat_text`). These metrics are
-//! what layout sizes boxes with; until the draw path is also moved in-tree,
-//! a bound font can differ slightly from what the host draws.
+// metrics — in-tree text measurement (`docs/loam_zeus_v2.md` §1.4, Phase 13).
+//
+// When a font is bound (`zeus.use_font` / `bind`), measurement parses its
+// tables with `std:font`, so every host computes the same line box for the
+// same (font, size, string) — the point of moving metrics in-tree. Unbound, it
+// falls through to the host's own measurement (`platform.plat_measure`), which
+// is exactly the behavior before Phase 13.
+//
+// Drawing is still the host's job (`platform.plat_text`). These metrics are
+// what layout sizes boxes with; until the draw path is also moved in-tree,
+// a bound font can differ slightly from what the host draws.
 
 import "platform.loam"
 import "std:font"
 import "std:unicode"
 
-/// Font bytes for in-tree metrics, or `""` when unbound.
+/** *Font bytes for in-tree metrics, or `""` when unbound. */
 let mut metrics_font: string = ""
 
 // --- text-measure cache ---------------------------------------------------
@@ -33,7 +33,7 @@ let mut tc_mw: []int = []int {}
 let mut tc_wrap: []int = []int {}
 let mut tc_w: []int = []int {}
 let mut tc_h: []int = []int {}
-/// Host or font measurements made (cache misses), and cache hits, since boot.
+/** *Host or font measurements made (cache misses), and cache hits, since boot. */
 let mut tc_misses: int = 0
 let mut tc_hits: int = 0
 
@@ -51,7 +51,7 @@ fn tc_ensure() {
     }
 }
 
-/// Drop every cached measurement.
+/** *Drop every cached measurement. */
 fn reset_cache() {
     for i in 0..tc_px.len {
         tc_px[i] = -1
@@ -59,8 +59,8 @@ fn reset_cache() {
     }
 }
 
-/// Slot for a key: FNV-1a over the bytes, folded to the table size (the
-/// product is taken in `i64` because `int` multiplication is checked).
+/** *Slot for a key: FNV-1a over the bytes, folded to the table size (the */
+/** *product is taken in `i64` because `int` multiplication is checked). */
 fn tc_slot(s: string, px: int, max_w: int, wrap: int) -> int {
     let mut h: i64 = 2166136261
     for i in 0..s.len {
@@ -72,8 +72,8 @@ fn tc_slot(s: string, px: int, max_w: int, wrap: int) -> int {
     return i32((h ^ (h >> 12)) & i64(TC_SIZE - 1))
 }
 
-/// Measure through the cache: one line when `wrap` is 0, wrapped to `max_w`
-/// when 1, and one line by the host's own face (never the bound font) when 2.
+/** *Measure through the cache: one line when `wrap` is 0, wrapped to `max_w` */
+/** *when 1, and one line by the host's own face (never the bound font) when 2. */
 fn tc_measure(s: string, px: int, max_w: int, wrap: int, w: &mut int, h: &mut int) {
     tc_ensure()
     let k = tc_slot(s, px, max_w, wrap)
@@ -105,9 +105,9 @@ fn tc_measure(s: string, px: int, max_w: int, wrap: int, w: &mut int, h: &mut in
     *h = mh
 }
 
-/// Bind font bytes (a `.ttf` / `.otf` the app or host loaded). Returns 1 when
-/// the bytes parse as a font with a usable `hmtx`, 0 otherwise — the caller
-/// then keeps host measurement.
+/** *Bind font bytes (a `.ttf` / `.otf` the app or host loaded). Returns 1 when */
+/** *the bytes parse as a font with a usable `hmtx`, 0 otherwise — the caller */
+/** *then keeps host measurement. */
 fn bind(bytes: string) -> int {
     if bytes.len == 0 {
         return 0
@@ -123,18 +123,18 @@ fn bind(bytes: string) -> int {
     return 1
 }
 
-/// Drop the bound font; measurement falls back to the host.
+/** *Drop the bound font; measurement falls back to the host. */
 fn unbind() {
     metrics_font = ""
     reset_cache()
 }
 
-/// 1 when in-tree metrics are active.
+/** *1 when in-tree metrics are active. */
 fn bound() -> int {
     return metrics_font.len
 }
 
-/// Decimal string of `v`, so bound numeric labels measure in-tree too.
+/** *Decimal string of `v`, so bound numeric labels measure in-tree too. */
 fn decimal(v: int) -> string {
     let mut n = i64(v)
     let mut out = []int {}
@@ -160,8 +160,8 @@ fn decimal(v: int) -> string {
     return string_from_bytes(out)
 }
 
-/// Measure one line of `s` at `px`. `w`/`h` are out-params (the shape layout
-/// already uses).
+/** *Measure one line of `s` at `px`. `w`/`h` are out-params (the shape layout */
+/** *already uses). */
 fn measure(s: string, px: int, w: &mut int, h: &mut int) {
     tc_measure(s, px, 0, 0, w, h)
 }
@@ -174,7 +174,7 @@ fn measure_raw(s: string, px: int, w: &mut int, h: &mut int) {
     platform.plat_measure(s, px, w, h)
 }
 
-/// Measure the decimal form of `v` at `px`.
+/** *Measure the decimal form of `v` at `px`. */
 fn measure_int(v: int, px: int, w: &mut int, h: &mut int) {
     if metrics_font.len > 0 {
         font.measure(metrics_font, px, decimal(v), w, h)
@@ -183,27 +183,27 @@ fn measure_int(v: int, px: int, w: &mut int, h: &mut int) {
     platform.plat_measure_int(v, px, w, h)
 }
 
-/// Measure `s` wrapped to `max_w`, for the height a label grows to.
+/** *Measure `s` wrapped to `max_w`, for the height a label grows to. */
 fn measure_wrap(s: string, px: int, max_w: int, w: &mut int, h: &mut int) {
     tc_measure(s, px, max_w, 1, w, h)
 }
 
-/// Measure one line of `s` as the host draws it, ignoring any bound font. Paint
-/// positions the words of wrapped text with this, so they sit where the host's
-/// glyphs land.
+/** *Measure one line of `s` as the host draws it, ignoring any bound font. Paint */
+/** *positions the words of wrapped text with this, so they sit where the host's */
+/** *glyphs land. */
 fn measure_host(s: string, px: int, w: &mut int, h: &mut int) {
     tc_measure(s, px, 0, 2, w, h)
 }
 
 // --- ellipsis -------------------------------------------------------------
 
-/// `…` (U+2026) as UTF-8 bytes: one glyph, so an ellipsized label keeps a
-/// stable trailing width in every font that has it.
+/** *`…` (U+2026) as UTF-8 bytes: one glyph, so an ellipsized label keeps a */
+/** *stable trailing width in every font that has it. */
 fn ellipsis_mark() -> string {
     return string_from_bytes([]int { 226, 128, 166 })
 }
 
-/// Bytes of `s` in `[a, b)`.
+/** *Bytes of `s` in `[a, b)`. */
 fn sub_bytes(s: string, a: int, b: int) -> string {
     let mut out = []int {}
     let mut i = a
@@ -214,14 +214,14 @@ fn sub_bytes(s: string, a: int, b: int) -> string {
     return string_from_bytes(out)
 }
 
-/// Truncate `s` to fit `max_w` at `px`, appending `…`, cutting only at a
-/// grapheme boundary so the result is always valid UTF-8. `full_w` is the
-/// pre-measured width of the whole string (a node's `text_width`), so a caller that
-/// already measured it does not pay for a second pass. `w` / `h` receive the
-/// width and height of the returned string.
-///
-/// Returns `s` unchanged when it already fits, and `""` when not even the
-/// ellipsis glyph fits — an empty cell reads better than a mark that spills.
+/** *Truncate `s` to fit `max_w` at `px`, appending `…`, cutting only at a */
+/** *grapheme boundary so the result is always valid UTF-8. `full_w` is the */
+/** *pre-measured width of the whole string (a node's `text_width`), so a caller that */
+/** *already measured it does not pay for a second pass. `w` / `h` receive the */
+/** *width and height of the returned string. */
+/** */
+/** *Returns `s` unchanged when it already fits, and `""` when not even the */
+/** *ellipsis glyph fits — an empty cell reads better than a mark that spills. */
 fn ellipsize(s: string, px: int, max_w: int, full_w: int, w: &mut int, h: &mut int) -> string {
     if s.len == 0 || full_w <= max_w {
         *w = full_w

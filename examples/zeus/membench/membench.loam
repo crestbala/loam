@@ -1,34 +1,34 @@
-//! membench — the Phase 0 Zeus memory baseline (`docs/mem-baseline.md`).
-//!
-//! Fixed modes so bytes-per-node can be derived from a slope:
-//!
-//!   membench empty      an empty root box
-//!   membench one        one Ghost button
-//!   membench thousand   1000 Ghost buttons
-//!   membench scroll     a keyed windowed list scrolled 500 one-row frames
-//!
-//! `scroll` is the Phase 2 proof for `docs/mem-baseline.md` §5.1: it mirrors
-//! the reported reproduction (a windowed list scrolled one row at a time) on the
-//! keyed path (`zui.VirtualListKeyed`), so the scroll is a bounded delta instead
-//! of a rebuild of every visible row per frame.
-//!
-//! Run headless (one layout, then the stats report on exit):
-//!
-//!   make bin/loamc
-//!   ZEUS_MEM_STATS=1 ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/membench/membench.loam -o out/membench
-//!   ZEUS_MEM_STATS=1 ZEUS_HEADLESS=1 ./out/membench thousand
-//!
-//! The window is a fixed 320x240 so the baseline does not move with the host
-//! screen, and every mode is the same tree plus N buttons. `empty` still builds
-//! the root box, so the slope (not an absolute) is what carries bytes-per-node.
+// membench — the Phase 0 Zeus memory baseline (`docs/mem-baseline.md`).
+//
+// Fixed modes so bytes-per-node can be derived from a slope:
+//
+//   membench empty      an empty root box
+//   membench one        one Ghost button
+//   membench thousand   1000 Ghost buttons
+//   membench scroll     a keyed windowed list scrolled 500 one-row frames
+//
+// `scroll` is the Phase 2 proof for `docs/mem-baseline.md` §5.1: it mirrors
+// the reported reproduction (a windowed list scrolled one row at a time) on the
+// keyed path (`zui.VirtualListKeyed`), so the scroll is a bounded delta instead
+// of a rebuild of every visible row per frame.
+//
+// Run headless (one layout, then the stats report on exit):
+//
+//   make bin/loamc
+//   ZEUS_MEM_STATS=1 ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/membench/membench.loam -o out/membench
+//   ZEUS_MEM_STATS=1 ZEUS_HEADLESS=1 ./out/membench thousand
+//
+// The window is a fixed 320x240 so the baseline does not move with the host
+// screen, and every mode is the same tree plus N buttons. `empty` still builds
+// the root box, so the slope (not an absolute) is what carries bytes-per-node.
 
 import "std:fmt"
 import "std:sys"
 import "zeus"
 import "zui"
 
-/// Button count for a mode name. Unknown modes are a hard error: a typo that
-/// silently benches the wrong tree makes the whole baseline meaningless.
+/** *Button count for a mode name. Unknown modes are a hard error: a typo that */
+/** *silently benches the wrong tree makes the whole baseline meaningless. */
 fn count_for(mode: string) -> int {
     if mode == "empty" {
         return 0
@@ -68,10 +68,10 @@ fn RowView(i: int, r: BenchRow) -> Node {
     }
 }
 
-/// The Phase 2 scroll proof: a keyed windowed list of 500 rows scrolled 500
-/// one-row frames. Live node count and `proof_allocs` should stay bounded —
-/// the keyed path moves the rows that stay in the window and builds only the
-/// row entering it.
+/** *The Phase 2 scroll proof: a keyed windowed list of 500 rows scrolled 500 */
+/** *one-row frames. Live node count and `proof_allocs` should stay bounded — */
+/** *the keyed path moves the rows that stay in the window and builds only the */
+/** *row entering it. */
 fn scroll_proof() {
     let mut rows = []BenchRow {}
     let mut i = 0

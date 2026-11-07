@@ -1,6 +1,6 @@
-//! Every choice that shapes a piece, as one value. The screen edits these
-//! through signals (`studio/store.loam`); the arranger and the graph read a
-//! snapshot. Levels and amounts are 0..100.
+// Every choice that shapes a piece, as one value. The screen edits these
+// through signals (`studio/store.loam`); the arranger and the graph read a
+// snapshot. Levels and amounts are 0..100.
 
 import "styles.loam" as styles
 import "synth.loam" as synth
@@ -17,7 +17,7 @@ const SPACE_ROOM: int = 0
 const SPACE_HALL: int = 1
 const SPACE_VAST: int = 2
 
-/// Echo time: an eighth, a dotted eighth, a quarter, a half note.
+/** *Echo time: an eighth, a dotted eighth, a quarter, a half note. */
 const ECHO_8: int = 0
 const ECHO_8D: int = 1
 const ECHO_4: int = 2
@@ -26,11 +26,11 @@ const ECHO_2: int = 3
 struct Sound {
     style: int,
     energy: int,
-    /// 0 is 1 min, 1 is 3 min, 2 is 4 min.
+    /** *0 is 1 min, 1 is 3 min, 2 is 4 min. */
     length_ix: int,
-    /// BPM, or 0 to follow the recordings.
+    /** *BPM, or 0 to follow the recordings. */
     tempo: int,
-    /// Semitones, -12..12, applied to everything.
+    /** *Semitones, -12..12, applied to everything. */
     pitch: int,
     voices: int,
     rec_on: bool,
@@ -57,7 +57,7 @@ struct Sound {
     warmth: int,
     width: int,
     pump: bool,
-    /// Variation: a new take moves this.
+    /** *Variation: a new take moves this. */
     seed: int,
 }
 
@@ -91,8 +91,8 @@ fn voice_names() -> []string {
     return []string { "Remove", "Keep" }
 }
 
-/// The starting point for a style. Length, tempo, pitch, voices, and the
-/// seed are the listener's and survive a style change (`with_style`).
+/** *The starting point for a style. Length, tempo, pitch, voices, and the */
+/** *seed are the listener's and survive a style change (`with_style`). */
 fn preset(s: int) -> Sound {
     let mut v = Sound {
         style: s, energy: styles.FLOW, length_ix: 1, tempo: 0, pitch: 0, voices: VOICES_REMOVE,
@@ -201,7 +201,7 @@ fn preset(s: int) -> Sound {
     return v
 }
 
-/// `cur` with the style's sound, keeping the listener's own choices.
+/** *`cur` with the style's sound, keeping the listener's own choices. */
 fn with_style(cur: Sound, s: int) -> Sound {
     let mut v = preset(s)
     v.length_ix = cur.length_ix
@@ -212,8 +212,8 @@ fn with_style(cur: Sound, s: int) -> Sound {
     return v
 }
 
-/// A level slider (0..100, 70 is the default) as decibels: 0 is silent,
-/// 70 is 0 dB, 100 is +6 dB.
+/** *A level slider (0..100, 70 is the default) as decibels: 0 is silent, */
+/** *70 is 0 dB, 100 is +6 dB. */
 fn level_db(v: int) -> f64 {
     if v <= 0 {
         return -90.0

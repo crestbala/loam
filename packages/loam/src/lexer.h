@@ -3,9 +3,10 @@
  *
  * Tokens are spans into the caller's buffer (`start` + `len`); the lexer
  * does not copy lexemes. Keywords are TokenKind values, not identifiers.
- * Line comments (`//`) and block comments are skipped. `///` and `//!` are
- * tokens (item / module docs), not skipped. Semicolons are tokens; the parser
- * treats them as optional.
+ * Line comments (`//`) and block comments are skipped. A doc comment is
+ * slash-star-star with a star before the text, and it attaches to the next
+ * item. Three stars in a row stays an ordinary block comment.
+ * Semicolons are tokens; the parser treats them as optional.
  */
 #ifndef LOAM_LEXER_H
 #define LOAM_LEXER_H
@@ -89,8 +90,8 @@ typedef enum {
     TOK_AS,
     TOK_TRUE,
     TOK_FALSE,
-    TOK_DOC,      /* `///` item documentation */
-    TOK_MOD_DOC,  /* `//!` module documentation */
+    TOK_DOC,      /* slash-star-star item documentation */
+    TOK_MOD_DOC,  /* not produced; a bang block is an ordinary comment */
 } TokenKind;
 
 /** One token: kind, source span, and start/end location (1-based). */

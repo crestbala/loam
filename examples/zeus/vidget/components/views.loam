@@ -1,6 +1,6 @@
-//! The screen, in four pieces: header, link bar, preview dialog and downloads.
-//! Every piece reads `store.loam`; none talks to the engine directly. Logs go
-//! to the terminal running `zeli serve`, not the window.
+// The screen, in four pieces: header, link bar, preview dialog and downloads.
+// Every piece reads `store.loam`; none talks to the engine directly. Logs go
+// to the terminal running `zeli serve`, not the window.
 
 import "zeus"
 import "zui"
@@ -9,7 +9,7 @@ import "zui:spacing"
 import "../server/api.loam"
 import "store.loam"
 
-/// A down-arrow into a tray, 24-unit viewBox like the zui icon set.
+/** *A down-arrow into a tray, 24-unit viewBox like the zui icon set. */
 const IC_DOWNLOAD: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 3v12\"/><path d=\"M7 10l5 5 5-5\"/><path d=\"M5 21h14\"/></svg>"
 
 fn Header() -> Node {
@@ -40,7 +40,7 @@ fn Header() -> Node {
     }
 }
 
-/// URL field, Download, and the options a paste uses.
+/** *URL field, Download, and the options a paste uses. */
 fn LinkBar() -> Node {
     // A pasted link opens the preview dialog; nothing downloads until Save.
     zeus.effect(fn() {
@@ -83,13 +83,13 @@ fn LinkBar() -> Node {
     }
 }
 
-/// What the link holds, before anything downloads: thumbnail, title, site,
-/// length and the format list, with Cancel and Save.
-///
-/// One `Match` on the probe state, so exactly one arm is mounted: sibling
-/// `Show`s left the loading skeleton painted next to the result when the
-/// state flipped inside the reply's `zeus.batch`. A new probe passes through
-/// LOADING, so the ready arm (and its format list) rebuilds each time.
+/** *What the link holds, before anything downloads: thumbnail, title, site, */
+/** *length and the format list, with Cancel and Save. */
+/** */
+/** *One `Match` on the probe state, so exactly one arm is mounted: sibling */
+/** *`Show`s left the loading skeleton painted next to the result when the */
+/** *state flipped inside the reply's `zeus.batch`. A new probe passes through */
+/** *LOADING, so the ready arm (and its format list) rebuilds each time. */
 fn PreviewDialog() -> Node {
     // The X, Escape or the scrim close it too: drop the probe the same way.
     zeus.effect(fn() {

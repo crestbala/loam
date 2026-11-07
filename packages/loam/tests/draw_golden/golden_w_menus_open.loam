@@ -21,7 +21,7 @@ fn settle() {
     zeus.dump_draw_list()
 }
 
-/// Close whatever menu is open with a click on empty page space.
+/** *Close whatever menu is open with a click on empty page space. */
 fn dismiss() {
     zeus.engine_click(460, 400)
     zeus.engine_mouseup()

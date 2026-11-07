@@ -1,11 +1,11 @@
-//! Scales, chord progressions, and voicings for the synth layers.
-//!
-//! Everything is in the piece key, so the instruments agree with the
-//! recordings after those are shifted onto it. A progression is four
-//! chords, one per bar. The arranger reads it from the recordings when they
-//! are tonal enough (`arrange.progression_for`); otherwise the style's own,
-//! written here as scale degrees, is used. Either way the synths get chord
-//! codes (`key.chord_code`), so a borrowed chord plays as it was heard.
+// Scales, chord progressions, and voicings for the synth layers.
+//
+// Everything is in the piece key, so the instruments agree with the
+// recordings after those are shifted onto it. A progression is four
+// chords, one per bar. The arranger reads it from the recordings when they
+// are tonal enough (`arrange.progression_for`); otherwise the style's own,
+// written here as scale degrees, is used. Either way the synths get chord
+// codes (`key.chord_code`), so a borrowed chord plays as it was heard.
 
 import "key.loam" as key
 import "num.loam" as num
@@ -25,8 +25,8 @@ fn scale(minor: bool) -> []int {
     return major_scale()
 }
 
-/// Four-bar progressions as scale degrees (0 is the tonic chord). `pick`
-/// chooses one; each style starts from its own.
+/** *Four-bar progressions as scale degrees (0 is the tonic chord). `pick` */
+/** *chooses one; each style starts from its own. */
 fn progression(minor: bool, pick: int) -> []int {
     let p = num.absi(pick) % 4
     if minor {
@@ -53,7 +53,7 @@ fn progression(minor: bool, pick: int) -> []int {
     return []int { 0, 3, 5, 4 }
 }
 
-/// Semitones above the tonic of scale degree `d` (any integer; octaves wrap).
+/** *Semitones above the tonic of scale degree `d` (any integer; octaves wrap). */
 fn degree_semis(minor: bool, d: int) -> int {
     let s = scale(minor)
     let mut oct = 0
@@ -69,15 +69,15 @@ fn degree_semis(minor: bool, d: int) -> int {
     return s[k] + oct * 12
 }
 
-/// The triad on scale degree `d` as a chord code (`key.chord_code`): its
-/// quality is the one the scale gives it.
+/** *The triad on scale degree `d` as a chord code (`key.chord_code`): its */
+/** *quality is the one the scale gives it. */
 fn degree_chord(tonic: int, minor: bool, d: int) -> int {
     let root = degree_semis(minor, d)
     let third = degree_semis(minor, d + 2) - root
     return key.chord_code(tonic + root, third == 3)
 }
 
-/// A progression of scale degrees as chord codes.
+/** *A progression of scale degrees as chord codes. */
 fn chords_of(tonic: int, minor: bool, degrees: []int) -> []int {
     let mut out = []int {}
     for i in 0..degrees.len {
@@ -86,8 +86,8 @@ fn chords_of(tonic: int, minor: bool, degrees: []int) -> []int {
     return out
 }
 
-/// Pitch classes of `chord`, plus its seventh when `seventh` is set: the
-/// minor seventh, or the major one when only that is in the key.
+/** *Pitch classes of `chord`, plus its seventh when `seventh` is set: the */
+/** *minor seventh, or the major one when only that is in the key. */
 fn chord_pcs(chord: int, seventh: bool, tonic: int, minor: bool) -> []int {
     let mut out = key.chord_tones(chord)
     if seventh {
@@ -102,7 +102,7 @@ fn chord_pcs(chord: int, seventh: bool, tonic: int, minor: bool) -> []int {
     return out
 }
 
-/// MIDI note of pitch class `pc` nearest `centre`.
+/** *MIDI note of pitch class `pc` nearest `centre`. */
 fn nearest(pc: int, centre: int) -> int {
     let p = (pc % 12 + 12) % 12
     let mut m = (centre / 12) * 12 + p
@@ -115,7 +115,7 @@ fn nearest(pc: int, centre: int) -> int {
     return m
 }
 
-/// The chord as MIDI notes in a close voicing around `centre`, low to high.
+/** *The chord as MIDI notes in a close voicing around `centre`, low to high. */
 fn voicing(chord: int, seventh: bool, tonic: int, minor: bool, centre: int) -> []int {
     return voice_pcs(chord_pcs(chord, seventh, tonic, minor), centre)
 }
@@ -129,8 +129,8 @@ fn voice_pcs(pcs: []int, centre: int) -> []int {
     return out
 }
 
-/// `color` from `plan.tension_color`: 0 triad, 1 seventh, 2 sus4, 3 add9.
-/// Sus4 is root, fourth, and fifth. Add9 is the triad plus the ninth.
+/** *`color` from `plan.tension_color`: 0 triad, 1 seventh, 2 sus4, 3 add9. */
+/** *Sus4 is root, fourth, and fifth. Add9 is the triad plus the ninth. */
 fn colored(chord: int, color: int, tonic: int, minor: bool, centre: int) -> []int {
     let r = key.chord_root(chord)
     if color == 2 {
@@ -144,12 +144,12 @@ fn colored(chord: int, color: int, tonic: int, minor: bool, centre: int) -> []in
     return voicing(chord, color == 1, tonic, minor, centre)
 }
 
-/// Root of `chord` in the bass register (MIDI 34..46).
+/** *Root of `chord` in the bass register (MIDI 34..46). */
 fn bass_note(chord: int) -> int {
     return bass_at(chord, 40)
 }
 
-/// Root of `chord` nearest `centre`.
+/** *Root of `chord` nearest `centre`. */
 fn bass_at(chord: int, centre: int) -> int {
     return nearest(key.chord_root(chord), centre)
 }

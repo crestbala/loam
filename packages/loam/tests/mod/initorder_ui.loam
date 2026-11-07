@@ -1,5 +1,5 @@
-//! Reaches `zeus` before `initorder_store.loam` is imported, so the import
-//! walk visits zeus first (see golden/module_signal_init.loam).
+// Reaches `zeus` before `initorder_store.loam` is imported, so the import
+// walk visits zeus first (see golden/module_signal_init.loam).
 
 import "zeus"
 

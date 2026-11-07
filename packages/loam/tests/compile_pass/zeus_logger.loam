@@ -18,7 +18,7 @@ fn check(what: string, ok: bool) {
     }
 }
 
-/// A record in `scope` whose text contains `want`.
+/** *A record in `scope` whose text contains `want`. */
 fn seen(scope: string, want: string) -> bool {
     let rs = log.records()
     for i in 0..rs.len {

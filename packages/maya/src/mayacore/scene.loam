@@ -1,4 +1,4 @@
-//! Retained Maya scene: analytic-sphere tracer and top-down 2D map.
+// Retained Maya scene: analytic-sphere tracer and top-down 2D map.
 
 import "math.loam"
 

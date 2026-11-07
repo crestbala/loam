@@ -1,11 +1,11 @@
-//! WebSocket (RFC 6455) codec bits for `http`: base64, SHA-1, the
-//! handshake accept key, and text-frame encode/decode. Pure Loam over
-//! bytes-in-strings — no C, no crypto library. Bit ops use the `wrapping_*`
-//! builtins; 32-bit words live in ints masked to 32 bits.
-//!
-//! Client → server frames must be masked; server → client frames never are.
-//! Frame reads are incremental: `take_frame` returns the first complete
-//! frame and leaves the rest of the buffer for the next read.
+// WebSocket (RFC 6455) codec bits for `http`: base64, SHA-1, the
+// handshake accept key, and text-frame encode/decode. Pure Loam over
+// bytes-in-strings — no C, no crypto library. Bit ops use the `wrapping_*`
+// builtins; 32-bit words live in ints masked to 32 bits.
+//
+// Client → server frames must be masked; server → client frames never are.
+// Frame reads are incremental: `take_frame` returns the first complete
+// frame and leaves the rest of the buffer for the next read.
 
 fn eq(a: string, b: string) -> bool {
     let mut same = true
@@ -74,7 +74,7 @@ fn byte_at(s: string, i: int) -> int {
 
 const B64_ALPHA: string = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 
-/// Base64 (RFC 4648, with padding) of `s`.
+/** *Base64 (RFC 4648, with padding) of `s`. */
 fn b64e(s: string) -> string {
     let mut out = []int {}
     let n = s.len
@@ -124,7 +124,7 @@ fn xor32(a: u64, b: u64) -> u64 {
     return wrapping_or(a, b) - wrapping_and(a, b)
 }
 
-/// SHA-1 digest of `msg`, returned as 20 raw bytes.
+/** *SHA-1 digest of `msg`, returned as 20 raw bytes. */
 fn sha1(msg: string) -> string {
     let mut m = bytes_of(msg)
     let bitlen = u64(msg.len) * 8
@@ -219,12 +219,12 @@ fn sha1(msg: string) -> string {
 
 const WS_GUID: string = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
-/// `Sec-WebSocket-Accept` for a client `Sec-WebSocket-Key`.
+/** *`Sec-WebSocket-Accept` for a client `Sec-WebSocket-Key`. */
 fn accept_key(key: string) -> string {
     return b64e(sha1(concat(key, WS_GUID)))
 }
 
-/// 16 pseudo-random bytes for `Sec-WebSocket-Key`, seeded from the clock.
+/** *16 pseudo-random bytes for `Sec-WebSocket-Key`, seeded from the clock. */
 fn client_key(seed: i64) -> string {
     let mut x = wrapping_and(u64(seed), MASK32)
     let mut out = []int {}
@@ -235,8 +235,8 @@ fn client_key(seed: i64) -> string {
     return string_of(out)
 }
 
-/// Header block value lookup: find `\r\nName: value` (case-insensitive) in a
-/// raw HTTP/1.1 head. Empty when missing. `name` must be lowercase.
+/** *Header block value lookup: find `\r\nName: value` (case-insensitive) in a */
+/** *raw HTTP/1.1 head. Empty when missing. `name` must be lowercase. */
 fn header_val(head: string, name: string) -> string {
     let nl = head.len
     let nn = name.len
@@ -296,18 +296,18 @@ fn header_val(head: string, name: string) -> string {
 
 // --- frames ---------------------------------------------------------------
 
-/// Server → client text frame (never masked).
+/** *Server → client text frame (never masked). */
 fn server_text(s: string) -> string {
     return frame_bytes(1, 0, s, 0)
 }
 
-/// Client → server masked text frame.
+/** *Client → server masked text frame. */
 fn client_text(s: string, seed: int) -> string {
     return frame_bytes(1, 1, s, seed)
 }
 
-/// One outgoing frame. `masked` = client→server (RFC 6455 §5.3). Supports
-/// payloads up to 65535 bytes (16-bit length).
+/** *One outgoing frame. `masked` = client→server (RFC 6455 §5.3). Supports */
+/** *payloads up to 65535 bytes (16-bit length). */
 fn frame_bytes(op: int, masked: int, s: string, seed: int) -> string {
     let mut out = []int {}
     out.push(128 + op)
@@ -348,9 +348,9 @@ fn frame_bytes(op: int, masked: int, s: string, seed: int) -> string {
     return string_of(out)
 }
 
-/// One decoded frame: `ok` 1 = complete, 0 = need more bytes, -1 = bad.
-/// `op`: 1 text, 8 close, 9 ping. `text` is the payload; `rest` is the
-/// buffer after this frame.
+/** *One decoded frame: `ok` 1 = complete, 0 = need more bytes, -1 = bad. */
+/** *`op`: 1 text, 8 close, 9 ping. `text` is the payload; `rest` is the */
+/** *buffer after this frame. */
 struct Frame {
     ok: int,
     op: int,

@@ -1,6 +1,6 @@
-//! `#[test]` fns for the pure parsers (no network, no tools):
-//!
-//!   ZEUS_HEADLESS=1 ./bin/loamc test examples/zeus/vidget/app.loam
+// `#[test]` fns for the pure parsers (no network, no tools):
+//
+//   ZEUS_HEADLESS=1 ./bin/loamc test examples/zeus/vidget/app.loam
 
 import "std:test"
 import "../server/extract.loam"

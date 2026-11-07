@@ -1,28 +1,28 @@
-//! Module docs (`//!`) describe the file. Hover on the module name shows this.
-//!
-//! Example:
-//!   let n = add(1, 2)
+// The file header is an ordinary line comment.
+//
+// Example:
+//   let n = add(1, 2)
 
 import "std:fmt"
 
-/// Adds two integers.
-///
-/// Example:
-///   let n = add(2, 3)
+/** *Adds two integers. */
+/** */
+/** *Example: */
+/** *let n = add(2, 3) */
 fn add(a: int, b: int) -> int {
     return a + b
 }
 
-/// A named pair of ints.
+/** *A named pair of ints. */
 struct Point {
-    /// Horizontal position.
+    /** *Horizontal position. */
     x: int,
-    /// Vertical position.
+    /** *Vertical position. */
     y: int,
 }
 
 fn main() {
-    /// Local docs attach to `let`.
+    /** *Local docs attach to `let`. */
     let p = Point { x: 1, y: 2 }
     fmt.println(add(p.x, p.y))
 }

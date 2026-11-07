@@ -1,35 +1,35 @@
-//! Blog list, fetched from the backend over gRPC (`Blog.Posts` in
-//! `server/api.loam`).
-//!
-//! On module state: some of it is unavoidable — a signal has to outlive a page
-//! build, and there is nowhere else to keep one — but it is kept to two *zero*
-//! handles, created on first use, with no separate flag. This is `zeus:router`'s
-//! own idiom (`ensure_path`, router.loam:300):
-//!
-//!     let mut cur_path: Signal<string> = Signal { id: 0 }
-//!     fn ensure_path() { if cur_path.id == 0 { cur_path = zeus.signal("/") } }
-//!
-//! `state.id == 0` doubles as the "already started" latch, so there is no
-//! `started` flag either. A module-level `let state = zeus.signal(...)` also
-//! works (module inits run after the inits of everything they import; see
-//! examples/zeus/vidget/components/store.loam), but it would need that flag.
-//!
-//! Two signals and not one `Signal<Feed>`: a signal holding a struct that owns a
-//! list loses the list's *elements* when the store happens inside an async
-//! callback — exactly where a reply lands. Minimal reproduction (the value reads
-//! back fine, nothing paints):
-//!
-//!     struct Feed { state: int, titles: []string }
-//!     let a = zeus.signal(Feed { state: 0, titles: []string {} })
-//!     async.spawn(|| { a.set(Feed { state: 1, titles: pushed("delta") }) })
-//!     zeus.pump_frame()
-//!     // a.get().titles.len == 1, but `zeus.Text(a.get().titles[0])` inside a
-//!     // `zui.Match` over `a` paints nothing.
-//!
-//! `start()` is called from `app.loam` before `zeus.App`, not from the page:
-//! `call_async` registers connection state, and anything allocated during a
-//! `Match` / `Each` rebuild belongs to that host, which frees it on its next
-//! rebuild.
+// Blog list, fetched from the backend over gRPC (`Blog.Posts` in
+// `server/api.loam`).
+//
+// On module state: some of it is unavoidable — a signal has to outlive a page
+// build, and there is nowhere else to keep one — but it is kept to two *zero*
+// handles, created on first use, with no separate flag. This is `zeus:router`'s
+// own idiom (`ensure_path`, router.loam:300):
+//
+//     let mut cur_path: Signal<string> = Signal { id: 0 }
+//     fn ensure_path() { if cur_path.id == 0 { cur_path = zeus.signal("/") } }
+//
+// `state.id == 0` doubles as the "already started" latch, so there is no
+// `started` flag either. A module-level `let state = zeus.signal(...)` also
+// works (module inits run after the inits of everything they import; see
+// examples/zeus/vidget/components/store.loam), but it would need that flag.
+//
+// Two signals and not one `Signal<Feed>`: a signal holding a struct that owns a
+// list loses the list's *elements* when the store happens inside an async
+// callback — exactly where a reply lands. Minimal reproduction (the value reads
+// back fine, nothing paints):
+//
+//     struct Feed { state: int, titles: []string }
+//     let a = zeus.signal(Feed { state: 0, titles: []string {} })
+//     async.spawn(|| { a.set(Feed { state: 1, titles: pushed("delta") }) })
+//     zeus.pump_frame()
+//     // a.get().titles.len == 1, but `zeus.Text(a.get().titles[0])` inside a
+//     // `zui.Match` over `a` paints nothing.
+//
+// `start()` is called from `app.loam` before `zeus.App`, not from the page:
+// `call_async` registers connection state, and anything allocated during a
+// `Match` / `Each` rebuild belongs to that host, which frees it on its next
+// rebuild.
 
 import "http"
 import "zeus"
@@ -40,19 +40,19 @@ import "zui"
 // Import paths are relative to this file, hence the climb to the app root.
 import "../../server/api.loam"
 
-/// In flight, or answered. `zeus:res`'s RES.Loading / RES.Ready.
+/** *In flight, or answered. `zeus:res`'s RES.Loading / RES.Ready. */
 let STATE_LOADING = 0
 let STATE_READY = 1
 
 let mut state: Signal<int> = Signal { id: 0 }
 let mut titles: Signal<[]string> = Signal { id: 0 }
 
-/// Start the request, once. Idempotent, and the zero handle *is* the latch: an
-/// allocated `state` means a request is already under way.
-///
-/// A transport failure leaves the state at `STATE_LOADING`: `call_async` has no
-/// error channel and the synchronous `call` would block the frame. Adding a
-/// timeout is a separate change.
+/** *Start the request, once. Idempotent, and the zero handle *is* the latch: an */
+/** *allocated `state` means a request is already under way. */
+/** */
+/** *A transport failure leaves the state at `STATE_LOADING`: `call_async` has no */
+/** *error channel and the synchronous `call` would block the frame. Adding a */
+/** *timeout is a separate change. */
 fn start() {
     if state.id != 0 {
         return
@@ -66,19 +66,19 @@ fn start() {
     })
 }
 
-/// The load state, for the page to `zui.Match` on.
+/** *The load state, for the page to `zui.Match` on. */
 fn load_state() -> Signal<int> {
     return state
 }
 
-/// The reply, read inside the `Match` so the repaint follows it.
+/** *The reply, read inside the `Match` so the repaint follows it. */
 fn load_data() -> Signal<[]string> {
     return titles
 }
 
-/// Is a reply in hand? A function rather than a constant the page could compare
-/// against, because a cross-module `let` cannot be read (see
-/// tests/compile_fail/zeus_mod_get.loam).
+/** *Is a reply in hand? A function rather than a constant the page could compare */
+/** *against, because a cross-module `let` cannot be read (see */
+/** *tests/compile_fail/zeus_mod_get.loam). */
 fn is_ready(st: int) -> bool {
     return st == STATE_READY
 }

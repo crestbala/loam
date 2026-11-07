@@ -454,7 +454,7 @@ every file. Colors are already exactly 32 bits packed; splitting them is a loss.
 
 **Store these unscaled, in dp, and apply the DPI scale at paint.** If you store
 *scaled* values, `padding = 100` on a 3× display traps at 300 in a `u8`. Every
-narrowed field needs a documented max in its `///` comment and a compile error at
+narrowed field needs a documented max in its doc comment and a compile error at
 the literal — `padding = 400: does not fit u16 field 'padding' (max 65535)` — not
 a runtime trap in someone's app.
 

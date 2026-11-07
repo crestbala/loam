@@ -1,12 +1,12 @@
-//! The screen, driven like a person: a drop of two files, a pasted path,
-//! then Generate. The piece is the real ffmpeg render. Skips the render
-//! when ffmpeg is missing, and still checks the list.
-//!
-//! The melody recording plays one note a bar over a click, in a shuffled
-//! order of pitches. The take must place its phrases and follow the energy
-//! arc: quiet at the start, full in the middle.
-//!
-//!   ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/mune/tests/session.loam -o /tmp/mune-session && /tmp/mune-session
+// The screen, driven like a person: a drop of two files, a pasted path,
+// then Generate. The piece is the real ffmpeg render. Skips the render
+// when ffmpeg is missing, and still checks the list.
+//
+// The melody recording plays one note a bar over a click, in a shuffled
+// order of pitches. The take must place its phrases and follow the energy
+// arc: quiet at the start, full in the middle.
+//
+//   ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/mune/tests/session.loam -o /tmp/mune-session && /tmp/mune-session
 
 import "std:async"
 import "std:fmt"
@@ -20,7 +20,7 @@ import "../studio/store.loam" as store
 
 const DIR: string = "/tmp/mune-flow"
 const RATE: int = 48000
-/// 120 BPM: a beat is half a second, a bar two.
+/** *120 BPM: a beat is half a second, a bar two. */
 const BEAT: int = 24000
 
 fn fail(what: string) {
@@ -54,7 +54,7 @@ fn click(label: string) {
     frames()
 }
 
-/// A short noisy click at the start of every beat.
+/** *A short noisy click at the start of every beat. */
 fn click_at(i: int) -> int {
     let pos = i % BEAT
     if pos >= 600 {
@@ -66,7 +66,7 @@ fn click_at(i: int) -> int {
     return if n % 2 == 0 { mag } else { -mag }
 }
 
-/// Clicks, and one held note per bar in a shuffled order of pitches.
+/** *Clicks, and one held note per bar in a shuffled order of pitches. */
 fn write_melody(path: string) {
     let notes = []int { 62, 50, 69, 57, 74, 53, 65, 60, 71, 55, 67, 48 }
     let mut samples = []int {}
@@ -83,7 +83,7 @@ fn write_melody(path: string) {
     }
 }
 
-/// A steady low hum, for the air bus.
+/** *A steady low hum, for the air bus. */
 fn write_pad(path: string) {
     let mut samples = []int {}
     let f = num.midi_hz(45)

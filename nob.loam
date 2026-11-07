@@ -1,38 +1,38 @@
-//! nob — the Loam build and test tool.
-//!
-//! `nob` is a Loam program, so something else has to build the first compiler:
-//! `nob.sh` compiles a seed `bin/loamc` and `bin/nob`, then hands every command
-//! here. Everything after that bootstrap lives in this file.
-//!
-//!     nob                  build bin/loamc, bin/loam-lsp, bin/loam-fmt, bin/zeli
-//!     nob test [-j N]      build, then run the language suites and host checks
-//!     nob test --isolated  the same, but every fixture as its own binary
-//!     nob test <filter>    only fixtures whose path contains <filter>, isolated
-//!     nob test <f.loam>    build and run exactly this file
-//!     nob integration      the zeli/serve/pkg/fmt suite (slow; on demand)
-//!     nob lsp              build the language server (and its objects) only
-//!     nob bench            build, then run packages/loam/tests/bench/run.sh
-//!     nob grammar          regenerate, check and publish the tree-sitter grammar
-//!     nob grammar-check    check the grammar against the compiler's parser
-//!     nob install-editor   install the VS Code extension
-//!     nob clean            remove build output
-//!     nob help
-//!
-//! `-j N` (default: every core, or `NOB_JOBS` / `LOAM_JOBS`) bounds how many
-//! cases run at once; each case's result line is streamed as it finishes. The
-//! pool is `xargs -P`, because Loam's `thread.spawn` workers are deliberately
-//! barred from the C seam (`sys.exec` is not in `worker_seam_ok`), so parallelism
-//! is one process per case rather than one Loam thread per case.
-//!
-//! Why `nob test` batches: compiling hundreds of fixtures separately parses and
-//! compiles the same Zeus library hundreds of times, and macOS scans every new
-//! binary on its first exec, about 0.3s per binary, one at a time across the whole
-//! machine, whatever `-j` says. So a full run builds the fixtures into two
-//! binaries, and each binary forks one process per fixture before anything has
-//! initialized (`runtime/batch_run.c`); only that fixture's modules then start
-//! (`codegen_set_batch`). A fixture that does not pass that way is rerun, then
-//! retried on its own, and that verdict stands.
-//! `--isolated` is the slower check that no fixture depends on being batched.
+// nob — the Loam build and test tool.
+//
+// `nob` is a Loam program, so something else has to build the first compiler:
+// `nob.sh` compiles a seed `bin/loamc` and `bin/nob`, then hands every command
+// here. Everything after that bootstrap lives in this file.
+//
+//     nob                  build bin/loamc, bin/loam-lsp, bin/loam-fmt, bin/zeli
+//     nob test [-j N]      build, then run the language suites and host checks
+//     nob test --isolated  the same, but every fixture as its own binary
+//     nob test <filter>    only fixtures whose path contains <filter>, isolated
+//     nob test <f.loam>    build and run exactly this file
+//     nob integration      the zeli/serve/pkg/fmt suite (slow; on demand)
+//     nob lsp              build the language server (and its objects) only
+//     nob bench            build, then run packages/loam/tests/bench/run.sh
+//     nob grammar          regenerate, check and publish the tree-sitter grammar
+//     nob grammar-check    check the grammar against the compiler's parser
+//     nob install-editor   install the VS Code extension
+//     nob clean            remove build output
+//     nob help
+//
+// `-j N` (default: every core, or `NOB_JOBS` / `LOAM_JOBS`) bounds how many
+// cases run at once; each case's result line is streamed as it finishes. The
+// pool is `xargs -P`, because Loam's `thread.spawn` workers are deliberately
+// barred from the C seam (`sys.exec` is not in `worker_seam_ok`), so parallelism
+// is one process per case rather than one Loam thread per case.
+//
+// Why `nob test` batches: compiling hundreds of fixtures separately parses and
+// compiles the same Zeus library hundreds of times, and macOS scans every new
+// binary on its first exec, about 0.3s per binary, one at a time across the whole
+// machine, whatever `-j` says. So a full run builds the fixtures into two
+// binaries, and each binary forks one process per fixture before anything has
+// initialized (`runtime/batch_run.c`); only that fixture's modules then start
+// (`codegen_set_batch`). A fixture that does not pass that way is rerun, then
+// retried on its own, and that verdict stands.
+// `--isolated` is the slower check that no fixture depends on being batched.
 
 import "std:fmt"
 import "std:sys"
@@ -54,21 +54,21 @@ let mut JOBS: int = 1
 let mut CHANGED: bool = false
 let mut N_PASS: int = 0
 let mut N_FAIL: int = 0
-/// Cases that failed inside a batch and were retried alone.
+/** *Cases that failed inside a batch and were retried alone. */
 let mut N_RETRIED: int = 0
 let mut TSTART: int = 0
 let mut FAILURES: []string = []string {}
-/// `nob test <filter>`: run only the fixtures whose path contains this
-/// substring, and skip the host checks. Empty means the whole suite.
+/** *`nob test <filter>`: run only the fixtures whose path contains this */
+/** *substring, and skip the host checks. Empty means the whole suite. */
 let mut ONLY: string = ""
-/// `nob test <file.loam>`: build and run exactly this file, headless.
+/** *`nob test <file.loam>`: build and run exactly this file, headless. */
 let mut ONLY_FILE: string = ""
-/// `nob test --isolated`: every fixture as its own binary.
+/** *`nob test --isolated`: every fixture as its own binary. */
 let mut ISOLATED: bool = false
 
 // --- small string helpers ------------------------------------------------
 
-/// `s[a..b]` as a new string (empty when the range is empty or backwards).
+/** *`s[a..b]` as a new string (empty when the range is empty or backwards). */
 fn slice(s: string, a: int, b: int) -> string {
     let mut x = []int {}
     if a < b {
@@ -79,8 +79,8 @@ fn slice(s: string, a: int, b: int) -> string {
     return string_from_bytes(x)
 }
 
-/// `a` with `b` after it. Strings are values here, so building text is a pure
-/// function returning a new string (Loam has no `+` for strings).
+/** *`a` with `b` after it. Strings are values here, so building text is a pure */
+/** *function returning a new string (Loam has no `+` for strings). */
 fn cat(a: string, b: string) -> string {
     let mut x = []int {}
     for i in 0..a.len {
@@ -129,8 +129,8 @@ fn int_of(s: string) -> int {
     return n
 }
 
-/// `s` as one word for the shell: single-quoted, with `'` closed, escaped and
-/// reopened. `sys.exec` runs through `sh`, so every path goes through this.
+/** *`s` as one word for the shell: single-quoted, with `'` closed, escaped and */
+/** *reopened. `sys.exec` runs through `sh`, so every path goes through this. */
 fn shq(s: string) -> string {
     let mut b = []int {}
     push(b, 39) /* ' */
@@ -174,7 +174,7 @@ fn ends_with(s: string, suffix: string) -> bool {
     return true
 }
 
-/// `p` without its last path segment ("" when it has none).
+/** *`p` without its last path segment ("" when it has none). */
 fn dir_of(p: string) -> string {
     let mut cut = -1
     for i in 0..p.len {
@@ -188,7 +188,7 @@ fn dir_of(p: string) -> string {
     return slice(p, 0, cut)
 }
 
-/// The last path segment of `p`.
+/** *The last path segment of `p`. */
 fn base(p: string) -> string {
     let mut cut = -1
     for i in 0..p.len {
@@ -209,7 +209,7 @@ fn join(dir: string, name: string) -> string {
     return "{{dir}}/{{name}}"
 }
 
-/// `p` without this repo's root prefix, the way the suite prints a file.
+/** *`p` without this repo's root prefix, the way the suite prints a file. */
 fn rel_of(p: string) -> string {
     let pre = "{{ROOT}}/"
     if starts_with(p, pre) {
@@ -231,8 +231,8 @@ fn pad4(i: int) -> string {
     return "{{i}}"
 }
 
-/// Ordering on byte strings, so a list of paths can be sorted without a
-/// string `<` operator the language does not have.
+/** *Ordering on byte strings, so a list of paths can be sorted without a */
+/** *string `<` operator the language does not have. */
 fn str_less(a: string, b: string) -> bool {
     let mut n = a.len
     if b.len < n {
@@ -249,7 +249,7 @@ fn str_less(a: string, b: string) -> bool {
     return a.len < b.len
 }
 
-/// A new array with `v`'s strings in order (insertion sort).
+/** *A new array with `v`'s strings in order (insertion sort). */
 fn sorted(v: []string) -> []string {
     let mut out = []string {}
     for i in 0..v.len {
@@ -269,7 +269,7 @@ fn sorted(v: []string) -> []string {
     return out
 }
 
-/// `name` with its last `n` bytes removed.
+/** *`name` with its last `n` bytes removed. */
 fn drop_last(name: string, n: int) -> string {
     if name.len < n {
         return name
@@ -277,19 +277,19 @@ fn drop_last(name: string, n: int) -> string {
     return slice(name, 0, name.len - n)
 }
 
-/// `p` without a `.loam` extension, as a stem (no directory).
+/** *`p` without a `.loam` extension, as a stem (no directory). */
 fn stem_of(p: string) -> string {
     return drop_last(base(p), 5)
 }
 
-/// `name` without a `.c` extension.
+/** *`name` without a `.c` extension. */
 fn stem_c(name: string) -> string {
     return drop_last(name, 2)
 }
 
 // --- filesystem listings -------------------------------------------------
 
-/// Every `ext` file directly in `dir`, sorted (`sys.list_dir` sorts entries).
+/** *Every `ext` file directly in `dir`, sorted (`sys.list_dir` sorts entries). */
 fn list_ext(dir: string, ext: string) -> []string {
     let mut out = []string {}
     if sys.is_dir(dir) == 0 {
@@ -308,8 +308,8 @@ fn list_loam(dir: string) -> []string {
     return list_ext(dir, ".loam")
 }
 
-/// An entry point named after its directory (`examples/zeus/dashboard/
-/// dashboard.loam`). Full-stack examples have no such file and are excluded.
+/** *An entry point named after its directory (`examples/zeus/dashboard/ */
+/** *dashboard.loam`). Full-stack examples have no such file and are excluded. */
 fn zeus_apps() -> []string {
     let mut out = []string {}
     let dir = "{{ROOT}}/examples/zeus"
@@ -332,14 +332,14 @@ fn zeus_apps() -> []string {
 
 // --- shell plumbing ------------------------------------------------------
 
-/// Run `cmd` from the repo root and return whether it exited 0.
+/** *Run `cmd` from the repo root and return whether it exited 0. */
 fn run_ok(cmd: string) -> bool {
     sys.exec("cd {{shq(ROOT)}} && {{cmd}}")
     return sys.exec_status() == 0
 }
 
-/// Is `a` strictly newer than `b`? (`test -nt` is true when `b` is missing,
-/// which is the wanted behaviour for "needs building".)
+/** *Is `a` strictly newer than `b`? (`test -nt` is true when `b` is missing, */
+/** *which is the wanted behaviour for "needs building".) */
 fn is_newer(a: string, b: string) -> bool {
     sys.exec("cd {{shq(ROOT)}} && test {{shq(a)}} -nt {{shq(b)}}")
     return sys.exec_status() == 0
@@ -354,7 +354,7 @@ fn now_s() -> int {
     return int_of(sys.exec("date +%s"))
 }
 
-/// Non-overlapping occurrences of `needle` in `hay`.
+/** *Non-overlapping occurrences of `needle` in `hay`. */
 fn count_of(hay: string, needle: string) -> int {
     let mut n = 0
     let mut i = 0
@@ -393,7 +393,7 @@ fn contains_str(hay: string, needle: string) -> bool {
     return false
 }
 
-/// Every line of `text` that starts with `prefix`, trimmed.
+/** *Every line of `text` that starts with `prefix`, trimmed. */
 fn lines_with(text: string, prefix: string) -> []string {
     let mut out = []string {}
     let all = split_lines(text)
@@ -422,9 +422,9 @@ fn split_lines(s: string) -> []string {
 
 // --- compiler build ------------------------------------------------------
 
-/// The flags the compiler is built with. Kept in one place: `nob.sh`'s seed
-/// build mirrors this, and `build` stamps the value into `obj/.cflags` so a
-/// change here forces a full object rebuild.
+/** *The flags the compiler is built with. Kept in one place: `nob.sh`'s seed */
+/** *build mirrors this, and `build` stamps the value into `obj/.cflags` so a */
+/** *change here forces a full object rebuild. */
 fn cflags() -> string {
     let mut s = "-std=c11 -D_GNU_SOURCE -Wall -Wextra -Wpedantic -O2 -g"
     s = cat(s, " -DLOAM_RT_PATH='\"{{ROOT}}/packages/loam/runtime/loam_rt.h\"'")
@@ -443,7 +443,7 @@ struct CSrc {
     lib: bool,
 }
 
-/// Every compiler source, with its object path under `obj/`.
+/** *Every compiler source, with its object path under `obj/`. */
 fn c_sources() -> []CSrc {
     let mut out = []CSrc {}
     let top = list_ext(SRC, ".c")
@@ -481,8 +481,8 @@ fn quoted_list(v: []string) -> string {
     return s
 }
 
-/// The objects that link into a given binary: `loamc` adds `driver.o`, `lsp`
-/// adds `lsp.o`; both take every library object.
+/** *The objects that link into a given binary: `loamc` adds `driver.o`, `lsp` */
+/** *adds `lsp.o`; both take every library object. */
 fn objs_of(srcs: []CSrc, what: string) -> []string {
     let mut out = []string {}
     for i in 0..srcs.len {
@@ -495,8 +495,8 @@ fn objs_of(srcs: []CSrc, what: string) -> []string {
     return out
 }
 
-/// Recompile every object that is missing or older than its source. `full`
-/// rebuilds all of them (a header or the flags changed).
+/** *Recompile every object that is missing or older than its source. `full` */
+/** *rebuilds all of them (a header or the flags changed). */
 fn compile_stale(srcs: []CSrc, full: bool) -> bool {
     for i in 0..srcs.len {
         let s = srcs[i]
@@ -531,7 +531,7 @@ fn link(objs: []string, out: string) -> bool {
     return true
 }
 
-/// `all` builds every binary; `lsp` stops after the language server.
+/** *`all` builds every binary; `lsp` stops after the language server. */
 fn build(what: string) -> int {
     sys.mkdir(OBJ)
     sys.mkdir("{{OBJ}}/sema")
@@ -610,9 +610,9 @@ fn build(what: string) -> int {
 
 // --- the test plan -------------------------------------------------------
 
-/// One fixture case. `kind` selects the shell body `body` generates; `desc` is
-/// what the suite prints (a file, or a golden's stem). `bin` is the batch binary
-/// that holds this fixture as `case_id`; "" means it is compiled on its own.
+/** *One fixture case. `kind` selects the shell body `body` generates; `desc` is */
+/** *what the suite prints (a file, or a golden's stem). `bin` is the batch binary */
+/** *that holds this fixture as `case_id`; "" means it is compiled on its own. */
 struct Job {
     kind: string,
     src: string,
@@ -671,12 +671,12 @@ fn missing_job(desc: string) -> Job {
     return Job { kind: "missing", src: "", out: "", want: "", desc: desc, bin: "", case_id: 0 }
 }
 
-/// A named integration stanza, run as a child `nob` alongside the fixture cases.
+/** *A named integration stanza, run as a child `nob` alongside the fixture cases. */
 fn stanza_job(name: string) -> Job {
     return Job { kind: "stanza", src: "", out: "", want: "", desc: name, bin: "", case_id: 0 }
 }
 
-/// Compile `j` for a case, or nothing when a batch binary already holds it.
+/** *Compile `j` for a case, or nothing when a batch binary already holds it. */
 fn build_of(j: Job, id: string) -> string {
     if j.bin != "" {
         return "true"
@@ -684,7 +684,7 @@ fn build_of(j: Job, id: string) -> string {
     return "{{shq(LOAMC)}} {{shq(j.src)}} -o {{shq(j.out)}} >\"$RES/{{id}}.build\" 2>&1"
 }
 
-/// The command that runs `j`'s program.
+/** *The command that runs `j`'s program. */
 fn exe_of(j: Job) -> string {
     if j.bin != "" {
         return "LOAM_CASE={{j.case_id}} {{shq(j.bin)}}"
@@ -692,14 +692,14 @@ fn exe_of(j: Job) -> string {
     return shq(j.out)
 }
 
-/// `j` as a case compiled on its own.
+/** *`j` as a case compiled on its own. */
 fn alone(j: Job) -> Job {
     return Job { kind: j.kind, src: j.src, out: j.out, want: j.want, desc: j.desc, bin: "", case_id: 0 }
 }
 
-/// The whole case. A failure inside a batch is not yet a verdict, since the
-/// fixture has been built beside hundreds of others: it reruns alone, as
-/// `--isolated` would, which also reports a compile error in its plain form.
+/** *The whole case. A failure inside a batch is not yet a verdict, since the */
+/** *fixture has been built beside hundreds of others: it reruns alone, as */
+/** *`--isolated` would, which also reports a compile error in its plain form. */
 fn case_body(j: Job, id: string) -> string {
     if j.bin == "" {
         return body(j, id)
@@ -710,8 +710,8 @@ fn case_body(j: Job, id: string) -> string {
     return cat(s, "fi\n")
 }
 
-/// The shell a case runs. Every branch sets `st` to 0 or 1; `pool` writes it to
-/// the status file and the case exits with it. Output goes to `$RES/<id>.log`.
+/** *The shell a case runs. Every branch sets `st` to 0 or 1; `pool` writes it to */
+/** *the status file and the case exits with it. Output goes to `$RES/<id>.log`. */
 fn body(j: Job, id: string) -> string {
     if j.kind == "run" {
         return "if {{build_of(j, id)}}; then\n  if {{exe_of(j)}} >/dev/null 2>&1; then\n    echo \"ok   {{j.desc}}\"\n    st=0\n  else\n    echo \"FAIL run {{j.desc}}\"\n    st=1\n  fi\nelse\n  echo \"FAIL compile {{j.desc}}\"\n  cat \"$RES/{{id}}.build\"\n  st=1\nfi\n"
@@ -756,10 +756,10 @@ fn body(j: Job, id: string) -> string {
     return "echo \"FAIL unknown job kind {{j.kind}}\"\nst=1\n"
 }
 
-/// Run `jobs` as a bounded pool: `xargs -P JOBS` over one small script per case,
-/// each of which redirects to its own log and records its status. Separate files
-/// because `sh` parses a whole script to run any line of it, and a suite's worth
-/// of cases in one script costs more to parse than most of them cost to run.
+/** *Run `jobs` as a bounded pool: `xargs -P JOBS` over one small script per case, */
+/** *each of which redirects to its own log and records its status. Separate files */
+/** *because `sh` parses a whole script to run any line of it, and a suite's worth */
+/** *of cases in one script costs more to parse than most of them cost to run. */
 fn pool(suite: string, jobs: []Job) -> int {
     let n = jobs.len
     if n == 0 {
@@ -824,9 +824,9 @@ fn pass_files() -> []string {
     return list_loam("{{TESTS}}/compile_pass")
 }
 
-/// The examples the suite compiles: the golden programs, the language demos
-/// (minus the trap fixture, and minus raygui when raylib is absent), and the
-/// Zeus apps whose entry point is named after their directory.
+/** *The examples the suite compiles: the golden programs, the language demos */
+/** *(minus the trap fixture, and minus raygui when raylib is absent), and the */
+/** *Zeus apps whose entry point is named after their directory. */
 fn example_files() -> []string {
     let mut files = []string {}
     let g = list_loam("{{TESTS}}/golden")
@@ -863,7 +863,7 @@ fn pass_jobs() -> []Job {
     return out
 }
 
-/// `nob test <filter>` keeps only the fixtures whose path contains `ONLY`.
+/** *`nob test <filter>` keeps only the fixtures whose path contains `ONLY`. */
 fn job_kept(src: string) -> int {
     if ONLY == "" {
         return 1
@@ -1075,11 +1075,11 @@ fn test() -> int {
 
 // --- batched runs --------------------------------------------------------
 
-/// Which batch `src` builds in. The two batches exist because a program's imports
-/// choose its link line and build flags, so a fixture without Zeus should not get
-/// them from a neighbour. "alone" is for what cannot share a program at all: maya
-/// and raygui take over the link, and an app with a `runtime/` directory has C
-/// seams the driver only finds beside its entry file.
+/** *Which batch `src` builds in. The two batches exist because a program's imports */
+/** *choose its link line and build flags, so a fixture without Zeus should not get */
+/** *them from a neighbour. "alone" is for what cannot share a program at all: maya */
+/** *and raygui take over the link, and an app with a `runtime/` directory has C */
+/** *seams the driver only finds beside its entry file. */
 fn class_of(src: string) -> string {
     let text = sys.read_file(src)
     if contains_str(text, "\"std:maya\"") || contains_str(text, "import \"maya\"") || contains_str(text, "\"std:raygui\"") || contains_str(text, "import \"raygui\"") {
@@ -1134,8 +1134,8 @@ fn unlines(v: []string) -> string {
     return string_from_bytes(b)
 }
 
-/// The program that holds `files`: each is imported as `case<N>`, and `LOAM_CASE`
-/// picks the one whose `main` this process runs.
+/** *The program that holds `files`: each is imported as `case<N>`, and `LOAM_CASE` */
+/** *picks the one whose `main` this process runs. */
 fn suite_source(files: []string) -> string {
     let mut lines = []string { "import \"std:sys\"" }
     for i in 0..files.len {
@@ -1150,8 +1150,8 @@ fn suite_source(files: []string) -> string {
     return unlines(lines)
 }
 
-/// A case its batch binary can judge itself: exit status, plus a golden for a
-/// draw. The rest need arguments or read their output in ways only a script does.
+/** *A case its batch binary can judge itself: exit status, plus a golden for a */
+/** *draw. The rest need arguments or read their output in ways only a script does. */
 fn servable(j: Job) -> bool {
     return j.kind == "run" || j.kind == "draw"
 }
@@ -1176,8 +1176,8 @@ fn split_tabs(s: string) -> []string {
     return out
 }
 
-/// Have the suite binary fork its own cases. The runner reports what passed; a
-/// case it does not report reruns as a script, so nothing here decides a failure.
+/** *Have the suite binary fork its own cases. The runner reports what passed; a */
+/** *case it does not report reruns as a script, so nothing here decides a failure. */
 fn serve_suite(class: string, files: []string) {
     let dir = suite_path(class, "_serve")
     reset_dir(dir)
@@ -1197,7 +1197,7 @@ fn serve_suite(class: string, files: []string) {
     sh("LOAM_SERVE={{shq(manifest)}} LOAM_SERVE_JOBS={{JOBS}} {{shq(bin)}} 1>&2")
 }
 
-/// The fixtures every full run compiles, whichever way it builds them.
+/** *The fixtures every full run compiles, whichever way it builds them. */
 fn program_jobs() -> []Job {
     let mut out = []Job {}
     let groups = [][]Job { pass_jobs(), example_jobs(), oob_jobs(), draw_jobs(), argv_jobs(), fs_jobs(), watch_jobs() }
@@ -1210,9 +1210,9 @@ fn program_jobs() -> []Job {
     return out
 }
 
-/// A full run: build the batches beside everything that needs no fixture binary,
-/// then run every case. All of it shares one pool, so the wall time is the slowest
-/// part of each stage rather than the sum of them.
+/** *A full run: build the batches beside everything that needs no fixture binary, */
+/** *then run every case. All of it shares one pool, so the wall time is the slowest */
+/** *part of each stage rather than the sum of them. */
 fn test_batched(t0: int) -> int {
     fmt.println("nob: test — language suites + host checks, batched (-j {{JOBS}})")
     let jobs = program_jobs()
@@ -1341,7 +1341,7 @@ fn test_batched(t0: int) -> int {
     return report(t0, failed)
 }
 
-/// `j` run from its batch binary when that batch kept it, and on its own when not.
+/** *`j` run from its batch binary when that batch kept it, and on its own when not. */
 fn batched_case(j: Job, built_zeus: []string, built_plain: []string) -> Job {
     let z = index_of(built_zeus, j.src)
     let p = index_of(built_plain, j.src)
@@ -1354,9 +1354,9 @@ fn batched_case(j: Job, built_zeus: []string, built_plain: []string) -> Job {
     return j
 }
 
-/// Compile one batch. A fixture the compiler rejects is left out, so it reports
-/// alone with its own diagnostics and the rest stay batched. Files from a batch
-/// that fails some other way (a link error names no fixture) all compile alone.
+/** *Compile one batch. A fixture the compiler rejects is left out, so it reports */
+/** *alone with its own diagnostics and the rest stay batched. Files from a batch */
+/** *that fails some other way (a link error names no fixture) all compile alone. */
 fn ig_suite(class: string) {
     mark("suite {{class}}")
     let source = suite_path(class, ".loam")
@@ -1396,8 +1396,8 @@ fn ig_suite(class: string) {
     N_RETRIED += 1
 }
 
-/// Fork every case the batch binary can judge. A case it does not pass is left
-/// for the caller to rerun; this stanza does not fail the run on its own.
+/** *Fork every case the batch binary can judge. A case it does not pass is left */
+/** *for the caller to rerun; this stanza does not fail the run on its own. */
 fn ig_serve(class: string) {
     mark("serve {{class}}")
     let builtp = suite_path(class, ".built")
@@ -1407,7 +1407,7 @@ fn ig_serve(class: string) {
     serve_suite(class, split_lines(sys.read_file(builtp)))
 }
 
-/// The files a generated suite imports.
+/** *The files a generated suite imports. */
 fn suite_files(source: string) -> []string {
     let mut out = []string {}
     let lines = split_lines(sys.read_file(source))
@@ -1426,8 +1426,8 @@ fn suite_files(source: string) -> []string {
     return out
 }
 
-/// Every `#[test]` file as one test binary, for the same reason as the suites.
-/// If it fails, `.failed` sends each file to run alone and name its own failure.
+/** *Every `#[test]` file as one test binary, for the same reason as the suites. */
+/** *If it fails, `.failed` sends each file to run alone and name its own failure. */
 fn ig_suite_tests() {
     mark("suite tests")
     let log = suite_path("tests", ".log")
@@ -1447,9 +1447,9 @@ fn suite_files_tests(source: string) -> int {
     return split_lines(sys.read_file(source)).len
 }
 
-/// Lower and verify every fixture in the batch. This pass is separate from the
-/// build because the build lowers only what survives dead-code removal, while
-/// `--emit-ir` covers every function the fixtures and libraries declare.
+/** *Lower and verify every fixture in the batch. This pass is separate from the */
+/** *build because the build lowers only what survives dead-code removal, while */
+/** *`--emit-ir` covers every function the fixtures and libraries declare. */
 fn ig_suite_ir(class: string) {
     mark("ir {{class}}")
     let source = tmpf("nob/suite_{{class}}_ir.loam")
@@ -1466,7 +1466,7 @@ fn ig_suite_ir(class: string) {
     ok("ir lowering + verify ({{class}})")
 }
 
-/// Print the run summary and return the exit code.
+/** *Print the run summary and return the exit code. */
 fn report(t0: int, failed: int) -> int {
     let secs = now_s() - t0
     fmt.println("")
@@ -1530,18 +1530,18 @@ fn catlog(p: string) {
     }
 }
 
-/// A scratch path under `tests/tmp`.
+/** *A scratch path under `tests/tmp`. */
 fn tmpf(name: string) -> string {
     return "{{TMP}}/{{name}}"
 }
 
-/// Run `cmd` from the repo root; true when it exits 0, headless like every test.
+/** *Run `cmd` from the repo root; true when it exits 0, headless like every test. */
 fn sh(cmd: string) -> bool {
     sys.exec("cd {{shq(ROOT)}} && ZEUS_HEADLESS=1 MAYA_HEADLESS=1 {{cmd}}")
     return sys.exec_status() == 0
 }
 
-/// Run `cmd` from the repo root; its exit code.
+/** *Run `cmd` from the repo root; its exit code. */
 fn rc(cmd: string) -> int {
     sys.exec("cd {{shq(ROOT)}} && ZEUS_HEADLESS=1 MAYA_HEADLESS=1 {{cmd}}")
     return sys.exec_status()
@@ -1565,7 +1565,7 @@ fn file_has(p: string, needle: string) -> bool {
     return contains_str(sys.read_file(p), needle)
 }
 
-/// `grep -qE` over `p`.
+/** *`grep -qE` over `p`. */
 fn file_matches(p: string, re: string) -> bool {
     sys.exec("grep -qE {{shq(re)}} {{shq(p)}} 2>/dev/null")
     return sys.exec_status() == 0
@@ -1592,8 +1592,8 @@ fn diff_log(a: string, b: string, log: string) -> bool {
     return sys.exec_status() == 0
 }
 
-/// `git diff --exit-code -- p`: git itself is the expectation. The output (the
-/// diff, or nothing) goes to `log` for the failure branch to print.
+/** *`git diff --exit-code -- p`: git itself is the expectation. The output (the */
+/** *diff, or nothing) goes to `log` for the failure branch to print. */
 fn git_clean(p: string, log: string) -> bool {
     sys.exec("cd {{shq(ROOT)}} && git --no-optional-locks diff --exit-code -- {{shq(p)}} >{{shq(log)}} 2>&1")
     return sys.exec_status() == 0
@@ -1603,8 +1603,8 @@ fn write_text(p: string, body: string) -> bool {
     return sys.write_file(p, body) == 0
 }
 
-/// Leave `p` untouched when it already holds `body`, so a later compile can see
-/// that this input did not change.
+/** *Leave `p` untouched when it already holds `body`, so a later compile can see */
+/** *that this input did not change. */
 fn write_if_changed(p: string, body: string) {
     if sys.read_file(p) != body {
         sys.write_file(p, body)
@@ -1623,8 +1623,8 @@ fn rmrf(p: string) -> bool {
     return sys.remove_path(p) == 0
 }
 
-/// Remove a scratch tree, retrying: a leftover `zeli serve` can still be writing
-/// into it, which makes `rm -rf` fail with "Directory not empty".
+/** *Remove a scratch tree, retrying: a leftover `zeli serve` can still be writing */
+/** *into it, which makes `rm -rf` fail with "Directory not empty". */
 fn reset_dir(p: string) -> bool {
     let mut n = 0
     while n < 6 {
@@ -1667,7 +1667,7 @@ fn kill_pid(pid: int) {
     sys.exec("kill {{pid}} 2>/dev/null")
 }
 
-/// The pid after `needle` in `log`, first or last line that has one.
+/** *The pid after `needle` in `log`, first or last line that has one. */
 fn picked_pid(log: string, needle: string, tail: bool) -> int {
     let mut sel = "head -1"
     if tail {
@@ -1677,10 +1677,10 @@ fn picked_pid(log: string, needle: string, tail: bool) -> int {
     return int_of(trim(o))
 }
 
-/// Start `cmd` (absolute paths) as an orphaned background process; its pid.
-/// The whole group's own stdout is `/dev/null`, so no child can inherit — and
-/// hold open — the pipe `sys.exec` reads: otherwise this call would not return
-/// until the server exited, which is the whole stanza.
+/** *Start `cmd` (absolute paths) as an orphaned background process; its pid. */
+/** *The whole group's own stdout is `/dev/null`, so no child can inherit — and */
+/** *hold open — the pipe `sys.exec` reads: otherwise this call would not return */
+/** *until the server exited, which is the whole stanza. */
 fn spawn(cmd: string) -> int {
     let pf = tmpf("spawn.pid")
     rmrf(pf)
@@ -2205,8 +2205,8 @@ fn ig_server_split() {
     ok("server split (body excluded)")
 }
 
-/// `#[c]` on a client build: a reachable binding is refused, and one only a
-/// `#[server]` body calls leaves no C behind, not even from a closure.
+/** *`#[c]` on a client build: a reachable binding is refused, and one only a */
+/** *`#[server]` body calls leaves no C behind, not even from a closure. */
 fn ig_c_client() {
     mark("c client")
     let dir = "packages/loam/tests/c_client"
@@ -2252,10 +2252,10 @@ fn ig_lsp() {
     }
 }
 
-/// `--cost` is the Phase 5 measurement, so it gets a check: a program whose
-/// bounds/overflow traps the compiler can prove redundant must report fewer of
-/// them (the elision is the language's whole point for speed). The numbers are
-/// compared, not a golden string, so a diagnostic reformat does not break it.
+/** *`--cost` is the Phase 5 measurement, so it gets a check: a program whose */
+/** *bounds/overflow traps the compiler can prove redundant must report fewer of */
+/** *them (the elision is the language's whole point for speed). The numbers are */
+/** *compared, not a golden string, so a diagnostic reformat does not break it. */
 fn ig_stale_capture() {
     mark("stale capture")
     let src = "{{TESTS}}/compile_fail/stale_capture.loam"
@@ -2325,8 +2325,8 @@ fn ig_cost() {
     ok("cost report (bounds + overflow elision)")
 }
 
-/// The first integer appearing after `label` in a `--cost` report, or -1 when
-/// the label is missing. Bytes are compared directly; digits are ASCII.
+/** *The first integer appearing after `label` in a `--cost` report, or -1 when */
+/** *the label is missing. Bytes are compared directly; digits are ASCII. */
 fn cost_field(report: string, label: string) -> int {
     let mut i = 0
     while i + label.len <= report.len {
@@ -2350,7 +2350,7 @@ fn cost_field(report: string, label: string) -> int {
     return -1
 }
 
-/// True when `s` has `needle` starting at byte `at`.
+/** *True when `s` has `needle` starting at byte `at`. */
 fn same_at(s: string, at: int, needle: string) -> bool {
     let mut i = 0
     while i < needle.len {
@@ -2362,12 +2362,12 @@ fn same_at(s: string, at: int, needle: string) -> bool {
     return true
 }
 
-/// Phase 6: one program, five surfaces. The counter and gallery each have a
-/// per-host entry (`macos` = native, shared by Linux + macOS; `ios`,
-/// `android`, `frontend` = wasm Canvas2D) that is a **thin stub**: it imports
-/// the shared `../ui.loam` and calls `ui.start()`, and holds no UI of its own.
-/// This check pins that shape, so a host cannot drift into a second copy of the
-/// UI — the whole point of "one UI change shows up on all five".
+/** *Phase 6: one program, five surfaces. The counter and gallery each have a */
+/** *per-host entry (`macos` = native, shared by Linux + macOS; `ios`, */
+/** *`android`, `frontend` = wasm Canvas2D) that is a **thin stub**: it imports */
+/** *the shared `../ui.loam` and calls `ui.start()`, and holds no UI of its own. */
+/** *This check pins that shape, so a host cannot drift into a second copy of the */
+/** *UI — the whole point of "one UI change shows up on all five". */
 fn ig_one_surface() {
     mark("one surface")
     let mut apps = []string {}
@@ -2422,16 +2422,17 @@ fn ig_one_surface() {
     ok("one surface (thin host stubs share one ui.loam)")
 }
 
-/// The component-model rule (`packages/zeus/docs/component-model.md` §6.1):
-/// app code never touches the arena. Elements own `ui_push` / `slot` / `raw_*`
-/// / `arena.*`; a component returns its tree. Comment lines are ignored.
+/** *The component-model rule (`packages/zeus/docs/component-model.md` §6.1): */
+/** *app code never touches the arena. Elements own `ui_push` / `slot` / `raw_*` */
+/** * / `arena.*`; a component returns its tree. Comment lines are ignored. */
 fn ig_arena_lint() {
     mark("arena lint")
     let l = tmpf("arena_lint.log")
     // `show` / `show_eq` / … are element-layer visibility hooks: components
     // and apps use `Show(when = …)` or a reactive `Style(display = …)`.
     let re = "(^|[^A-Za-z0-9_])((ui_push|ui_pop|slot|raw_[a-z_]+|show|show_(eq|ne|ge|le))[(]|arena[.]|intern_[a-z]|prop_int|set_prop_[a-z])"
-    sh("grep -rnE {{shq(re)}} --include='*.loam' --exclude-dir=build --exclude-dir=node_modules examples/zeus www | grep -vE ':[0-9]+:[[:space:]]*//' > {{shq(l)}}")
+    // A comment line starts with `//` or `/*`, including a doc comment.
+    sh("grep -rnE {{shq(re)}} --include='*.loam' --exclude-dir=build --exclude-dir=node_modules examples/zeus www | grep -vE ':[0-9]+:[[:space:]]*(//|/[*])' > {{shq(l)}}")
     if is_nonempty(l) {
         bad("arena lint (app code reaches into the element layer)", l)
         return
@@ -2444,7 +2445,7 @@ fn ig_arena_lint() {
     // Engine internals (`zeuscore/*`: the arena, the platform seam) are not
     // public API, so no allow-list reaches them.
     let lay = tmpf("arena_lint_layers.log")
-    sh("grep -nE '^import \"zeus:zeuscore/|(^|[^A-Za-z0-9_])(arena|platform|geometry)[.]' {{lib}}/*.loam | grep -vE ':[0-9]+:[[:space:]]*//' > {{shq(lay)}}")
+    sh("grep -nE '^import \"zeus:zeuscore/|(^|[^A-Za-z0-9_])(arena|platform|geometry)[.]' {{lib}}/*.loam | grep -vE ':[0-9]+:[[:space:]]*(//|/[*])' > {{shq(lay)}}")
     if is_nonempty(lay) {
         bad("arena lint (zeus-components imports or names zeuscore internals)", lay)
         return
@@ -2464,7 +2465,7 @@ fn ig_arena_lint() {
     // A hit names the enclosing top-level fn; it fails unless that fn is in
     // the file's allow-list. Comment lines are skipped.
     let prog = tmpf("arena_lint.awk")
-    sys.write_file(prog, "BEGIN { n = split(ALLOW, a, \" \"); for (k = 1; k <= n; k++) ok[a[k]] = 1 }\n/^fn / { match($0, /^fn [A-Za-z0-9_]+/); name = substr($0, 4, RLENGTH - 3) }\n$0 ~ RE && $0 !~ \"^[[:space:]]*//\" && !(name in ok) { print F \".loam:\" NR \": \" name \": \" $0 }\n")
+    sys.write_file(prog, "BEGIN { n = split(ALLOW, a, \" \"); for (k = 1; k <= n; k++) ok[a[k]] = 1 }\n/^fn / { match($0, /^fn [A-Za-z0-9_]+/); name = substr($0, 4, RLENGTH - 3) }\n$0 ~ RE && $0 !~ \"^[[:space:]]*(//|/[*])\" && !(name in ok) { print F \".loam:\" NR \": \" name \": \" $0 }\n")
     for i in 0..files.len {
         if !sh("awk -v RE={{shq(re)}} -v ALLOW={{shq(allow[i])}} -v F={{files[i]}} -f {{shq(prog)}} {{lib}}/{{files[i]}}.loam >> {{shq(ll)}} 2>&1") {
             bad("arena lint (awk failed on {{files[i]}}.loam)", ll)
@@ -2478,12 +2479,12 @@ fn ig_arena_lint() {
     ok("arena lint (examples, www and library components use no ui_push / slot / arena / raw_*; components import no zeuscore)")
 }
 
-/// The public-surface freeze (`packages/zeus/docs/api-freeze.md`): every name
-/// the freeze lists must still exist. `zeus.x` / `zui.x` / `value.x` are
-/// top-level fns in the public zeus files, the component tiers, and
-/// `zeuscore/style.loam`; `Style.k` (and `Float` / `Border` / `Edges` /
-/// `Corners`) are struct fields there. Adding API never trips it; removing or
-/// renaming a listed name does, until the freeze is edited on purpose.
+/** *The public-surface freeze (`packages/zeus/docs/api-freeze.md`): every name */
+/** *the freeze lists must still exist. `zeus.x` / `zui.x` / `value.x` are */
+/** *top-level fns in the public zeus files, the component tiers, and */
+/** *`zeuscore/style.loam`; `Style.k` (and `Float` / `Border` / `Edges` / */
+/** *`Corners`) are struct fields there. Adding API never trips it; removing or */
+/** *renaming a listed name does, until the freeze is edited on purpose. */
 fn ig_api_freeze() {
     mark("api freeze")
     let doc = "packages/zeus/docs/api-freeze.md"
@@ -2509,7 +2510,7 @@ fn ig_myapp() {
     ig_myapp_build()
 }
 
-/// Package resolution, selective imports, and a reproducible vendor tree.
+/** *Package resolution, selective imports, and a reproducible vendor tree. */
 fn ig_modules() {
     mark("modules")
     let tests = "{{ROOT}}/packages/loam/tests"
@@ -2604,7 +2605,7 @@ fn ig_modules() {
     ok("modules (std:, packages, tree-shake, lock reproducibility)")
 }
 
-/// `nob integration <name>` runs exactly one stanza; unknown names are refused.
+/** *`nob integration <name>` runs exactly one stanza; unknown names are refused. */
 fn stanza_dispatch(name: string) -> bool {
     if name == "routes_app" {
         ig_routes_table()
@@ -2673,9 +2674,9 @@ fn stanza_dispatch(name: string) -> bool {
     return true
 }
 
-/// The stanzas `nob integration` runs. A stanza is the unit of parallelism: `myapp` merges the route-table regeneration with the
-/// build that consumes it, and each of the others owns a scratch tree of its
-/// own, so no two can collide.
+/** *The stanzas `nob integration` runs. A stanza is the unit of parallelism: `myapp` merges the route-table regeneration with the */
+/** *build that consumes it, and each of the others owns a scratch tree of its */
+/** *own, so no two can collide. */
 fn stanza_names() -> []string {
     let mut v = []string {}
     push(v, "routes_app")
@@ -2703,9 +2704,9 @@ fn stanza_names() -> []string {
     return v
 }
 
-/// Run the stanzas as `bin/nob integration <name>` children, bounded by `JOBS`.
-/// Each child is a fresh process with its own Loam state, so the same pool the
-/// fixtures use works here — and control flow stays in Loam, not in a script.
+/** *Run the stanzas as `bin/nob integration <name>` children, bounded by `JOBS`. */
+/** *Each child is a fresh process with its own Loam state, so the same pool the */
+/** *fixtures use works here — and control flow stays in Loam, not in a script. */
 fn pool_stanzas(names: []string) -> int {
     let n = names.len
     if n == 0 {
@@ -2757,21 +2758,21 @@ fn pool_stanzas(names: []string) -> int {
     return failed
 }
 
-/// Every integration check, run as a bounded pool of stanza children. This is
-/// the `zeli`/serve/pkg/fmt suite; `nob test` does not run it (see
-/// `host_checks`), because it is slow and the most environment-sensitive part.
+/** *Every integration check, run as a bounded pool of stanza children. This is */
+/** *the `zeli`/serve/pkg/fmt suite; `nob test` does not run it (see */
+/** *`host_checks`), because it is slow and the most environment-sensitive part. */
 fn integration() -> int {
     return pool_stanzas(stanza_names())
 }
 
-/// The host checks `test` does run: they need neither `bin/zeli` nor a scratch
-/// app. The wasm module's entry points, the server/client split, and the
-/// language server all sit next to the compiler.
+/** *The host checks `test` does run: they need neither `bin/zeli` nor a scratch */
+/** *app. The wasm module's entry points, the server/client split, and the */
+/** *language server all sit next to the compiler. */
 fn host_stanzas() -> []string {
     return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "api_freeze", "modules" }
 }
 
-/// One after another, for an `--isolated` run; a batched run pools them.
+/** *One after another, for an `--isolated` run; a batched run pools them. */
 fn host_checks() -> int {
     let before = N_FAIL
     let names = host_stanzas()
@@ -2781,8 +2782,8 @@ fn host_checks() -> int {
     return N_FAIL - before
 }
 
-/// `nob integration`: the process/port/git checks alone (development). Same
-/// reporting as `test`, without the fixture pools.
+/** *`nob integration`: the process/port/git checks alone (development). Same */
+/** *reporting as `test`, without the fixture pools. */
 fn run_integration_only() -> int {
     sys.mkdir(TMP)
     sys.mkdir(NOB)
@@ -2817,8 +2818,8 @@ fn bench() -> int {
     return sys.exec_status()
 }
 
-/// The grammar is a second, hand-maintained parser and nothing in `nob test`
-/// reads it, so it rots silently while Loam moves on: `grammar` gates on this.
+/** *The grammar is a second, hand-maintained parser and nothing in `nob test` */
+/** *reads it, so it rots silently while Loam moves on: `grammar` gates on this. */
 fn grammar_check() -> int {
     return rc("bash packages/tooling/tree-sitter-loam/check.sh")
 }

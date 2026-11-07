@@ -1,15 +1,15 @@
-//! vidy — a video player. One entry, every host.
-//!
-//!   zeli serve examples/zeus/vidy --target macos   # native window (AVFoundation)
-//!   zeli serve examples/zeus/vidy --target web     # wasm + <video> in the browser
-//!   sh examples/zeus/vidy/scripts/install.sh       # Vidy.app in ~/Applications
-//!
-//! `zeli routes` generates app_routes.loam from routes/; this file mounts it.
-//!
-//!   lib/         pure helpers (time labels, aspect boxes, names, ffmpeg job)
-//!   player/      the store (signals + actions) and the key bindings
-//!   components/  the widgets; each reads the store
-//!   tests/       unit tests, the headless e2e, layout probes
+// vidy — a video player. One entry, every host.
+//
+//   zeli serve examples/zeus/vidy --target macos   # native window (AVFoundation)
+//   zeli serve examples/zeus/vidy --target web     # wasm + <video> in the browser
+//   sh examples/zeus/vidy/scripts/install.sh       # Vidy.app in ~/Applications
+//
+// `zeli routes` generates app_routes.loam from routes/; this file mounts it.
+//
+//   lib/         pure helpers (time labels, aspect boxes, names, ffmpeg job)
+//   player/      the store (signals + actions) and the key bindings
+//   components/  the widgets; each reads the store
+//   tests/       unit tests, the headless e2e, layout probes
 
 import "zeus"
 import "std:str"

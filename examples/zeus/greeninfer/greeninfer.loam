@@ -1,9 +1,9 @@
-//! greeninfer.loam — GreenInfer desktop (macOS Cocoa via zeus).
-//!
-//! Clean, three-step flow: 1) point at a folder, 2) ask your code, 3) get a
-//! model answer. Everything else (stats, watch toggle, key/model) is tucked
-//! into the card it belongs to — no walls of copy. Retrieval is local and
-//! microsecond-fast; models are optional (Grok cloud or a local Ollama).
+// greeninfer.loam — GreenInfer desktop (macOS Cocoa via zeus).
+//
+// Clean, three-step flow: 1) point at a folder, 2) ask your code, 3) get a
+// model answer. Everything else (stats, watch toggle, key/model) is tucked
+// into the card it belongs to — no walls of copy. Retrieval is local and
+// microsecond-fast; models are optional (Grok cloud or a local Ollama).
 
 import "std:async"
 import "zeus"
@@ -22,7 +22,7 @@ const LIST_H: int = 220
 const DEFAULT_ROOT: string = "./examples/zeus/greeninfer"
 const DEFAULT_QUERY: string = "how does the watcher reindex a changed file"
 
-/// One retrieved chunk row.
+/** *One retrieved chunk row. */
 struct Hit {
     label: string,
     snippet: string,
@@ -52,7 +52,7 @@ fn default_exts() -> []string {
     return e
 }
 
-/// Does `s` contain `p`? (byte scan, for error-ish captions)
+/** *Does `s` contain `p`? (byte scan, for error-ish captions) */
 fn has_text(s: string, p: string) -> bool {
     if p.len == 0 || p.len > s.len {
         return false
@@ -91,7 +91,7 @@ fn endpoint_labels() -> []string {
 // Small building blocks
 // ---------------------------------------------------------------------------
 
-/// Live RAM chip: zeus.memory_kb() is the host resident-set size in KB.
+/** *Live RAM chip: zeus.memory_kb() is the host resident-set size in KB. */
 fn RamChip() -> Node {
     let ram = zeus.signal(zeus.memory_kb())
     if ram_armed == 0 {
@@ -136,7 +136,7 @@ fn Header() -> Node {
     }
 }
 
-/// Card caption: quiet by default, red when it reports a problem.
+/** *Card caption: quiet by default, red when it reports a problem. */
 fn Caption(sig: Signal<string>) -> Node {
     let t = zeus.Text(
         fn() -> string {
@@ -178,7 +178,7 @@ fn AnsRow(i: int, s: string) -> Node {
     }
 }
 
-/// Split `s` into newline-separated lines (for the model answer box).
+/** *Split `s` into newline-separated lines (for the model answer box). */
 fn split_lines(s: string) -> []string {
     let mut out = []string {}
     let mut b = []int {}

@@ -1,31 +1,31 @@
-//! `plasma.loam` — rexim's `plasma.cpp`, in Loam.
-//!
-//! https://gist.github.com/rexim/ef86bf70918034a5a57881456c0a0ccf
-//!
-//! The C++ original evaluates XorDev's twigl interference shader
-//! (https://x.com/XorDev/status/1894123951401378051) per pixel on the CPU,
-//! writes 240 frames as `output-%03d.ppm`, and leaves the encode to ffmpeg.
-//! This is the same shader ported line for line: `mathf.loam` supplies
-//! `sin`/`cos`/`exp`/`tanh`/`abs` as pure Loam polynomials, `frames.loam`
-//! writes the P6 frames and runs ffmpeg, and nothing else is involved.
-//!
-//!     ./bin/loamc examples/language/ppm/plasma.loam --run
-//!
-//! Knobs (all optional): `LOAM_PPM_SCALE` (60, so the gist's 960x540),
-//! `LOAM_PPM_FRAMES` (120), `LOAM_PPM_FPS` (60), `LOAM_PPM_OUT` (`out`),
-//! `LOAM_PPM_CRF` (16), `LOAM_PPM_PRESET` (`slow`), `LOAM_PPM_KEEP=1`,
-//! and `LOAM_PPM_FLIP=1` to flip the row the shader sees (see `main`).
-//!
-//! At the defaults this renders for roughly a minute and peaks around 250 MB
-//! (one leaked string per frame; see "Memory" in README.md).
+// `plasma.loam` — rexim's `plasma.cpp`, in Loam.
+//
+// https://gist.github.com/rexim/ef86bf70918034a5a57881456c0a0ccf
+//
+// The C++ original evaluates XorDev's twigl interference shader
+// (https://x.com/XorDev/status/1894123951401378051) per pixel on the CPU,
+// writes 240 frames as `output-%03d.ppm`, and leaves the encode to ffmpeg.
+// This is the same shader ported line for line: `mathf.loam` supplies
+// `sin`/`cos`/`exp`/`tanh`/`abs` as pure Loam polynomials, `frames.loam`
+// writes the P6 frames and runs ffmpeg, and nothing else is involved.
+//
+//     ./bin/loamc examples/language/ppm/plasma.loam --run
+//
+// Knobs (all optional): `LOAM_PPM_SCALE` (60, so the gist's 960x540),
+// `LOAM_PPM_FRAMES` (120), `LOAM_PPM_FPS` (60), `LOAM_PPM_OUT` (`out`),
+// `LOAM_PPM_CRF` (16), `LOAM_PPM_PRESET` (`slow`), `LOAM_PPM_KEEP=1`,
+// and `LOAM_PPM_FLIP=1` to flip the row the shader sees (see `main`).
+//
+// At the defaults this renders for roughly a minute and peaks around 250 MB
+// (one leaked string per frame; see "Memory" in README.md).
 
 import "std:fmt"
 import "std:sys"
 import "frames.loam"
 import "mathf.loam"
 
-/// Frame file numbers are zero-padded to this width, matching the C original's
-/// `output-%03d.ppm`.
+/** *Frame file numbers are zero-padded to this width, matching the C original's */
+/** *`output-%03d.ppm`. */
 const DIGITS: int = 3
 
 fn main() {
@@ -115,17 +115,17 @@ fn sub2(a: Vec2, b: Vec2) -> Vec2 {
     return v2(a.x - b.x, a.y - b.y)
 }
 
-/// `v * s` — both components scaled.
+/** *`v * s` — both components scaled. */
 fn scale2(a: Vec2, s: float) -> Vec2 {
     return v2(a.x * s, a.y * s)
 }
 
-/// `v / s`.
+/** *`v / s`. */
 fn div2(a: Vec2, s: float) -> Vec2 {
     return v2(a.x / s, a.y / s)
 }
 
-/// `v + s` — the scalar to both components, GLSL's `v + s`.
+/** *`v + s` — the scalar to both components, GLSL's `v + s`. */
 fn add2s(a: Vec2, s: float) -> Vec2 {
     return v2(a.x + s, a.y + s)
 }
@@ -134,12 +134,12 @@ fn dot2(a: Vec2, b: Vec2) -> float {
     return a.x * b.x + a.y * b.y
 }
 
-/// The `.yx` swizzle.
+/** *The `.yx` swizzle. */
 fn yx2(a: Vec2) -> Vec2 {
     return v2(a.y, a.x)
 }
 
-/// The `.xyyx` swizzle, which widens a `vec2` to a `vec4`.
+/** *The `.xyyx` swizzle, which widens a `vec2` to a `vec4`. */
 fn xyyx2(a: Vec2) -> Vec4 {
     return v4(a.x, a.y, a.y, a.x)
 }
@@ -164,17 +164,17 @@ fn add4(a: Vec4, b: Vec4) -> Vec4 {
     return v4(a.x + b.x, a.y + b.y, a.z + b.z, a.w + b.w)
 }
 
-/// `v + s`.
+/** *`v + s`. */
 fn add4s(a: Vec4, s: float) -> Vec4 {
     return v4(a.x + s, a.y + s, a.z + s, a.w + s)
 }
 
-/// `s - v` — the scalar minus each component, GLSL's `s - v`.
+/** *`s - v` — the scalar minus each component, GLSL's `s - v`. */
 fn sub4s(s: float, a: Vec4) -> Vec4 {
     return v4(s - a.x, s - a.y, s - a.z, s - a.w)
 }
 
-/// `v * s`.
+/** *`v * s`. */
 fn scale4(a: Vec4, s: float) -> Vec4 {
     return v4(a.x * s, a.y * s, a.z * s, a.w * s)
 }
@@ -185,21 +185,21 @@ fn div4(a: Vec4, b: Vec4) -> Vec4 {
 
 // --- the shader -------------------------------------------------------------
 
-/// One pixel in `0.0..1.0` RGB. `x`/`y` are pixel coordinates, `w`/`h` the
-/// frame size, `t` the position in the animation (one turn per sequence).
-///
-/// The body follows the C++ source step for step:
-///
-/// ```c
-/// vec2 p=(FC*2.-r)/r.y,l,i,v=p*(l+=4.-4.*abs(.7-dot(p,p)));
-/// for(;i.y++<8.;o+=(sin(v.xyyx())+1.)*abs(v.x-v.y))v+=cos(v.yx()*i.y+i+t)/i.y+.7;
-/// o=tanh(5.*exp(l.x-4.-p.y*vec4(-1,1,2,0))/o);
-/// ```
-///
-/// The one non-obvious part is that loop: `i.y++` sits in the *condition*, so
-/// the body runs with `i.y` at 1..8, and the accumulator is the loop's
-/// successor clause, which means each iteration advances `v` *before* folding
-/// the new `v` into `o`.
+/** *One pixel in `0.0..1.0` RGB. `x`/`y` are pixel coordinates, `w`/`h` the */
+/** *frame size, `t` the position in the animation (one turn per sequence). */
+/** */
+/** *The body follows the C++ source step for step: */
+/** */
+/** *```c */
+/** *vec2 p=(FC*2.-r)/r.y,l,i,v=p*(l+=4.-4.*abs(.7-dot(p,p))); */
+/** *for(;i.y++<8.;o+=(sin(v.xyyx())+1.)*abs(v.x-v.y))v+=cos(v.yx()*i.y+i+t)/i.y+.7; */
+/** *o=tanh(5.*exp(l.x-4.-p.y*vec4(-1,1,2,0))/o); */
+/** *``` */
+/** */
+/** *The one non-obvious part is that loop: `i.y++` sits in the *condition*, so */
+/** *the body runs with `i.y` at 1..8, and the accumulator is the loop's */
+/** *successor clause, which means each iteration advances `v` *before* folding */
+/** *the new `v` into `o`. */
 fn shade(x: int, y: int, w: int, h: int, t: float) -> Vec4 {
     let fc = v2(f32(x), f32(y))
     let r = v2(f32(w), f32(h))

@@ -130,8 +130,8 @@ Call imported items as `foo.bar(...)`.
 | `std:net` | TCP connect / listen / read / write. Used by `http`; not an app-level import. |
 | `std:sys` | `env_set` / `exit`. Language-level seam into `loam_rt`. |
 
-Document items with `///` (and `//!` at the file top). Hover in the editor
-shows those comments plus the type.
+Document items with `/** *text */`. A single-line comment is `//` and a block
+comment is `/* */`. Hover in the editor shows the doc plus the type.
 
 ### Zeus
 

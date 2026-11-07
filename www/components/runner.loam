@@ -1,22 +1,22 @@
-//! Browser runner: a small Loam interpreter that lives in the page.
-//!
-//! The playground tokenizes, parses, and walks the tree here, inside the wasm
-//! module. It is not loamc: there is no typechecker or borrow checker, so it
-//! accepts some programs loamc would reject. What it runs is the everyday
-//! core of the language:
-//!
-//! - `fn` declarations, recursion, nested `fn`, closures (`|a| a + 1`, `fn(x: int) -> int { .. }`)
-//! - `let`, `let mut`, `const`, `=`, `+=`, `-=`, `*=`, `/=`, `%=`
-//! - `if` / `else if` / `else` (also as a value), `while`, `for i in a..b`,
-//!   `break`, `continue`, `return`, `switch` / `case` / `default`
-//! - structs, enums, `[]T` arrays with `push`, `pop`, and `.len`
-//! - method calls: `x.f(a)` runs `f(x, a)`; `s.trim()` uses `std:str`
-//! - `{{expr}}` string interpolation, int, float, bool, and string values
-//!
-//! Imports are an allow-list: std:fmt, std:str, and std:math. Files, network,
-//! and host modules are refused. A step budget and a call-depth cap stop a
-//! runaway program, and int arithmetic traps on i32 overflow the way compiled
-//! Loam does. When `main` exists it runs after the top-level statements.
+// Browser runner: a small Loam interpreter that lives in the page.
+//
+// The playground tokenizes, parses, and walks the tree here, inside the wasm
+// module. It is not loamc: there is no typechecker or borrow checker, so it
+// accepts some programs loamc would reject. What it runs is the everyday
+// core of the language:
+//
+// - `fn` declarations, recursion, nested `fn`, closures (`|a| a + 1`, `fn(x: int) -> int { .. }`)
+// - `let`, `let mut`, `const`, `=`, `+=`, `-=`, `*=`, `/=`, `%=`
+// - `if` / `else if` / `else` (also as a value), `while`, `for i in a..b`,
+//   `break`, `continue`, `return`, `switch` / `case` / `default`
+// - structs, enums, `[]T` arrays with `push`, `pop`, and `.len`
+// - method calls: `x.f(a)` runs `f(x, a)`; `s.trim()` uses `std:str`
+// - `{{expr}}` string interpolation, int, float, bool, and string values
+//
+// Imports are an allow-list: std:fmt, std:str, and std:math. Files, network,
+// and host modules are refused. A step budget and a call-depth cap stop a
+// runaway program, and int arithmetic traps on i32 overflow the way compiled
+// Loam does. When `main` exists it runs after the top-level statements.
 
 import "std:str"
 import "std:math"
@@ -161,7 +161,7 @@ struct RnVar {
     mutable: bool,
 }
 
-/// Arrays, structs, and closure captures. `names` is empty for an array.
+/** *Arrays, structs, and closure captures. `names` is empty for an array. */
 struct RnObj {
     tname: string,
     names: []string,
@@ -196,8 +196,8 @@ struct Runner {
     has_last: bool,
 }
 
-/// What a run produced. `out` is everything the program printed, even when
-/// it stopped on an error. `err` is empty on success; `line` is 1-based.
+/** *What a run produced. `out` is everything the program printed, even when */
+/** *it stopped on an error. `err` is empty on success; `line` is 1-based. */
 struct RunResult {
     ok: bool,
     out: string,
@@ -385,8 +385,8 @@ fn tok(kind: int, text: string, line: int, nl: bool) -> RnTok {
     return RnTok { kind: kind, text: text, n: i64(0), f: 0.0, line: line, nl: nl }
 }
 
-/// Tokens of `src`, starting at `line0`. On a bad character the error is set
-/// and the list ends there with an EOF token.
+/** *Tokens of `src`, starting at `line0`. On a bad character the error is set */
+/** *and the list ends there with an EOF token. */
 fn lex(p: &mut Runner, src: string, line0: int) -> []RnTok {
     let mut out = []RnTok {}
     let mut i = 0
@@ -847,7 +847,7 @@ fn parse_fn_decl(p: &mut Runner) {
     p.fns[slot].body = body
 }
 
-/// `fn name(..)` inside a body: a closure bound to `name`.
+/** *`fn name(..)` inside a body: a closure bound to `name`. */
 fn parse_nested_fn(p: &mut Runner) -> int {
     let line = tk(p).line
     adv(p)
@@ -1034,7 +1034,7 @@ fn parse_block(p: &mut Runner) -> int {
     return b
 }
 
-/// One statement. Declarations register themselves and return -1.
+/** *One statement. Declarations register themselves and return -1. */
 fn parse_stmt(p: &mut Runner, top: bool) -> int {
     let t = tk(p)
     let line = t.line
@@ -1169,7 +1169,7 @@ fn parse_stmt(p: &mut Runner, top: bool) -> int {
     return n
 }
 
-/// An expression where `Name {` opens a block, not a struct literal.
+/** *An expression where `Name {` opens a block, not a struct literal. */
 fn parse_cond(p: &mut Runner) -> int {
     let saved = p.no_struct
     p.no_struct = true
@@ -1613,7 +1613,7 @@ fn parse_struct_lit(p: &mut Runner) -> int {
     return n
 }
 
-/// Parse `src` as one expression, for an interpolation hole.
+/** *Parse `src` as one expression, for an interpolation hole. */
 fn parse_hole(p: &mut Runner, src: string, line: int) -> int {
     let saved_toks = p.toks
     let saved_tp = p.tp
@@ -1638,8 +1638,8 @@ fn parse_hole(p: &mut Runner, src: string, line: int) -> int {
     return e
 }
 
-/// A string literal. Holes follow loamc: nested double braces count, and an
-/// unclosed one leaves the rest as plain text.
+/** *A string literal. Holes follow loamc: nested double braces count, and an */
+/** *unclosed one leaves the rest as plain text. */
 fn parse_string(p: &mut Runner, s: string, line: int) -> int {
     let o = open2()
     if !str.contains(s, o) {
@@ -1705,8 +1705,8 @@ fn is_agg(v: RnVal) -> bool {
     return v.kind == K_ARR || v.kind == K_STRUCT
 }
 
-/// A deep copy: Loam arrays and structs are values, so `let b = a` must not
-/// alias `a`.
+/** *A deep copy: Loam arrays and structs are values, so `let b = a` must not */
+/** *alias `a`. */
 fn deep_copy(p: &mut Runner, v: RnVal, depth: int) -> RnVal {
     if !is_agg(v) || v.h < 0 {
         return v
@@ -3053,7 +3053,7 @@ fn exec_if(p: &mut Runner, node: int) -> int {
     return exec_block(p, nd.c)
 }
 
-/// Root of a place (`a` in `a.b[2].c`), or -1.
+/** *Root of a place (`a` in `a.b[2].c`), or -1. */
 fn place_root(p: &mut Runner, node: int) -> int {
     let mut n = node
     while n >= 0 {
@@ -3393,7 +3393,7 @@ fn finish(p: &mut Runner) -> RunResult {
     return RunResult { ok: true, out: out, err: "", line: 0 }
 }
 
-/// Run `src`. Nothing in here reads the process, the clock, or a file.
+/** *Run `src`. Nothing in here reads the process, the clock, or a file. */
 fn run_source(src: string) -> RunResult {
     if src.len > SRC_MAX {
         return RunResult {

@@ -1,18 +1,18 @@
-//! enums — the shared enums of the widget API: layout direction, alignment,
-//! spacing, sizing, appearance, the reactive-prop setter keys, and host key
-//! codes. Leaf module with no imports of its own, so every layer above —
-//! `zeusbase`, the components, `zeus` itself — can name them without importing
-//! back down into `zeus`.
-//!
-//! This file exists because enum *variables* are not module-global the way
-//! struct type names are: an enum is reachable only through the import graph,
-//! so the ones the primitives and the components share have to sit below both.
-//! Values follow the codes the layout solver and the hosts already use.
+// enums — the shared enums of the widget API: layout direction, alignment,
+// spacing, sizing, appearance, the reactive-prop setter keys, and host key
+// codes. Leaf module with no imports of its own, so every layer above —
+// `zeusbase`, the components, `zeus` itself — can name them without importing
+// back down into `zeus`.
+//
+// This file exists because enum *variables* are not module-global the way
+// struct type names are: an enum is reachable only through the import graph,
+// so the ones the primitives and the components share have to sit below both.
+// Values follow the codes the layout solver and the hosts already use.
 
-/// Button variants, named after the fill they carry. `Solid` is the
-/// `default` (primary) variant, `Soft` is `secondary`, `Danger` is
-/// `destructive`, and `Link` is text-only. Gallery rows read
-/// Primary / Secondary / Outline / Ghost / Destructive / Link.
+/** *Button variants, named after the fill they carry. `Solid` is the */
+/** *`default` (primary) variant, `Soft` is `secondary`, `Danger` is */
+/** *`destructive`, and `Link` is text-only. Gallery rows read */
+/** *Primary / Secondary / Outline / Ghost / Destructive / Link. */
 enum Look {
     Solid = 0,
     Soft = 1,
@@ -26,8 +26,8 @@ enum Look {
     Success = 7,
 }
 
-/// How `zeus.logger` marks a line: the color it gets and whether it shows.
-/// Values are `std:log` levels.
+/** *How `zeus.logger` marks a line: the color it gets and whether it shows. */
+/** *Values are `std:log` levels. */
 enum Log {
     Debug = 0,
     Info = 1,
@@ -36,24 +36,24 @@ enum Log {
     Error = 4,
 }
 
-/// Control sizes, by height: Sm 32px, Md 36px, Lg 44px (see `control_h`).
+/** *Control sizes, by height: Sm 32px, Md 36px, Lg 44px (see `control_h`). */
 enum Size {
     Sm = 0,
     Md = 1,
     Lg = 2,
 }
 
-/// Control density: shifts every `control_h` by −4 / 0 / +4 px (and the side
-/// padding by half that). Read through `density()`, so it is one global knob.
+/** *Control density: shifts every `control_h` by −4 / 0 / +4 px (and the side */
+/** *padding by half that). Read through `density()`, so it is one global knob. */
 enum Density {
     Compact = 0,
     Standard = 1,
     Comfortable = 2,
 }
 
-/// Icon sizes. Each member *is* its pixel size, so `Icon(markup, 16)` and
-/// `Icon(markup, IconSize.Md)` are the same call and SVG art can still pass a
-/// raw px.
+/** *Icon sizes. Each member *is* its pixel size, so `Icon(markup, 16)` and */
+/** *`Icon(markup, IconSize.Md)` are the same call and SVG art can still pass a */
+/** *raw px. */
 enum IconSize {
     Xs = 12,
     Sm = 14,
@@ -63,9 +63,9 @@ enum IconSize {
     Xxl = 32,
 }
 
-/// Avatar diameters. Like `IconSize`, the member is the px, so an existing
-/// `Avatar(initials, 40)` reads the same as `AvatarSize.Lg`. `Xxl` is for
-/// profile headers.
+/** *Avatar diameters. Like `IconSize`, the member is the px, so an existing */
+/** *`Avatar(initials, 40)` reads the same as `AvatarSize.Lg`. `Xxl` is for */
+/** *profile headers. */
 enum AvatarSize {
     Xs = 20,
     Sm = 24,
@@ -75,10 +75,10 @@ enum AvatarSize {
     Xxl = 72,
 }
 
-/// Shadow levels, named by what floats. Each member is the engine's
-/// `elevation` level, so `Style(elevation = Elevation.Floating)` paints the
-/// cached shadow for that level directly. `Overlay` is the small lift under a
-/// tooltip, toast, or field dropdown; `Floating` is a menu or popover.
+/** *Shadow levels, named by what floats. Each member is the engine's */
+/** *`elevation` level, so `Style(elevation = Elevation.Floating)` paints the */
+/** *cached shadow for that level directly. `Overlay` is the small lift under a */
+/** *tooltip, toast, or field dropdown; `Floating` is a menu or popover. */
 enum Elevation {
     Flat = 0,
     Raised = 1,
@@ -87,7 +87,7 @@ enum Elevation {
     Modal = 4,
 }
 
-/// Status tints for chips, badges, stats, meters.
+/** *Status tints for chips, badges, stats, meters. */
 enum Tint {
     Ink = 0,
     Ok = 1,
@@ -98,13 +98,13 @@ enum Tint {
     Info = 6,
 }
 
-/// Layout direction for `align_direction`.
+/** *Layout direction for `align_direction`. */
 enum Direction {
     Row = 0,
     Column = 1,
 }
 
-/// Cross-axis and main-axis alignment. Same codes the layout solver uses.
+/** *Cross-axis and main-axis alignment. Same codes the layout solver uses. */
 enum Align {
     Start = 0,
     Center = 1,
@@ -115,8 +115,8 @@ enum Align {
     Stretch = 6,
 }
 
-/// How `Image` maps the bitmap into its layout box: Stretch (default, may
-/// distort), Contain (letterbox), Cover (crop to fill), None (intrinsic size).
+/** *How `Image` maps the bitmap into its layout box: Stretch (default, may */
+/** *distort), Contain (letterbox), Cover (crop to fill), None (intrinsic size). */
 enum Fit {
     Stretch = 0,
     Contain = 1,
@@ -124,12 +124,12 @@ enum Fit {
     None = 3,
 }
 
-/// The spacing scale, in points.
-/// Spacing, on a 4pt grid. Every step is a multiple of 4 — the three that
-/// were not (`Exxxs` 2, `Exxs` 6, `Xxxl` 62) are snapped to the nearest
-/// multiple, which is the whole of the change. `Exxs` and `Exs` both land on
-/// 8: the old 6/8 pair was a distinction the grid does not make, and keeping
-/// both names means no call site has to move.
+/** *The spacing scale, in points. */
+/** *Spacing, on a 4pt grid. Every step is a multiple of 4 — the three that */
+/** *were not (`Exxxs` 2, `Exxs` 6, `Xxxl` 62) are snapped to the nearest */
+/** *multiple, which is the whole of the change. `Exxs` and `Exs` both land on */
+/** *8: the old 6/8 pair was a distinction the grid does not make, and keeping */
+/** *both names means no call site has to move. */
 enum Space {
     None = 0,
     Exxxs = 4,
@@ -145,7 +145,7 @@ enum Space {
     Xxxxl = 72
 }
 
-/// Key codes as delivered by the hosts. `e.key == Key.K` is the spell.
+/** *Key codes as delivered by the hosts. `e.key == Key.K` is the spell. */
 enum Key {
     Backspace = 8,
     Tab = 9,
@@ -190,8 +190,8 @@ enum Key {
     End = 1007,
 }
 
-/// Which node attribute a reactive prop writes. One effect per member, so a
-/// signal change repaints exactly that attribute.
+/** *Which node attribute a reactive prop writes. One effect per member, so a */
+/** *signal change repaints exactly that attribute. */
 enum SET {
     Width = 1,
     Height = 2,
@@ -277,9 +277,9 @@ enum SET {
     A11yRole = 102,
     Cursor = 103,
 }
-/// Theme slots. A widget stores the *role*, not a resolved color, so the
-/// paint pass resolves it against `appearance()` every frame — that is how
-/// a theme switch repaints a retained tree with no effects and no rebuild.
+/** *Theme slots. A widget stores the *role*, not a resolved color, so the */
+/** *paint pass resolves it against `appearance()` every frame — that is how */
+/** *a theme switch repaints a retained tree with no effects and no rebuild. */
 enum ROLE {
     Paper = 1,
     Plate = 2,

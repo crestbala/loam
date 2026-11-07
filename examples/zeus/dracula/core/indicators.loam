@@ -1,18 +1,18 @@
-//! Indicators over a `NavSeries`. Pure functions, no module state.
-//!
-//! Every result is one value per bar, plus a `ready` flag. `ready[i] == 0`
-//! means the indicator has no opinion at that bar: the window is not full
-//! yet, or the window would reach across a gap of more than five calendar
-//! days. A 200-day SMA has no opinion before bar 200. Those bars are not
-//! zeroes. A strategy that treats them as zeroes would trade the warmup.
-//!
-//! `ack` is 1 when the operator has acknowledged the gaps in this series.
-//! Then a window may cross them. `ack` is 0 otherwise, and a gap starts a
-//! new window the way a fresh listing would.
-//!
-//! Prices enter as paise and leave as `f64` in that same unit, except the
-//! ratio indicators (drawdown, momentum, relative strength, volatility),
-//! which are plain fractions. A drawdown of `0.25` is a 25% decline.
+// Indicators over a `NavSeries`. Pure functions, no module state.
+//
+// Every result is one value per bar, plus a `ready` flag. `ready[i] == 0`
+// means the indicator has no opinion at that bar: the window is not full
+// yet, or the window would reach across a gap of more than five calendar
+// days. A 200-day SMA has no opinion before bar 200. Those bars are not
+// zeroes. A strategy that treats them as zeroes would trade the warmup.
+//
+// `ack` is 1 when the operator has acknowledged the gaps in this series.
+// Then a window may cross them. `ack` is 0 otherwise, and a gap starts a
+// new window the way a fresh listing would.
+//
+// Prices enter as paise and leave as `f64` in that same unit, except the
+// ratio indicators (drawdown, momentum, relative strength, volatility),
+// which are plain fractions. A drawdown of `0.25` is a 25% decline.
 
 import "std:math"
 import "std:date"
@@ -20,16 +20,16 @@ import "series.loam"
 import "stats.loam"
 
 struct Line {
-    /// `1` when `v` at this bar is an opinion.
+    /** *`1` when `v` at this bar is an opinion. */
     ready: []int,
     v: []f64,
 }
 
 struct Macd {
-    /// `1` when `macd` at this bar is an opinion.
+    /** *`1` when `macd` at this bar is an opinion. */
     ready: []int,
     macd: []f64,
-    /// `1` when `signal` and `hist` at this bar are opinions.
+    /** *`1` when `signal` and `hist` at this bar are opinions. */
     sig_ready: []int,
     signal: []f64,
     hist: []f64,
@@ -75,7 +75,7 @@ fn price(s: NavSeries, i: int) -> f64 {
     return f64(s.navs[i])
 }
 
-/// The `bars` ending at `i` sit inside one unbroken run.
+/** *The `bars` ending at `i` sit inside one unbroken run. */
 fn in_window(dates: []int, i: int, bars: int, ack: int) -> bool {
     if bars < 1 || i < bars - 1 {
         return false
@@ -93,8 +93,8 @@ fn in_window(dates: []int, i: int, bars: int, ack: int) -> bool {
     return true
 }
 
-/// Segment boundaries. `cuts[0] == 0`, `cuts[last] == len`, and each entry
-/// in between is the first bar after an unacknowledged gap.
+/** *Segment boundaries. `cuts[0] == 0`, `cuts[last] == len`, and each entry */
+/** *in between is the first bar after an unacknowledged gap. */
 fn cuts(dates: []int, ack: int) -> []int {
     let mut c = []int {}
     push(c, 0)
@@ -122,9 +122,9 @@ fn mean_prices(s: NavSeries, from: int, to: int) -> f64 {
     return sum / f64(n)
 }
 
-/// `pre[k]` is the number of unacknowledged gaps at bars `1..k`, so a run
-/// `(from, to]` crosses one exactly when `pre[to] - pre[from] > 0`. With
-/// `ack` set nothing is a gap.
+/** *`pre[k]` is the number of unacknowledged gaps at bars `1..k`, so a run */
+/** *`(from, to]` crosses one exactly when `pre[to] - pre[from] > 0`. With */
+/** *`ack` set nothing is a gap. */
 fn gap_prefix(dates: []int, ack: int) -> []int {
     let mut pre = []int {}
     let mut n = 0
@@ -139,12 +139,12 @@ fn gap_prefix(dates: []int, ack: int) -> []int {
     return pre
 }
 
-/// Simple moving average of `n` NAVs. No opinion before `n` bars, and none
-/// whose window crosses an unacknowledged gap.
-///
-/// One pass: a running sum in paise, and the gap count from `gap_prefix`.
-/// NAVs are whole paise, so the sum is exact and the mean is the same
-/// value a fresh sum over the window gives.
+/** *Simple moving average of `n` NAVs. No opinion before `n` bars, and none */
+/** *whose window crosses an unacknowledged gap. */
+/** */
+/** *One pass: a running sum in paise, and the gap count from `gap_prefix`. */
+/** *NAVs are whole paise, so the sum is exact and the mean is the same */
+/** *value a fresh sum over the window gives. */
 fn sma(s: NavSeries, n: int, ack: int) -> Line {
     let mut line = blank(series.len(s))
     if n < 1 {
@@ -167,9 +167,9 @@ fn sma(s: NavSeries, n: int, ack: int) -> Line {
     return line
 }
 
-/// Exponential moving average. Seeded with the SMA of the first `n` bars of
-/// the segment, then `k = 2 / (n + 1)`. A gap that is not acknowledged
-/// throws the seed away and starts again.
+/** *Exponential moving average. Seeded with the SMA of the first `n` bars of */
+/** *the segment, then `k = 2 / (n + 1)`. A gap that is not acknowledged */
+/** *throws the seed away and starts again. */
 fn ema(s: NavSeries, n: int, ack: int) -> Line {
     let mut line = blank(series.len(s))
     if n < 1 {
@@ -206,9 +206,9 @@ fn ema(s: NavSeries, n: int, ack: int) -> Line {
     return line
 }
 
-/// Wilder RSI of `n` changes. No opinion until `n` changes exist inside the
-/// segment. A flat window, gain and loss both zero, is 50. A window with no
-/// losses is 100.
+/** *Wilder RSI of `n` changes. No opinion until `n` changes exist inside the */
+/** *segment. A flat window, gain and loss both zero, is 50. A window with no */
+/** *losses is 100. */
 fn rsi(s: NavSeries, n: int, ack: int) -> Line {
     let mut line = blank(series.len(s))
     if n < 1 {
@@ -274,10 +274,10 @@ fn rsi(s: NavSeries, n: int, ack: int) -> Line {
     return line
 }
 
-/// MACD line `ema(fast) - ema(slow)`, and a signal line that is the EMA of
-/// that difference. The signal has no opinion until `sig` MACD values exist
-/// in the segment. `hist` is the line minus the signal, and only while the
-/// signal itself has an opinion.
+/** *MACD line `ema(fast) - ema(slow)`, and a signal line that is the EMA of */
+/** *that difference. The signal has no opinion until `sig` MACD values exist */
+/** *in the segment. `hist` is the line minus the signal, and only while the */
+/** *signal itself has an opinion. */
 fn macd(s: NavSeries, fast: int, slow: int, sig: int, ack: int) -> Macd {
     let mut out = blank_macd(series.len(s))
     if fast < 1 || slow < 1 || sig < 1 {
@@ -331,10 +331,10 @@ fn macd(s: NavSeries, fast: int, slow: int, sig: int, ack: int) -> Macd {
     return out
 }
 
-/// Sample standard deviation of the last `n` log returns. `n` is a count of
-/// returns, so the window is `n + 1` prices. Not annualised: the fixture is
-/// the deviation itself, and a 252-day scale factor would only hide it.
-/// No opinion when any price in the window is not positive.
+/** *Sample standard deviation of the last `n` log returns. `n` is a count of */
+/** *returns, so the window is `n + 1` prices. Not annualised: the fixture is */
+/** *the deviation itself, and a 252-day scale factor would only hide it. */
+/** *No opinion when any price in the window is not positive. */
 fn rolling_vol(s: NavSeries, n: int, ack: int) -> Line {
     let mut line = blank(series.len(s))
     if n < 2 {
@@ -367,9 +367,9 @@ fn rolling_vol(s: NavSeries, n: int, ack: int) -> Line {
     return line
 }
 
-/// Drawdown from the segment's running peak, as a positive fraction.
-/// The first bar of a segment is zero: it is the peak so far. An
-/// unacknowledged gap starts a new peak. A non-positive price has no opinion.
+/** *Drawdown from the segment's running peak, as a positive fraction. */
+/** *The first bar of a segment is zero: it is the peak so far. An */
+/** *unacknowledged gap starts a new peak. A non-positive price has no opinion. */
 fn drawdown(s: NavSeries, ack: int) -> Line {
     let mut line = blank(series.len(s))
     let bounds = cuts(s.dates, ack)
@@ -400,8 +400,8 @@ fn drawdown(s: NavSeries, ack: int) -> Line {
     return line
 }
 
-/// Latest bar whose date is on or before `ymd`, or `-1`. The series is in
-/// date order, so the scan stops at the first later date.
+/** *Latest bar whose date is on or before `ymd`, or `-1`. The series is in */
+/** *date order, so the scan stops at the first later date. */
 fn on_or_before(dates: []int, ymd: int) -> int {
     let mut found = -1
     let mut i = 0
@@ -430,10 +430,10 @@ fn crosses(dates: []int, from: int, to: int, ack: int) -> bool {
     return false
 }
 
-/// `nav[t] / nav[t - months] - 1`. The past bar is the latest one on or
-/// before the calendar date `months` earlier, not a count of prints. No
-/// opinion when that bar is missing, is this same bar, or an unacknowledged
-/// gap sits between the two.
+/** *`nav[t] / nav[t - months] - 1`. The past bar is the latest one on or */
+/** *before the calendar date `months` earlier, not a count of prints. No */
+/** *opinion when that bar is missing, is this same bar, or an unacknowledged */
+/** *gap sits between the two. */
 fn momentum(s: NavSeries, months: int, ack: int) -> Line {
     let mut line = blank(series.len(s))
     if months < 1 {
@@ -469,10 +469,10 @@ fn momentum(s: NavSeries, months: int, ack: int) -> Line {
     return line
 }
 
-/// Scheme momentum minus the reference's momentum, over the same number of
-/// months. The reference bar is the latest one on or before the scheme's
-/// date. No opinion when either side has none, or when the two dates are
-/// more than five days apart and the gap is not acknowledged.
+/** *Scheme momentum minus the reference's momentum, over the same number of */
+/** *months. The reference bar is the latest one on or before the scheme's */
+/** *date. No opinion when either side has none, or when the two dates are */
+/** *more than five days apart and the gap is not acknowledged. */
 fn relative_strength(s: NavSeries, ref: NavSeries, months: int, ack: int) -> Line {
     let mut line = blank(series.len(s))
     let sm = momentum(s, months, ack)

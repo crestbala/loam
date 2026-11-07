@@ -431,7 +431,7 @@ end of this section — update it in the same commit that closes an item.
   (`OkS3`, `OkS9`, …) partly to make collisions structurally unlikely. Grep
   the enum before adding to it.
 
-  Related: doc comments (`///`) are rejected *inside* an enum body. Use `//`.
+  Related: doc comments (`/** *text */`) are rejected *inside* an enum body. Use `//`.
 
 ### What phase 2 deliberately did **not** do
 

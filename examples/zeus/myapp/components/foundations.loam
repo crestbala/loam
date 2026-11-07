@@ -1,6 +1,6 @@
-//! Foundations page: the type scale, status accents, and the two ways to
-//! build a surface — a recipe (`zui.Card`) and a primitive (`zui.Comp`).
-//! Every color is a role token, so the whole page inverts with the appearance.
+// Foundations page: the type scale, status accents, and the two ways to
+// build a surface — a recipe (`zui.Card`) and a primitive (`zui.Comp`).
+// Every color is a role token, so the whole page inverts with the appearance.
 
 import "zeus"
 import "zui:colors"

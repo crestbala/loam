@@ -1,6 +1,6 @@
-//! The engine without a window: chords heard in audio, the progression,
-//! the energy arc, the Markov walk, the arranged score, and the filter
-//! graph. `loamc test` runs these.
+// The engine without a window: chords heard in audio, the progression,
+// the energy arc, the Markov walk, the arranged score, and the filter
+// graph. `loamc test` runs these.
 
 import "std:math"
 import "std:str"
@@ -35,8 +35,8 @@ fn has(text: string, needle: string) {
     }
 }
 
-/// `sec` of the MIDI `notes` sounding together, as the decode job's
-/// 5512 Hz s16le copy. No notes is a hiss.
+/** *`sec` of the MIDI `notes` sounding together, as the decode job's */
+/** *5512 Hz s16le copy. No notes is a hiss. */
 fn chord_pcm(notes: []int, sec: int) -> string {
     let mut b = []int {}
     let n = key.RATE * sec
@@ -58,7 +58,7 @@ fn chord_pcm(notes: []int, sec: int) -> string {
     return string_from_bytes(b)
 }
 
-/// Twelve pitch classes with the triad of `chord` loud and the rest a floor.
+/** *Twelve pitch classes with the triad of `chord` loud and the rest a floor. */
 fn block(chord: int) -> []int {
     let mut out = []int {}
     let t = key.chord_tones(chord)
@@ -68,7 +68,7 @@ fn block(chord: int) -> []int {
     return out
 }
 
-/// A phrase's four blocks, one chord a bar.
+/** *A phrase's four blocks, one chord a bar. */
 fn blocks(chords: []int) -> []int {
     let mut out = []int {}
     for b in 0..key.BLOCKS {
@@ -80,9 +80,9 @@ fn blocks(chords: []int) -> []int {
     return out
 }
 
-/// A recording with a pulse at 120 BPM: six two-bar phrases back to back,
-/// their level rising with the index (listed out of order so order is not
-/// a hint), each playing Am F C G.
+/** *A recording with a pulse at 120 BPM: six two-bar phrases back to back, */
+/** *their level rising with the index (listed out of order so order is not */
+/** *a hint), each playing Am F C G. */
 fn source(role: int) -> Source {
     let bar = time.bar_samples(12000)
     let levels = []int { 90, 40, 70, 20, 55, 100 }
@@ -211,8 +211,8 @@ fn ranks_and_energies() {
     }
 }
 
-/// `n` units, energies spread evenly, shuffled so the walk cannot win by
-/// reading the list in order. Unit audio does not overlap.
+/** *`n` units, energies spread evenly, shuffled so the walk cannot win by */
+/** *reading the list in order. Unit audio does not overlap. */
 fn ladder(n: int) -> Units {
     let mut u = chain.no_units()
     for k in 0..n {
@@ -608,8 +608,8 @@ fn graph_renders_the_score() {
     }
 }
 
-/// One recording cut the way `listen` cuts it: one-, two-, and four-bar
-/// phrases over the same bars, so the shorter ones sit inside the longer.
+/** *One recording cut the way `listen` cuts it: one-, two-, and four-bar */
+/** *phrases over the same bars, so the shorter ones sit inside the longer. */
 fn nested_source() -> Source {
     let bar = time.bar_samples(12000)
     let mut h = listen.no_heard()
@@ -670,9 +670,9 @@ fn buses_never_share_audio() {
     }
 }
 
-/// A corpus cut like `listen` cuts one recording: one-, two-, and four-bar
-/// units over the same bars, energy rising with the bar, so the units
-/// inside a longer one sit right next to it on the arc.
+/** *A corpus cut like `listen` cuts one recording: one-, two-, and four-bar */
+/** *units over the same bars, energy rising with the bar, so the units */
+/** *inside a longer one sit right next to it on the arc. */
 fn nested_units() -> Units {
     let mut u = chain.no_units()
     let lens = []int { 1, 2, 4 }
@@ -697,8 +697,8 @@ fn nested_units() -> Units {
     return u
 }
 
-/// Slots in the last three that replay audio slot `k` plays, counting a
-/// unit nested in (or around) a recent one, but not the same unit again.
+/** *Slots in the last three that replay audio slot `k` plays, counting a */
+/** *unit nested in (or around) a recent one, but not the same unit again. */
 fn nested_repeats(u: Units, w: []int, k: int) -> int {
     let mut n = 0
     let back = if k >= 3 { k - 3 } else { 0 }
@@ -1102,10 +1102,10 @@ fn step_of(g: Groove, at: f64) -> int {
     return num.roundi(at / (g.bar_sec / 16.0))
 }
 
-/// Cadence bars of phrase `p`: the last bar when open, the last two when
-/// closed. A free drop downbeat is the tonic. A free odd bar may hold the
-/// previous chord when the harmonic rhythm asks for two bars. A tonal bar
-/// keeps the heard chord, the style's voice, and a single chord.
+/** *Cadence bars of phrase `p`: the last bar when open, the last two when */
+/** *closed. A free drop downbeat is the tonic. A free odd bar may hold the */
+/** *previous chord when the harmonic rhythm asks for two bars. A tonal bar */
+/** *keeps the heard chord, the style's voice, and a single chord. */
 fn cadence_holds(sc: &mut Score, srcs: []Source) {
     eq("a chord per bar", sc.bar_ch.len, sc.bars)
     eq("a colour per bar", sc.bar_col.len, sc.bars)
@@ -1369,7 +1369,7 @@ fn apart(a: f64, b: f64, loop: f64) -> f64 {
     return d
 }
 
-/// Every humanized hit matches one grid hit, within `bound_s` on the loop.
+/** *Every humanized hit matches one grid hit, within `bound_s` on the loop. */
 fn covers(got: Hits, grid: Hits, loop: f64, bound_s: f64) {
     if got.at.len != grid.at.len || got.at.len == 0 {
         test.fail("humanize changed the count")
@@ -1550,8 +1550,8 @@ fn a_calm_drop_keeps_its_own_loop() {
     }
 }
 
-/// Distinct layers sounding at `bar`: synth layers (not the riser or the
-/// impact) and recorded buses.
+/** *Distinct layers sounding at `bar`: synth layers (not the riser or the */
+/** *impact) and recorded buses. */
 fn layers_at(sc: Score, bar: int) -> int {
     let mut seen = []int {}
     for i in 0..sc.sy_layer.len {
@@ -1573,7 +1573,7 @@ fn layers_at(sc: Score, bar: int) -> int {
     return seen.len
 }
 
-/// Most layers sounding at once in section `sec`.
+/** *Most layers sounding at once in section `sec`. */
 fn fullest_in(sc: Score, sec: int) -> int {
     let mut most = 0
     for b in sc.sec_bar[sec]..(sc.sec_bar[sec] + sc.sec_bars[sec]) {
@@ -1961,7 +1961,7 @@ fn the_instruments_render_in_loam() {
     }
 }
 
-/// `n` frames of chroma: `tones` at 1, every other pitch class at `floor`.
+/** *`n` frames of chroma: `tones` at 1, every other pitch class at `floor`. */
 fn frames_of(tones: []int, floor: f64, n: int) -> []f64 {
     let mut out = []f64 {}
     for f in 0..n {
@@ -2110,8 +2110,8 @@ fn chords_are_decoded_as_a_sequence() {
     eq("progression from the decoded chords", sc.prog[1], key.chord_code(2, true))
 }
 
-/// Voices kept: a voiced phrase is chosen for how it plays, and plays as
-/// recorded. Removed: every voiced phrase that still plays is cleaned.
+/** *Voices kept: a voiced phrase is chosen for how it plays, and plays as */
+/** *recorded. Removed: every voiced phrase that still plays is cleaned. */
 #[test]
 fn keep_voices_uses_the_voiced_phrases() {
     let mut src = source(arrange.RHYTHM)
@@ -2144,8 +2144,8 @@ fn keep_voices_uses_the_voiced_phrases() {
     }
 }
 
-/// Hearing serves both voice choices: the pool keeps voice-free phrases
-/// first, and still the best voiced ones, without the voice in their score.
+/** *Hearing serves both voice choices: the pool keeps voice-free phrases */
+/** *first, and still the best voiced ones, without the voice in their score. */
 #[test]
 fn the_pool_keeps_voiced_phrases_too() {
     let mut c = listen.empty_pool()

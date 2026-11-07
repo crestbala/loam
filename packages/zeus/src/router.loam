@@ -1,61 +1,61 @@
-//! router — route table, typed params, history, and navigation.
-//!
-//! The router is a plain Loam module over the public `zeus` primitives:
-//! the current path is a `Signal<string>`, the page slot is a `zui.Match`
-//! host (one page mounted at a time), and each page build runs under
-//! `zui.Boundary`, so a bad route paints `error(msg)` instead of killing the
-//! app.
-//!
-//! ```
-//! import "zeus"
-//! import "zeus:router"
-//!
-//! fn Home(p: Params) -> Node { return zeus.Text("home") }
-//! fn Post(p: Params) -> Node { return zeus.Text("post " + router.param(p, "slug")) }
-//!
-//! fn main() {
-//!     zeus.App("app", fn() -> Node {
-//!         return zeus.Box(style = Style(direction = Direction.Column)) {
-//!             Navbar()                                  // retained shell
-//!             router.Router([]Route {
-//!                 Route { pattern: "/", build: Home },
-//!                 Route { pattern: "/post/:slug", build: Post },
-//!             }, RouterProps {})
-//!         }
-//!     })
-//! }
-//! ```
-//!
-//! Data loads with `on_load`: every loader whose pattern matches the target
-//! path starts when navigation begins — before the page builds — so a route's
-//! independent fetches are in flight together (no waterfalls, §5.5).
-//!
-//! ```loam
-//! router.on_load("/post/:slug", fn(p) {
-//!     let slug = router.param(p, "slug")
-//!     http.client("").call_async(get_post_req(slug), fn(reply) {
-//!         post_state.set(decode_Post(reply))
-//!     })
-//! })
-//! ```
-//!
-//! A shell built around `router.Router` is created once, so its state (nav
-//! selection, scroll, open menus) survives navigation — only the page slot
-//! rebuilds. The slot is keyed on the *matched route*, not the path: a route
-//! marked `live` keeps its page mounted when only the params change
-//! (`/post/a` → `/post/b`) and reads them through `param_live`, which is a
-//! signal read, so the labels that used a param update in place. A route that
-//! takes `Params` by value (the default) rebuilds on every navigation, as a
-//! snapshot must.
-//!
-//! ```loam
-//! fn PostLive() -> Node { return zeus.Text("post " + router.param_live("slug")) }
-//! Route { pattern: "/post/:slug", build: fn(p) { PostLive() }, live: true }
-//! ```
-//!
-//! Host history is the `platform.plat_history_*` seam; the core keeps the
-//! back/forward stack and hosts call `router.engine_open_url` for a deep link
-//! or an OS back button.
+// router — route table, typed params, history, and navigation.
+//
+// The router is a plain Loam module over the public `zeus` primitives:
+// the current path is a `Signal<string>`, the page slot is a `zui.Match`
+// host (one page mounted at a time), and each page build runs under
+// `zui.Boundary`, so a bad route paints `error(msg)` instead of killing the
+// app.
+//
+// ```
+// import "zeus"
+// import "zeus:router"
+//
+// fn Home(p: Params) -> Node { return zeus.Text("home") }
+// fn Post(p: Params) -> Node { return zeus.Text("post " + router.param(p, "slug")) }
+//
+// fn main() {
+//     zeus.App("app", fn() -> Node {
+//         return zeus.Box(style = Style(direction = Direction.Column)) {
+//             Navbar()                                  // retained shell
+//             router.Router([]Route {
+//                 Route { pattern: "/", build: Home },
+//                 Route { pattern: "/post/:slug", build: Post },
+//             }, RouterProps {})
+//         }
+//     })
+// }
+// ```
+//
+// Data loads with `on_load`: every loader whose pattern matches the target
+// path starts when navigation begins — before the page builds — so a route's
+// independent fetches are in flight together (no waterfalls, §5.5).
+//
+// ```loam
+// router.on_load("/post/:slug", fn(p) {
+//     let slug = router.param(p, "slug")
+//     http.client("").call_async(get_post_req(slug), fn(reply) {
+//         post_state.set(decode_Post(reply))
+//     })
+// })
+// ```
+//
+// A shell built around `router.Router` is created once, so its state (nav
+// selection, scroll, open menus) survives navigation — only the page slot
+// rebuilds. The slot is keyed on the *matched route*, not the path: a route
+// marked `live` keeps its page mounted when only the params change
+// (`/post/a` → `/post/b`) and reads them through `param_live`, which is a
+// signal read, so the labels that used a param update in place. A route that
+// takes `Params` by value (the default) rebuilds on every navigation, as a
+// snapshot must.
+//
+// ```loam
+// fn PostLive() -> Node { return zeus.Text("post " + router.param_live("slug")) }
+// Route { pattern: "/post/:slug", build: fn(p) { PostLive() }, live: true }
+// ```
+//
+// Host history is the `platform.plat_history_*` seam; the core keeps the
+// back/forward stack and hosts call `router.engine_open_url` for a deep link
+// or an OS back button.
 
 import "zeus"
 import "zui"
@@ -63,43 +63,43 @@ import "zeuscore/input.loam" as input
 import "zeuscore/logs.loam" as logs
 import "zeuscore/platform.loam"
 
-/// Captured `:name` segments of a matched route.
+/** *Captured `:name` segments of a matched route. */
 struct Params {
     keys: []string,
     vals: []string,
 }
 
-/// Per-route metadata (§5.7). On web it fills the generated HTML `<head>`; on
-/// native the same struct fills the window title and the share sheet. All
-/// fields have defaults, so `Meta {}` is valid.
+/** *Per-route metadata (§5.7). On web it fills the generated HTML `<head>`; on */
+/** *native the same struct fills the window title and the share sheet. All */
+/** *fields have defaults, so `Meta {}` is valid. */
 struct Meta {
     title: string = "",
     description: string = "",
-    /// Absolute or root-relative canonical URL; empty means "use the path".
+    /** *Absolute or root-relative canonical URL; empty means "use the path". */
     canonical: string = "",
     og_image: string = "",
     og_type: string = "website",
-    /// `index,follow` (default) or `noindex`.
+    /** *`index,follow` (default) or `noindex`. */
     robots: string = "index,follow",
-    /// Optional JSON-LD structured data, emitted verbatim in the shell head
-    /// (§5.7). It is a crawler annotation, not application data transport.
+    /** *Optional JSON-LD structured data, emitted verbatim in the shell head */
+    /** *(§5.7). It is a crawler annotation, not application data transport. */
     jsonld: string = "",
 }
 
-/// One route: a `/`-separated pattern with `:name` captures and the builder
-/// that mounts the page. `build` runs under an error boundary. Loaders are
-/// registered separately with `on_load` (§5.5). `meta` and `paths` feed the
-/// build-time HTML shell (§5.7): `paths()` enumerates a dynamic route's
-/// concrete URLs, and `meta()` gives each one its head.
+/** *One route: a `/`-separated pattern with `:name` captures and the builder */
+/** *that mounts the page. `build` runs under an error boundary. Loaders are */
+/** *registered separately with `on_load` (§5.5). `meta` and `paths` feed the */
+/** *build-time HTML shell (§5.7): `paths()` enumerates a dynamic route's */
+/** *concrete URLs, and `meta()` gives each one its head. */
 struct Route {
     pattern: string,
     build: fn(Params) -> Node,
     meta: fn(Params) -> Meta = router_default_meta,
     paths: fn() -> []string = router_default_paths,
-    /// The page reads its params through `param_live` / `params_live` and so
-    /// survives a navigation that changes only them: the slot is not rebuilt,
-    /// the page's own effects update. Leave it off for a page that takes the
-    /// `Params` argument as a snapshot.
+    /** *The page reads its params through `param_live` / `params_live` and so */
+    /** *survives a navigation that changes only them: the slot is not rebuilt, */
+    /** *the page's own effects update. Leave it off for a page that takes the */
+    /** *`Params` argument as a snapshot. */
     live: bool = false,
 }
 
@@ -111,8 +111,8 @@ fn router_default_paths() -> []string {
     return []string {}
 }
 
-/// 1 when `pattern` has a `:name` capture (so a build cannot know its URLs
-/// without `paths()`).
+/** *1 when `pattern` has a `:name` capture (so a build cannot know its URLs */
+/** *without `paths()`). */
 fn is_dynamic(pattern: string) -> int {
     let mut i = 0
     while i < pattern.len {
@@ -124,15 +124,15 @@ fn is_dynamic(pattern: string) -> int {
     return 0
 }
 
-/// A loader registered for a route pattern. Several may share a pattern; all
-/// of them start, in registration order, when navigation to it begins.
+/** *A loader registered for a route pattern. Several may share a pattern; all */
+/** *of them start, in registration order, when navigation to it begins. */
 struct LoaderEntry {
     pattern: string,
     load: fn(Params),
 }
 
-/// Per-router fallbacks. Both default to a plain `Text`, so `RouterProps {}`
-/// works out of the box.
+/** *Per-router fallbacks. Both default to a plain `Text`, so `RouterProps {}` */
+/** *works out of the box. */
 struct RouterProps {
     notFound: fn() -> Node = RouterDefaultNotFound,
     error: fn(string) -> Node = RouterDefaultError,
@@ -166,7 +166,7 @@ fn r_seg_end(s: string, i: int, end: int) -> int {
     return j
 }
 
-/// Length of `s` with trailing slashes removed (never below 1, so "/" stays).
+/** *Length of `s` with trailing slashes removed (never below 1, so "/" stays). */
 fn r_trim_end(s: string) -> int {
     let mut e = s.len
     while e > 1 {
@@ -199,18 +199,18 @@ fn r_starts_slash(s: string) -> int {
     return 0
 }
 
-/// Result buffers for `match_route`.
-///
-/// `match_route` used to return a struct holding `[]string`; copying its slice
-/// fields out of the returned value corrupts under wasm codegen, so the match
-/// writes into these module buffers instead and returns just `ok`. Read them
-/// with `match_keys()` / `match_vals()` immediately after a successful match.
+/** *Result buffers for `match_route`. */
+/** */
+/** *`match_route` used to return a struct holding `[]string`; copying its slice */
+/** *fields out of the returned value corrupts under wasm codegen, so the match */
+/** *writes into these module buffers instead and returns just `ok`. Read them */
+/** *with `match_keys()` / `match_vals()` immediately after a successful match. */
 let mut mr_keys: []string = []string {}
 let mut mr_vals: []string = []string {}
 
-/// Match `path` against `pattern`. Literal segments compare byte-for-byte; a
-/// `:name` segment captures the path segment. Returns 1 on a match and fills
-/// `match_keys()` / `match_vals()` with the captured params.
+/** *Match `path` against `pattern`. Literal segments compare byte-for-byte; a */
+/** *`:name` segment captures the path segment. Returns 1 on a match and fills */
+/** *`match_keys()` / `match_vals()` with the captured params. */
 fn match_route(pattern: string, path: string) -> int {
     mr_keys = []string {}
     mr_vals = []string {}
@@ -261,12 +261,12 @@ fn match_route(pattern: string, path: string) -> int {
     return 1
 }
 
-/// Captured `:name` keys from the last successful `match_route`.
+/** *Captured `:name` keys from the last successful `match_route`. */
 fn match_keys() -> []string {
     return mr_keys
 }
 
-/// Captured path values from the last successful `match_route`.
+/** *Captured path values from the last successful `match_route`. */
 fn match_vals() -> []string {
     return mr_vals
 }
@@ -284,7 +284,7 @@ fn param(p: Params, name: string) -> string {
     return ""
 }
 
-/// Decimal `:param` as an int (0 when absent or non-numeric).
+/** *Decimal `:param` as an int (0 when absent or non-numeric). */
 fn param_int(p: Params, name: string) -> int {
     let s = param(p, name)
     let mut n = 0
@@ -303,22 +303,22 @@ fn param_int(p: Params, name: string) -> int {
     return n
 }
 
-/// The current route's params, read live: a signal read, so the thunk or
-/// effect that calls this re-runs on every navigation. This is how a `live`
-/// route's page follows its params without being rebuilt. Outside a reactive
-/// scope it is simply the current params.
+/** *The current route's params, read live: a signal read, so the thunk or */
+/** *effect that calls this re-runs on every navigation. This is how a `live` */
+/** *route's page follows its params without being rebuilt. Outside a reactive */
+/** *scope it is simply the current params. */
 fn params_live() -> Params {
     ensure_path()
     params_gen.get()
     return cur_params
 }
 
-/// `param` over `params_live()`.
+/** *`param` over `params_live()`. */
 fn param_live(name: string) -> string {
     return param(params_live(), name)
 }
 
-/// `param_int` over `params_live()`.
+/** *`param_int` over `params_live()`. */
 fn param_int_live(name: string) -> int {
     return param_int(params_live(), name)
 }
@@ -328,24 +328,24 @@ fn param_int_live(name: string) -> int {
 let mut cur_path: Signal<string> = Signal { id: 0 }
 let mut hist: []string = []string {}
 let mut hist_at: int = 0
-/// The route table the mounted `Router` resolves against (empty until it is
-/// built), the match for the current path, and the two signals the page slot
-/// hangs off. `page_key` moves when the slot must rebuild — a different route,
-/// or the same route taken as a snapshot; `params_gen` moves on every
-/// navigation, so a `param_live` read re-runs whatever read it. The params
-/// themselves are module state, not a signal payload: a signal holding a
-/// struct that owns lists does not round-trip its elements (see the myapp blog
-/// loader), and this is `match_keys()` / `match_vals()`'s idiom already.
+/** *The route table the mounted `Router` resolves against (empty until it is */
+/** *built), the match for the current path, and the two signals the page slot */
+/** *hangs off. `page_key` moves when the slot must rebuild — a different route, */
+/** *or the same route taken as a snapshot; `params_gen` moves on every */
+/** *navigation, so a `param_live` read re-runs whatever read it. The params */
+/** *themselves are module state, not a signal payload: a signal holding a */
+/** *struct that owns lists does not round-trip its elements (see the myapp blog */
+/** *loader), and this is `match_keys()` / `match_vals()`'s idiom already. */
 let mut cur_routes: []Route = []Route {}
 let mut cur_index: int = -1
 let mut cur_params: Params = Params { keys: []string {}, vals: []string {} }
 let mut params_gen: Signal<int> = Signal { id: 0 }
 let mut page_key: Signal<int> = Signal { id: 0 }
-/// Loaders registered with `on_load`, matched against the target path when
-/// navigation begins.
+/** *Loaders registered with `on_load`, matched against the target path when */
+/** *navigation begins. */
 let mut route_loaders: []LoaderEntry = []LoaderEntry {}
 let mut initial_loads_done: int = 0
-/// Last title pushed to the host (`Meta.title`); tests and hosts poll it.
+/** *Last title pushed to the host (`Meta.title`); tests and hosts poll it. */
 let mut cur_title: string = ""
 
 fn ensure_path() {
@@ -361,8 +361,8 @@ fn ensure_path() {
     }
 }
 
-/// Match `path` against the mounted route table: sets `cur_index` /
-/// `cur_params` and returns the index (-1 for no route).
+/** *Match `path` against the mounted route table: sets `cur_index` / */
+/** *`cur_params` and returns the index (-1 for no route). */
 fn resolve(path: string) -> int {
     let mut i = 0
     while i < cur_routes.len {
@@ -378,15 +378,15 @@ fn resolve(path: string) -> int {
     return -1
 }
 
-/// The route whose code is loading, or -1.
+/** *The route whose code is loading, or -1. */
 let mut waiting_route: int = -1
-/// See `pending`.
+/** *See `pending`. */
 let mut pending_sig: Signal<bool> = Signal { id: 0 }
 
-/// Make `path` current. The params are resolved first, so an effect that
-/// `params_gen` re-runs reads the new ones; the slot then rebuilds unless the
-/// route is the one already mounted and it is `live`, in which case only the
-/// title (which may depend on the params) is refreshed.
+/** *Make `path` current. The params are resolved first, so an effect that */
+/** *`params_gen` re-runs reads the new ones; the slot then rebuilds unless the */
+/** *route is the one already mounted and it is `live`, in which case only the */
+/** *title (which may depend on the params) is refreshed. */
 fn set_path(path: string) {
     let prev = cur_index
     let idx = resolve(path)
@@ -418,8 +418,8 @@ fn set_path(path: string) {
     }
 }
 
-/// The current path as a signal: read it to build a nav highlight, `set` it
-/// through `navigate` / `replace`, never directly.
+/** *The current path as a signal: read it to build a nav highlight, `set` it */
+/** *through `navigate` / `replace`, never directly. */
 fn path_signal() -> Signal<string> {
     ensure_path()
     return cur_path
@@ -430,9 +430,9 @@ fn current() -> string {
     return cur_path.get()
 }
 
-/// Start every loader registered for the route matching `path`, in order.
-/// Called the moment navigation begins — before `cur_path` changes and the
-/// page paints — so a route's fetches are all in flight together.
+/** *Start every loader registered for the route matching `path`, in order. */
+/** *Called the moment navigation begins — before `cur_path` changes and the */
+/** *page paints — so a route's fetches are all in flight together. */
 fn start_loaders(path: string) {
     let mut i = 0
     while i < route_loaders.len {
@@ -444,14 +444,14 @@ fn start_loaders(path: string) {
     }
 }
 
-/// Register a loader for the routes matching `pattern`. All loaders for the
-/// target route start (in registration order) when navigation begins, before
-/// the page builds, so their requests run concurrently (§5.5).
+/** *Register a loader for the routes matching `pattern`. All loaders for the */
+/** *target route start (in registration order) when navigation begins, before */
+/** *the page builds, so their requests run concurrently (§5.5). */
 fn on_load(pattern: string, load: fn(Params)) {
     route_loaders.push(LoaderEntry { pattern: pattern, load: load })
 }
 
-/// `path` without its query or fragment: what a canonical URL names.
+/** *`path` without its query or fragment: what a canonical URL names. */
 fn clean_path(path: string) -> string {
     let mut out = []int {}
     for i in 0..path.len {
@@ -463,11 +463,11 @@ fn clean_path(path: string) -> string {
     return string_from_bytes(out)
 }
 
-/// Push a route's `Meta` to the host: the window title, and on the web the whole
-/// `<head>`, so a shared or indexed URL describes the page it shows. Empty titles
-/// are ignored, so routes without `meta` leave the title alone. Every other field
-/// is sent even when empty, so one page's tags never outlive it. Called from
-/// `RouterPage`, where the matched route is already in hand.
+/** *Push a route's `Meta` to the host: the window title, and on the web the whole */
+/** *`<head>`, so a shared or indexed URL describes the page it shows. Empty titles */
+/** *are ignored, so routes without `meta` leave the title alone. Every other field */
+/** *is sent even when empty, so one page's tags never outlive it. Called from */
+/** *`RouterPage`, where the matched route is already in hand. */
 fn apply_meta(m: Meta) {
     if m.title.len > 0 {
         cur_title = m.title
@@ -483,19 +483,19 @@ fn apply_meta(m: Meta) {
     platform.plat_set_head("og_image", m.og_image)
 }
 
-/// Title last applied on navigation ("" until a route with `meta` is shown).
+/** *Title last applied on navigation ("" until a route with `meta` is shown). */
 fn meta_title() -> string {
     return cur_title
 }
 
-/// Record a move off the current path: `navigate /a -> /b`.
+/** *Record a move off the current path: `navigate /a -> /b`. */
 fn note_nav(verb: string, to: string) {
     if logs.tracking() {
         logs.nav("{{verb}} {{cur_path.peek()}} -> {{to}}")
     }
 }
 
-/// Push `path` onto history and mount its route.
+/** *Push `path` onto history and mount its route. */
 fn navigate(path: string) {
     ensure_path()
     note_nav("navigate", path)
@@ -517,7 +517,7 @@ fn push_path(path: string) {
     platform.plat_history_push(path)
 }
 
-/// Replace the current history entry (no new back step).
+/** *Replace the current history entry (no new back step). */
 fn replace(path: string) {
     ensure_path()
     note_nav("redirect", path)
@@ -532,7 +532,7 @@ fn replace(path: string) {
     platform.plat_history_replace(path)
 }
 
-/// Go back one history entry. No-op at the start of history.
+/** *Go back one history entry. No-op at the start of history. */
 fn back() {
     ensure_path()
     if hist_at > 0 {
@@ -544,26 +544,26 @@ fn back() {
     }
 }
 
-/// Host callback: a deep link or an OS back/forward button. `url` is the
-/// target path (for back, hosts pass `hist`-relative paths via the events they
-/// receive; the core keeps the stack).
+/** *Host callback: a deep link or an OS back/forward button. `url` is the */
+/** *target path (for back, hosts pass `hist`-relative paths via the events they */
+/** *receive; the core keeps the stack). */
 fn engine_open_url(url: string) {
     ensure_path()
     note_nav("open", url)
     push_path(url)
 }
 
-/// How many times `preload` has matched a route. A hover onto a node with
-/// `href` counts. The page does not change.
+/** *How many times `preload` has matched a route. A hover onto a node with */
+/** *`href` counts. The page does not change. */
 let mut preload_hits: int = 0
-/// The last path that matched, or "" before any.
+/** *The last path that matched, or "" before any. */
 let mut preload_path: string = ""
 
-/// Fetch the code for `path` ahead of time, so a navigation there has nothing
-/// to wait for. A node with `href` does this on its own when the pointer
-/// enters it (`Router` installs that). Web only: `plat_chunks_preload` fetches
-/// on the web host and does nothing on desktop and mobile. Cheap to repeat, a
-/// no-op where code is not split, and it changes nothing about the current page.
+/** *Fetch the code for `path` ahead of time, so a navigation there has nothing */
+/** *to wait for. A node with `href` does this on its own when the pointer */
+/** *enters it (`Router` installs that). Web only: `plat_chunks_preload` fetches */
+/** *on the web host and does nothing on desktop and mobile. Cheap to repeat, a */
+/** *no-op where code is not split, and it changes nothing about the current page. */
 fn preload(path: string) {
     for i in 0..cur_routes.len {
         if match_route(cur_routes[i].pattern, path) == 1 {
@@ -576,34 +576,34 @@ fn preload(path: string) {
     }
 }
 
-/// How many route preloads have been asked for. Tests read it.
+/** *How many route preloads have been asked for. Tests read it. */
 fn preload_count() -> int {
     return preload_hits
 }
 
-/// The last path `preload` matched, or "". Tests read it.
+/** *The last path `preload` matched, or "". Tests read it. */
 fn preloaded() -> string {
     return preload_path
 }
 
-/// True while a navigation has been waiting on its code long enough to notice.
-/// A signal, so a shell can show a spinner from it. The current page stays up
-/// meanwhile. A quick load never sets it, so a fast connection never flashes.
+/** *True while a navigation has been waiting on its code long enough to notice. */
+/** *A signal, so a shell can show a spinner from it. The current page stays up */
+/** *meanwhile. A quick load never sets it, so a fast connection never flashes. */
 fn pending() -> Signal<bool> {
     ensure_path()
     return pending_sig
 }
 
-/// Route `index`'s code is taking a while to arrive. Navigating on since makes
-/// this a no-op.
+/** *Route `index`'s code is taking a while to arrive. Navigating on since makes */
+/** *this a no-op. */
 fn engine_chunks_slow(index: int) {
     if index == waiting_route {
         pending_sig.set(true)
     }
 }
 
-/// Route `index`'s code has landed. Navigating on since it was asked for makes
-/// this a no-op: the newer route is the one waiting now.
+/** *Route `index`'s code has landed. Navigating on since it was asked for makes */
+/** *this a no-op: the newer route is the one waiting now. */
 fn engine_chunks_done(index: int) {
     if index == waiting_route {
         waiting_route = -1
@@ -612,14 +612,14 @@ fn engine_chunks_done(index: int) {
     }
 }
 
-/// Back one entry, for a host that only knows "the user went back".
+/** *Back one entry, for a host that only knows "the user went back". */
 fn engine_history_back() {
     back()
 }
 
 // --- the router ---
 
-/// Mount the page for the resolved route (`cur_index` / `cur_params`).
+/** *Mount the page for the resolved route (`cur_index` / `cur_params`). */
 fn RouterPage(p: RouterProps) -> Node {
     if cur_index < 0 {
         // Nothing here to index, and nothing of the last page's to keep.
@@ -637,10 +637,10 @@ fn RouterPage(p: RouterProps) -> Node {
     })
 }
 
-/// The page slot. Put it inside a retained shell: on navigation only this
-/// host rebuilds, so shell state survives. `RouterProps {}` uses the built-in
-/// not-found / error pages. Keyed on `page_key`, which `set_path` moves for
-/// every navigation except one that keeps a `live` route's page.
+/** *The page slot. Put it inside a retained shell: on navigation only this */
+/** *host rebuilds, so shell state survives. `RouterProps {}` uses the built-in */
+/** *not-found / error pages. Keyed on `page_key`, which `set_path` moves for */
+/** *every navigation except one that keeps a `live` route's page. */
 fn Router(routes: []Route, p: RouterProps) -> Node {
     ensure_path()
     // Any later hover of a node with `href` fetches that route's code. The

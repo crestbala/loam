@@ -1,5 +1,5 @@
-//! WAV for the tests. `write_mono` is 16-bit PCM. `inspect` also reads
-//! the 24-bit stereo file the mixer writes.
+// WAV for the tests. `write_mono` is 16-bit PCM. `inspect` also reads
+// the 24-bit stereo file the mixer writes.
 
 import "std:sys"
 
@@ -42,7 +42,7 @@ fn push32(b: &mut []int, v: int) {
     push(b, (x / 16777216) % 256)
 }
 
-/// 16-bit mono PCM. `0` when the file was written.
+/** *16-bit mono PCM. `0` when the file was written. */
 fn write_mono(path: string, rate: int, samples: []int) -> int {
     let mut rate_v = rate
     if rate_v <= 0 {
@@ -116,7 +116,7 @@ fn sample_at(b: string, i: int, bits: int) -> int {
     return u
 }
 
-/// Header, rate, channels, bit depth, duration, and mean absolute sample.
+/** *Header, rate, channels, bit depth, duration, and mean absolute sample. */
 fn inspect(path: string) -> WavInfo {
     let b = sys.read_file(path)
     if b.len < 44 {

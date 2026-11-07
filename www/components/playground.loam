@@ -1,4 +1,4 @@
-//! The playground: pick an example or write a program, run it in the page.
+// The playground: pick an example or write a program, run it in the page.
 
 import "zeus"
 import "zui:spacing"
@@ -10,8 +10,8 @@ import "editor.loam" as editor
 import "highlight.loam" as highlight
 import "prose.loam" as prose
 
-/// Samples are written with `%{` and `}%` for interpolation braces: a Loam
-/// string literal cannot hold two opening braces without interpolating.
+/** *Samples are written with `%{` and `}%` for interpolation braces: a Loam */
+/** *string literal cannot hold two opening braces without interpolating. */
 fn tpl(s: string) -> string {
     let o = string_from_bytes([]int { 123, 123 })
     let c = string_from_bytes([]int { 125, 125 })
@@ -72,7 +72,7 @@ fn lines_of(s: string) -> []string {
     return out
 }
 
-/// 0 not run, 1 ok, 2 error.
+/** *0 not run, 1 ok, 2 error. */
 fn status_text(state: int, line: int) -> string {
     if state == 1 {
         return "Finished"
@@ -93,7 +93,7 @@ fn status_color(state: int) -> string {
     return colors.mute()
 }
 
-/// A dot and a word that follow the run state.
+/** *A dot and a word that follow the run state. */
 fn StatusPill(state: Signal<int>, line: Signal<int>) -> Node {
     return zeus.Box(style = Style(
         direction = Direction.Row,

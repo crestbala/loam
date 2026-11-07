@@ -1,6 +1,6 @@
-//! The three rules, the two benchmarks, and the look-ahead check on the
-//! orders themselves: a series cut at date t produces the same orders up to
-//! t as the full series.
+// The three rules, the two benchmarks, and the look-ahead check on the
+// orders themselves: a series cut at date t produces the same orders up to
+// t as the full series.
 
 import "std:test"
 import "std:date"

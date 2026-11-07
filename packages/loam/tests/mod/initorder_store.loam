@@ -1,5 +1,5 @@
-//! Module-level signals of different types. Their initializers must run after
-//! zeus's own module state (the signal arena) is set up.
+// Module-level signals of different types. Their initializers must run after
+// zeus's own module state (the signal arena) is set up.
 
 import "zeus"
 

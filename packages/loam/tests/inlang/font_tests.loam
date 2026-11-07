@@ -19,7 +19,7 @@ fn bytes(xs: []int) -> string {
     return string_from_bytes(xs)
 }
 
-/// Offset of the `cmap` subtable whose format is `fmt`, or -1.
+/** *Offset of the `cmap` subtable whose format is `fmt`, or -1. */
 fn subtable(s: string, fmt: int) -> int {
     let c = font.table_offset(s, "cmap")
     let n = font.read_u16_be(s, c + 2)

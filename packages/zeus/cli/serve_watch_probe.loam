@@ -18,12 +18,12 @@ fn under(dir: string, name: string) -> string {
     return "{{dir}}/{{name}}"
 }
 
-/// Append `s` to `p`: read, join, write. There is no append in `std:sys`.
+/** *Append `s` to `p`: read, join, write. There is no append in `std:sys`. */
 fn append_file(p: string, s: string) {
     sys.write_file(p, cat(sys.read_file(p), s))
 }
 
-/// Wait for the burst and print what it named, as `hit` lines the caller greps.
+/** *Wait for the burst and print what it named, as `hit` lines the caller greps. */
 fn report(h: int, roots: []string, label: string, wait_ms: int) {
     let hits = zeli.watch_batch(h, roots, wait_ms)
     fmt.println("case", label)

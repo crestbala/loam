@@ -39,7 +39,7 @@ fn frame() {
     zeus.engine_paint()
 }
 
-/// The y of the fill painted with `rgb`, or -9999.
+/** *The y of the fill painted with `rgb`, or -9999. */
 fn fill_y(rgb: int) -> int {
     for i in 0..zeus.draw_count() {
         if zeus.draw_rgb(i) == rgb && zeus.draw_w(i) == 90 {

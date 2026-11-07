@@ -1,19 +1,19 @@
-//! The analytics server. Build it for the machine that runs it:
-//!
-//!     ./bin/loamc www/server/main.loam -o analytics
-//!
-//! It reads everything from the environment:
-//!
-//!     PORT                  8080 unless set
-//!     HOST                  127.0.0.1 unless set. Fly needs 0.0.0.0
-//!     DATABASE_PATH         analytics.db unless set
-//!     SITE_ORIGIN           the published site, such as https://example.com
-//!     VAULT_EMAIL           the owner's login
-//!     VAULT_PASSWORD_HASH   from hash_password.loam
-//!     VAULT_SESSION_SECRET  32 to 64 bytes: `openssl rand -hex 32`
-//!     INSECURE_COOKIE       set to 1 only to try it over http on localhost
-//!
-//! None of the secrets go in the repo.
+// The analytics server. Build it for the machine that runs it:
+//
+//     ./bin/loamc www/server/main.loam -o analytics
+//
+// It reads everything from the environment:
+//
+//     PORT                  8080 unless set
+//     HOST                  127.0.0.1 unless set. Fly needs 0.0.0.0
+//     DATABASE_PATH         analytics.db unless set
+//     SITE_ORIGIN           the published site, such as https://example.com
+//     VAULT_EMAIL           the owner's login
+//     VAULT_PASSWORD_HASH   from hash_password.loam
+//     VAULT_SESSION_SECRET  32 to 64 bytes: `openssl rand -hex 32`
+//     INSECURE_COOKIE       set to 1 only to try it over http on localhost
+//
+// None of the secrets go in the repo.
 
 import "std:fmt"
 import "http"

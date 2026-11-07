@@ -1,4 +1,4 @@
-//! Full-bleed dark room. The page supplies the column.
+// Full-bleed dark room. The page supplies the column.
 
 import "zeus"
 import "../theme.loam" as theme

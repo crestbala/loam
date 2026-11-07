@@ -1,13 +1,13 @@
-//! Mune's backend: the piece is made here, behind `server/api.loam`.
-//!
-//! `zeli serve` (any target) builds and starts this on 127.0.0.1:8080 before
-//! the UI, so the macOS window (h2c) and the browser (gRPC-Web through the
-//! Vite proxy) reach the same engine — the one place with ffmpeg, the voice
-//! tools, and the file writes. The wasm build cannot render a piece itself,
-//! so its store makes these calls; the macOS store can too.
-//!
-//!   `MUNE_PORT` moves it off 8080 (tests next to a running engine; the UI
-//!   then needs `LOAM_RPC_ADDR=127.0.0.1:<port>`).
+// Mune's backend: the piece is made here, behind `server/api.loam`.
+//
+// `zeli serve` (any target) builds and starts this on 127.0.0.1:8080 before
+// the UI, so the macOS window (h2c) and the browser (gRPC-Web through the
+// Vite proxy) reach the same engine — the one place with ffmpeg, the voice
+// tools, and the file writes. The wasm build cannot render a piece itself,
+// so its store makes these calls; the macOS store can too.
+//
+//   `MUNE_PORT` moves it off 8080 (tests next to a running engine; the UI
+//   then needs `LOAM_RPC_ADDR=127.0.0.1:<port>`).
 
 import "http"
 import "std:str"

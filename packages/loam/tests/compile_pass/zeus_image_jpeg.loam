@@ -35,8 +35,8 @@ fn load(name: string) -> string {
     return sys.read_file("packages/loam/tests/images/{{name}}")
 }
 
-/// Decode `name`, compare every channel against its Pillow oracle, and report
-/// the worst and mean absolute differences. `label` names it in the output.
+/** *Decode `name`, compare every channel against its Pillow oracle, and report */
+/** *the worst and mean absolute differences. `label` names it in the output. */
 fn compare(name: string, label: string, ew: int, eh: int) {
     let s = load(name)
     let f = zeusraster.image_format_of(s)

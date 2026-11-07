@@ -1,8 +1,8 @@
-//! The cache pipeline, on fixture files shaped like AMFI's.
-//!
-//! No network. Each test uses its own directory and removes it afterwards.
-//! What is checked is the thing a bad row would otherwise become: a cached
-//! NAV, a dormant flag, or a gap that indicators must not cross.
+// The cache pipeline, on fixture files shaped like AMFI's.
+//
+// No network. Each test uses its own directory and removes it afterwards.
+// What is checked is the thing a bad row would otherwise become: a cached
+// NAV, a dormant flag, or a gap that indicators must not cross.
 
 import "std:test"
 import "std:sys"

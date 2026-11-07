@@ -1,9 +1,9 @@
-//! WebSocket demo UI (wasm). `http.ws_open(client(""), "/ws", ...)` opens
-//! the same-origin socket through the browser's WebSocket: every frame the
-//! engine drains the JS message queue, so each `tick-N` frame lands in the
-//! signals below and repaints. The vite dev server proxies `/ws` to the
-//! native backend on :8080. If the socket drops (backend restarted), the
-//! page reconnects every second.
+// WebSocket demo UI (wasm). `http.ws_open(client(""), "/ws", ...)` opens
+// the same-origin socket through the browser's WebSocket: every frame the
+// engine drains the JS message queue, so each `tick-N` frame lands in the
+// signals below and repaints. The vite dev server proxies `/ws` to the
+// native backend on :8080. If the socket drops (backend restarted), the
+// page reconnects every second.
 
 import "std:async"
 import "zeus"

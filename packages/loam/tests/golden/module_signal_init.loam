@@ -1,8 +1,8 @@
-//! Module-level `zeus.signal` in an imported module. `initorder_ui` imports
-//! zeus first, so module inits must follow the import graph, not the order
-//! modules were first visited: run in visit order, the store's signals were
-//! allocated before the arena initialised, then wiped and their ids reused.
-//! The suite only checks the exit code, so every mismatch panics.
+// Module-level `zeus.signal` in an imported module. `initorder_ui` imports
+// zeus first, so module inits must follow the import graph, not the order
+// modules were first visited: run in visit order, the store's signals were
+// allocated before the arena initialised, then wiped and their ids reused.
+// The suite only checks the exit code, so every mismatch panics.
 
 import "std:fmt"
 import "zeus"

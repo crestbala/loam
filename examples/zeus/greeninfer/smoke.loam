@@ -1,12 +1,12 @@
-//! smoke.loam — GreenInfer self-test (headless CLI). Phase 2 coverage:
-//! the chunker's token budgets and boundaries, cosine normalization, the
-//! mmap engine (rank, capacity guard, reopen), and a real folder scan via
-//! watcher.loam with manifest tick.
-//!
-//! Run from the repo root:
-//!   make
-//!   LOAM_LINK_EXTRA="examples/zeus/greeninfer/runtime/greeninfer_runtime.c" \
-//!     ./bin/loamc --run examples/zeus/greeninfer/smoke.loam
+// smoke.loam — GreenInfer self-test (headless CLI). Phase 2 coverage:
+// the chunker's token budgets and boundaries, cosine normalization, the
+// mmap engine (rank, capacity guard, reopen), and a real folder scan via
+// watcher.loam with manifest tick.
+//
+// Run from the repo root:
+//   make
+//   LOAM_LINK_EXTRA="examples/zeus/greeninfer/runtime/greeninfer_runtime.c" \
+//     ./bin/loamc --run examples/zeus/greeninfer/smoke.loam
 
 import "std:fmt"
 import "std:sys"
@@ -28,7 +28,7 @@ fn expect(ok: bool, what: string) {
     fail(what)
 }
 
-/// Build a string of `n` copies of `piece` (for chunker tests).
+/** *Build a string of `n` copies of `piece` (for chunker tests). */
 fn repeat(piece: string, n: int) -> string {
     let mut b = []int {}
     let mut k = 0
@@ -148,7 +148,7 @@ fn main() {
     fmt.println("engine + watcher smoke: all ok")
 }
 
-/// Smoke ext list (built by hand — no shared const arrays in Loam).
+/** *Smoke ext list (built by hand — no shared const arrays in Loam). */
 fn default_exts_for_smoke() -> []string {
     let mut e = []string {}
     push(e, ".loam")

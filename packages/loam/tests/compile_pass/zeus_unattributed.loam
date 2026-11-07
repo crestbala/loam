@@ -23,7 +23,7 @@ fn must(ok: bool, what: string) {
 
 let mut logged: int = 0
 
-/// One quiet frame: layout + paint, so the next write starts clean.
+/** *One quiet frame: layout + paint, so the next write starts clean. */
 fn frame() {
     zeus.engine_layout(260, 180)
     zeus.engine_paint()

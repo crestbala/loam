@@ -1,4 +1,4 @@
-//! The title pill and the round buttons along the top edge.
+// The title pill and the round buttons along the top edge.
 
 import "zeus"
 import "zui"

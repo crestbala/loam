@@ -1,5 +1,5 @@
-//! Imported as `theory_b`: its `c` would be `loam_theory_b_c`, the same
-//! symbol as `theory.b_c`. See compile_pass/symbol_clash.loam.
+// Imported as `theory_b`: its `c` would be `loam_theory_b_c`, the same
+// symbol as `theory.b_c`. See compile_pass/symbol_clash.loam.
 
 fn c() -> int {
     return 4

@@ -1,6 +1,6 @@
-//! scene — the draw list. Paint records primitives; present() submits them
-//! through platform (the host's 2D API, not a GPU). The software rasterizer in
-//! `zeus:zeusraster` is the other, opt-in consumer of the same list.
+// scene — the draw list. Paint records primitives; present() submits them
+// through platform (the host's 2D API, not a GPU). The software rasterizer in
+// `zeus:zeusraster` is the other, opt-in consumer of the same list.
 
 import "arena.loam"
 import "nodes.loam"
@@ -41,11 +41,11 @@ let mut draws: []Draw = []Draw {}
 let mut op_start: []int = []int {}
 let mut op_len: []int = []int {}
 
-/// Recording state. `rec_mode` 1 means ops land in `patch_ops` instead of
-/// `draws`, and a span is rebased onto `rec_base` — the retained offset the run
-/// will be written back to. `cur_floater` is the floater root the floaters pass is
-/// recording; it is the one node whose run must *not* overwrite its main-region
-/// span, because its shell lives in the main region and its body does not.
+/** *Recording state. `rec_mode` 1 means ops land in `patch_ops` instead of */
+/** *`draws`, and a span is rebased onto `rec_base` — the retained offset the run */
+/** *will be written back to. `cur_floater` is the floater root the floaters pass is */
+/** *recording; it is the one node whose run must *not* overwrite its main-region */
+/** *span, because its shell lives in the main region and its body does not. */
 let mut rec_mode: int = 0
 let mut rec_base: int = 0
 let mut rec_from: int = 0
@@ -72,13 +72,13 @@ let mut rerec_gen: int = 0
    reused. It is the tail of the list, so re-recording it never shifts anything. */
 let mut fl_section_start: int = 0
 
-/// Diagnostics for tests: frames that re-recorded only their dirty subtrees,
-/// frames that re-recorded everything, and op runs re-recorded rather than
-/// reused.
+/** *Diagnostics for tests: frames that re-recorded only their dirty subtrees, */
+/** *frames that re-recorded everything, and op runs re-recorded rather than */
+/** *reused. */
 let mut patch_frames: int = 0
 let mut full_frames: int = 0
 let mut patch_runs: int = 0
-/// Patched frames where a run changed length and was spliced in.
+/** *Patched frames where a run changed length and was spliced in. */
 let mut splice_frames: int = 0
 
 fn paint_splice_frames() -> int {
@@ -95,7 +95,7 @@ fn paint_patch_runs() -> int {
     return patch_runs
 }
 
-/// Index the next op will occupy — in `patch_ops` while re-recording a run.
+/** *Index the next op will occupy — in `patch_ops` while re-recording a run. */
 fn rec_here() -> int {
     if rec_mode != 0 {
         return patch_ops.len
@@ -136,8 +136,8 @@ fn set_span(id: int, from: int, len: int) {
     op_len[id] = len
 }
 
-/// Forget every span. Called at the start of a full record, so a node the record
-/// never reaches (inside an invisible subtree) cannot answer to a stale run.
+/** *Forget every span. Called at the start of a full record, so a node the record */
+/** *never reaches (inside an invisible subtree) cannot answer to a stale run. */
 fn clear_spans() {
     let n = op_len.len
     for i in 0..n {
@@ -187,17 +187,17 @@ fn fill_alpha(x: int, y: int, w: int, h: int, rgb: int, radius: int, alpha: int)
     }
 }
 
-/// Vertical (`axis` 0) or horizontal (`axis` 1) linear gradient, rounded by
-/// `radius`. `axis` rides in `font` and the second color in `value`, so the
-/// record keeps one shape for every primitive.
+/** *Vertical (`axis` 0) or horizontal (`axis` 1) linear gradient, rounded by */
+/** *`radius`. `axis` rides in `font` and the second color in `value`, so the */
+/** *record keeps one shape for every primitive. */
 fn fill_g(x: int, y: int, w: int, h: int, c0: int, c1: int, axis: int, radius: int, alpha: int) {
     emit(11, x, y, w, h, c0, radius, alpha, axis, "", c1)
 }
 
-/// Soft drop shadow under a rounded rect. `blur`, `dx`, and `dy` ride in
-/// `font`, `value`, and `radius`'s high bits would be ambiguous, so the
-/// offsets are packed into `value` as `(dy + 128) * 256 + (dx + 128)` —
-/// both are small signed dp offsets, and packing keeps `Draw` at one shape.
+/** *Soft drop shadow under a rounded rect. `blur`, `dx`, and `dy` ride in */
+/** *`font`, `value`, and `radius`'s high bits would be ambiguous, so the */
+/** *offsets are packed into `value` as `(dy + 128) * 256 + (dx + 128)` — */
+/** *both are small signed dp offsets, and packing keeps `Draw` at one shape. */
 fn shadow(
     x: int,
     y: int,
@@ -213,24 +213,24 @@ fn shadow(
     emit(12, x, y, w, h, rgb, radius, alpha, blur, "", (dy + 128) * 256 + (dx + 128))
 }
 
-/// Anti-aliased ring stroke inside the rect. Stroke width rides in `font`.
+/** *Anti-aliased ring stroke inside the rect. Stroke width rides in `font`. */
 fn stroke(x: int, y: int, w: int, h: int, rgb: int, radius: int, width: int, alpha: int) {
     emit(13, x, y, w, h, rgb, radius, alpha, width, "", 0)
 }
 
-/// Per-corner radius fill, clockwise from the top-left. The four radii ride
-/// in two fields as 16-bit lanes — `tl | tr << 16` and `br | bl << 16` — so a
-/// `RAD_FULL` (999) pill corner survives the trip (hosts clamp each to half
-/// the smaller extent). `radius` carries the first pair and `value` the
-/// second; both are free for this kind.
+/** *Per-corner radius fill, clockwise from the top-left. The four radii ride */
+/** *in two fields as 16-bit lanes — `tl | tr << 16` and `br | bl << 16` — so a */
+/** *`RAD_FULL` (999) pill corner survives the trip (hosts clamp each to half */
+/** *the smaller extent). `radius` carries the first pair and `value` the */
+/** *second; both are free for this kind. */
 fn fill4(x: int, y: int, w: int, h: int, rgb: int, alpha: int, tl: int, tr: int, br: int, bl: int) {
     emit(14, x, y, w, h, rgb, tl | (tr << 16), alpha, 0, "", br | (bl << 16))
 }
 
-/// Translate, then scale and rotate about an origin. Paint-space only: this
-/// never touches layout, which is what makes a move or a scale a PAINT-dirty
-/// change rather than a LAYOUT-dirty one. `dx` / `dy` are 1/16 dp and `scale`
-/// permille, so hosts draw the positions between whole dp a slow spring ends on.
+/** *Translate, then scale and rotate about an origin. Paint-space only: this */
+/** *never touches layout, which is what makes a move or a scale a PAINT-dirty */
+/** *change rather than a LAYOUT-dirty one. `dx` / `dy` are 1/16 dp and `scale` */
+/** *permille, so hosts draw the positions between whole dp a slow spring ends on. */
 fn xform(dx: int, dy: int, scale: int, rotation_degrees: int, ox: int, oy: int) {
     emit(15, dx, dy, ox, oy, 0, scale, 255, rotation_degrees, "", 0)
 }
@@ -239,8 +239,8 @@ fn text(x: int, y: int, s: string, rgb: int, font: int, alpha: int) {
     emit(2, x, y, 0, 0, rgb, 0, alpha, font, s, 0)
 }
 
-/// Rotated text: `deg` is clockwise on screen, pivoted around the top-left
-/// of the (unrotated) line box — the same anchor as `text`.
+/** *Rotated text: `deg` is clockwise on screen, pivoted around the top-left */
+/** *of the (unrotated) line box — the same anchor as `text`. */
 fn text_rot(x: int, y: int, s: string, rgb: int, font: int, deg: int, alpha: int) {
     emit(9, x, y, deg, 0, rgb, 0, alpha, font, s, 0)
 }
@@ -265,7 +265,7 @@ fn save() {
     emit(6, 0, 0, 0, 0, 0, 0, 0, 0, "", 0)
 }
 
-/// Clip to a rect, rounded when `radius` > 0.
+/** *Clip to a rect, rounded when `radius` > 0. */
 fn clip(x: int, y: int, w: int, h: int, radius: int) {
     emit(7, x, y, w, h, 0, radius, 0, 0, "", 0)
 }
@@ -274,35 +274,35 @@ fn restore() {
     emit(8, 0, 0, 0, 0, 0, 0, 0, 0, "", 0)
 }
 
-/// 1 when this op needs a host alpha layer. Text has no alpha argument, so
-/// present() wraps it in `plat_alpha` / `plat_restore` — extra host calls,
-/// not extra draw-list ops (`draw_count` stays the open-panel count).
-/// Ints per op in the frame buffer: `kind x y w h rgb radius alpha font value`
-/// and the op's string index (-1 when it has none). The fields are the `Draw`
-/// record's; the kinds a host would have to compute (3, 4, 5) are lowered in
-/// `present` and never arrive.
+/** *1 when this op needs a host alpha layer. Text has no alpha argument, so */
+/** *present() wraps it in `plat_alpha` / `plat_restore` — extra host calls, */
+/** *not extra draw-list ops (`draw_count` stays the open-panel count). */
+/** *Ints per op in the frame buffer: `kind x y w h rgb radius alpha font value` */
+/** *and the op's string index (-1 when it has none). The fields are the `Draw` */
+/** *record's; the kinds a host would have to compute (3, 4, 5) are lowered in */
+/** *`present` and never arrive. */
 const FRAME_STRIDE: int = 11
 const OP_TEXT: int = 2
 const OP_PATH_FILL: int = 16
 const OP_PATH_STROKE: int = 17
 const OP_ALPHA: int = 18
-/// "ZEUS" read as a little-endian int32, then the format version. A host
-/// checks both before decoding.
+/** *"ZEUS" read as a little-endian int32, then the format version. A host */
+/** *checks both before decoding. */
 const FRAME_MAGIC: int = 0x5355455A
 const FRAME_VERSION: int = 1
 
-/// The frame handed to the host: `FRAME_STRIDE` ints per op, the strings text /
-/// image ops point into, and the path stream path ops point into (`SP_*`
-/// command codes, then coordinates in 1/64 layout point). Reused across frames,
-/// so a steady frame allocates nothing.
+/** *The frame handed to the host: `FRAME_STRIDE` ints per op, the strings text / */
+/** *image ops point into, and the path stream path ops point into (`SP_*` */
+/** *command codes, then coordinates in 1/64 layout point). Reused across frames, */
+/** *so a steady frame allocates nothing. */
 let mut frame_ops: []int = []int {}
 let mut frame_strs: []string = []string {}
 let mut frame_path: []int = []int {}
 let mut frame_n: int = 0
 let mut frame_np: int = 0
 let mut frame_ns: int = 0
-/// The frame header: magic, version, stride, op count, string count, path
-/// length (`docs/frame-format.md`).
+/** *The frame header: magic, version, stride, op count, string count, path */
+/** *length (`docs/frame-format.md`). */
 let mut frame_head: []int = []int { 0, 0, 0, 0, 0, 0 }
 
 fn frame_put(i: int, v: int) {
@@ -339,8 +339,8 @@ fn frame_op(kind: int, x: int, y: int, w: int, h: int, rgb: int, radius: int, al
     frame_n = frame_n + 1
 }
 
-/// Layout points to the path stream's 1/64 fixed point, rounded half away
-/// from zero.
+/** *Layout points to the path stream's 1/64 fixed point, rounded half away */
+/** *from zero. */
 fn fix64(v: float) -> int {
     if v >= 0.0 {
         return i32(v * 64.0 + 0.5)
@@ -348,8 +348,8 @@ fn fix64(v: float) -> int {
     return 0 - i32(0.5 - v * 64.0)
 }
 
-/// An `svg` op as path ops: the markup's cached shapes fitted into the op's
-/// box (uniform scale, centred), `currentColor` resolved to the op's colour.
+/** *An `svg` op as path ops: the markup's cached shapes fitted into the op's */
+/** *box (uniform scale, centred), `currentColor` resolved to the op's colour. */
 fn lower_svg(d: Draw) {
     if d.w <= 0 || d.h <= 0 {
         return
@@ -410,7 +410,7 @@ fn lower_svg(d: Draw) {
     }
 }
 
-/// Put `s` in the frame's string table and return its index.
+/** *Put `s` in the frame's string table and return its index. */
 fn frame_str(s: string) -> int {
     if frame_ns < frame_strs.len {
         frame_strs[frame_ns] = s
@@ -425,11 +425,11 @@ fn text_op(x: int, y: int, s: string, rgb: int, font: int) {
     frame_op(OP_TEXT, x, y, 0, 0, rgb, 0, 255, font, 0, frame_str(s))
 }
 
-/// Wrapped text (kind 4) as one text op per word, broken at `max_w` exactly as
-/// `measure_wrap` sized it: words split on space, tab and newline; a space is
-/// drawn only between words on the same line; a newline always breaks. Word
-/// widths come from the host's own face (`measure_host`, cached), so the words
-/// sit where the host's glyphs land.
+/** *Wrapped text (kind 4) as one text op per word, broken at `max_w` exactly as */
+/** *`measure_wrap` sized it: words split on space, tab and newline; a space is */
+/** *drawn only between words on the same line; a newline always breaks. Word */
+/** *widths come from the host's own face (`measure_host`, cached), so the words */
+/** *sit where the host's glyphs land. */
 fn lower_wrap(d: Draw) {
     let s = d.text
     let px = d.font
@@ -486,19 +486,19 @@ fn lower_wrap(d: Draw) {
     }
 }
 
-/// Hand the draw list to the host as one command buffer, in the versioned
-/// format of `docs/frame-format.md`. Everything a host would otherwise have to
-/// compute is lowered here first, so a host only draws primitives:
-///
-/// - `svg` (5) becomes path ops (16 / 17);
-/// - wrapped text (4) becomes one text op per word;
-/// - a number label (3) becomes a text op over its decimal string;
-/// - text drawn at partial alpha (2, 3, 4, 9) is bracketed by an `alpha` op
-///   (18) and a `restore` (8), so text ops themselves carry no alpha.
-///
-/// The runtime either replays the buffer into the host's `ZeusDraw`
-/// (`zeus_replay`) or hands it over whole (`zeus_bind_frame`), so this is the
-/// only paint call a frame makes across the seam.
+/** *Hand the draw list to the host as one command buffer, in the versioned */
+/** *format of `docs/frame-format.md`. Everything a host would otherwise have to */
+/** *compute is lowered here first, so a host only draws primitives: */
+/** */
+/** *- `svg` (5) becomes path ops (16 / 17); */
+/** *- wrapped text (4) becomes one text op per word; */
+/** *- a number label (3) becomes a text op over its decimal string; */
+/** *- text drawn at partial alpha (2, 3, 4, 9) is bracketed by an `alpha` op */
+/** *(18) and a `restore` (8), so text ops themselves carry no alpha. */
+/** */
+/** *The runtime either replays the buffer into the host's `ZeusDraw` */
+/** *(`zeus_replay`) or hands it over whole (`zeus_bind_frame`), so this is the */
+/** *only paint call a frame makes across the seam. */
 fn present() {
     let n = draws.len
     frame_n = 0
@@ -574,9 +574,9 @@ fn paint_hover_wash(id: int) {
     }
 }
 
-/// Skeleton shimmer: a highlight band (fill → plate → fill, two gradient
-/// halves) 40% of the box wide, sweeping left to right on the frame clock,
-/// clipped to the rounded box. Directional, unlike the old alpha sawtooth.
+/** *Skeleton shimmer: a highlight band (fill → plate → fill, two gradient */
+/** *halves) 40% of the box wide, sweeping left to right on the frame clock, */
+/** *clipped to the rounded box. Directional, unlike the old alpha sawtooth. */
 fn paint_shimmer(id: int, x: int, y: int, w: int, h: int, r: int, a: int) {
     if w <= 0 {
         return
@@ -598,11 +598,11 @@ fn paint_shimmer(id: int, x: int, y: int, w: int, h: int, r: int, a: int) {
     restore()
 }
 
-/// A shadow's alpha under a surface at alpha `a`. It goes faster than the
-/// surface: hosts leave the middle of a cached shadow undrawn, because an
-/// opaque surface covers it, and a shadow as strong as a half-faded surface
-/// shows that hole as a hard-edged frame. In 16 steps, because a host keeps a
-/// template per alpha and a fade must not build one a frame.
+/** *A shadow's alpha under a surface at alpha `a`. It goes faster than the */
+/** *surface: hosts leave the middle of a cached shadow undrawn, because an */
+/** *opaque surface covers it, and a shadow as strong as a half-faded surface */
+/** *shows that hole as a hard-edged frame. In 16 steps, because a host keeps a */
+/** *template per alpha and a fade must not build one a frame. */
 fn shadow_fade(alpha: int, a: int) -> int {
     if a >= 255 {
         return alpha
@@ -710,8 +710,8 @@ fn paint_fill_box(id: int, wash: int) {
     }
 }
 
-/// The selection indicator, under the children: a pill the size of the selected
-/// child, or a line along its foot. Before its first sync it sits on the child.
+/** *The selection indicator, under the children: a pill the size of the selected */
+/** *child, or a line along its foot. Before its first sync it sits on the child. */
 fn paint_indicator(id: int) {
     let sel = arena.sig_val(nodes.anim[id].ind_sig)
     let t = arena.ind_target(id, sel)
@@ -732,7 +732,7 @@ fn paint_indicator(id: int) {
     }
 }
 
-/// Side borders: per-side widths drawn inside the box (no layout space).
+/** *Side borders: per-side widths drawn inside the box (no layout space). */
 fn paint_side_borders(id: int, x: int, y: int, w: int, h: int, a: int) {
     if nodes.look[id].border_c < 0 {
         return
@@ -759,8 +759,8 @@ fn paint_side_borders(id: int, x: int, y: int, w: int, h: int, a: int) {
     }
 }
 
-/// `Border.between`: a rule centred in the gap between consecutive flow
-/// children, across the content box. Painted over the children.
+/** *`Border.between`: a rule centred in the gap between consecutive flow */
+/** *children, across the content box. Painted over the children. */
 fn paint_between(id: int) {
     let bw = int(nodes.look[id].bd_between)
     if bw <= 0 || nodes.look[id].border_c < 0 {
@@ -845,7 +845,7 @@ fn paint_input(id: int) {
     restore()
 }
 
-/// `textAlign` shift for a single line `tw` wide in content width `inner`.
+/** *`textAlign` shift for a single line `tw` wide in content width `inner`. */
 fn align_dx(id: int, inner: int, tw: int) -> int {
     let al = int(nodes.look[id].t_align)
     if al == 0 || inner <= tw {
@@ -1004,13 +1004,13 @@ fn paint_scrollbar(id: int) {
     }
 }
 
-/// Paint a node, applying its animated paint transform first. The transform
-/// comes from paint-only tracks, so nothing here can move the layout box.
-/// Paint a node's subtree. Wraps the shaped pass with damage capture: a node
-/// whose PAINT bit is set opens a capture, so it and every node painted inside
-/// it contribute a damage rect. A dirty container must repaint its children —
-/// they composite over its new fill — so the capture covers the subtree, not
-/// just the node.
+/** *Paint a node, applying its animated paint transform first. The transform */
+/** *comes from paint-only tracks, so nothing here can move the layout box. */
+/** *Paint a node's subtree. Wraps the shaped pass with damage capture: a node */
+/** *whose PAINT bit is set opens a capture, so it and every node painted inside */
+/** *it contribute a damage rect. A dirty container must repaint its children — */
+/** *they composite over its new fill — so the capture covers the subtree, not */
+/** *just the node. */
 // --- culling ---------------------------------------------------------------
 //
 // The rule: an element whose box lies wholly outside the clip it paints
@@ -1022,26 +1022,26 @@ fn paint_scrollbar(id: int) {
 // recorded; when it later needs ops, the patch sees a length change from zero
 // and the frame records in full, re-deciding every cull.
 
-/// Slack around the clip rect, in dp: shadows, focus rings and anti-aliasing
-/// paint a little outside a node's box.
+/** *Slack around the clip rect, in dp: shadows, focus rings and anti-aliasing */
+/** *paint a little outside a node's box. */
 const CULL_PAD: int = 48
 
-/// The active cull rect in draw space; `cull_on` 0 = no clip above.
+/** *The active cull rect in draw space; `cull_on` 0 = no clip above. */
 let mut cull_on: int = 0
 let mut cull_x0: int = 0
 let mut cull_y0: int = 0
 let mut cull_x1: int = 0
 let mut cull_y1: int = 0
 
-/// Nodes skipped by culling this session (diagnostics).
+/** *Nodes skipped by culling this session (diagnostics). */
 let mut culled_count: int = 0
 
 fn paint_culled_count() -> int {
     return culled_count
 }
 
-/// Narrow the cull rect to (`x`, `y`, `w`, `h`). The caller saved the five
-/// fields first and restores them after the subtree.
+/** *Narrow the cull rect to (`x`, `y`, `w`, `h`). The caller saved the five */
+/** *fields first and restores them after the subtree. */
 fn cull_enter(x: int, y: int, w: int, h: int) {
     if cull_on == 0 {
         cull_on = 1
@@ -1057,8 +1057,8 @@ fn cull_enter(x: int, y: int, w: int, h: int) {
     cull_y1 = geometry.min2(cull_y1, y + h)
 }
 
-/// 1 when a node paints away from its laid-out box (an animated transform),
-/// so neither it nor its subtree can be culled by box.
+/** *1 when a node paints away from its laid-out box (an animated transform), */
+/** *so neither it nor its subtree can be culled by box. */
 fn moves_off_box(id: int) -> int {
     if int(nodes.anim[id].an_scale) != arena.SCALE_ONE ||
         int(nodes.anim[id].an_tx) != 0 ||
@@ -1070,8 +1070,8 @@ fn moves_off_box(id: int) -> int {
     return 0
 }
 
-/// 1 when `id`, at the current scroll offsets, lies wholly outside the active
-/// cull rect. Floaters paint in their own pass and are never culled here.
+/** *1 when `id`, at the current scroll offsets, lies wholly outside the active */
+/** *cull rect. Floaters paint in their own pass and are never culled here. */
 fn node_culled(id: int) -> int {
     if cull_on == 0 {
         return 0
@@ -1194,8 +1194,8 @@ fn paint_node_shaped(id: int) {
     }
 }
 
-/// Paint `id` and its subtree under its effective scheme (a scoped light /
-/// dark subtree), restoring the parent's for whatever it paints after.
+/** *Paint `id` and its subtree under its effective scheme (a scoped light / */
+/** *dark subtree), restoring the parent's for whatever it paints after. */
 fn paint_node_body(id: int) {
     let prev = arena.paint_scheme_enter(id)
     paint_node_body_in(id)
@@ -1563,7 +1563,7 @@ fn paint_floaters(id: int) {
     paint_floaters_paint()
 }
 
-/// Paint the floaters `floater_collect` already gathered, in z order.
+/** *Paint the floaters `floater_collect` already gathered, in z order. */
 fn paint_floaters_paint() {
     let n = arena.floater_id.len
     for i in 0..n {
@@ -1574,9 +1574,9 @@ fn paint_floaters_paint() {
     }
 }
 
-/// Re-record one dirty node's whole run in place. Returns 0 when the run's length
-/// changed — the retained list would have to shift, so the frame falls back to a
-/// full record. Nothing is written to `draws` until every patch is known to fit.
+/** *Re-record one dirty node's whole run in place. Returns 0 when the run's length */
+/** *changed — the retained list would have to shift, so the frame falls back to a */
+/** *full record. Nothing is written to `draws` until every patch is known to fit. */
 fn patch_run(id: int) -> int {
     let from0 = op_start_span(id)
     let len0 = op_len_len(id)
@@ -1594,9 +1594,9 @@ fn patch_run(id: int) -> int {
     return file_patch(from0, len0, patch_ops.len - rec_from)
 }
 
-/// File the run just re-recorded (`len` ops at `rec_from`) over the retained
-/// `len0` ops at `from0`. A changed length is spliced at apply time, except a
-/// run that had no ops: with no span to anchor it, the frame records in full.
+/** *File the run just re-recorded (`len` ops at `rec_from`) over the retained */
+/** *`len0` ops at `from0`. A changed length is spliced at apply time, except a */
+/** *run that had no ops: with no span to anchor it, the frame records in full. */
 fn file_patch(from0: int, len0: int, len: int) -> int {
     if len != len0 && len0 == 0 {
         return 0
@@ -1609,17 +1609,17 @@ fn file_patch(from0: int, len0: int, len: int) -> int {
     return 1
 }
 
-/// Walk the retained tree and re-record only what carries dirt. A subtree with no
-/// paint bit below it keeps every op it has, so its resolution — colors, text,
-/// shadow packing, transforms — is not redone. A node with only a *descendant*
-/// marked keeps its own ops and recurses, because its ops bracket its children and
-/// an in-place patch elsewhere does not disturb them.
-///
-/// A floater is the exception. Its ops live in two places — a shell in the main
-/// region (which a transformed or revealing floater emits, and which moves with
-/// any scroller above it) and its body in the floaters section — so instead of
-/// trusting bits this re-records the shell unconditionally (it is a handful of ops
-/// at most) and leaves the section to `patch_frame`.
+/** *Walk the retained tree and re-record only what carries dirt. A subtree with no */
+/** *paint bit below it keeps every op it has, so its resolution — colors, text, */
+/** *shadow packing, transforms — is not redone. A node with only a *descendant* */
+/** *marked keeps its own ops and recurses, because its ops bracket its children and */
+/** *an in-place patch elsewhere does not disturb them. */
+/** */
+/** *A floater is the exception. Its ops live in two places — a shell in the main */
+/** *region (which a transformed or revealing floater emits, and which moves with */
+/** *any scroller above it) and its body in the floaters section — so instead of */
+/** *trusting bits this re-records the shell unconditionally (it is a handful of ops */
+/** *at most) and leaves the section to `patch_frame`. */
 fn patch_node(id: int) -> int {
     if id <= 0 {
         return 1
@@ -1707,7 +1707,7 @@ fn patch_node(id: int) -> int {
     return ok
 }
 
-/// 1 when a floater (a z-indexed node or an overlay) lives under `id`.
+/** *1 when a floater (a z-indexed node or an overlay) lives under `id`. */
 fn has_floater_inside(id: int) -> int {
     let kids = nodes.tree[id].kids
     for i in 0..kids.len {
@@ -1724,7 +1724,7 @@ fn has_floater_inside(id: int) -> int {
     return 0
 }
 
-/// Re-record a floater's main-region shell (no body: `paint_skip_z` is set).
+/** *Re-record a floater's main-region shell (no body: `paint_skip_z` is set). */
 fn patch_shell(id: int) -> int {
     let from0 = op_start_span(id)
     let len0 = op_len_len(id)
@@ -1746,7 +1746,7 @@ fn op_start_span(id: int) -> int {
     return op_start[id]
 }
 
-/// `op_len[id]`, 0 for a node the spans do not cover.
+/** *`op_len[id]`, 0 for a node the spans do not cover. */
 fn op_len_len(id: int) -> int {
     if id <= 0 {
         return 0
@@ -1757,9 +1757,9 @@ fn op_len_len(id: int) -> int {
     return op_len[id]
 }
 
-/// Rebuild the frame's op list by patching the retained one. Returns 0 when the
-/// frame cannot be patched (a run changed length), leaving `draws` untouched so
-/// the caller can do a full record instead.
+/** *Rebuild the frame's op list by patching the retained one. Returns 0 when the */
+/** *frame cannot be patched (a run changed length), leaving `draws` untouched so */
+/** *the caller can do a full record instead. */
 fn patch_frame() -> int {
     while patch_dst.len > 0 {
         pop(patch_dst)
@@ -1806,12 +1806,12 @@ fn patch_frame() -> int {
     return 1
 }
 
-/// Apply this frame's patches when at least one run changed length: rebuild the
-/// main region with each run swapped in (the ops between runs are copied, not
-/// re-resolved), then remap every span. A node a patch re-recorded has its span
-/// in that run's coordinates, so it shifts by the patches *before* that run; any
-/// other span maps both ends through every patch that ends at or before them —
-/// which also stretches an ancestor whose run brackets a patch.
+/** *Apply this frame's patches when at least one run changed length: rebuild the */
+/** *main region with each run swapped in (the ops between runs are copied, not */
+/** *re-resolved), then remap every span. A node a patch re-recorded has its span */
+/** *in that run's coordinates, so it shifts by the patches *before* that run; any */
+/** *other span maps both ends through every patch that ends at or before them — */
+/** *which also stretches an ancestor whose run brackets a patch. */
 fn splice_frame() -> int {
     let n = patch_dst.len
     // Patches in list order (z-sorted siblings can file them out of order).
@@ -1894,7 +1894,7 @@ fn splice_frame() -> int {
     return 1
 }
 
-/// 1 when an ancestor of `id` had its run re-recorded this frame.
+/** *1 when an ancestor of `id` had its run re-recorded this frame. */
 fn under_rerec(id: int) -> int {
     if id >= nodes.tree.len {
         return 0
@@ -1911,8 +1911,8 @@ fn under_rerec(id: int) -> int {
     return 0
 }
 
-/// Where retained offset `p` lands after the splice: shifted by every patch
-/// that ends at or before it.
+/** *Where retained offset `p` lands after the splice: shifted by every patch */
+/** *that ends at or before it. */
 fn splice_map(p: int, ord: []int) -> int {
     let mut q = p
     let n = ord.len
@@ -1925,8 +1925,8 @@ fn splice_map(p: int, ord: []int) -> int {
     return q
 }
 
-/// Re-record the whole frame. The fallback, and the frame that establishes the
-/// spans every later patch is measured against.
+/** *Re-record the whole frame. The fallback, and the frame that establishes the */
+/** *spans every later patch is measured against. */
 fn record_frame() {
     full_frames = full_frames + 1
     rec_mode = 0
@@ -1945,11 +1945,11 @@ fn record_frame() {
     arena.note_paint_spans()
 }
 
-/// Gather the floaters and paint them as the frame's tail, recording where the
-/// section starts. `truncate` drops the previous section first — needed on a
-/// patched frame, where the tail is still in `draws`; a full record has already
-/// emptied it. A scroller root paints its floaters inline instead, so its section
-/// is empty and the start lands at the frame's end.
+/** *Gather the floaters and paint them as the frame's tail, recording where the */
+/** *section starts. `truncate` drops the previous section first — needed on a */
+/** *patched frame, where the tail is still in `draws`; a full record has already */
+/** *emptied it. A scroller root paints its floaters inline instead, so its section */
+/** *is empty and the start lands at the frame's end. */
 fn paint_floaters_section(truncate: int) {
     if arena.root_id > 0 {
         if int(nodes.tree[arena.root_id].kind) != 11 {
@@ -1983,7 +1983,7 @@ let mut fl_ids: []int = []int {}
 let mut fl_start: []int = []int {}
 let mut fl_len: []int = []int {}
 let mut fl_geo: []int = []int {}
-/// Floater runs a patched frame reused instead of re-recording (diagnostics).
+/** *Floater runs a patched frame reused instead of re-recording (diagnostics). */
 let mut fl_reused: int = 0
 
 fn paint_floaters_reused() -> int {
@@ -1997,8 +1997,8 @@ fn fl_clear() {
     fl_geo = []int {}
 }
 
-/// Paint the gathered floaters as the section's runs. `reuse` = 1 on a patched
-/// frame: `old` holds the previous section (which started at `old_base`).
+/** *Paint the gathered floaters as the section's runs. `reuse` = 1 on a patched */
+/** *frame: `old` holds the previous section (which started at `old_base`). */
 fn paint_floaters_runs(old: []Draw, old_base: int, reuse: int) {
     let n = arena.floater_id.len
     let mut ids = []int {}
@@ -2046,7 +2046,7 @@ fn paint_floaters_runs(old: []Draw, old_base: int, reuse: int) {
     fl_geo = geo
 }
 
-/// Collect the visible floaters of `root` in z order.
+/** *Collect the visible floaters of `root` in z order. */
 fn collect_floaters(root: int) {
     arena.floater_clear()
     arena.fc_skip_window = 0
@@ -2093,7 +2093,7 @@ fn paint() {
     arena.damage_frame_end()
 }
 
-/// `a` moved `pct` percent of the way to `b`, per channel.
+/** *`a` moved `pct` percent of the way to `b`, per channel. */
 fn mix_rgb(a: int, b: int, pct: int) -> int {
     let mut out = 0
     let mut shift = 1

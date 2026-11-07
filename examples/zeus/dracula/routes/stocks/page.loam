@@ -14,10 +14,10 @@ fn spec() -> []TableCol {
     return h
 }
 
-/// The results for one search state. `MatchBy` keeps the arm while the state
-/// (and whether any row matched) holds; inside it the rows are an `Each` over
-/// the hits, so a refined query keeps the rows that still match and builds
-/// only the new ones.
+/** *The results for one search state. `MatchBy` keeps the arm while the state */
+/** *(and whether any row matched) holds; inside it the rows are an `Each` over */
+/** *the hits, so a refined query keeps the rows that still match and builds */
+/** *only the new ones. */
 fn arm(v: Signal<StockSearch>) -> Node {
     let x = v.peek()
     if x.state == 0 {

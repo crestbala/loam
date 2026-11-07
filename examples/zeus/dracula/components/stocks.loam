@@ -1,9 +1,9 @@
-//! Stock closes for the screens: search, one focused chart, and the day
-//! walk that fills the stock cache. Nothing here is a fund. There is no
-//! signal, no exit load, stamp duty, or STT, and no backtest.
-//!
-//! Signals are created in `start`, which `app.loam` calls before `zeus.App`.
-//! A dead server is an empty reply body (see `book.loam`): state 3.
+// Stock closes for the screens: search, one focused chart, and the day
+// walk that fills the stock cache. Nothing here is a fund. There is no
+// signal, no exit load, stamp duty, or STT, and no backtest.
+//
+// Signals are created in `start`, which `app.loam` calls before `zeus.App`.
+// A dead server is an empty reply body (see `book.loam`): state 3.
 
 import "std:date"
 import "http"
@@ -14,13 +14,13 @@ import "../core/series.loam"
 import "present.loam" as present
 
 let mut gen: Signal<int> = Signal { id: 0 }
-/// The focused stock as one value: the page binds to it (`MatchBy` on the
-/// state), and every field it shows updates in place when this is written.
+/** *The focused stock as one value: the page binds to it (`MatchBy` on the */
+/** *state), and every field it shows updates in place when this is written. */
 let mut focus_view: Signal<StockView> = Signal { id: 0 }
 let mut range_sel: Signal<int> = Signal { id: 0 }
 let mut search_input: Signal<string> = Signal { id: 0 }
 let mut search_gen: Signal<int> = Signal { id: 0 }
-/// The search as one value (see `StockSearch`).
+/** *The search as one value (see `StockSearch`). */
 let mut search_view: Signal<StockSearch> = Signal { id: 0 }
 let mut data_gen: Signal<int> = Signal { id: 0 }
 let mut from_input: Signal<string> = Signal { id: 0 }
@@ -63,8 +63,8 @@ let mut walk_days = []int {}
 let mut walk_cached = 0
 let mut progress = ""
 
-/// What the stock page shows. `state`: 0 loading, 1 loaded, 2 not cached,
-/// 3 server down.
+/** *What the stock page shows. `state`: 0 loading, 1 loaded, 2 not cached, */
+/** *3 server down. */
 struct StockView {
     state: int,
     sym: string,
@@ -79,8 +79,8 @@ fn view() -> Signal<StockView> {
     return focus_view
 }
 
-/// Publish the focus globals as the view value. A write of an equal value is
-/// no change, so a bump that moved nothing the page shows re-runs nothing.
+/** *Publish the focus globals as the view value. A write of an equal value is */
+/** *no change, so a bump that moved nothing the page shows re-runs nothing. */
 fn publish_view() {
     if focus_view.id == 0 {
         return
@@ -144,14 +144,14 @@ fn bump_search() {
     publish_search()
 }
 
-/// One search result row: the symbol it opens and its table cells.
+/** *One search result row: the symbol it opens and its table cells. */
 struct StockHit {
     sym: string,
     cells: []string,
 }
 
-/// What the stock search shows. `state`: 0 no query, 1 asking, 2 answered,
-/// 3 server down.
+/** *What the stock search shows. `state`: 0 no query, 1 asking, 2 answered, */
+/** *3 server down. */
 struct StockSearch {
     state: int,
     query: string,
@@ -217,7 +217,7 @@ fn clear_hits() {
     hit_closes = []string {}
 }
 
-/// Runs in an effect on the search field.
+/** *Runs in an effect on the search field. */
 fn search_tick() {
     if search_input.id == 0 {
         return
@@ -270,7 +270,7 @@ fn search_query() -> string {
     return asked_query
 }
 
-/// `0` no query, `1` asking, `2` answered, `3` the server did not answer.
+/** *`0` no query, `1` asking, `2` answered, `3` the server did not answer. */
 fn search_status() -> int {
     return search_state
 }
@@ -290,7 +290,7 @@ fn hit_symbol(i: int) -> string {
     return hit_syms[i]
 }
 
-/// Name, symbol, last close, as of.
+/** *Name, symbol, last close, as of. */
 fn hit_cells(i: int) -> []string {
     let mut row = []string {}
     if i < 0 || i >= hit_syms.len {
@@ -324,7 +324,7 @@ fn clear_chart() {
     stat_texts = []string {}
 }
 
-/// The stock page. `0` loading, `1` loaded, `2` not cached, `3` server down.
+/** *The stock page. `0` loading, `1` loaded, `2` not cached, `3` server down. */
 fn focus(sym: string) {
     if gen.id == 0 || sym.len == 0 {
         return
@@ -409,7 +409,7 @@ fn publish() {
     bump()
 }
 
-/// Runs in an effect on the range control.
+/** *Runs in an effect on the range control. */
 fn range_tick() {
     if range_sel.id == 0 {
         return
@@ -601,8 +601,8 @@ fn on_day(day: string, raw: string) {
     walk_step()
 }
 
-/// Walk the typed range one trading day at a time, oldest first. A weekend
-/// or holiday answers "closed" and the walk moves on.
+/** *Walk the typed range one trading day at a time, oldest first. A weekend */
+/** *or holiday answers "closed" and the walk moves on. */
 fn load_history() {
     if data_gen.id == 0 || walking == 1 {
         return

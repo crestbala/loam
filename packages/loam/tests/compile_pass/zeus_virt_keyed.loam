@@ -31,7 +31,7 @@ fn ItemRow(i: int, it: Item) -> Node {
     }
 }
 
-/// Scroll `n` one-row shifts, returning `[allocs, live_nodes_at_end]`.
+/** *Scroll `n` one-row shifts, returning `[allocs, live_nodes_at_end]`. */
 fn scroll_n(items: Signal<[]Item>, keyed: bool, n: int) -> []int {
     zeus.snapshot(240, 300, fn() -> Node {
         zeus.Box(style = Style(direction = Direction.Column)) {

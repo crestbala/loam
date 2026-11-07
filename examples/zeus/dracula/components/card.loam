@@ -1,5 +1,5 @@
-//! Shared component, no routing knowledge: a fn that builds into the
-//! current host.
+// Shared component, no routing knowledge: a fn that builds into the
+// current host.
 
 import "zeus"
 import "zui"

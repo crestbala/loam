@@ -23,9 +23,9 @@ async fn after_str(s: string) -> string {
     return await f
 }
 
-/// for + continue + break around awaits. Skips 2, stops at 5: 0+1+3+4 = 8.
-/// `after_int` is an `async fn` that already pumps; the `await` here is on
-/// a fresh mailbox, so the loop itself suspends (no CPS split).
+/** *for + continue + break around awaits. Skips 2, stops at 5: 0+1+3+4 = 8. */
+/** *`after_int` is an `async fn` that already pumps; the `await` here is on */
+/** *a fresh mailbox, so the loop itself suspends (no CPS split). */
 async fn loop_sum() -> int {
     let mut s = 0
     for i in 0..8 {
@@ -43,9 +43,9 @@ async fn loop_sum() -> int {
     return s
 }
 
-/// Nested while + if/else. Each branch awaits a different mailbox, and
-/// calling another `async fn` from an `async fn` is a plain call (it returns
-/// the value, not a Future).
+/** *Nested while + if/else. Each branch awaits a different mailbox, and */
+/** *calling another `async fn` from an `async fn` is a plain call (it returns */
+/** *the value, not a Future). */
 async fn nested_branch() -> int {
     let mut i = 0
     let mut acc = 0

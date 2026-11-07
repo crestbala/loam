@@ -6,10 +6,10 @@ import "../../../components/present.loam" as present
 import "../../../components/stocks.loam" as stocks
 import "../../../components/ui.loam" as ui
 
-/// The page for one load state. `MatchBy` keeps the arm while the state holds,
-/// so new closes or a range change land in the arm's view signal: the chart,
-/// header and stats update in place, and only a state change (loading ->
-/// loaded, a dead server) builds another arm.
+/** *The page for one load state. `MatchBy` keeps the arm while the state holds, */
+/** *so new closes or a range change land in the arm's view signal: the chart, */
+/** *header and stats update in place, and only a state change (loading -> */
+/** *loaded, a dead server) builds another arm. */
 fn arm(sym: string, v: Signal<StockView>) -> Node {
     let st = v.peek().state
     if st == 1 {

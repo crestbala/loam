@@ -26,7 +26,7 @@ fn run_ms(ms: int) {
     }
 }
 
-/// Translucent fills in the right-hand gutter (x >= 300): thumbs and tracks.
+/** *Translucent fills in the right-hand gutter (x >= 300): thumbs and tracks. */
 fn gutter_fills() -> int {
     let mut c = 0
     for i in 0..zeus.draw_count() {
@@ -37,7 +37,7 @@ fn gutter_fills() -> int {
     return c
 }
 
-/// Top and width of the (only) thumb in the gutter, -1 when none.
+/** *Top and width of the (only) thumb in the gutter, -1 when none. */
 fn gutter_y() -> int {
     for i in 0..zeus.draw_count() {
         if zeus.draw_x(i) >= 300 && zeus.draw_alpha(i) > 0 && zeus.draw_alpha(i) < 255 {

@@ -1408,7 +1408,7 @@ enum {
 };
 
 typedef struct {
-    int line, col, len, type;
+    int line, col, len, type, mod;
 } SemTok;
 
 typedef struct {
@@ -1416,7 +1416,7 @@ typedef struct {
     int n, cap;
 } SemToks;
 
-static void st_push(SemToks *s, int line, int col, int len, int type) {
+static void st_push(SemToks *s, int line, int col, int len, int type, int mod) {
     if (len <= 0) return;
     if (s->n >= s->cap) {
         s->cap = s->cap ? s->cap * 2 : 256;
@@ -1426,10 +1426,11 @@ static void st_push(SemToks *s, int line, int col, int len, int type) {
     s->v[s->n].col = col;
     s->v[s->n].len = len;
     s->v[s->n].type = type;
+    s->v[s->n].mod = mod;
     s->n++;
 }
 
-static void st_bytes(SemToks *s, const char *src, const char *start, int len, int type) {
+static void st_bytes(SemToks *s, const char *src, const char *start, int len, int type, int mod) {
     if (!src || !start || len <= 0) return;
     int line = 0, col = 0;
     const unsigned char *q = (const unsigned char *)src;
@@ -1462,7 +1463,7 @@ static void st_bytes(SemToks *s, const char *src, const char *start, int len, in
     for (int i = 0; i < len; i++) {
         unsigned char ch = (unsigned char)start[i];
         if (start[i] == '\n') {
-            if (run > 0) st_push(s, rl, rc, u16, type);
+            if (run > 0) st_push(s, rl, rc, u16, type, mod);
             line++;
             col = 0;
             run = 0;
@@ -1491,7 +1492,7 @@ static void st_bytes(SemToks *s, const char *src, const char *start, int len, in
             }
         }
     }
-    if (run > 0) st_push(s, rl, rc, u16, type);
+    if (run > 0) st_push(s, rl, rc, u16, type, mod);
 }
 
 static void st_scan_gap(SemToks *s, const char *src, const char *from, const char *to) {
@@ -1501,7 +1502,7 @@ static void st_scan_gap(SemToks *s, const char *src, const char *from, const cha
         if (*p == '/' && p + 1 < to && p[1] == '/') {
             const char *start = p;
             while (p < to && *p != '\n') p++;
-            st_bytes(s, src, start, (int)(p - start), ST_COMMENT);
+            st_bytes(s, src, start, (int)(p - start), ST_COMMENT, 0);
             continue;
         }
         if (*p == '/' && p + 1 < to && p[1] == '*') {
@@ -1510,7 +1511,7 @@ static void st_scan_gap(SemToks *s, const char *src, const char *from, const cha
             while (p + 1 < to && !(*p == '*' && p[1] == '/')) p++;
             if (p + 1 < to) p += 2;
             else p = to;
-            st_bytes(s, src, start, (int)(p - start), ST_COMMENT);
+            st_bytes(s, src, start, (int)(p - start), ST_COMMENT, 0);
             continue;
         }
         p++;
@@ -1874,9 +1875,12 @@ static void handle_semantic_tokens(const char *msg, const char *id) {
             if (k == TOK_RPAREN && paren > 0) paren--;
             if (k == TOK_UNKNOWN) continue;
             int ty;
+            int mod = 0;
             if (st_is_punct(k)) ty = ST_PUNCTUATION;
             else ty = st_tok_kind(ts, ntok, i, paren);
-            st_bytes(&toks, src, ts[i].start, ts[i].len, ty);
+            /* Legend bit 1: documentation. Item and module doc comments. */
+            if (k == TOK_DOC || k == TOK_MOD_DOC) mod = 2;
+            st_bytes(&toks, src, ts[i].start, ts[i].len, ty, mod);
         }
         free(ts);
         if (toks.n > 1)
@@ -1897,8 +1901,8 @@ static void handle_semantic_tokens(const char *msg, const char *id) {
         int dl = toks.v[i].line - pl;
         int dc = dl == 0 ? toks.v[i].col - pc : toks.v[i].col;
         char item[80];
-        int m = snprintf(item, sizeof item, "%s%d,%d,%d,%d,0", i ? "," : "", dl, dc,
-                         toks.v[i].len, toks.v[i].type);
+        int m = snprintf(item, sizeof item, "%s%d,%d,%d,%d,%d", i ? "," : "", dl, dc,
+                         toks.v[i].len, toks.v[i].type, toks.v[i].mod);
         if (n + (size_t)m + 8 >= cap) {
             cap = cap * 2 + (size_t)m + 32;
             char *nb = (char *)realloc(body, cap);
@@ -1925,7 +1929,7 @@ static void handle(const char *msg) {
     }
 
     if (strcmp(method, "initialize") == 0) {
-        char out[1600];
+        char out[2048];
         snprintf(out, sizeof out,
                  "{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{"
                  "\"capabilities\":{\"textDocumentSync\":1,"
@@ -1936,7 +1940,7 @@ static void handle(const char *msg) {
                  "\"parameter\",\"variable\",\"property\",\"enumMember\","
                  "\"function\",\"keyword\",\"comment\",\"string\",\"number\","
                  "\"operator\",\"modifier\",\"punctuation\"],"
-                 "\"tokenModifiers\":[\"declaration\"]},"
+                 "\"tokenModifiers\":[\"declaration\",\"documentation\"]},"
                  "\"full\":true,\"range\":false}},"
                  "\"serverInfo\":{\"name\":\"loam-lsp\",\"version\":\"0.4\"}}}",
                  id ? id : "null");

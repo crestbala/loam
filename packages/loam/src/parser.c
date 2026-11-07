@@ -3,7 +3,7 @@
  *
  * Pratt parser for binary ops. Struct literals are disabled in `if`/`for`
  * conditions so `{` starts a block. Closures are `|x| { ... }` / `|| { ... }`.
- * Semicolons are optional. `///` attaches to the next item; `//!` to the module.
+ * Semicolons are optional. An item doc attaches to the next item.
  */
 #include "parser.h"
 #include "diagnostics.h"
@@ -56,17 +56,101 @@ static void consume_gt(Parser *p) {
     consume(p, TOK_GT, "expected >");
 }
 
-/** Text after `///` / `//!`, dropping one leading space. */
-static char *doc_line_text(Token t) {
-    int skip = 3;
-    if (t.len < skip) return loam_dup("");
-    const char *s = t.start + skip;
-    int n = t.len - skip;
-    if (n > 0 && s[0] == ' ') {
-        s++;
-        n--;
+static char *doc_append(char *acc, const char *line);
+
+/** Body of a doc comment.
+ *  One line drops one padding space on each side and a leading star.
+ *  Several lines drop a blank opener line, a star leader, and the closer. */
+static char *doc_block_text(Token t) {
+    const char *s = t.start;
+    int n = t.len;
+    if (n >= 3) {
+        s += 3;
+        n -= 3;
     }
-    return loam_dupn(s, n > 0 ? (size_t)n : 0);
+    if (n >= 2 && s[n - 2] == '*' && s[n - 1] == '/') n -= 2;
+
+    int multiline = 0;
+    for (int i = 0; i < n; i++) {
+        if (s[i] == '\n') {
+            multiline = 1;
+            break;
+        }
+    }
+    if (!multiline) {
+        if (n >= 2 && s[0] == ' ' && s[n - 1] == ' ') {
+            s++;
+            n -= 2;
+        } else if (n > 0 && s[0] == ' ') {
+            s++;
+            n--;
+        }
+        if (n > 0 && s[0] == '*') {
+            s++;
+            n--;
+            if (n > 0 && s[0] == ' ') {
+                s++;
+                n--;
+            }
+        }
+        return loam_dupn(s, n > 0 ? (size_t)n : 0);
+    }
+
+    while (n > 0 && (s[n - 1] == ' ' || s[n - 1] == '\t' || s[n - 1] == '\r')) n--;
+    if (n > 0 && s[n - 1] == '\n') n--;
+
+    char *acc = NULL;
+    int i = 0;
+    int first = 1;
+    while (i < n) {
+        int start = i;
+        while (i < n && s[i] != '\n') i++;
+        int end = i;
+        if (i < n && s[i] == '\n') i++;
+        if (end > start && s[end - 1] == '\r') end--;
+        const char *line = s + start;
+        int ln = end - start;
+        if (first) {
+            first = 0;
+            int ws = 1;
+            for (int k = 0; k < ln; k++) {
+                if (line[k] != ' ' && line[k] != '\t') {
+                    ws = 0;
+                    break;
+                }
+            }
+            if (ws) continue;
+            if (ln > 0 && line[0] == ' ') {
+                line++;
+                ln--;
+            }
+            if (ln > 0 && line[0] == '*') {
+                line++;
+                ln--;
+                if (ln > 0 && line[0] == ' ') {
+                    line++;
+                    ln--;
+                }
+            }
+        } else {
+            while (ln > 0 && (line[0] == ' ' || line[0] == '\t')) {
+                line++;
+                ln--;
+            }
+            if (ln > 0 && line[0] == '*') {
+                line++;
+                ln--;
+                if (ln > 0 && line[0] == ' ') {
+                    line++;
+                    ln--;
+                }
+            }
+        }
+        char *piece = loam_dupn(line, ln > 0 ? (size_t)ln : 0);
+        acc = doc_append(acc, piece);
+        free(piece);
+    }
+    return acc ? acc : loam_dup("");
 }
 
 static char *doc_append(char *acc, const char *line) {
@@ -82,25 +166,25 @@ static char *doc_append(char *acc, const char *line) {
     return n;
 }
 
-/** Consecutive `///` lines. */
+/** Consecutive item doc comments. */
 static char *take_docs(Parser *p) {
     char *acc = NULL;
     while (check(p, TOK_DOC)) {
-        char *line = doc_line_text(p->current);
-        acc = doc_append(acc, line);
-        free(line);
+        char *text = doc_block_text(p->current);
+        acc = doc_append(acc, text);
+        free(text);
         advance(p);
     }
     return acc;
 }
 
-/** Consecutive `//!` lines. */
+/** Consecutive module doc comments. */
 static char *take_mod_docs(Parser *p) {
     char *acc = NULL;
     while (check(p, TOK_MOD_DOC)) {
-        char *line = doc_line_text(p->current);
-        acc = doc_append(acc, line);
-        free(line);
+        char *text = doc_block_text(p->current);
+        acc = doc_append(acc, text);
+        free(text);
         advance(p);
     }
     return acc;

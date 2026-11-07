@@ -1,18 +1,18 @@
-//! RPC surface: the `#[proto]` contracts the backend and every client target
-//! share, plus the method names that pair them.
-//!
-//! The boundary is explicit here, not implicit. `#[server] fn` does *not*
-//! generate a client stub: on a wasm build codegen replaces its body with
-//! `loam_panic("<server>", ...)` (packages/loam/src/codegen_c.c), so calling
-//! one from a UI traps. The working shape is the one
-//! `examples/zeus/counter` uses — `app.rpc(name, handler)` on the backend
-//! (`server/main.loam`) and
-//! `http.client().call_async(name, bytes, cb)` on the client
-//! (`routes/blog/loader.loam`).
-//!
-//! `#[proto]` fields are `int`, `string`, or a list of those — protobuf's
-//! `repeated` — encoded as one key per element. Nested messages are not
-//! supported yet, so a list of structs still has nowhere to go.
+// RPC surface: the `#[proto]` contracts the backend and every client target
+// share, plus the method names that pair them.
+//
+// The boundary is explicit here, not implicit. `#[server] fn` does *not*
+// generate a client stub: on a wasm build codegen replaces its body with
+// `loam_panic("<server>", ...)` (packages/loam/src/codegen_c.c), so calling
+// one from a UI traps. The working shape is the one
+// `examples/zeus/counter` uses — `app.rpc(name, handler)` on the backend
+// (`server/main.loam`) and
+// `http.client().call_async(name, bytes, cb)` on the client
+// (`routes/blog/loader.loam`).
+//
+// `#[proto]` fields are `int`, `string`, or a list of those — protobuf's
+// `repeated` — encoded as one key per element. Nested messages are not
+// supported yet, so a list of structs still has nowhere to go.
 
 import "http"
 
@@ -26,27 +26,27 @@ struct HelloResp {
     greeting: string,
 }
 
-/// Empty request: encodes to zero protobuf bytes.
+/** *Empty request: encodes to zero protobuf bytes. */
 #[proto]
 struct PostsReq {}
 
-/// Post titles, newest first.
+/** *Post titles, newest first. */
 #[proto]
 struct PostsResp {
     titles: []string,
 }
 
-/// RPC name `Blog.Hello` → path `/Blog/Hello`.
+/** *RPC name `Blog.Hello` → path `/Blog/Hello`. */
 fn hello_rpc() -> string {
     return "Blog.Hello"
 }
 
-/// RPC name `Blog.Posts` → path `/Blog/Posts`.
+/** *RPC name `Blog.Posts` → path `/Blog/Posts`. */
 fn posts_rpc() -> string {
     return "Blog.Posts"
 }
 
-/// The `Blog.Hello` reply body.
+/** *The `Blog.Hello` reply body. */
 fn greet(name: string) -> string {
     return http.concat_str("hello ", name)
 }

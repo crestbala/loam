@@ -1,5 +1,5 @@
-//! One fold is enough to see the freeze: the length is chosen on the rise,
-//! and the decline that follows is scored with that length left alone.
+// One fold is enough to see the freeze: the length is chosen on the rise,
+// and the decline that follows is scored with that length left alone.
 
 import "std:test"
 import "std:date"

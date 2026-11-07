@@ -27,7 +27,7 @@ fn tick() {
     zeus.engine_paint()
 }
 
-/// Ops reading `text`, how many, and the y and alpha of the last one.
+/** *Ops reading `text`, how many, and the y and alpha of the last one. */
 fn copies(text: string) -> int {
     let mut n = 0
     for i in 0..zeus.draw_count() {

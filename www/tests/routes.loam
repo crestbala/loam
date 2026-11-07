@@ -1,6 +1,6 @@
-//! Drives the generated route table headlessly and asserts every page paints.
-//!
-//!     ZEUS_HEADLESS=1 ./bin/loamc www/tests/routes.loam -o /tmp/loam-www-routes && /tmp/loam-www-routes
+// Drives the generated route table headlessly and asserts every page paints.
+//
+//     ZEUS_HEADLESS=1 ./bin/loamc www/tests/routes.loam -o /tmp/loam-www-routes && /tmp/loam-www-routes
 
 import "std:fmt"
 import "std:sys"

@@ -18,7 +18,7 @@ fn frame() {
     zeus.engine_paint()
 }
 
-/// Frames until nothing is animating, at 16 ms each.
+/** *Frames until nothing is animating, at 16 ms each. */
 fn frames_to_rest() -> int {
     let mut n = 0
     while zeus.proof_anim_live() > 0 && n < 120 {
@@ -28,7 +28,7 @@ fn frames_to_rest() -> int {
     return n
 }
 
-/// ms for a spring to cover 90% of a 1000 unit move.
+/** *ms for a spring to cover 90% of a 1000 unit move. */
 fn reach_90(node: Node, ease: int) -> int {
     zeus.animate_x(node, 0, 0)
     zeus.animate_x(node, 1000, 100, ease)

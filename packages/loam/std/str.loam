@@ -1,33 +1,33 @@
-//! str — byte-level string helpers: search, slice, trim, case, split / join,
-//! replace, pad, and shell quoting.
-//!
-//! A `string` is bytes and `s[i]` is one byte, so indices here are byte
-//! offsets. Every search and slice works on whole needles, which keeps UTF-8
-//! intact as long as the offsets came from a search (or from `std:unicode`).
-//! Case mapping is ASCII only.
-//!
-//! Method calls rewrite to module calls, so after `import "std:str"` both
-//! spellings work:
-//!
-//! ```
-//! str.trim("  hi  ")          // "hi"
-//! "a.mkv".ends_with(".mkv")   // true
-//! ```
+// str — byte-level string helpers: search, slice, trim, case, split / join,
+// replace, pad, and shell quoting.
+//
+// A `string` is bytes and `s[i]` is one byte, so indices here are byte
+// offsets. Every search and slice works on whole needles, which keeps UTF-8
+// intact as long as the offsets came from a search (or from `std:unicode`).
+// Case mapping is ASCII only.
+//
+// Method calls rewrite to module calls, so after `import "std:str"` both
+// spellings work:
+//
+// ```
+// str.trim("  hi  ")          // "hi"
+// "a.mkv".ends_with(".mkv")   // true
+// ```
 
-/// True for ASCII space, tab, newline, carriage return, vertical tab, form feed.
+/** *True for ASCII space, tab, newline, carriage return, vertical tab, form feed. */
 fn is_space(c: int) -> bool {
     return c == 32 || (c >= 9 && c <= 13)
 }
 
-/// True for ASCII `0`..`9`.
+/** *True for ASCII `0`..`9`. */
 fn is_digit(c: int) -> bool {
     return c >= 48 && c <= 57
 }
 
 // --- slicing ------------------------------------------------------------------
 
-/// `s[a..b]` as a new string. Out-of-range bounds are clamped; an empty or
-/// inverted range gives `""`.
+/** *`s[a..b]` as a new string. Out-of-range bounds are clamped; an empty or */
+/** *inverted range gives `""`. */
 fn slice(s: string, a: int, b: int) -> string {
     let mut lo = a
     let mut hi = b
@@ -46,14 +46,14 @@ fn slice(s: string, a: int, b: int) -> string {
     return string_from_bytes(x)
 }
 
-/// Everything from byte `a` on.
+/** *Everything from byte `a` on. */
 fn slice_from(s: string, a: int) -> string {
     return slice(s, a, s.len)
 }
 
 // --- search -------------------------------------------------------------------
 
-/// True when `needle` occurs in `s` at byte `at`.
+/** *True when `needle` occurs in `s` at byte `at`. */
 fn has_at(s: string, needle: string, at: int) -> bool {
     if at < 0 || at + needle.len > s.len {
         return false
@@ -74,8 +74,8 @@ fn ends_with(s: string, suffix: string) -> bool {
     return has_at(s, suffix, s.len - suffix.len)
 }
 
-/// First index of `needle` at or after `from`, or -1. An empty needle is found
-/// at `from` (clamped into the string).
+/** *First index of `needle` at or after `from`, or -1. An empty needle is found */
+/** *at `from` (clamped into the string). */
 fn index_from(s: string, needle: string, from: int) -> int {
     let mut i = from
     if i < 0 {
@@ -93,12 +93,12 @@ fn index_from(s: string, needle: string, from: int) -> int {
     return -1
 }
 
-/// First index of `needle`, or -1.
+/** *First index of `needle`, or -1. */
 fn index_of(s: string, needle: string) -> int {
     return index_from(s, needle, 0)
 }
 
-/// Last index of `needle`, or -1. An empty needle is found at `s.len`.
+/** *Last index of `needle`, or -1. An empty needle is found at `s.len`. */
 fn last_index_of(s: string, needle: string) -> int {
     let mut i = s.len - needle.len
     while i >= 0 {
@@ -110,7 +110,7 @@ fn last_index_of(s: string, needle: string) -> int {
     return -1
 }
 
-/// First index of byte `c`, or -1.
+/** *First index of byte `c`, or -1. */
 fn index_of_byte(s: string, c: int) -> int {
     for i in 0..s.len {
         if s[i] == c {
@@ -120,7 +120,7 @@ fn index_of_byte(s: string, c: int) -> int {
     return -1
 }
 
-/// Last index of byte `c`, or -1.
+/** *Last index of byte `c`, or -1. */
 fn last_index_of_byte(s: string, c: int) -> int {
     let mut i = s.len - 1
     while i >= 0 {
@@ -136,7 +136,7 @@ fn contains(s: string, needle: string) -> bool {
     return index_of(s, needle) >= 0
 }
 
-/// Non-overlapping occurrences of `needle`; 0 for an empty needle.
+/** *Non-overlapping occurrences of `needle`; 0 for an empty needle. */
 fn count(s: string, needle: string) -> int {
     if needle.len == 0 {
         return 0
@@ -168,7 +168,7 @@ fn trim_end(s: string) -> string {
     return slice(s, 0, b)
 }
 
-/// `s` without leading and trailing ASCII whitespace.
+/** *`s` without leading and trailing ASCII whitespace. */
 fn trim(s: string) -> string {
     let mut a = 0
     let mut b = s.len
@@ -181,7 +181,7 @@ fn trim(s: string) -> string {
     return slice(s, a, b)
 }
 
-/// True when `s` is empty or only whitespace.
+/** *True when `s` is empty or only whitespace. */
 fn is_blank(s: string) -> bool {
     for i in 0..s.len {
         if !is_space(s[i]) {
@@ -191,7 +191,7 @@ fn is_blank(s: string) -> bool {
     return true
 }
 
-/// `s` without `prefix`, or `s` unchanged when it does not start with it.
+/** *`s` without `prefix`, or `s` unchanged when it does not start with it. */
 fn strip_prefix(s: string, prefix: string) -> string {
     if starts_with(s, prefix) {
         return slice(s, prefix.len, s.len)
@@ -199,7 +199,7 @@ fn strip_prefix(s: string, prefix: string) -> string {
     return s
 }
 
-/// `s` without `suffix`, or `s` unchanged when it does not end with it.
+/** *`s` without `suffix`, or `s` unchanged when it does not end with it. */
 fn strip_suffix(s: string, suffix: string) -> string {
     if ends_with(s, suffix) {
         return slice(s, 0, s.len - suffix.len)
@@ -207,8 +207,8 @@ fn strip_suffix(s: string, suffix: string) -> string {
     return s
 }
 
-/// `s` with every trailing byte `c` removed, but never down to empty: a lone
-/// `/` stays `/`.
+/** *`s` with every trailing byte `c` removed, but never down to empty: a lone */
+/** *`/` stays `/`. */
 fn trim_end_byte(s: string, c: int) -> string {
     let mut b = s.len
     while b > 1 && s[b - 1] == c {
@@ -237,7 +237,7 @@ fn to_lower(s: string) -> string {
     return string_from_bytes(x)
 }
 
-/// ASCII case-insensitive equality.
+/** *ASCII case-insensitive equality. */
 fn eq_fold(a: string, b: string) -> bool {
     if a.len != b.len {
         return false
@@ -254,9 +254,9 @@ fn eq_fold(a: string, b: string) -> bool {
 
 // --- split / join -----------------------------------------------------------------
 
-/// The pieces of `s` between occurrences of `sep`. `split("a,,b", ",")` is
-/// `["a", "", "b"]`; an empty `s` gives one empty piece; an empty `sep` gives
-/// `[s]`.
+/** *The pieces of `s` between occurrences of `sep`. `split("a,,b", ",")` is */
+/** *`["a", "", "b"]`; an empty `s` gives one empty piece; an empty `sep` gives */
+/** *`[s]`. */
 fn split(s: string, sep: string) -> []string {
     let mut out = []string {}
     if sep.len == 0 {
@@ -274,7 +274,7 @@ fn split(s: string, sep: string) -> []string {
     return out
 }
 
-/// `s` split on `\n`, with a trailing `\r` dropped from each line.
+/** *`s` split on `\n`, with a trailing `\r` dropped from each line. */
 fn lines(s: string) -> []string {
     let parts = split(s, "\n")
     let mut out = []string {}
@@ -284,7 +284,7 @@ fn lines(s: string) -> []string {
     return out
 }
 
-/// `parts` with `sep` between each pair.
+/** *`parts` with `sep` between each pair. */
 fn join(parts: []string, sep: string) -> string {
     let mut x = []int {}
     for i in 0..parts.len {
@@ -301,8 +301,8 @@ fn join(parts: []string, sep: string) -> string {
     return string_from_bytes(x)
 }
 
-/// `s` with every non-overlapping `from` replaced by `to`. An empty `from`
-/// leaves `s` unchanged.
+/** *`s` with every non-overlapping `from` replaced by `to`. An empty `from` */
+/** *leaves `s` unchanged. */
 fn replace_all(s: string, from: string, to: string) -> string {
     if from.len == 0 {
         return s
@@ -312,7 +312,7 @@ fn replace_all(s: string, from: string, to: string) -> string {
 
 // --- building -----------------------------------------------------------------------
 
-/// `s` repeated `n` times (`""` for n <= 0).
+/** *`s` repeated `n` times (`""` for n <= 0). */
 fn repeat(s: string, n: int) -> string {
     let mut x = []int {}
     for r in 0..n {
@@ -323,8 +323,8 @@ fn repeat(s: string, n: int) -> string {
     return string_from_bytes(x)
 }
 
-/// `s` left-padded with byte `fill` to at least `width` bytes:
-/// `pad_start("7", 2, 48)` is `"07"`.
+/** *`s` left-padded with byte `fill` to at least `width` bytes: */
+/** *`pad_start("7", 2, 48)` is `"07"`. */
 fn pad_start(s: string, width: int, fill: int) -> string {
     let mut x = []int {}
     for i in s.len..width {
@@ -336,7 +336,7 @@ fn pad_start(s: string, width: int, fill: int) -> string {
     return string_from_bytes(x)
 }
 
-/// `s` right-padded with byte `fill` to at least `width` bytes.
+/** *`s` right-padded with byte `fill` to at least `width` bytes. */
 fn pad_end(s: string, width: int, fill: int) -> string {
     let mut x = []int {}
     for k in 0..s.len {
@@ -348,7 +348,7 @@ fn pad_end(s: string, width: int, fill: int) -> string {
     return string_from_bytes(x)
 }
 
-/// `s` single-quoted for `sh`: `it's` becomes `'it'\''s'`.
+/** *`s` single-quoted for `sh`: `it's` becomes `'it'\''s'`. */
 fn shell_quote(s: string) -> string {
     let mut x = []int { 39 }
     for i in 0..s.len {

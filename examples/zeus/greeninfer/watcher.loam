@@ -1,29 +1,29 @@
-//! watcher.loam — GreenInfer folder watcher + chunker (phase 2).
-//!
-//! Everything that decides lives in Loam, under the language's checks:
-//!   - recursive directory walk, skip lists, extension filters, sorting;
-//!   - manifest diffing (path + mtime) that turns "something changed" into
-//!     a re-index (the engine is append-only, so a changed tree is rebuilt);
-//!   - 500-token chunk boundaries for source and markdown;
-//!   - per-chunk labels + snippets for the UI.
-//!
-//! The C seam (runtime/greeninfer_runtime.c) contributes only data movement
-//! for this module: read a whole file, list one directory level, and return
-//! an mtime. Chunks are embedded by engine.loam's word-overlap hash and
-//! stored L2-normalized by the engine, so every search score is a cosine.
+// watcher.loam — GreenInfer folder watcher + chunker (phase 2).
+//
+// Everything that decides lives in Loam, under the language's checks:
+//   - recursive directory walk, skip lists, extension filters, sorting;
+//   - manifest diffing (path + mtime) that turns "something changed" into
+//     a re-index (the engine is append-only, so a changed tree is rebuilt);
+//   - 500-token chunk boundaries for source and markdown;
+//   - per-chunk labels + snippets for the UI.
+//
+// The C seam (runtime/greeninfer_runtime.c) contributes only data movement
+// for this module: read a whole file, list one directory level, and return
+// an mtime. Chunks are embedded by engine.loam's word-overlap hash and
+// stored L2-normalized by the engine, so every search score is a cosine.
 
 import "engine.loam"
 
-/// Chunk budget in tokens (a token is a word run or one punctuation byte).
+/** *Chunk budget in tokens (a token is a word run or one punctuation byte). */
 const CHUNK_TOKENS: int = 500
 
-/// Files larger than this are not indexed (4 MB).
+/** *Files larger than this are not indexed (4 MB). */
 const MAX_FILE_BYTES: int = 4194304
 
-/// Walk depth cap so a directory loop cannot hang the scan.
+/** *Walk depth cap so a directory loop cannot hang the scan. */
 const WALK_DEPTH: int = 10
 
-/// One open watch: root folder, engine file it indexes into, extension list.
+/** *One open watch: root folder, engine file it indexes into, extension list. */
 struct CodebaseWatcher {
     root: string,
     file: string,
@@ -32,7 +32,7 @@ struct CodebaseWatcher {
     exts: []string,
 }
 
-/// UI-facing metadata for one indexed chunk (parallel to engine row ids).
+/** *UI-facing metadata for one indexed chunk (parallel to engine row ids). */
 struct ChunkMeta {
     label: string,
     snippet: string,
@@ -43,13 +43,13 @@ struct ChunkMeta {
 // as the engine seam; loam emits the extern prototypes automatically).
 // ---------------------------------------------------------------------------
 
-/// Whole file as a string. Empty on error or when bigger than 256 MB.
+/** *Whole file as a string. Empty on error or when bigger than 256 MB. */
 fn gi_read_file(path: string) -> string {}
 
-/// One directory level: "name\n" lines; directories end with '/'.
+/** *One directory level: "name\n" lines; directories end with '/'. */
 fn gi_dir_list(path: string) -> string {}
 
-/// Modification time in seconds since the epoch; -1 on error.
+/** *Modification time in seconds since the epoch; -1 on error. */
 fn gi_file_mtime(path: string) -> int {}
 
 // ---------------------------------------------------------------------------
@@ -73,8 +73,8 @@ fn is_word_byte(b: int) -> bool {
     return (b >= 97 && b <= 122) || (b >= 48 && b <= 57) || b == 95
 }
 
-/// Count tokens in `text` with the same rule the chunker uses: a word run
-/// is one token, every non-space punctuation byte is one token.
+/** *Count tokens in `text` with the same rule the chunker uses: a word run */
+/** *is one token, every non-space punctuation byte is one token. */
 fn count_tokens(text: string) -> int {
     let mut n = 0
     let mut in_word = 0
@@ -99,10 +99,10 @@ fn byte_is_ws(b: int) -> bool {
     return b == 32 || b == 9 || b == 10 || b == 13
 }
 
-/// Split `text` into chunks of at most `max_tokens` tokens. Boundaries land
-/// on token edges (word starts and punctuation), preferring line ends: a
-/// chunk is flushed when the budget is met at a newline, or immediately at
-/// the next token edge mid-line. Whitespace is preserved inside chunks.
+/** *Split `text` into chunks of at most `max_tokens` tokens. Boundaries land */
+/** *on token edges (word starts and punctuation), preferring line ends: a */
+/** *chunk is flushed when the budget is met at a newline, or immediately at */
+/** *the next token edge mid-line. Whitespace is preserved inside chunks. */
 fn chunk_text(text: string, max_tokens: int) -> []string {
     let mut out = []string {}
     let mut acc = []int {}
@@ -199,7 +199,7 @@ fn ends_with(s: string, suf: string) -> bool {
     return true
 }
 
-/// Lexicographic compare of two strings (byte order), for stable manifests.
+/** *Lexicographic compare of two strings (byte order), for stable manifests. */
 fn cmp_str(a: string, b: string) -> int {
     let mut n = a.len
     if b.len < n {
@@ -231,7 +231,7 @@ fn has_ext(name: string, exts: []string) -> bool {
     return false
 }
 
-/// Directories the walk skips: dot-prefixed plus repo/vendor noise.
+/** *Directories the walk skips: dot-prefixed plus repo/vendor noise. */
 fn skip_dir(name: string) -> bool {
     if name.len > 0 && name[0] == 46 {
         return true
@@ -304,7 +304,7 @@ fn walk_dir(dir: string, depth: int, exts: []string, files: &mut []string, mts: 
 // Path helpers
 // ---------------------------------------------------------------------------
 
-/// The part of `full` after the watcher root, for display.
+/** *The part of `full` after the watcher root, for display. */
 fn rel_of(full: string) -> string {
     let root = watcher.root
     if starts_with(full, root) && full.len > root.len {
@@ -319,7 +319,7 @@ fn rel_of(full: string) -> string {
     return full
 }
 
-/// First line of `s`, collapsed whitespace, capped for the row + prompt.
+/** *First line of `s`, collapsed whitespace, capped for the row + prompt. */
 fn snippet_of(s: string) -> string {
     let mut b = []int {}
     let mut i = 0
@@ -339,9 +339,9 @@ fn snippet_of(s: string) -> string {
 // Scanning + indexing (the engine singleton is the sink)
 // ---------------------------------------------------------------------------
 
-/// Index one file: read, chunk at CHUNK_TOKENS, embed, insert. Returns the
-/// number of chunks indexed (0 for an unindexable file, -1 on engine error).
-/// Row ids are metas indices, so the UI can label hits 1:1.
+/** *Index one file: read, chunk at CHUNK_TOKENS, embed, insert. Returns the */
+/** *number of chunks indexed (0 for an unindexable file, -1 on engine error). */
+/** *Row ids are metas indices, so the UI can label hits 1:1. */
 fn scan_and_index_file(full: string) -> int {
     let body = gi_read_file(full)
     if body.len == 0 || body.len > MAX_FILE_BYTES {
@@ -377,7 +377,7 @@ fn scan_and_index_file(full: string) -> int {
     return total
 }
 
-/// Collect every matching file under `root` into sorted manifest order.
+/** *Collect every matching file under `root` into sorted manifest order. */
 fn collect_files(root: string, exts: []string, files: &mut []string, mts: &mut []int) {
     walk_dir(root, 0, exts, files, mts)
     // Insertion sort by path so manifests and labels are deterministic
@@ -398,8 +398,8 @@ fn collect_files(root: string, exts: []string, files: &mut []string, mts: &mut [
     }
 }
 
-/// Full scan: wipe the engine file, walk `root`, index every matching file
-/// as chunks. Returns the chunk count (0 when nothing matched, -1 on error).
+/** *Full scan: wipe the engine file, walk `root`, index every matching file */
+/** *as chunks. Returns the chunk count (0 when nothing matched, -1 on error). */
 fn watch_scan(root: string, file: string, cap: int, exts: []string) -> int {
     watcher.root = root
     watcher.file = file
@@ -466,9 +466,9 @@ fn watch_scan(root: string, file: string, cap: int, exts: []string) -> int {
     return n
 }
 
-/// Poll: re-walk and compare path+mtime against the manifest. On any change
-/// the whole tree is re-indexed (append-only engine). 0 = unchanged;
-/// > 0 = chunk count after the automatic re-index; -1 = error.
+/** *Poll: re-walk and compare path+mtime against the manifest. On any change */
+/** *the whole tree is re-indexed (append-only engine). 0 = unchanged; */
+/** *> 0 = chunk count after the automatic re-index; -1 = error. */
 fn watch_tick() -> int {
     if watcher.on == 0 {
         return 0
@@ -507,7 +507,7 @@ fn watch_is_on() -> int {
     return watcher.on
 }
 
-/// Chunks currently indexed (== engine rows).
+/** *Chunks currently indexed (== engine rows). */
 fn watch_chunks() -> int {
     return metas.len
 }

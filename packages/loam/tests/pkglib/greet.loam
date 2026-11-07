@@ -1,5 +1,5 @@
-//! A tiny vendored package fixture, materialized by `zeus pkg sync` and used
-//! through `import "pkg:greet"`.
+// A tiny vendored package fixture, materialized by `zeus pkg sync` and used
+// through `import "pkg:greet"`.
 
 fn hello() -> string {
     return "hello from pkg"

@@ -1,8 +1,8 @@
-//! Canvas2D wasm host, served by Vite (vite.config.js). The shared UI and
-//! store are the same as the macOS entry (`../app.loam`, `../studio/store.loam`);
-//! every render step reaches the native engine (`../server/main.loam`) over
-//! gRPC-Web through the dev server's proxy, because a browser cannot run
-//! ffmpeg or the voice tools.
+// Canvas2D wasm host, served by Vite (vite.config.js). The shared UI and
+// store are the same as the macOS entry (`../app.loam`, `../studio/store.loam`);
+// every render step reaches the native engine (`../server/main.loam`) over
+// gRPC-Web through the dev server's proxy, because a browser cannot run
+// ffmpeg or the voice tools.
 
 import "zeus"
 import "../app_routes.loam" as approutes

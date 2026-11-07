@@ -1,24 +1,24 @@
-//! The backend engine: the piece is made here, on the machine that has
-//! ffmpeg, the voice tools, and the file writes.
-//!
-//! The wasm build cannot decode, separate voices, or render — a browser has
-//! no ffmpeg — so `studio/store.loam` forwards every step to this engine
-//! over gRPC-Web (see `server/main.loam`), the way vidget's UI talks to its
-//! download engine. The macOS window talks to the same engine, so both
-//! targets behave alike.
-//!
-//! The pipeline is the same one `DESIGN.md` describes, with the signals
-//! replaced by plain fields:
-//!
-//!   decode   ffmpeg: 48 kHz copies, envelopes, pitch copies, loudness
-//!   voices   the host's classifier maps where anyone sings or speaks
-//!   analyze  Loam: tempo, grid, key, phrases and their pitch
-//!   split    the host removes the voice from recordings that have almost
-//!            no voice-free phrase (only when voices are removed)
-//!   render   ffmpeg: the graph, loudness, 24-bit WAV, the waveform
-//!
-//! Every call is cheap: the shell jobs run detached and `poll` reports the
-//! stage, so the client's UI keeps moving while ffmpeg works.
+// The backend engine: the piece is made here, on the machine that has
+// ffmpeg, the voice tools, and the file writes.
+//
+// The wasm build cannot decode, separate voices, or render — a browser has
+// no ffmpeg — so `studio/store.loam` forwards every step to this engine
+// over gRPC-Web (see `server/main.loam`), the way vidget's UI talks to its
+// download engine. The macOS window talks to the same engine, so both
+// targets behave alike.
+//
+// The pipeline is the same one `DESIGN.md` describes, with the signals
+// replaced by plain fields:
+//
+//   decode   ffmpeg: 48 kHz copies, envelopes, pitch copies, loudness
+//   voices   the host's classifier maps where anyone sings or speaks
+//   analyze  Loam: tempo, grid, key, phrases and their pitch
+//   split    the host removes the voice from recordings that have almost
+//            no voice-free phrase (only when voices are removed)
+//   render   ffmpeg: the graph, loudness, 24-bit WAV, the waveform
+//
+// Every call is cheap: the shell jobs run detached and `poll` reports the
+// stage, so the client's UI keeps moving while ffmpeg works.
 
 import "std:async"
 import "std:str"
@@ -35,10 +35,10 @@ import "../core/styles.loam" as styles
 import "../core/time.loam" as time
 import "../studio/files.loam" as files
 
-/// Bars in the waveform overview.
+/** *Bars in the waveform overview. */
 const WAVE_BARS: int = 120
 
-/// Stages `PollResp.stage` carries.
+/** *Stages `PollResp.stage` carries. */
 const ST_IDLE: int = 0
 const ST_RUNNING: int = 1
 const ST_READY: int = 2
@@ -108,8 +108,8 @@ fn start() {
     session_new()
 }
 
-/// A fresh session for the current recordings; the takes stay (see
-/// `files.takes_dir`). `reset` and every `add` start one.
+/** *A fresh session for the current recordings; the takes stay (see */
+/** *`files.takes_dir`). `reset` and every `add` start one. */
 fn session_new() {
     session_n = session_n + 1
     session = files.session_dir(session_n)
@@ -131,7 +131,7 @@ fn session_new() {
     scan = scan + 1
 }
 
-/// `[scan, tools, voice, recordings]`.
+/** *`[scan, tools, voice, recordings]`. */
 fn state() -> []int {
     return []int { scan, b2i(tools_ok), b2i(voice_ok), paths.len }
 }
@@ -145,8 +145,8 @@ fn b2i(b: bool) -> int {
 
 // ---- Recordings --------------------------------------------------------------
 
-/// Add `name`/`path`. A duplicate path is ignored, so a re-drop of the same
-/// file (or a paste of it) does not build the recording twice.
+/** *Add `name`/`path`. A duplicate path is ignored, so a re-drop of the same */
+/** *file (or a paste of it) does not build the recording twice. */
 fn add_file(path: string, name: string) {
     let p = str.trim(path)
     if p.len == 0 {
@@ -174,8 +174,8 @@ fn reset() {
 
 // ---- Generate ----------------------------------------------------------------
 
-/// Start a run for these recordings and this sound. The empty string is
-/// success; anything else is the message to show.
+/** *Start a run for these recordings and this sound. The empty string is */
+/** *success; anything else is the message to show. */
 fn generate(
     scan_in: int,
     seed: int,
@@ -275,7 +275,7 @@ fn lvl(xs: []int, i: int) -> int {
     return pick(xs, i, 70)
 }
 
-/// The effect amount `i`, 0 when the effect is off.
+/** *The effect amount `i`, 0 when the effect is off. */
 fn fx_amt(on_xs: []int, a: []int, i: int) -> int {
     if i >= on_xs.len || on_xs[i] == 0 {
         return 0
@@ -306,7 +306,7 @@ fn begin_listen() {
 
 // ---- Poll --------------------------------------------------------------------
 
-/// Advance one step. Cheap; the client polls (or watches the stream).
+/** *Advance one step. Cheap; the client polls (or watches the stream). */
 fn poll() {
     if stage != ST_RUNNING {
         return
@@ -398,7 +398,7 @@ fn begin_analyze() {
     status = "Listening for tempo, key, and phrases…"
 }
 
-/// One recording per tick, so the client's window stays live.
+/** *One recording per tick, so the client's window stays live. */
 fn step_analyze() {
     let n = paths.len
     if analyze_at >= n {
@@ -512,14 +512,14 @@ fn name_at(i: int) -> string {
 
 let mut pending_take: int = 0
 let mut pending_ms: int = 0
-/// The render's graph while its voices are being written, a slice of them
-/// per poll; `voicing` until the last is on disk.
+/** *The render's graph while its voices are being written, a slice of them */
+/** *per poll; `voicing` until the last is on disk. */
 let mut render_graph: Graph = graph.empty()
 let mut render_snd: Sound = sound.preset(styles.LOFI)
 let mut voicing: bool = false
 let mut voicing_at: int = 0
 
-/// Milliseconds of voice synthesis per poll, so a poll answers promptly.
+/** *Milliseconds of voice synthesis per poll, so a poll answers promptly. */
 const VOICE_SLICE_MS: int = 40
 
 fn render() {
@@ -552,7 +552,7 @@ fn render() {
     status = "Playing the instruments…"
 }
 
-/// Write the next voices, then start the render once the last is written.
+/** *Write the next voices, then start the render once the last is written. */
 fn step_voices() {
     let g = render_graph
     let n = g.voice_path.len
@@ -575,7 +575,7 @@ fn step_voices() {
     launch_render()
 }
 
-/// The voices are on disk: write the render job and start ffmpeg.
+/** *The voices are on disk: write the render job and start ffmpeg. */
 fn launch_render() {
     let sc = render_score
     let g = render_graph
@@ -642,7 +642,7 @@ fn finish_render(n: int) {
     saved = ""
 }
 
-/// "F♯m" → "F#m", for a file name.
+/** *"F♯m" → "F#m", for a file name. */
 fn plain_key(k: string) -> string {
     return str.replace_all(str.replace_all(k, "♯", "#"), "♭", "b")
 }
@@ -656,7 +656,7 @@ fn errored(msg: string) {
     run_phase = PH_IDLE
 }
 
-/// The waveform: `bars` peaks of the 50 Hz overview, 4..100.
+/** *The waveform: `bars` peaks of the 50 Hz overview, 4..100. */
 fn load_peaks(path: string, bars: int) -> []int {
     let b = sys.read_file(path)
     let n = b.len / 2
@@ -709,8 +709,8 @@ fn section_marks(sc: Score) -> []int {
 
 // ---- Save --------------------------------------------------------------------
 
-/// Copy the take to `~/Documents/Mune` under `title`, in `format`
-/// (`FMT_*`). The job is detached; `poll_save` reports it.
+/** *Copy the take to `~/Documents/Mune` under `title`, in `format` */
+/** *(`FMT_*`). The job is detached; `poll_save` reports it. */
 fn save(id: int, title: string, format: int) -> string {
     if take_n <= 0 || id != take_n {
         return "There is no take to save."
@@ -767,14 +767,14 @@ fn poll_save() {
     }
 }
 
-/// Show `path` in Finder (a no-op away from macOS).
+/** *Show `path` in Finder (a no-op away from macOS). */
 fn reveal(path: string) {
     files.reveal(path)
 }
 
-/// Stop the run in flight: the markers are dropped and the shell jobs are
-/// left to finish their ffmpeg quietly (they write to a session folder that
-/// the next run clears).
+/** *Stop the run in flight: the markers are dropped and the shell jobs are */
+/** *left to finish their ffmpeg quietly (they write to a session folder that */
+/** *the next run clears). */
 fn cancel() {
     if saving {
         return
@@ -787,7 +787,7 @@ fn cancel() {
 
 // ---- Wire --------------------------------------------------------------------
 
-/// The stage as `PollResp`.
+/** *The stage as `PollResp`. */
 fn poll_state() -> PollResp {
     return PollResp {
         live: 1, stage: stage, percent: percent, status: status,
@@ -795,9 +795,9 @@ fn poll_state() -> PollResp {
     }
 }
 
-/// The finished take as `TakeResp`. `id` 0 until a take exists. `detail` and
-/// `role` describe the recordings, so the client shows the list without a
-/// second call.
+/** *The finished take as `TakeResp`. `id` 0 until a take exists. `detail` and */
+/** *`role` describe the recordings, so the client shows the list without a */
+/** *second call. */
 fn take_resp() -> TakeResp {
     let mut ds = []string {}
     let mut rs = []int {}
@@ -819,7 +819,7 @@ fn take_resp() -> TakeResp {
     }
 }
 
-/// "110 BPM · F♯m · 4:38 · 1:21 voice-free"
+/** *"110 BPM · F♯m · 4:38 · 1:21 voice-free" */
 fn describe(s: Source) -> string {
     let h = s.heard
     if h.dur_ms <= 0 {

@@ -1,31 +1,31 @@
-//! raster — the software rasterizer's foundation.
-//!
-//! Zeus rasterizes every pixel itself, in Loam, into one buffer it owns. This
-//! module is the bottom of that stack: the framebuffer, the color pipeline, and
-//! the tables every fill and glyph composite reads.
-//!
-//! What lives here (Phase 4, first step):
-//!   * ONE framebuffer we own — `physical_w * physical_h * 4`, BGRA8,
-//!     premultiplied, reallocated only when the logical size or the backing
-//!     scale actually changes. No second full-size buffer anywhere.
-//!   * sRGB↔linear 256-entry tables, and a compositor that blends in linear
-//!     space so light-on-dark and dark-on-light text keep the same weight. The
-//!     framebuffer stays 8-bit; the tables are what make that correct.
-//!   * Ordered 8×8 (Bayer) dithering, so a gradient written to 8-bit does not
-//!     band.
-//!
-//! Geometry (analytic coverage, tiles, rounded rects, strokes), shadows, the
-//! glyph atlas, and image decode build on this and land next. Nothing here
-//! talks to a graphics API: the buffer is plain memory until a host blits it.
+// raster — the software rasterizer's foundation.
+//
+// Zeus rasterizes every pixel itself, in Loam, into one buffer it owns. This
+// module is the bottom of that stack: the framebuffer, the color pipeline, and
+// the tables every fill and glyph composite reads.
+//
+// What lives here (Phase 4, first step):
+//   * ONE framebuffer we own — `physical_w * physical_h * 4`, BGRA8,
+//     premultiplied, reallocated only when the logical size or the backing
+//     scale actually changes. No second full-size buffer anywhere.
+//   * sRGB↔linear 256-entry tables, and a compositor that blends in linear
+//     space so light-on-dark and dark-on-light text keep the same weight. The
+//     framebuffer stays 8-bit; the tables are what make that correct.
+//   * Ordered 8×8 (Bayer) dithering, so a gradient written to 8-bit does not
+//     band.
+//
+// Geometry (analytic coverage, tiles, rounded rects, strokes), shadows, the
+// glyph atlas, and image decode build on this and land next. Nothing here
+// talks to a graphics API: the buffer is plain memory until a host blits it.
 
-/// Rasterization tile edge, in device pixels. Coverage is always computed
-/// against global geometry and only the *write* is clipped to the tile — this
-/// constant is the size of that clip, not of the geometry.
+/** *Rasterization tile edge, in device pixels. Coverage is always computed */
+/** *against global geometry and only the *write* is clipped to the tile — this */
+/** *constant is the size of that clip, not of the geometry. */
 const RASTER_TILE: int = 256
 
-/// Ordered 8×8 Bayer matrix (values 0..63). Hardcoded: it is a fixed, tiny
-/// pattern, and generating it from bit interleaves at init is more code than
-/// the table is worth.
+/** *Ordered 8×8 Bayer matrix (values 0..63). Hardcoded: it is a fixed, tiny */
+/** *pattern, and generating it from bit interleaves at init is more code than */
+/** *the table is worth. */
 let mut bayer8: []int = []int {
     0, 32, 8, 40, 2, 34, 10, 42,
     48, 16, 56, 24, 50, 18, 58, 26,
@@ -37,32 +37,32 @@ let mut bayer8: []int = []int {
     63, 31, 55, 23, 61, 29, 53, 21,
 }
 
-/// sRGB byte → linear, scaled to 0..4095 (12-bit). 12 bits, not 8, because an
-/// 8-bit linear domain cannot represent the dark end: sRGB bytes 1..12 all
-/// collapse to linear 0, which crushes shadow detail and makes the tables
-/// non-invertible. `lin_to_srgb` is indexed by that same 12-bit domain, so both
-/// directions stay exact within one byte. Blending happens in this domain.
+/** *sRGB byte → linear, scaled to 0..4095 (12-bit). 12 bits, not 8, because an */
+/** *8-bit linear domain cannot represent the dark end: sRGB bytes 1..12 all */
+/** *collapse to linear 0, which crushes shadow detail and makes the tables */
+/** *non-invertible. `lin_to_srgb` is indexed by that same 12-bit domain, so both */
+/** *directions stay exact within one byte. Blending happens in this domain. */
 const RASTER_LIN_MAX: int = 4095
 let mut srgb_to_lin: []int = []int {}
 let mut lin_to_srgb: []int = []int {}
 let mut raster_tables_ready: int = 0
 
-/// The one framebuffer. `fb_w`/`fb_h` are physical pixels; `fb_scale` is the
-/// backing scale it was allocated for (2 on retina).
+/** *The one framebuffer. `fb_w`/`fb_h` are physical pixels; `fb_scale` is the */
+/** *backing scale it was allocated for (2 on retina). */
 let mut fb: []u8 = []u8 {}
 let mut fb_w: int = 0
 let mut fb_h: int = 0
 let mut fb_scale: int = 0
 let mut fb_logical_w: int = 0
 let mut fb_logical_h: int = 0
-/// Bumped on every reallocation, so a test can prove the buffer is reused
-/// across frames and only reallocated on a real size/scale change.
+/** *Bumped on every reallocation, so a test can prove the buffer is reused */
+/** *across frames and only reallocated on a real size/scale change. */
 let mut fb_gen: int = 0
 let mut fb_reallocs: int = 0
 
 const RASTER_LN2: float = 0.6931471805599453
 
-/// Round to nearest, ties away from zero. The language has no `round` builtin.
+/** *Round to nearest, ties away from zero. The language has no `round` builtin. */
 fn raster_round(x: float) -> float {
     if x >= 0.0 {
         return float(i32(x + 0.5))
@@ -70,7 +70,7 @@ fn raster_round(x: float) -> float {
     return float(i32(x - 0.5))
 }
 
-/// Natural log, range-reduced to [1,2) and summed with the atanh series.
+/** *Natural log, range-reduced to [1,2) and summed with the atanh series. */
 fn raster_ln(x: float) -> float {
     if x <= 0.0 {
         return -1.0e30
@@ -98,7 +98,7 @@ fn raster_ln(x: float) -> float {
     return 2.0 * sum + float(k) * RASTER_LN2
 }
 
-/// Exponential, |r| reduced to ±ln2/2 and summed with a Taylor series.
+/** *Exponential, |r| reduced to ±ln2/2 and summed with a Taylor series. */
 fn raster_exp(x: float) -> float {
     if x > 300.0 {
         return 1.0e30
@@ -132,7 +132,7 @@ fn raster_exp(x: float) -> float {
     return sum * scale
 }
 
-/// a^b for a > 0. Only used to build the sRGB tables at init.
+/** *a^b for a > 0. Only used to build the sRGB tables at init. */
 fn raster_pow(a: float, b: float) -> float {
     if a <= 0.0 {
         return 0.0
@@ -140,7 +140,7 @@ fn raster_pow(a: float, b: float) -> float {
     return raster_exp(b * raster_ln(a))
 }
 
-/// IEC 61966-2-1 sRGB transfer, encode side: linear 0..1 → sRGB 0..1.
+/** *IEC 61966-2-1 sRGB transfer, encode side: linear 0..1 → sRGB 0..1. */
 fn raster_lin_to_srgb01(c: float) -> float {
     if c <= 0.0031308 {
         return c * 12.92
@@ -148,7 +148,7 @@ fn raster_lin_to_srgb01(c: float) -> float {
     return 1.055 * raster_pow(c, 1.0 / 2.4) - 0.055
 }
 
-/// sRGB 0..1 → linear 0..1.
+/** *sRGB 0..1 → linear 0..1. */
 fn raster_srgb_to_lin01(c: float) -> float {
     if c <= 0.04045 {
         return c / 12.92
@@ -176,7 +176,7 @@ fn raster_clamp_lin(v: int) -> int {
     return v
 }
 
-/// Build the color tables once. Idempotent; safe to call from any entry point.
+/** *Build the color tables once. Idempotent; safe to call from any entry point. */
 fn raster_build() {
     if raster_tables_ready != 0 {
         return
@@ -199,11 +199,11 @@ fn raster_build() {
     }
 }
 
-/// Allocate (or reuse) the framebuffer for a logical size at a backing scale.
-///
-/// Reallocates ONLY when the physical size or the scale changed — a frame at
-/// the same size is a no-op, and dragging between a retina and a non-retina
-/// screen (scale 2 → 1) reallocates and re-renders at the new scale.
+/** *Allocate (or reuse) the framebuffer for a logical size at a backing scale. */
+/** */
+/** *Reallocates ONLY when the physical size or the scale changed — a frame at */
+/** *the same size is a no-op, and dragging between a retina and a non-retina */
+/** *screen (scale 2 → 1) reallocates and re-renders at the new scale. */
 fn raster_ensure(lw: int, lh: int, scale: int) {
     raster_build()
     let mut s = scale
@@ -242,8 +242,8 @@ fn raster_ready() -> int {
     return 1
 }
 
-/// Table accessors so callers never touch the vectors directly. `raster_srgb_to_lin`
-/// returns the 12-bit linear value; `raster_lin_to_srgb` takes one.
+/** *Table accessors so callers never touch the vectors directly. `raster_srgb_to_lin` */
+/** *returns the 12-bit linear value; `raster_lin_to_srgb` takes one. */
 fn raster_srgb_to_lin(b: int) -> int {
     raster_build()
     return srgb_to_lin[raster_clamp_byte(b)]
@@ -270,8 +270,8 @@ fn raster_bytes() -> int {
     return fb.len
 }
 
-/// The framebuffer itself, for the one blit (Phase 4). Handed over as a byte
-/// slice so the host wraps these very bytes — it never gets a copy.
+/** *The framebuffer itself, for the one blit (Phase 4). Handed over as a byte */
+/** *slice so the host wraps these very bytes — it never gets a copy. */
 fn raster_buffer() -> []u8 {
     return fb
 }
@@ -284,13 +284,13 @@ fn raster_realloc_count() -> int {
     return fb_reallocs
 }
 
-/// Curve flattening tolerance in DEVICE pixels; the one source of truth for
-/// every arc and rounded corner (quality rule 7).
+/** *Curve flattening tolerance in DEVICE pixels; the one source of truth for */
+/** *every arc and rounded corner (quality rule 7). */
 fn raster_flat_tol() -> float {
     return RASTER_FLAT_TOL
 }
 
-/// Tile edge in device pixels; the one source of truth for the tile grid.
+/** *Tile edge in device pixels; the one source of truth for the tile grid. */
 fn raster_tile_size() -> int {
     return RASTER_TILE
 }
@@ -299,7 +299,7 @@ fn raster_pixel_index(x: int, y: int) -> int {
     return (y * fb_w + x) * 4
 }
 
-/// Channel `c` (0 B, 1 G, 2 R, 3 A) of the pixel at (x, y).
+/** *Channel `c` (0 B, 1 G, 2 R, 3 A) of the pixel at (x, y). */
 fn raster_get(x: int, y: int, c: int) -> int {
     if x < 0 {
         return 0
@@ -316,7 +316,7 @@ fn raster_get(x: int, y: int, c: int) -> int {
     return int(fb[raster_pixel_index(x, y) + c])
 }
 
-/// Premultiplied opaque write.
+/** *Premultiplied opaque write. */
 fn raster_set(x: int, y: int, r: int, g: int, b: int) {
     if x < 0 {
         return
@@ -337,13 +337,13 @@ fn raster_set(x: int, y: int, r: int, g: int, b: int) {
     fb[i + 3] = u8(255)
 }
 
-/// Gamma-correct source-over of a straight (non-premultiplied) color with
-/// alpha `a` (0..255) onto the premultiplied framebuffer.
-///
-/// Both colors go through the sRGB→linear table, are composited in linear
-/// space, and come back through the linear→sRGB table. That is what keeps
-/// light-on-dark and dark-on-light glyphs the same apparent weight; naive
-/// byte blending in sRGB does not.
+/** *Gamma-correct source-over of a straight (non-premultiplied) color with */
+/** *alpha `a` (0..255) onto the premultiplied framebuffer. */
+/** */
+/** *Both colors go through the sRGB→linear table, are composited in linear */
+/** *space, and come back through the linear→sRGB table. That is what keeps */
+/** *light-on-dark and dark-on-light glyphs the same apparent weight; naive */
+/** *byte blending in sRGB does not. */
 fn raster_blend(x: int, y: int, r: int, g: int, b: int, a: int) {
     if x < 0 {
         return
@@ -390,16 +390,16 @@ fn raster_blend(x: int, y: int, r: int, g: int, b: int, a: int) {
     fb[i + 3] = u8(oa)
 }
 
-/// Ordered-dither threshold for (x, y), 0..63. A gradient writer adds
-/// `(dither(x,y) - 31) / 64` to its 0..255 value before rounding to a byte,
-/// which removes visible banding for free.
+/** *Ordered-dither threshold for (x, y), 0..63. A gradient writer adds */
+/** *`(dither(x,y) - 31) / 64` to its 0..255 value before rounding to a byte, */
+/** *which removes visible banding for free. */
 fn raster_dither(x: int, y: int) -> int {
     let xi = x & 7
     let yi = y & 7
     return bayer8[yi * 8 + xi]
 }
 
-/// Quantize a 0..255 float channel to a byte with ordered dithering.
+/** *Quantize a 0..255 float channel to a byte with ordered dithering. */
 fn raster_quantize(x: int, y: int, v: float) -> int {
     let d = float(raster_dither(x, y) - 31) / 64.0
     return raster_clamp_byte(i32(v + d + 0.5))
@@ -431,8 +431,8 @@ const RASTER_R8: float = 0.0000248015873015873
 const RASTER_R9: float = 0.00000275573192239859
 const RASTER_R10: float = 0.000000275573192239859
 
-/// Flattening tolerance in DEVICE pixels: a curve is subdivided until its chord
-/// error is under this, so a rounded corner stays smooth at every scale.
+/** *Flattening tolerance in DEVICE pixels: a curve is subdivided until its chord */
+/** *error is under this, so a rounded corner stays smooth at every scale. */
 const RASTER_FLAT_TOL: float = 0.25
 
 struct RPoint {
@@ -440,9 +440,9 @@ struct RPoint {
     y: float,
 }
 
-/// The current path (device pixels) and the scratch polygons used to clip it.
-/// All three are popped to zero, never dropped, so a steady frame allocates
-/// nothing.
+/** *The current path (device pixels) and the scratch polygons used to clip it. */
+/** *All three are popped to zero, never dropped, so a steady frame allocates */
+/** *nothing. */
 let mut rp_path: []RPoint = []RPoint {}
 let mut rp_clip_a: []RPoint = []RPoint {}
 let mut rp_clip_out: []RPoint = []RPoint {}
@@ -455,7 +455,7 @@ fn raster_fabs(x: float) -> float {
     return x
 }
 
-/// Newton's method; `x > 0`. Used only to size curve subdivisions.
+/** *Newton's method; `x > 0`. Used only to size curve subdivisions. */
 fn raster_sqrt(x: float) -> float {
     if x <= 0.0 {
         return 0.0
@@ -560,8 +560,8 @@ fn raster_cos(x: float) -> float {
     return s * raster_cos_kernel(a)
 }
 
-/// Append the arc from angle `a0` to `a1` on the circle (cx, cy, rad), both
-/// endpoints included so a corner meets its straight edges exactly.
+/** *Append the arc from angle `a0` to `a1` on the circle (cx, cy, rad), both */
+/** *endpoints included so a corner meets its straight edges exactly. */
 fn raster_arc(cx: float, cy: float, rad: float, a0: float, a1: float, nseg: int) {
     let mut k = 0
     while k <= nseg {
@@ -572,8 +572,8 @@ fn raster_arc(cx: float, cy: float, rad: float, a0: float, a1: float, nseg: int)
     }
 }
 
-/// Build a clockwise rounded rectangle in device pixels. `rad` is clamped to
-/// half the shorter side, and 0 gives a plain rectangle.
+/** *Build a clockwise rounded rectangle in device pixels. `rad` is clamped to */
+/** *half the shorter side, and 0 gives a plain rectangle. */
 fn raster_round_rect(x: float, y: float, w: float, h: float, r: float) {
     while rp_path.len > 0 {
         pop(rp_path)
@@ -609,8 +609,8 @@ fn raster_round_rect(x: float, y: float, w: float, h: float, r: float) {
     raster_arc(x + rad, y + rad, rad, RASTER_PI, RASTER_PI + RASTER_HALF_PI, nseg)
 }
 
-/// Edge indices whose y-extent overlaps pixel row `py`, skipping degenerate
-/// edges. Only the few edges in the row band are tested per pixel.
+/** *Edge indices whose y-extent overlaps pixel row `py`, skipping degenerate */
+/** *edges. Only the few edges in the row band are tested per pixel. */
 fn raster_row_active(py: int) {
     while rp_active.len > 0 {
         pop(rp_active)
@@ -635,7 +635,7 @@ fn raster_row_active(py: int) {
     }
 }
 
-/// Even-odd point-in-path at (x, y).
+/** *Even-odd point-in-path at (x, y). */
 fn raster_point_inside(x: float, y: float) -> int {
     let n = rp_path.len
     let mut inside = 0
@@ -656,8 +656,8 @@ fn raster_point_inside(x: float, y: float) -> int {
     return inside
 }
 
-/// A Liang-Barsky result: the trimmed parameter interval and whether the
-/// segment survives it.
+/** *A Liang-Barsky result: the trimmed parameter interval and whether the */
+/** *segment survives it. */
 struct LB {
     t0: float,
     t1: float,
@@ -692,7 +692,7 @@ fn raster_lb(p: float, q: float, t0: float, t1: float) -> LB {
     return LB { t0: t0, t1: n1, ok: 1 }
 }
 
-/// Does segment a→b touch the unit pixel square at (px, py)?
+/** *Does segment a→b touch the unit pixel square at (px, py)? */
 fn raster_edge_hits_square(a: RPoint, b: RPoint, px: int, py: int) -> int {
     let xmin = float(px)
     let xmax = xmin + 1.0
@@ -739,8 +739,8 @@ fn raster_in_keep(v: float, bound: float, keep_ge: int) -> int {
     return 0
 }
 
-/// Clip `rp_clip_a` by one half-plane into `rp_clip_out` (Sutherland-Hodgman;
-/// valid because the path is convex, so clipping keeps it convex).
+/** *Clip `rp_clip_a` by one half-plane into `rp_clip_out` (Sutherland-Hodgman; */
+/** *valid because the path is convex, so clipping keeps it convex). */
 fn raster_clip_global(axis: int, bound: float, keep_ge: int) {
     while rp_clip_out.len > 0 {
         pop(rp_clip_out)
@@ -798,7 +798,7 @@ fn raster_poly_area(pts: []RPoint) -> float {
     return 0.5 * raster_fabs(a)
 }
 
-/// Exact coverage of pixel (px, py), 0..255: area of path ∩ pixel square.
+/** *Exact coverage of pixel (px, py), 0..255: area of path ∩ pixel square. */
 fn raster_pixel_area(px: int, py: int) -> int {
     while rp_clip_a.len > 0 {
         pop(rp_clip_a)
@@ -827,8 +827,8 @@ fn raster_pixel_area(px: int, py: int) -> int {
     return c
 }
 
-/// Fill the current path, writing only inside [x0,x1) x [y0,y1). Coverage is
-/// always from global geometry, so the region is a clip on the write only.
+/** *Fill the current path, writing only inside [x0,x1) x [y0,y1). Coverage is */
+/** *always from global geometry, so the region is a clip on the write only. */
 fn raster_fill_path(x0: int, y0: int, x1: int, y1: int, cr: int, cg: int, cb: int, alpha: int) {
     raster_build()
     let n = rp_path.len
@@ -912,7 +912,7 @@ let mut raster_g0b: int = 0
 let mut raster_g1r: int = 0
 let mut raster_g1g: int = 0
 let mut raster_g1b: int = 0
-/// 0 = vertical (top to bottom), 1 = horizontal (left to right).
+/** *0 = vertical (top to bottom), 1 = horizontal (left to right). */
 let mut raster_grad_axis: int = 0
 let mut raster_grad_start: int = 0
 let mut raster_grad_len: int = 1
@@ -942,7 +942,7 @@ fn raster_grad_disarm() {
     raster_grad_on = 0
 }
 
-/// Blend the gradient's colour at (x, y) over the framebuffer with coverage `a`.
+/** *Blend the gradient's colour at (x, y) over the framebuffer with coverage `a`. */
 fn raster_blend_grad(x: int, y: int, a: int) {
     let mut p = x
     if raster_grad_axis == 0 {
@@ -972,7 +972,7 @@ fn raster_blend_grad(x: int, y: int, a: int) {
     )
 }
 
-/// Composite a colour already in the 12-bit linear domain.
+/** *Composite a colour already in the 12-bit linear domain. */
 fn raster_blend_lin(x: int, y: int, lr: int, lg: int, lb: int, a: int) {
     if x < 0 || y < 0 || x >= fb_w || y >= fb_h {
         return
@@ -996,9 +996,9 @@ fn raster_blend_lin(x: int, y: int, lr: int, lg: int, lb: int, a: int) {
     fb[i + 3] = u8(raster_clamp_byte(i32(float(a) + float(int(fb[i + 3])) * inv + 0.5)))
 }
 
-/// Fill the current path with a gradient, tiled and damage-clipped like any
-/// other fill. The gradient's span is the SHAPE's box (device pixels), not the
-/// surface: a gradient runs corner to corner of the thing it fills.
+/** *Fill the current path with a gradient, tiled and damage-clipped like any */
+/** *other fill. The gradient's span is the SHAPE's box (device pixels), not the */
+/** *surface: a gradient runs corner to corner of the thing it fills. */
 fn raster_fill_gradient_tiled(
     c0: int,
     c1: int,
@@ -1030,7 +1030,7 @@ fn raster_fill_gradient_tiled(
     raster_grad_disarm()
 }
 
-/// Fill the current path as ONE region (whole surface).
+/** *Fill the current path as ONE region (whole surface). */
 fn raster_fill_whole(cr: int, cg: int, cb: int, alpha: int) {
     raster_fill_path(0, 0, fb_w, fb_h, cr, cg, cb, alpha)
 }
@@ -1050,7 +1050,7 @@ fn raster_clip_reset() {
     clip_on = 0
 }
 
-/// Restrict the next tiled draws to this device-space box.
+/** *Restrict the next tiled draws to this device-space box. */
 fn raster_clip_box(x0: int, y0: int, x1: int, y1: int) {
     clip_x0 = x0
     clip_y0 = y0
@@ -1063,8 +1063,8 @@ fn raster_clip_active() -> int {
     return clip_on
 }
 
-/// Intersect a tile with the clip. Returns the effective region by writing the
-/// four globals below; empty when x1<=x0 or y1<=y0.
+/** *Intersect a tile with the clip. Returns the effective region by writing the */
+/** *four globals below; empty when x1<=x0 or y1<=y0. */
 let mut reg_x0: int = 0
 let mut reg_y0: int = 0
 let mut reg_x1: int = 0
@@ -1095,9 +1095,9 @@ fn raster_tile_region(tx: int, ty: int, text_width: int, text_height: int) {
     reg_y1 = y1
 }
 
-/// Fill the current path in 256x256 tiles, honoring the damage clip. Must be
-/// byte-identical to `raster_fill_whole` inside the clip: the tile is a write
-/// clip, never a geometry clip.
+/** *Fill the current path in 256x256 tiles, honoring the damage clip. Must be */
+/** *byte-identical to `raster_fill_whole` inside the clip: the tile is a write */
+/** *clip, never a geometry clip. */
 fn raster_fill_tiled(cr: int, cg: int, cb: int, alpha: int) {
     let mut ty = 0
     while ty < fb_h {
@@ -1152,7 +1152,7 @@ fn raster_multi_begin() {
     }
 }
 
-/// Add a contour given as parallel coordinate arrays. `sign` +1 outer, -1 hole.
+/** *Add a contour given as parallel coordinate arrays. `sign` +1 outer, -1 hole. */
 fn raster_multi_add_poly(xs: []float, ys: []float, sign: int) {
     if xs.len < 3 {
         return
@@ -1171,7 +1171,7 @@ fn raster_multi_add_poly(xs: []float, ys: []float, sign: int) {
     }
 }
 
-/// Add a circle contour, flattened to the device tolerance.
+/** *Add a circle contour, flattened to the device tolerance. */
 fn raster_multi_add_circle(cx: float, cy: float, r: float, sign: int) {
     if r <= 0.0 {
         return
@@ -1213,7 +1213,7 @@ fn raster_mc_load(c: int) {
     }
 }
 
-/// Fill every contour with its winding sign, tiled, honoring the damage clip.
+/** *Fill every contour with its winding sign, tiled, honoring the damage clip. */
 fn raster_fill_multi(cr: int, cg: int, cb: int, alpha: int) {
     raster_build()
     let nc = mc_off.len
@@ -1251,7 +1251,7 @@ fn raster_fill_multi(cr: int, cg: int, cb: int, alpha: int) {
     }
 }
 
-/// Set every pixel opaque. Test/probe helper and the frame's first clear.
+/** *Set every pixel opaque. Test/probe helper and the frame's first clear. */
 fn raster_clear(r: int, g: int, b: int) {
     raster_build()
     let mut i = 0
@@ -1264,8 +1264,8 @@ fn raster_clear(r: int, g: int, b: int) {
     }
 }
 
-/// Rolling hash of the whole framebuffer, so a test can prove two rendering
-/// paths produced identical pixels without copying 20 MB around.
+/** *Rolling hash of the whole framebuffer, so a test can prove two rendering */
+/** *paths produced identical pixels without copying 20 MB around. */
 fn raster_checksum() -> int {
     let mut h: i64 = 0
     let mut i = 0
@@ -1316,12 +1316,12 @@ fn raster_cov_zero(text_width: int, text_height: int) {
     }
 }
 
-/// Round to the nearest device pixel — hairline snapping (quality rule 8).
+/** *Round to the nearest device pixel — hairline snapping (quality rule 8). */
 fn raster_snap(v: float) -> float {
     return raster_floor(v + 0.5)
 }
 
-/// Set the path to an axis-aligned rectangle (device pixels).
+/** *Set the path to an axis-aligned rectangle (device pixels). */
 fn raster_set_rect(x: float, y: float, w: float, h: float) {
     while rp_path.len > 0 {
         pop(rp_path)
@@ -1332,7 +1332,7 @@ fn raster_set_rect(x: float, y: float, w: float, h: float) {
     push(rp_path, RPoint { x: x, y: y + h })
 }
 
-/// Set the path to a quad (four points, convex).
+/** *Set the path to a quad (four points, convex). */
 fn raster_set_quad(
     ax: float,
     ay: float,
@@ -1352,12 +1352,12 @@ fn raster_set_quad(
     push(rp_path, RPoint { x: dx, y: dy })
 }
 
-/// Add the current path's coverage, clipped to the region [tx,tx+text_width) x
-/// [ty,ty+text_height), into the coverage buffer at stride RASTER_TILE. Same global-
-/// geometry rule as `raster_fill_path`: the region limits the write only.
-/// `sign` is the contour's winding direction: +1 for an outer contour, -1 for a
-/// hole. Summing signed coverage across contours is what turns a ring (and a
-/// glyph's outer + counter contours) into the right shape.
+/** *Add the current path's coverage, clipped to the region [tx,tx+text_width) x */
+/** *[ty,ty+text_height), into the coverage buffer at stride RASTER_TILE. Same global- */
+/** *geometry rule as `raster_fill_path`: the region limits the write only. */
+/** *`sign` is the contour's winding direction: +1 for an outer contour, -1 for a */
+/** *hole. Summing signed coverage across contours is what turns a ring (and a */
+/** *glyph's outer + counter contours) into the right shape. */
 fn raster_accum_path(tx: int, ty: int, text_width: int, text_height: int, sign: int) {
     let n = rp_path.len
     if n < 3 {
@@ -1415,7 +1415,7 @@ fn raster_accum_path(tx: int, ty: int, text_width: int, text_height: int, sign: 
     }
 }
 
-/// Composite the accumulated coverage for a region onto the framebuffer.
+/** *Composite the accumulated coverage for a region onto the framebuffer. */
 fn raster_composite_cov(
     tx: int,
     ty: int,
@@ -1450,9 +1450,9 @@ fn raster_composite_cov(
     }
 }
 
-/// Accumulate one quarter-ring: the band between radius `ro` and `ri` over the
-/// angle range [a0,a1], as a series of convex quads (the arc is flattened to the
-/// same device tolerance as `raster_round_rect`).
+/** *Accumulate one quarter-ring: the band between radius `ro` and `ri` over the */
+/** *angle range [a0,a1], as a series of convex quads (the arc is flattened to the */
+/** *same device tolerance as `raster_round_rect`). */
 fn raster_accum_corner(
     ccx: float,
     ccy: float,
@@ -1493,9 +1493,9 @@ fn raster_accum_corner(
     }
 }
 
-/// Accumulate a rounded-rect border RING of thickness `bw` into the coverage
-/// buffer, for region [tx,tx+text_width) x [ty,ty+text_height). Four straight runs plus four
-/// corner quarter-rings; accumulated, so shared edges never double-blend.
+/** *Accumulate a rounded-rect border RING of thickness `bw` into the coverage */
+/** *buffer, for region [tx,tx+text_width) x [ty,ty+text_height). Four straight runs plus four */
+/** *corner quarter-rings; accumulated, so shared edges never double-blend. */
 fn raster_accum_ring(
     x: float,
     y: float,
@@ -1589,9 +1589,9 @@ fn raster_accum_ring(
     }
 }
 
-/// Draw a rounded-rect border, tiled. A border whose device width rounds to one
-/// pixel or less snaps its outer edges to the pixel grid, so it lands as one
-/// crisp row instead of two half-lit ones (quality rule 8).
+/** *Draw a rounded-rect border, tiled. A border whose device width rounds to one */
+/** *pixel or less snaps its outer edges to the pixel grid, so it lands as one */
+/** *crisp row instead of two half-lit ones (quality rule 8). */
 fn raster_stroke_round_rect(
     x: float,
     y: float,
@@ -1654,7 +1654,7 @@ fn raster_stroke_round_rect(
 // byte per pixel over the shadow's own support plus the tile, reset per draw —
 // never RGBA and never surface-sized.
 
-/// Single-channel alpha mask and the ping-pong buffer the separable passes use.
+/** *Single-channel alpha mask and the ping-pong buffer the separable passes use. */
 let mut shmask: []u8 = []u8 {}
 let mut shbuf: []u8 = []u8 {}
 let mut shcap: int = 0
@@ -1678,9 +1678,9 @@ fn raster_shadow_ensure(n: int) {
     shcap = n
 }
 
-/// Coverage (0..255) of the current path at one pixel — the same analytic test
-/// the fills use, so the shadow mask matches the filled shape exactly. The
-/// caller must have filled `rp_active` for this row first.
+/** *Coverage (0..255) of the current path at one pixel — the same analytic test */
+/** *the fills use, so the shadow mask matches the filled shape exactly. The */
+/** *caller must have filled `rp_active` for this row first. */
 fn raster_path_cov_px(px: int, py: int) -> int {
     let n = rp_path.len
     let mut hit = 0
@@ -1702,7 +1702,7 @@ fn raster_path_cov_px(px: int, py: int) -> int {
     return raster_pixel_area(px, py)
 }
 
-/// Fill `shmask` (exw x exh) with the current path's coverage.
+/** *Fill `shmask` (exw x exh) with the current path's coverage. */
 fn raster_mask_fill(ex0: int, ey0: int, exw: int, exh: int) {
     // zero the window
     let mut i = 0
@@ -1747,7 +1747,7 @@ fn raster_mask_fill(ex0: int, ey0: int, exw: int, exh: int) {
     }
 }
 
-/// One separable box-blur pass, horizontal: shmask -> shbuf, edge-clamped.
+/** *One separable box-blur pass, horizontal: shmask -> shbuf, edge-clamped. */
 fn raster_box_h(w: int, h: int, r: int) {
     let span = 2 * r + 1
     let mut y = 0
@@ -1775,7 +1775,7 @@ fn raster_box_h(w: int, h: int, r: int) {
     }
 }
 
-/// One separable box-blur pass, vertical: shbuf -> shmask, edge-clamped.
+/** *One separable box-blur pass, vertical: shbuf -> shmask, edge-clamped. */
 fn raster_box_v(w: int, h: int, r: int) {
     let span = 2 * r + 1
     let mut x = 0
@@ -1799,10 +1799,10 @@ fn raster_box_v(w: int, h: int, r: int) {
     }
 }
 
-/// Draw a drop shadow for a rounded rect: the shape offset by (dx, dy), its
-/// coverage blurred by three separable box passes, composited under whatever
-/// the caller draws next. `blur` is the device-pixel blur radius, `alpha` the
-/// peak shadow opacity (0..255).
+/** *Draw a drop shadow for a rounded rect: the shape offset by (dx, dy), its */
+/** *coverage blurred by three separable box passes, composited under whatever */
+/** *the caller draws next. `blur` is the device-pixel blur radius, `alpha` the */
+/** *peak shadow opacity (0..255). */
 fn raster_shadow_rect(
     x: float,
     y: float,
@@ -1933,7 +1933,7 @@ fn raster_poly_area_signed(xs: []float, ys: []float) -> float {
     return 0.5 * a
 }
 
-/// Flatten one TrueType contour (points s..e) into tt_fx / tt_fy.
+/** *Flatten one TrueType contour (points s..e) into tt_fx / tt_fy. */
 fn raster_tt_contour(xs: []float, ys: []float, on: []int, s: int, e: int) {
     while tt_fx.len > 0 {
         pop(tt_fx)
@@ -2010,9 +2010,9 @@ fn mc_push_contour(sign: int) {
     }
 }
 
-/// Add every contour of a TrueType glyph (device-space coords) to the
-/// multi-contour set, deriving each contour's winding sign from its orientation
-/// relative to the first contour.
+/** *Add every contour of a TrueType glyph (device-space coords) to the */
+/** *multi-contour set, deriving each contour's winding sign from its orientation */
+/** *relative to the first contour. */
 fn raster_multi_add_tt(xs: []float, ys: []float, on: []int, ends: []int) {
     let nc = ends.len
     let mut s = 0
@@ -2041,14 +2041,14 @@ fn raster_multi_add_tt(xs: []float, ys: []float, on: []int, ends: []int) {
     }
 }
 
-/// Device-space scratch for one glyph's converted points.
+/** *Device-space scratch for one glyph's converted points. */
 let mut tt_ux: []float = []float {}
 let mut tt_uy: []float = []float {}
 
-/// Add a glyph's contours, converting its FONT-UNIT points to device pixels:
-/// `sc` is px/unitsPerEm, `(pen_x, pen_y)` the device-space baseline origin.
-/// Y flips (font Y is up, device Y is down); every contour's orientation flips
-/// with it, so the relative winding test still separates the counter.
+/** *Add a glyph's contours, converting its FONT-UNIT points to device pixels: */
+/** *`sc` is px/unitsPerEm, `(pen_x, pen_y)` the device-space baseline origin. */
+/** *Y flips (font Y is up, device Y is down); every contour's orientation flips */
+/** *with it, so the relative winding test still separates the counter. */
 fn raster_multi_add_glyph(
     xs: []int,
     ys: []int,
@@ -2073,14 +2073,14 @@ fn raster_multi_add_glyph(
     raster_multi_add_tt(tt_ux, tt_uy, on, ends)
 }
 
-/// Offscreen single-channel mask for a rasterized glyph.
+/** *Offscreen single-channel mask for a rasterized glyph. */
 let mut gm: []u8 = []u8 {}
 let mut gm_w: int = 0
 let mut gm_h: int = 0
 
-/// Rasterize the current multi-contour set into an offscreen R8 mask over the
-/// device box [x0,x1) x [y0,y1). 1 on success. The box must be at most one tile
-/// a side; the caller passes the device position (the pen).
+/** *Rasterize the current multi-contour set into an offscreen R8 mask over the */
+/** *device box [x0,x1) x [y0,y1). 1 on success. The box must be at most one tile */
+/** *a side; the caller passes the device position (the pen). */
 fn raster_multi_to_mask(x0: int, y0: int, x1: int, y1: int) -> int {
     raster_build()
     let w = x1 - x0
@@ -2135,7 +2135,7 @@ fn raster_mask_h() -> int {
     return gm_h
 }
 
-/// Mask coverage 0..255 at a point in the mask's own space.
+/** *Mask coverage 0..255 at a point in the mask's own space. */
 fn raster_mask_get(x: int, y: int) -> int {
     if x < 0 || y < 0 {
         return 0

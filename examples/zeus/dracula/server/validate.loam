@@ -1,22 +1,22 @@
-//! Ingest guards for one NAV row.
-//!
-//! A bad row that slips through does not look like a bug later. It looks like
-//! a signal. Every check lives here, returns a reason, and the store logs that
-//! reason. Nothing in this file reads or writes a file.
-//!
-//! Money is integer paise. `paise_of` turns AMFI's rupee text (`1234.5678`)
-//! into paise, rounding the half-paisa up and away from zero. A value that is
-//! not a NAV — `N.A.`, a blank, a second dot — comes back as `-1`, which
-//! `review` rejects. Zero is parsed as zero and rejected as non-positive, so
-//! a missing price and a zero price are the same outcome with the same reason.
+// Ingest guards for one NAV row.
+//
+// A bad row that slips through does not look like a bug later. It looks like
+// a signal. Every check lives here, returns a reason, and the store logs that
+// reason. Nothing in this file reads or writes a file.
+//
+// Money is integer paise. `paise_of` turns AMFI's rupee text (`1234.5678`)
+// into paise, rounding the half-paisa up and away from zero. A value that is
+// not a NAV — `N.A.`, a blank, a second dot — comes back as `-1`, which
+// `review` rejects. Zero is parsed as zero and rejected as non-positive, so
+// a missing price and a zero price are the same outcome with the same reason.
 
 import "std:date"
 
-/// What `review` decided. `accept` is 1 when the row may be cached.
-/// `warn` is 1 when it is cached but a person should look at it: a plan or
-/// option rename that jumped, or a gap longer than five calendar days.
-/// `gap` is 1 only for that gap. `reason` is empty when nothing is wrong.
-/// A reason never contains `;` — the reject log is semicolon-separated.
+/** *What `review` decided. `accept` is 1 when the row may be cached. */
+/** *`warn` is 1 when it is cached but a person should look at it: a plan or */
+/** *option rename that jumped, or a gap longer than five calendar days. */
+/** *`gap` is 1 only for that gap. `reason` is empty when nothing is wrong. */
+/** *A reason never contains `;` — the reject log is semicolon-separated. */
 struct Verdict {
     accept: int,
     warn: int,
@@ -52,9 +52,9 @@ fn contains(s: string, w: string) -> bool {
     return false
 }
 
-/// True when the plan (Direct/Regular) or the option (Growth/IDCW/Dividend/Bonus)
-/// wording differs. A direct-to-regular switch is how a large NAV jump shows
-/// up without the fund having moved.
+/** *True when the plan (Direct/Regular) or the option (Growth/IDCW/Dividend/Bonus) */
+/** *wording differs. A direct-to-regular switch is how a large NAV jump shows */
+/** *up without the fund having moved. */
 fn plan_moved(prev: string, now: string) -> bool {
     if contains(prev, "Direct") != contains(now, "Direct") {
         return true
@@ -105,10 +105,10 @@ fn trim(s: string) -> string {
     return string_from_bytes(out)
 }
 
-/// Rupee text to paise. `-1` when `s` is not a non-negative decimal number.
-///
-/// The third digit after the dot is the half-paisa place. `100.005` is
-/// 10000.5 paise and rounds to `10001`. `100.004` stays `10000`.
+/** *Rupee text to paise. `-1` when `s` is not a non-negative decimal number. */
+/** */
+/** *The third digit after the dot is the half-paisa place. `100.005` is */
+/** *10000.5 paise and rounds to `10001`. `100.004` stays `10000`. */
 fn paise_of(s: string) -> i64 {
     let t = trim(s)
     if t.len == 0 {
@@ -173,8 +173,8 @@ fn abs_i64(n: i64) -> i64 {
     return n
 }
 
-/// More than 20% away from `prev`. Exactly 20% is not a jump: a move of that
-/// size is the threshold, and the row above it is the one we refuse.
+/** *More than 20% away from `prev`. Exactly 20% is not a jump: a move of that */
+/** *size is the threshold, and the row above it is the one we refuse. */
 fn jumped(prev: i64, nav: i64) -> bool {
     if prev <= 0 {
         return false
@@ -183,13 +183,13 @@ fn jumped(prev: i64, nav: i64) -> bool {
     return d * i64(5) > prev
 }
 
-/// Judge one row against the previous accepted point for the same scheme.
-///
-/// `prev_date == 0` means the cache has no point yet. The new date must be
-/// strictly later than `prev_date`; the cache is append-only, so a duplicate
-/// and an older date are both refused. A gap of more than five calendar days
-/// is stored, not refused — indicators will not cross it until someone
-/// acknowledges it.
+/** *Judge one row against the previous accepted point for the same scheme. */
+/** */
+/** *`prev_date == 0` means the cache has no point yet. The new date must be */
+/** *strictly later than `prev_date`; the cache is append-only, so a duplicate */
+/** *and an older date are both refused. A gap of more than five calendar days */
+/** *is stored, not refused — indicators will not cross it until someone */
+/** *acknowledges it. */
 fn review(
     prev_date: int,
     prev_nav: i64,

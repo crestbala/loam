@@ -103,8 +103,9 @@ workers off module state — native/iOS/Android only, wasm `spawn` is a no-op).
 `zeus` (UI), `http`, and `maya` (tiny 3D) are packages, imported as
 `import "zeus"`, not `import "zeus"`.
 
-Document them with `///` above each `fn` / `struct` and `//!` at the top of the
-file. Hover in the editor shows those comments plus the type.
+Document them with `/** *text */` above each `fn` / `struct`. A single-line
+comment is `//` and a block comment is `/* */`. Hover in the editor shows the
+doc plus the type.
 
 ### Module resolution
 

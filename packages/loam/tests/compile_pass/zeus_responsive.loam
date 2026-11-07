@@ -76,7 +76,7 @@ fn Screen() -> Node {
     }
 }
 
-/// Shown boxes of the subtree at `id`, in tree order.
+/** *Shown boxes of the subtree at `id`, in tree order. */
 fn boxes(id: int, out: &mut []string) {
     if id <= 0 || arena.want_show(id) == 0 {
         return

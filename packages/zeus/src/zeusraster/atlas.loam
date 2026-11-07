@@ -1,45 +1,45 @@
-//! atlas — the glyph atlas, the coverage gamma, and the measurement cache.
-//!
-//! Phase 4, glyph half. `raster.loam` turns an outline into an R8 mask; this
-//! module is the cache that makes doing so affordable per frame:
-//!
-//!   * ONE single-channel R8 atlas, 1024x1024 to start, packed with a shelf
-//!     allocator. It is a cache and nothing else: any entry may be dropped at
-//!     any time and re-rasterized from its key, which is what makes eviction,
-//!     repacking and growth all safe.
-//!   * Keys are (font_id, glyph_id, size_px, subpixel_x), where subpixel_x is
-//!     a QUARTER-pixel bucket at logical sizes <= 16 and always 0 above that.
-//!     Small text is where 1/4-px phase matters and where up to 4 entries per
-//!     glyph buys evenly spaced text; that cost is accepted deliberately.
-//!   * Bounded LRU. The entry pool is fixed (`ATLAS_MAX_ENTRIES`), the index is
-//!     a fixed-capacity open-addressed table, and both the atlas and the
-//!     measurement cache evict least-recently-used instead of growing forever.
-//!     There is no unbounded map anywhere in here.
-//!   * A 256-entry coverage gamma applied on insert, so text weight is a single
-//!     documented constant rather than whatever the blend happens to produce.
-//!
-//! Reallocating the framebuffer is NOT this module's business; it only owns
-//! glyph coverage and measurement results.
+// atlas — the glyph atlas, the coverage gamma, and the measurement cache.
+//
+// Phase 4, glyph half. `raster.loam` turns an outline into an R8 mask; this
+// module is the cache that makes doing so affordable per frame:
+//
+//   * ONE single-channel R8 atlas, 1024x1024 to start, packed with a shelf
+//     allocator. It is a cache and nothing else: any entry may be dropped at
+//     any time and re-rasterized from its key, which is what makes eviction,
+//     repacking and growth all safe.
+//   * Keys are (font_id, glyph_id, size_px, subpixel_x), where subpixel_x is
+//     a QUARTER-pixel bucket at logical sizes <= 16 and always 0 above that.
+//     Small text is where 1/4-px phase matters and where up to 4 entries per
+//     glyph buys evenly spaced text; that cost is accepted deliberately.
+//   * Bounded LRU. The entry pool is fixed (`ATLAS_MAX_ENTRIES`), the index is
+//     a fixed-capacity open-addressed table, and both the atlas and the
+//     measurement cache evict least-recently-used instead of growing forever.
+//     There is no unbounded map anywhere in here.
+//   * A 256-entry coverage gamma applied on insert, so text weight is a single
+//     documented constant rather than whatever the blend happens to produce.
+//
+// Reallocating the framebuffer is NOT this module's business; it only owns
+// glyph coverage and measurement results.
 
 import "raster.loam"
 
-/// Fixed entry-pool capacity. Reaching it evicts LRU entries; it never grows.
+/** *Fixed entry-pool capacity. Reaching it evicts LRU entries; it never grows. */
 const ATLAS_MAX_ENTRIES: int = 4096
-/// 1024x1024 R8 = 1 MB to start.
+/** *1024x1024 R8 = 1 MB to start. */
 const ATLAS_DEFAULT_DIM: int = 1024
-/// Growth ceiling. At 2048x2048 = 4 MB the atlas is a fixed, known budget; past
-/// that we evict rather than grow, because a bigger atlas is real memory and a
-/// miss only costs one re-rasterization.
+/** *Growth ceiling. At 2048x2048 = 4 MB the atlas is a fixed, known budget; past */
+/** *that we evict rather than grow, because a bigger atlas is real memory and a */
+/** *miss only costs one re-rasterization. */
 const ATLAS_MAX_DIM: int = 2048
-/// Padding around a glyph's mask, in device pixels. AA bleed and the fractional
-/// subpixel offset both need room, so this is quality, not slack.
+/** *Padding around a glyph's mask, in device pixels. AA bleed and the fractional */
+/** *subpixel offset both need room, so this is quality, not slack. */
 const ATLAS_PAD: int = 1
-/// Coverage gamma exponent. Compositing happens in LINEAR space (raster.loam),
-/// which is correct but makes rendered text a touch heavier than the designers'
-/// intent, since type was drawn for gamma-naive blending. Raising coverage to
-/// 1/1.2 restores the intended weight. One constant, one table, documented.
+/** *Coverage gamma exponent. Compositing happens in LINEAR space (raster.loam), */
+/** *which is correct but makes rendered text a touch heavier than the designers' */
+/** *intent, since type was drawn for gamma-naive blending. Raising coverage to */
+/** *1/1.2 restores the intended weight. One constant, one table, documented. */
 const ATLAS_COV_GAMMA: float = 1.2
-/// Open-addressed index capacity. Must be >= 2x ATLAS_MAX_ENTRIES.
+/** *Open-addressed index capacity. Must be >= 2x ATLAS_MAX_ENTRIES. */
 const ATLAS_HASH_CAP: int = 16384
 
 // --- atlas state -----------------------------------------------------------
@@ -65,11 +65,11 @@ let mut at_free: []int = []int {}
 let mut at_head: int = -1
 let mut at_tail: int = -1
 
-/// Slot+1; 0 empty, -1 tombstone.
+/** *Slot+1; 0 empty, -1 tombstone. */
 let mut at_ht: []int = []int {}
 let mut at_ht_n: int = 0
 
-/// Scratch for repacking (glyph pixels only, so bounded by the live set).
+/** *Scratch for repacking (glyph pixels only, so bounded by the live set). */
 let mut at_scratch: []u8 = []u8 {}
 
 let mut pk_x: int = 0
@@ -118,15 +118,15 @@ fn atlas_build_gamma() {
     cov_gamma[255] = 255
 }
 
-/// Gamma-corrected coverage 0..255 for a raw coverage 0..255.
+/** *Gamma-corrected coverage 0..255 for a raw coverage 0..255. */
 fn atlas_gamma(c: int) -> int {
     atlas_build_gamma()
     return cov_gamma[raster.raster_clamp_byte(c)]
 }
 
-/// Subpixel-x bucket for a glyph: 1/4-px phase at sizes <= 16 LOGICAL px,
-/// integer positioning above (where a single device pixel is small enough that
-/// the extra phase buys nothing).
+/** *Subpixel-x bucket for a glyph: 1/4-px phase at sizes <= 16 LOGICAL px, */
+/** *integer positioning above (where a single device pixel is small enough that */
+/** *the extra phase buys nothing). */
 fn atlas_subx_bucket(size_logical: int, frac_x: float) -> int {
     if size_logical > 16 {
         return 0
@@ -141,7 +141,7 @@ fn atlas_subx_bucket(size_logical: int, frac_x: float) -> int {
     return b
 }
 
-/// Device offset baked in for a subpixel bucket.
+/** *Device offset baked in for a subpixel bucket. */
 fn atlas_subx_offset(bucket: int) -> float {
     return float(bucket) * 0.25
 }
@@ -154,7 +154,7 @@ fn pk_reset() {
     pk_rh = 0
 }
 
-/// Shelf-allocate `w`x`h`; on success the position is in `pk_dx`/`pk_dy`.
+/** *Shelf-allocate `w`x`h`; on success the position is in `pk_dx`/`pk_dy`. */
 fn pk_try(w: int, h: int) -> int {
     if w <= 0 || h <= 0 {
         return 0
@@ -277,8 +277,8 @@ fn atlas_ht_place(s: int) {
     at_ht[i] = s + 1
 }
 
-/// Rebuild the index from the live entries, dropping tombstones. Called before
-/// an insert rather than letting the table fill up.
+/** *Rebuild the index from the live entries, dropping tombstones. Called before */
+/** *an insert rather than letting the table fill up. */
 fn atlas_ht_rehash() {
     let mut i = 0
     while i < ATLAS_HASH_CAP {
@@ -376,9 +376,9 @@ fn atlas_drop_all() {
     }
 }
 
-/// Repack the live entries MRU-first, dropping any that will not seat. Pixels
-/// go through scratch first, so overlapping source and destination regions in
-/// the single atlas buffer are never a problem.
+/** *Repack the live entries MRU-first, dropping any that will not seat. Pixels */
+/** *go through scratch first, so overlapping source and destination regions in */
+/** *the single atlas buffer are never a problem. */
 fn atlas_repack() {
     at_repacks = at_repacks + 1
     pk_reset()
@@ -424,9 +424,9 @@ fn atlas_repack() {
     }
 }
 
-/// Allocate shelf space for a glyph, reclaiming by LRU eviction. Growth is the
-/// last resort: a larger atlas is real memory, while a miss is one
-/// re-rasterization, so the cache prefers to evict.
+/** *Allocate shelf space for a glyph, reclaiming by LRU eviction. Growth is the */
+/** *last resort: a larger atlas is real memory, while a miss is one */
+/** *re-rasterization, so the cache prefers to evict. */
 fn atlas_alloc(w: int, h: int) -> int {
     if pk_try(w, h) == 1 {
         return 1
@@ -481,8 +481,8 @@ fn atlas_alloc(w: int, h: int) -> int {
 
 // --- (re)initialization and growth -----------------------------------------
 
-/// Allocate the atlas buffer and reset the pools, index and LRU. Counters are
-/// left alone: they are observations about the running cache.
+/** *Allocate the atlas buffer and reset the pools, index and LRU. Counters are */
+/** *left alone: they are observations about the running cache. */
 fn atlas_init_buffer(dim: int) {
     at_dim = dim
     while at_r.len > 0 {
@@ -572,9 +572,9 @@ fn atlas_init_buffer(dim: int) {
     pk_reset()
 }
 
-/// Double the atlas, reallocating the buffer. Entries are a cache, so they are
-/// simply dropped and re-rasterized on demand; that also avoids ever holding
-/// two atlas buffers at once.
+/** *Double the atlas, reallocating the buffer. Entries are a cache, so they are */
+/** *simply dropped and re-rasterized on demand; that also avoids ever holding */
+/** *two atlas buffers at once. */
 fn atlas_grow() {
     if at_dim >= ATLAS_MAX_DIM {
         return
@@ -596,8 +596,8 @@ fn atlas_init() {
     atlas_init_buffer(ATLAS_DEFAULT_DIM)
 }
 
-/// Full reset at a given dimension. Test hook (and the handle a future
-/// per-frame scratch reset would use), not a per-frame path.
+/** *Full reset at a given dimension. Test hook (and the handle a future */
+/** *per-frame scratch reset would use), not a per-frame path. */
 fn atlas_reset(dim: int) {
     let mut d = dim
     if d < 8 {
@@ -632,13 +632,13 @@ fn atlas_lookup(font: int, gid: int, size: int, subx: int) -> int {
     return s
 }
 
-/// Ensure a glyph is in the atlas, rasterizing it on a miss.
-///
-/// `xs`/`ys`/`on`/`ends` are the outline in FONT UNITS, `upm` its units per em,
-/// `size` the DEVICE pixel size, `subx` a bucket from `atlas_subx_bucket`. The
-/// mask is stored relative to the pen: blit it with `atlas_blit` at the integer
-/// pen position. Returns the slot, or -1 when the glyph cannot be atlased
-/// (empty, or larger than a tile).
+/** *Ensure a glyph is in the atlas, rasterizing it on a miss. */
+/** */
+/** *`xs`/`ys`/`on`/`ends` are the outline in FONT UNITS, `upm` its units per em, */
+/** *`size` the DEVICE pixel size, `subx` a bucket from `atlas_subx_bucket`. The */
+/** *mask is stored relative to the pen: blit it with `atlas_blit` at the integer */
+/** *pen position. Returns the slot, or -1 when the glyph cannot be atlased */
+/** *(empty, or larger than a tile). */
 fn atlas_intern(
     font: int,
     gid: int,
@@ -757,11 +757,11 @@ fn atlas_intern(
     return s
 }
 
-/// Composite an atlased glyph onto the framebuffer at an integer pen position.
-/// The mask is stored relative to the pen (its origin is `at_ox`/`at_oy` from
-/// the pen), so this places it for you: coverage is premultiplied into `alpha`
-/// by the blend itself, and the framebuffer blend is gamma-correct, so a glyph
-/// composites the same way a filled shape does.
+/** *Composite an atlased glyph onto the framebuffer at an integer pen position. */
+/** *The mask is stored relative to the pen (its origin is `at_ox`/`at_oy` from */
+/** *the pen), so this places it for you: coverage is premultiplied into `alpha` */
+/** *by the blend itself, and the framebuffer blend is gamma-correct, so a glyph */
+/** *composites the same way a filled shape does. */
 fn atlas_blit(s: int, pen_x: int, pen_y: int, r: int, g: int, b: int, alpha: int) {
     if s < 0 {
         return
@@ -822,8 +822,8 @@ fn atlas_glyph_h(s: int) -> int {
     return at_mh[s]
 }
 
-/// Origin of the glyph's mask relative to the pen, in device pixels. The blit
-/// position is the integer pen position, so this is informational.
+/** *Origin of the glyph's mask relative to the pen, in device pixels. The blit */
+/** *position is the integer pen position, so this is informational. */
 fn atlas_glyph_origin_x(s: int) -> int {
     if s < 0 {
         return 0
@@ -935,9 +935,9 @@ fn str_init() {
     }
 }
 
-/// Intern a string, returning a stable id, or -1 when the table is full. A full
-/// table is a loud, counted, non-fatal condition: nothing is cached for the new
-/// string, and short strings are what fill it first.
+/** *Intern a string, returning a stable id, or -1 when the table is full. A full */
+/** *table is a loud, counted, non-fatal condition: nothing is cached for the new */
+/** *string, and short strings are what fill it first. */
 fn str_intern(s: string) -> int {
     str_init()
     if s.len == 0 {
@@ -995,7 +995,7 @@ fn meas_init() {
     }
 }
 
-/// Cached measurement for (signal_id, font, size): 1 on hit, with `w`/`h` written.
+/** *Cached measurement for (signal_id, font, size): 1 on hit, with `w`/`h` written. */
 fn meas_get(signal_id: int, font: int, size: int, w: &mut int, h: &mut int) -> int {
     meas_init()
     if signal_id < 0 {
@@ -1106,8 +1106,8 @@ fn meas_clear() {
     meas_evicts = 0
 }
 
-/// Bytes held by the atlas and the measurement tables — the Phase 0
-/// instrumentation hook, so a later phase can report this rather than guess.
+/** *Bytes held by the atlas and the measurement tables — the Phase 0 */
+/** *instrumentation hook, so a later phase can report this rather than guess. */
 fn atlas_mem_bytes() -> i64 {
     let mut total = i64(at_r.len) + i64(at_scratch.len)
     total = total + i64(at_font.len) * 8

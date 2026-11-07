@@ -1,20 +1,20 @@
-//! Hand-checked statistics.
-//!
-//! The 20-point series is the fixture the design asks for. The shifted series
-//! is the one the textbook variance formula gets wrong: the same five offsets
-//! sitting on `1e10`. Welford must still report a sample variance of `2.5`;
-//! `sum(x^2) / n - mean^2` collapses to zero there.
-//!
-//! Expected values are decimal literals, checked by relative error. An
-//! absolute epsilon would pass a large CAGR for the wrong reason and fail a
-//! small downside deviation for the same one.
+// Hand-checked statistics.
+//
+// The 20-point series is the fixture the design asks for. The shifted series
+// is the one the textbook variance formula gets wrong: the same five offsets
+// sitting on `1e10`. Welford must still report a sample variance of `2.5`;
+// `sum(x^2) / n - mean^2` collapses to zero there.
+//
+// Expected values are decimal literals, checked by relative error. An
+// absolute epsilon would pass a large CAGR for the wrong reason and fail a
+// small downside deviation for the same one.
 
 import "std:test"
 import "std:math"
 import "../core/stats.loam"
 
-/// An untyped float literal is `float`, and `push` into `[]f64` does not
-/// adopt the element type. A parameter does, so every literal goes through here.
+/** *An untyped float literal is `float`, and `push` into `[]f64` does not */
+/** *adopt the element type. A parameter does, so every literal goes through here. */
 fn f(v: f64) -> f64 {
     return v
 }
@@ -32,8 +32,8 @@ fn near(got: f64, want: f64) {
     }
 }
 
-/// The textbook variance. Correct on small numbers, and the thing Welford
-/// exists to replace once the numbers get large.
+/** *The textbook variance. Correct on small numbers, and the thing Welford */
+/** *exists to replace once the numbers get large. */
 fn naive_variance(xs: []f64) -> f64 {
     let n = xs.len
     if n < 2 {
@@ -63,8 +63,8 @@ fn five() -> []f64 {
     return xs
 }
 
-/// 20 prices. The deep decline is 115 down to 98, and the series makes a new
-/// high at 116, so the drawdown both has a known depth and recovers.
+/** *20 prices. The deep decline is 115 down to 98, and the series makes a new */
+/** *high at 116, so the drawdown both has a known depth and recovers. */
 fn twenty() -> []f64 {
     let mut xs = []f64 {}
     push(xs, f(100.0))
@@ -118,8 +118,8 @@ fn five_point_moments() {
     near(naive_variance(xs), stats.variance(xs))
 }
 
-/// Same offsets as `five`, translated by 1e10. The sample variance is still
-/// 2.5. The textbook formula loses it.
+/** *Same offsets as `five`, translated by 1e10. The sample variance is still */
+/** *2.5. The textbook formula loses it. */
 #[test]
 fn welford_survives_a_large_base() {
     let mut xs = []f64 {}

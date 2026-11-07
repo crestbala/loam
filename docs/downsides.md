@@ -79,7 +79,7 @@ counter android/ios still pass `640, 680`.
 
 What differs per host is folklore across READMEs.
 
-- [x] One table in this file; `http.default_addr` / `sys.target` `///`.
+- [x] One table in this file; `http.default_addr` / `sys.target` doc comments.
 - [x] `loam --target=wasm` without a `wasm32` clang names `./install.sh`
       / `LOAM_WASM_CC`.
 - [x] Missing iOS SDK / Android SDK still point at Xcode / `install.sh`.

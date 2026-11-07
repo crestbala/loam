@@ -19,8 +19,8 @@ fn fail(what: string) {
     sys.exit(1)
 }
 
-/// One simulated async op: a future filled on the next pump tick, awaited
-/// for its value — the shape a gRPC round trip takes (`http.async_call`).
+/** *One simulated async op: a future filled on the next pump tick, awaited */
+/** *for its value — the shape a gRPC round trip takes (`http.async_call`). */
 async fn fetch_value(tag: int) -> string {
     let f = async.future_str()
     async.spawn(|| { async.resolve(f, tag_str(tag)) })
@@ -47,7 +47,7 @@ async fn fetch_pair() -> Pair {
     return await f
 }
 
-/// Sequential awaits: the second only starts after the first completed.
+/** *Sequential awaits: the second only starts after the first completed. */
 async fn run() {
     let f1 = async.future_str()
     async.spawn(|| { async.resolve(f1, "one") })

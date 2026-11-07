@@ -220,7 +220,7 @@ function activate(context) {
     "enumMember", "function", "keyword", "comment", "string", "number", "operator",
     "modifier", "punctuation",
   ];
-  const legend = new vscode.SemanticTokensLegend(legendTypes, ["declaration"]);
+  const legend = new vscode.SemanticTokensLegend(legendTypes, ["declaration", "documentation"]);
   context.subscriptions.push(
     vscode.languages.registerDocumentSemanticTokensProvider(
       "loam",

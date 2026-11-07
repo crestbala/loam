@@ -1,9 +1,9 @@
-//! runtime — the engine's C runtime builtins: text-edit buffers, the key
-//! table, interned handlers and thunks, signal cells, recoverable traps and
-//! allocation counters. Bodyless `fn`s, like `platform.loam`, but these are
-//! implemented once in `packages/loam/runtime/zeus_plat.c` / `zeus_key.c` and
-//! are identical on every target. A host never implements any of them; the
-//! host contract is `platform.loam` alone.
+// runtime — the engine's C runtime builtins: text-edit buffers, the key
+// table, interned handlers and thunks, signal cells, recoverable traps and
+// allocation counters. Bodyless `fn`s, like `platform.loam`, but these are
+// implemented once in `packages/loam/runtime/zeus_plat.c` / `zeus_key.c` and
+// are identical on every target. A host never implements any of them; the
+// host contract is `platform.loam` alone.
 
 fn key_intern(name: string) -> int {}
 fn key_intern_action(action: string) -> int {}
@@ -16,18 +16,18 @@ fn edit_del(slot: int) -> int {}
 fn edit_len(slot: int) -> int {}
 fn edit_text(slot: int) -> string {}
 fn edit_shown(slot: int) -> string {}
-/// Mask a slot (password field): shown, measured, and hit-tested as one
-/// bullet per code point. The text itself is unchanged.
+/** *Mask a slot (password field): shown, measured, and hit-tested as one */
+/** *bullet per code point. The text itself is unchanged. */
 fn edit_set_secure(slot: int, on: int) {}
 fn edit_set(slot: int, text: string) -> int {}
 fn edit_insert(slot: int, text: string) -> int {}
 fn edit_caret(slot: int) -> int {}
 fn edit_anchor(slot: int) -> int {}
-/// Move the caret (selection pivot unchanged) to byte offset `pos`.
+/** *Move the caret (selection pivot unchanged) to byte offset `pos`. */
 fn edit_set_caret(slot: int, pos: int) -> int {}
-/// Move the selection anchor to byte offset `pos`. With `edit_set_caret`
-/// this forms a selection, which `edit_back` / `edit_del` then
-/// delete — how grapheme-aware editing removes one cluster at a time.
+/** *Move the selection anchor to byte offset `pos`. With `edit_set_caret` */
+/** *this forms a selection, which `edit_back` / `edit_del` then */
+/** *delete — how grapheme-aware editing removes one cluster at a time. */
 fn edit_set_anchor(slot: int, pos: int) -> int {}
 fn edit_mark(slot: int, text: string) -> int {}
 fn edit_metrics(slot: int, wrap_w: int, font: int) {}
@@ -38,60 +38,60 @@ fn edit_caret_y(slot: int) -> int {}
 fn edit_line_h(slot: int) -> int {}
 fn intern_fn(handler: fn()) -> int {}
 fn invoke_fn(id: int) {}
-/// Reactive props are thunks. Interning one yields an int id, which a plain
-/// `||` effect closure can capture (a `fn` value is not Copy and cannot be).
+/** *Reactive props are thunks. Interning one yields an int id, which a plain */
+/** *`||` effect closure can capture (a `fn` value is not Copy and cannot be). */
 fn intern_int_fn(thunk: fn() -> int) -> int {}
 fn invoke_int_fn(id: int) -> int {}
 fn intern_bool_fn(thunk: fn() -> bool) -> int {}
 fn invoke_bool_fn(id: int) -> int {}
 fn intern_str_fn(thunk: fn() -> string) -> int {}
 fn invoke_str_fn(id: int) -> string {}
-/// Calls refused because the interned slot held a handler of another signature.
-/// Zero is the contract: the intern table is shared by the void / int / bool /
-/// string kinds, so an invoke that reaches a slot of the wrong kind is a bug
-/// (it was undefined behaviour before, garbage on native and a trap on wasm).
+/** *Calls refused because the interned slot held a handler of another signature. */
+/** *Zero is the contract: the intern table is shared by the void / int / bool / */
+/** *string kinds, so an invoke that reaches a slot of the wrong kind is a bug */
+/** *(it was undefined behaviour before, garbage on native and a trap on wasm). */
 fn intern_kind_mismatch_count() -> int {}
-/// Live rows in the shared interned-handler table. A streaming list or a
-/// re-running scope must recycle handlers, not grow this. Exposed for tests.
+/** *Live rows in the shared interned-handler table. A streaming list or a */
+/** *re-running scope must recycle handlers, not grow this. Exposed for tests. */
 fn intern_live_count() -> int {}
 fn sig_bind_int(id: int, value: int) {}
-/// Every `sig_bind_*` bumps the cell's generation; `sig_gen` reads it
-/// back. `computed<T>` records the generation of each input it reads, so a lazy
-/// memo can tell whether an input's *value* moved before it recomputes.
+/** *Every `sig_bind_*` bumps the cell's generation; `sig_gen` reads it */
+/** *back. `computed<T>` records the generation of each input it reads, so a lazy */
+/** *memo can tell whether an input's *value* moved before it recomputes. */
 fn sig_gen(id: int) -> int {}
-/// Reserving a signal slot with no value bound yet. `computed<T>` needs an
-/// output cell for a `T` it cannot name a default for; the first pull binds it.
+/** *Reserving a signal slot with no value bound yet. `computed<T>` needs an */
+/** *output cell for a `T` it cannot name a default for; the first pull binds it. */
 fn sig_alloc_zero() -> int {}
-/// Free a signal slot: release its cell, zero its int mirror, and make the
-/// id reusable. No-op for ids that are already free.
+/** *Free a signal slot: release its cell, zero its int mirror, and make the */
+/** *id reusable. No-op for ids that are already free. */
 fn sig_free(id: int) {}
-/// Drop the text buffer of an edit slot so a rebuilt input never shows a
-/// dead input's contents.
+/** *Drop the text buffer of an edit slot so a rebuilt input never shows a */
+/** *dead input's contents. */
 fn edit_reset(slot: int) {}
-/// Free an interned handler/thunk: release its captured env and make the id
-/// reusable. No-op for ids that are already free.
+/** *Free an interned handler/thunk: release its captured env and make the id */
+/** *reusable. No-op for ids that are already free. */
 fn intern_free(id: int) {}
-/// Run `build` under a recoverable trap (`zui.Boundary`). Returns "" when the
-/// build completed, else the panic message. On wasm a trap is not caught here;
-/// it unwinds to the host, which recovers through `zeus.engine_recover`.
+/** *Run `build` under a recoverable trap (`zui.Boundary`). Returns "" when the */
+/** *build completed, else the panic message. On wasm a trap is not caught here; */
+/** *it unwinds to the host, which recovers through `zeus.engine_recover`. */
 fn boundary(build: fn()) -> string {}
-/// Invoke interned handler `id` under a trap arm: "" when it returned, else the
-/// panic message. On wasm a trap is not caught here; it unwinds to the host.
+/** *Invoke interned handler `id` under a trap arm: "" when it returned, else the */
+/** *panic message. On wasm a trap is not caught here; it unwinds to the host. */
 fn guard_fn(id: int) -> string {}
-/// The last panic's message, "" before any. Static storage: copy before keeping.
+/** *The last panic's message, "" before any. Static storage: copy before keeping. */
 fn trap_msg() -> string {}
-/// The message boundary number `seq` trapped with during a previous wasm
-/// instance's startup (pre-seeded by the web loader), or "".
+/** *The message boundary number `seq` trapped with during a previous wasm */
+/** *instance's startup (pre-seeded by the web loader), or "". */
 fn boundary_preset(seq: int) -> string {}
-/// Runtime allocation count since boot, for the animation proof harness. The
-/// runtime counts `loam_new` and array growth; an animated frame must not move
-/// it. 0 when the host/runtime does not track it.
+/** *Runtime allocation count since boot, for the animation proof harness. The */
+/** *runtime counts `loam_new` and array growth; an animated frame must not move */
+/** *it. 0 when the host/runtime does not track it. */
 fn alloc_count() -> int {}
-/// 1 when arena memory stats are on: compiled with `-DZEUS_MEM_STATS` or
-/// started with `ZEUS_MEM_STATS=1`. Phase 0 instrumentation only — no
-/// allocation decision reads it.
+/** *1 when arena memory stats are on: compiled with `-DZEUS_MEM_STATS` or */
+/** *started with `ZEUS_MEM_STATS=1`. Phase 0 instrumentation only — no */
+/** *allocation decision reads it. */
 fn mem_stats() -> int {}
-/// Bind (1) or unbind (0) the trace host: a `ZeusDraw` that prints every call
-/// a host would receive, one line each. Headless tests use it to cover the path
-/// from the draw list to a host.
+/** *Bind (1) or unbind (0) the trace host: a `ZeusDraw` that prints every call */
+/** *a host would receive, one line each. Headless tests use it to cover the path */
+/** *from the draw list to a host. */
 fn trace_draw(on: int) {}

@@ -1,20 +1,20 @@
-//! The shell jobs: decode, render, export. Each runs in the background
-//! and ends by touching `<name>.done` (or `<name>.fail`); the store polls.
-//! ffmpeg reads and writes every recording; Loam only reads the small
-//! envelope, pitch, and level files the decode leaves.
+// The shell jobs: decode, render, export. Each runs in the background
+// and ends by touching `<name>.done` (or `<name>.fail`); the store polls.
+// ffmpeg reads and writes every recording; Loam only reads the small
+// envelope, pitch, and level files the decode leaves.
 
 import "std:str"
 import "std:sys"
 import "time.loam" as time
 
-/// Finder's PATH misses Homebrew.
+/** *Finder's PATH misses Homebrew. */
 const PATH_FIX: string = "PATH=\"$PATH:/opt/homebrew/bin:/usr/local/bin\""
 
 const TARGET_LUFS: string = "-14"
 const TARGET_TP: string = "-1.0"
-/// The limiter's ceiling: -1.5 dBFS on the sample, about -1 dBTP.
+/** *The limiter's ceiling: -1.5 dBFS on the sample, about -1 dBTP. */
 const LIMIT: string = "0.84"
-/// Loudness the limiter takes off a typical take, given back in the gain.
+/** *Loudness the limiter takes off a typical take, given back in the gain. */
 const LIMIT_LOSS: string = "0.4"
 
 fn q(s: string) -> string {
@@ -61,14 +61,14 @@ fn split_wav(dir: string, i: int) -> string {
     return "{{dir}}/music{{i}}.wav"
 }
 
-/// The 100 Hz three-band envelope: absolute value first, so a transient
-/// that swings both ways is not averaged away.
+/** *The 100 Hz three-band envelope: absolute value first, so a transient */
+/** *that swings both ways is not averaged away. */
 fn env_band(filters: string) -> string {
     return "{{filters}}aeval=abs(val(0)),aresample=100:resampler=swr:filter_size=32:phase_shift=6,aformat=sample_fmts=s16:sample_rates=100:channel_layouts=mono"
 }
 
-/// One recording: 48 kHz stereo WAV (first 8 minutes), the envelope, a
-/// 5512 Hz mono copy for the key, and `channels`, `ms`, `lufs` in info.
+/** *One recording: 48 kHz stereo WAV (first 8 minutes), the envelope, a */
+/** *5512 Hz mono copy for the key, and `channels`, `ms`, `lufs` in info. */
 fn decode_one(dir: string, i: int, path: string) -> []string {
     let in_q = q(path)
     let wav = q(src_wav(dir, i))
@@ -109,7 +109,7 @@ fn decode_one(dir: string, i: int, path: string) -> []string {
     return out
 }
 
-/// Decode every recording, three at a time, then touch `decode.done`.
+/** *Decode every recording, three at a time, then touch `decode.done`. */
 fn decode_script(dir: string, paths: []string) -> string {
     let log = q("{{dir}}/log.txt")
     let done = q("{{dir}}/decode.done")
@@ -136,7 +136,7 @@ fn decode_script(dir: string, paths: []string) -> string {
     return str.join(lines, "\n")
 }
 
-/// `info{i}.txt` → [channels, ms, centi-LUFS]. Missing values are 0.
+/** *`info{i}.txt` → [channels, ms, centi-LUFS]. Missing values are 0. */
 fn read_info(dir: string, i: int) -> []int {
     let text = sys.read_file(info_txt(dir, i))
     let lines = str.split(text, "\n")
@@ -160,7 +160,7 @@ fn read_info(dir: string, i: int) -> []int {
     return []int { ch, ms, lufs }
 }
 
-/// The leading digits of `s` as an int (0 when there are none).
+/** *The leading digits of `s` as an int (0 when there are none). */
 fn whole(s: string) -> int {
     let t = str.trim(s)
     let mut v = 0
@@ -174,9 +174,9 @@ fn whole(s: string) -> int {
     return v
 }
 
-/// Premaster from `graph.txt`, two-pass loudness to −14 LUFS, 24-bit WAV
-/// at `out`, a waveform overview at `peaks`, then `out.done`.
-/// `progress.txt` follows the render; `stage.txt` says which pass runs.
+/** *Premaster from `graph.txt`, two-pass loudness to −14 LUFS, 24-bit WAV */
+/** *at `out`, a waveform overview at `peaks`, then `out.done`. */
+/** *`progress.txt` follows the render; `stage.txt` says which pass runs. */
 fn render_script(dir: string, inputs: []string, out: string, peaks: string) -> string {
     let mut ins = []string {}
     for i in 0..inputs.len {
@@ -252,8 +252,8 @@ fn render_script(dir: string, inputs: []string, out: string, peaks: string) -> s
     return str.join(lines, "\n")
 }
 
-/// Copy or encode the take to `dest`, then `dest.done`. `format` is
-/// "wav", "m4a", or "mp3".
+/** *Copy or encode the take to `dest`, then `dest.done`. `format` is */
+/** *"wav", "m4a", or "mp3". */
 fn export_script(take: string, dest: string, format: string) -> string {
     let in_q = q(take)
     let tmp = q("{{dest}}.part")
@@ -275,12 +275,12 @@ fn export_script(take: string, dest: string, format: string) -> string {
     return str.join(lines, "\n")
 }
 
-/// Run a script in the background, detached from the app.
+/** *Run a script in the background, detached from the app. */
 fn launch(script: string) {
     sys.exec("nohup sh {{q(script)}} >/dev/null 2>&1 &")
 }
 
-/// The last line of `log.txt`, for an error message.
+/** *The last line of `log.txt`, for an error message. */
 fn last_log(dir: string, fallback: string) -> string {
     let text = str.trim(sys.read_file("{{dir}}/log.txt"))
     if text.len == 0 {
@@ -297,7 +297,7 @@ fn last_log(dir: string, fallback: string) -> string {
     return line
 }
 
-/// Render progress 0..100 from `stage.txt` and ffmpeg's `progress.txt`.
+/** *Render progress 0..100 from `stage.txt` and ffmpeg's `progress.txt`. */
 fn progress(dir: string, total_ms: int) -> int {
     let st = str.trim(sys.read_file("{{dir}}/stage.txt"))
     if st == "2" {

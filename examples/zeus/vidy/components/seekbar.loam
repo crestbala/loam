@@ -1,12 +1,12 @@
-//! The seek bar: buffered range, played range and thumb over a tall hit area.
+// The seek bar: buffered range, played range and thumb over a tall hit area.
 
 import "zeus"
 import "../player/store.loam" as player
 import "../lib/timecode.loam" as timecode
 import { WHITE, ACCENT, TRACK } "../theme.loam"
 
-/// Buffered range, played range and thumb, over a tall hit area. Press or drag
-/// anywhere on it to seek; hovering shows the time under the pointer.
+/** *Buffered range, played range and thumb, over a tall hit area. Press or drag */
+/** *anywhere on it to seek; hovering shows the time under the pointer. */
 fn SeekBar() -> Node {
     let bw = zeus.signal(0)
     zeus.on_mount(fn() {

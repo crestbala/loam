@@ -1,8 +1,8 @@
-//! Byte-level string helpers for the engine. There is no `std:str`, and Loam
-//! has no `+` on strings, so every shape the engine needs (search, slice,
-//! split, quote) lives here, written on bytes like `packages/zeus/cli/zeli.loam`.
+// Byte-level string helpers for the engine. There is no `std:str`, and Loam
+// has no `+` on strings, so every shape the engine needs (search, slice,
+// split, quote) lives here, written on bytes like `packages/zeus/cli/zeli.loam`.
 
-/// `s[a..b]` as a new string; clamped, empty when the range is.
+/** *`s[a..b]` as a new string; clamped, empty when the range is. */
 fn slice(s: string, a: int, b: int) -> string {
     let mut lo = a
     let mut hi = b
@@ -21,7 +21,7 @@ fn slice(s: string, a: int, b: int) -> string {
     return string_from_bytes(x)
 }
 
-/// First index of `needle` in `s` at or after `from`, or -1.
+/** *First index of `needle` in `s` at or after `from`, or -1. */
 fn index_from(s: string, needle: string, from: int) -> int {
     if needle.len == 0 {
         return from
@@ -107,7 +107,7 @@ fn trim(s: string) -> string {
     return slice(s, a, b)
 }
 
-/// `s` split on `\n`, `\r` dropped, no trailing empty line.
+/** *`s` split on `\n`, `\r` dropped, no trailing empty line. */
 fn lines(s: string) -> []string {
     let mut out = []string {}
     let mut cur = []int {}
@@ -126,7 +126,7 @@ fn lines(s: string) -> []string {
     return out
 }
 
-/// `s` split on single spaces (runs of spaces yield no empty pieces).
+/** *`s` split on single spaces (runs of spaces yield no empty pieces). */
 fn words(s: string) -> []string {
     let mut out = []string {}
     let mut cur = []int {}
@@ -147,9 +147,9 @@ fn words(s: string) -> []string {
     return out
 }
 
-/// Does `s` hold `w` starting at byte `i`? Compares only there: a search
-/// (`index_from(s, w, i) == i`) would scan the rest of `s` on every miss and
-/// make a replace over a page quadratic.
+/** *Does `s` hold `w` starting at byte `i`? Compares only there: a search */
+/** *(`index_from(s, w, i) == i`) would scan the rest of `s` on every miss and */
+/** *make a replace over a page quadratic. */
 fn at(s: string, i: int, w: string) -> bool {
     if i < 0 || i + w.len > s.len {
         return false
@@ -162,8 +162,8 @@ fn at(s: string, i: int, w: string) -> bool {
     return true
 }
 
-/// Every `from` in `s` replaced by `to`. Linear: unescaping a 300 KB page
-/// runs this ten times.
+/** *Every `from` in `s` replaced by `to`. Linear: unescaping a 300 KB page */
+/** *runs this ten times. */
 fn replace(s: string, from: string, to: string) -> string {
     if from.len == 0 {
         return s
@@ -184,8 +184,8 @@ fn replace(s: string, from: string, to: string) -> string {
     return string_from_bytes(x)
 }
 
-/// `s` as one word for `sh`: single-quoted, an embedded `'` closed,
-/// escaped and reopened. Every URL and path reaches the shell through this.
+/** *`s` as one word for `sh`: single-quoted, an embedded `'` closed, */
+/** *escaped and reopened. Every URL and path reaches the shell through this. */
 fn shell_quote(s: string) -> string {
     let mut b = []int {}
     push(b, 39)
@@ -204,8 +204,8 @@ fn shell_quote(s: string) -> string {
     return string_from_bytes(b)
 }
 
-/// Decimal digits of `s` as an int; -1 when `s` is empty or not all digits.
-/// Stops before overflowing i32 (returns the clamp).
+/** *Decimal digits of `s` as an int; -1 when `s` is empty or not all digits. */
+/** *Stops before overflowing i32 (returns the clamp). */
 fn to_int(s: string) -> int {
     let t = trim(s)
     if t.len == 0 {
@@ -225,8 +225,8 @@ fn to_int(s: string) -> int {
     return n
 }
 
-/// A byte count (`12345`, `12345.0`, or a non-number) as KiB; -1 when absent.
-/// Byte counts outgrow i32, so the integer part is folded in as i64.
+/** *A byte count (`12345`, `12345.0`, or a non-number) as KiB; -1 when absent. */
+/** *Byte counts outgrow i32, so the integer part is folded in as i64. */
 fn bytes_to_kib(s: string) -> int {
     let t = trim(s)
     let mut n: i64 = i64(0)
@@ -248,7 +248,7 @@ fn bytes_to_kib(s: string) -> int {
     return int(n / i64(1024))
 }
 
-/// A float-ish number (`12.5`, `NA`) truncated to an int; -1 when absent.
+/** *A float-ish number (`12.5`, `NA`) truncated to an int; -1 when absent. */
 fn num_int(s: string) -> int {
     let t = trim(s)
     let mut cut = t.len
@@ -264,8 +264,8 @@ fn is_http_url(s: string) -> bool {
     return starts_with(t, "http://") || starts_with(t, "https://")
 }
 
-/// The URL path's last segment, without query or fragment. A trailing slash
-/// (`file.mp4/?token`, the shape a player uses for a file) is not part of the name.
+/** *The URL path's last segment, without query or fragment. A trailing slash */
+/** *(`file.mp4/?token`, the shape a player uses for a file) is not part of the name. */
 fn url_file(url: string) -> string {
     let mut end = url.len
     let q = index_of(url, "?")
@@ -288,7 +288,7 @@ fn url_file(url: string) -> string {
     return slice(url, start, end)
 }
 
-/// Lower-case extension of the URL's file (`mp4`, `m3u8`), or "".
+/** *Lower-case extension of the URL's file (`mp4`, `m3u8`), or "". */
 fn url_ext(url: string) -> string {
     let f = url_file(url)
     let mut dot = -1
@@ -303,7 +303,7 @@ fn url_ext(url: string) -> string {
     return lower(slice(f, dot + 1, f.len))
 }
 
-/// A human size for a KiB count: `812 KB`, `14.2 MB`, `1.31 GB`.
+/** *A human size for a KiB count: `812 KB`, `14.2 MB`, `1.31 GB`. */
 fn human_kib(kib: int) -> string {
     if kib < 0 {
         return "?"
@@ -326,10 +326,10 @@ fn human_kib(kib: int) -> string {
     return "{{whole}}.{{frac}} GB"
 }
 
-/// aria2c's own progress, from its last readout line in the log:
-/// `[#be93c8 173MiB/629MiB(27%) CN:16 DL:5.4MiB ETA:1m24s]`. aria2c counts
-/// what it has received; bytes on disk lag behind by its write cache (16 MiB
-/// by default), so `du` alone moves in jumps with the speed reading 0 between.
+/** *aria2c's own progress, from its last readout line in the log: */
+/** *`[#be93c8 173MiB/629MiB(27%) CN:16 DL:5.4MiB ETA:1m24s]`. aria2c counts */
+/** *what it has received; bytes on disk lag behind by its write cache (16 MiB */
+/** *by default), so `du` alone moves in jumps with the speed reading 0 between. */
 struct Readout {
     ok: bool,
     done_kib: int,
@@ -371,7 +371,7 @@ fn no_readout() -> Readout {
     return Readout { ok: false, done_kib: -1, total_kib: -1, speed_kib: 0, eta: -1 }
 }
 
-/// `5.4MiB` / `512KiB` / `1.2GiB` / `900B` as KiB; -1 when unreadable.
+/** *`5.4MiB` / `512KiB` / `1.2GiB` / `900B` as KiB; -1 when unreadable. */
 fn size_kib(t: string) -> int {
     let mut whole = 0
     let mut tenths = 0
@@ -408,7 +408,7 @@ fn size_kib(t: string) -> int {
     return whole / 1024
 }
 
-/// `1h2m3s` / `1m24s` / `45s` as seconds; -1 when unreadable.
+/** *`1h2m3s` / `1m24s` / `45s` as seconds; -1 when unreadable. */
 fn clock_secs(t: string) -> int {
     let mut total = 0
     let mut n = 0

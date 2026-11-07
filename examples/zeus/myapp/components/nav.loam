@@ -1,6 +1,6 @@
-//! App chrome: the top bar. Unlike the gallery's tab strip, every entry here
-//! is a real URL — the bar reads `router.path_signal()` to mark the active
-//! route, so navigation repaints the marker without rebuilding the shell.
+// App chrome: the top bar. Unlike the gallery's tab strip, every entry here
+// is a real URL — the bar reads `router.path_signal()` to mark the active
+// route, so navigation repaints the marker without rebuilding the shell.
 
 import "std:async"
 import "zeus"
@@ -11,8 +11,8 @@ import "zeus:router"
 
 let mut ram_armed: int = 0
 
-/// Live host memory: resident set on desktop, wasm heap on web. Reads once at
-/// mount so the chip is never blank, then refreshes twice a second.
+/** *Live host memory: resident set on desktop, wasm heap on web. Reads once at */
+/** *mount so the chip is never blank, then refreshes twice a second. */
 fn RamChip() -> Node {
     let ram = zeus.signal(zeus.memory_kb())
     if ram_armed == 0 {
@@ -39,10 +39,10 @@ fn RamChip() -> Node {
     }
 }
 
-/// One nav entry, mirroring `zui.NavTab` but driven by the URL instead of a
-/// tab index. `style` is a thunk, so the fill and the label colour re-run
-/// whenever the path moves: the highlight follows navigation even though the
-/// bar itself is retained and never rebuilds.
+/** *One nav entry, mirroring `zui.NavTab` but driven by the URL instead of a */
+/** *tab index. `style` is a thunk, so the fill and the label colour re-run */
+/** *whenever the path moves: the highlight follows navigation even though the */
+/** *bar itself is retained and never rebuilds. */
 fn NavLink(label: string, href: string) -> Node {
     let path = router.path_signal()
     fn active() -> bool {
@@ -74,9 +74,9 @@ fn NavLink(label: string, href: string) -> Node {
     }
 }
 
-/// Top bar: brand, route links, live RAM, and the light/dark switch. The
-/// switch drives `zeus.appearance()`, which every role token resolves against
-/// at paint — one toggle restyles the whole tree with no rebuild.
+/** *Top bar: brand, route links, live RAM, and the light/dark switch. The */
+/** *switch drives `zeus.appearance()`, which every role token resolves against */
+/** *at paint — one toggle restyles the whole tree with no rebuild. */
 fn Navbar() -> Node {
     return zui.Column(Space.None) {
         zeus.Box(style = Style(

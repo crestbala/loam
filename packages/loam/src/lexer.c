@@ -140,27 +140,25 @@ static int kw_eq(const char *s, int len, const char *kw) {
 Token lexer_next(Lexer *l) {
     for (;;) {
         while (*l->pos && isspace((unsigned char)*l->pos)) advance(l, 1);
-        if (*l->pos == '/' && l->pos[1] == '/') {
-            /* `///` item docs, `//!` module docs. `////` stays a normal comment. */
-            if (l->pos[2] == '/' && l->pos[3] != '/') {
-                const char *start = l->pos;
-                int sl = l->line, sc = l->col;
-                while (*l->pos && *l->pos != '\n') advance(l, 1);
-                return make_token(l, TOK_DOC, start, sl, sc);
-            }
-            if (l->pos[2] == '!') {
-                const char *start = l->pos;
-                int sl = l->line, sc = l->col;
-                while (*l->pos && *l->pos != '\n') advance(l, 1);
-                return make_token(l, TOK_MOD_DOC, start, sl, sc);
-            }
-            while (*l->pos && *l->pos != '\n') advance(l, 1);
-            continue;
-        }
         if (*l->pos == '/' && l->pos[1] == '*') {
+            /* A doc is slash-star-star, then a star and the text.
+               Three stars, or a star that closes at once, stays ordinary.
+               A bang after slash-star is an ordinary block comment. */
+            int is_doc = l->pos[2] == '*' && l->pos[3] != '/' && l->pos[3] != '*';
+            const char *start = l->pos;
+            int sl = l->line, sc = l->col;
             advance(l, 2);
             while (*l->pos && !(*l->pos == '*' && l->pos[1] == '/')) advance(l, 1);
-            if (*l->pos) advance(l, 2);
+            int closed = 0;
+            if (*l->pos) {
+                advance(l, 2);
+                closed = 1;
+            }
+            if (is_doc && closed) return make_token(l, TOK_DOC, start, sl, sc);
+            continue;
+        }
+        if (*l->pos == '/' && l->pos[1] == '/') {
+            while (*l->pos && *l->pos != '\n') advance(l, 1);
             continue;
         }
         break;

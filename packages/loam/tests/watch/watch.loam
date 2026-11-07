@@ -14,9 +14,9 @@
 import "std:fmt"
 import "std:sys"
 
-/// A directory no reload watches: build output and caches live inside a watched
-/// root, so watching them would rebuild forever. The same list `zeli fmt` walks
-/// with, which is what keeps "the sources" one idea across the commands.
+/** *A directory no reload watches: build output and caches live inside a watched */
+/** *root, so watching them would rebuild forever. The same list `zeli fmt` walks */
+/** *with, which is what keeps "the sources" one idea across the commands. */
 fn skip_dir(name: string) -> bool {
     if name == "build" {
         return true
@@ -54,8 +54,8 @@ fn under(dir: string, name: string) -> string {
     return "{{dir}}/{{name}}"
 }
 
-/// `a` with `b` after it. This probe stands alone — it imports nothing from the
-/// CLI — so it carries the one string join it needs.
+/** *`a` with `b` after it. This probe stands alone — it imports nothing from the */
+/** *CLI — so it carries the one string join it needs. */
 fn cat(a: string, b: string) -> string {
     let mut x = []int {}
     for i in 0..a.len {
@@ -67,15 +67,15 @@ fn cat(a: string, b: string) -> string {
     return string_from_bytes(x)
 }
 
-/// Append `s` to `p`: read, join, write. There is no append in `std:sys`, and a
-/// probe that needs one can afford the copy.
+/** *Append `s` to `p`: read, join, write. There is no append in `std:sys`, and a */
+/** *probe that needs one can afford the copy. */
 fn append_file(p: string, s: string) {
     sys.write_file(p, cat(sys.read_file(p), s))
 }
 
-/// The `.loam` files directly in `dir`, skipping what a walk never enters. A
-/// directory event names only the directory, so this is what turns one back into
-/// the file that appeared or went away — the half a file watch cannot see.
+/** *The `.loam` files directly in `dir`, skipping what a walk never enters. A */
+/** *directory event names only the directory, so this is what turns one back into */
+/** *the file that appeared or went away — the half a file watch cannot see. */
 fn sources_in(dir: string) -> []string {
     let mut out = []string {}
     let entries = sys.list_dir(dir)
@@ -94,9 +94,9 @@ fn sources_in(dir: string) -> []string {
     return out
 }
 
-/// The path a registration id stands for. The watcher keeps no state, so the
-/// id-to-path table is kept here — which is the point of the seam being four
-/// syscalls and nothing else.
+/** *The path a registration id stands for. The watcher keeps no state, so the */
+/** *id-to-path table is kept here — which is the point of the seam being four */
+/** *syscalls and nothing else. */
 fn path_of(id: int, paths: []string, ids: []int) -> string {
     for i in 0..ids.len {
         if ids[i] == id {
@@ -115,8 +115,8 @@ fn already(hits: []string, p: string) -> int {
     return 0
 }
 
-/// What one event means, as paths: the file itself, or — when the kernel named
-/// the directory it holds a registration for — the sources now in it.
+/** *What one event means, as paths: the file itself, or — when the kernel named */
+/** *the directory it holds a registration for — the sources now in it. */
 fn meaning(root_id: int, id: int, paths: []string, ids: []int) -> []string {
     let mut out = []string {}
     let p = path_of(id, paths, ids)
@@ -134,8 +134,8 @@ fn meaning(root_id: int, id: int, paths: []string, ids: []int) -> []string {
     return out
 }
 
-/// Wait for a burst and print what it named. `wait_ms` is bounded rather than
-/// zero because the kernel updates the knote, not the write.
+/** *Wait for a burst and print what it named. `wait_ms` is bounded rather than */
+/** *zero because the kernel updates the knote, not the write. */
 fn report(h: int, root_id: int, paths: []string, ids: []int, label: string, wait_ms: int) {
     let mut hits = []string {}
     let mut ev = sys.watch_next(h, wait_ms)

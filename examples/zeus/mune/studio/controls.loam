@@ -1,7 +1,7 @@
-//! The sound controls, one signal each, so a slider or a switch binds
-//! straight to its value. `snapshot` reads them all into a `Sound` for the
-//! arranger; `pick_style` loads a style's preset and keeps the listener's
-//! own choices (length, tempo, pitch, voices).
+// The sound controls, one signal each, so a slider or a switch binds
+// straight to its value. `snapshot` reads them all into a `Sound` for the
+// arranger; `pick_style` loads a style's preset and keeps the listener's
+// own choices (length, tempo, pitch, voices).
 
 import "zeus"
 import "../core/sound.loam" as sound
@@ -44,7 +44,7 @@ let pump = zeus.signal(false)
 let mut seed: int = 0
 let mut installed: bool = false
 
-/// Load the starting style once.
+/** *Load the starting style once. */
 fn install() {
     if installed {
         return
@@ -109,14 +109,14 @@ fn apply(v: Sound) {
     })
 }
 
-/// Switch to style `s`: its instruments and effects, the listener's length,
-/// tempo, pitch, and voice choice.
+/** *Switch to style `s`: its instruments and effects, the listener's length, */
+/** *tempo, pitch, and voice choice. */
 fn pick_style(s: int) {
     let cur = snapshot()
     apply(sound.with_style(cur, s))
 }
 
-/// The tempo slider follows the piece once it is known.
+/** *The tempo slider follows the piece once it is known. */
 fn follow_tempo(bpm: int) {
     if tempo_auto.peek() && bpm > 0 {
         tempo.set(bpm)

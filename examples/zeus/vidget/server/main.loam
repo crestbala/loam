@@ -1,8 +1,8 @@
-//! vidget's backend: the download engine behind `server/api.loam`.
-//!
-//! `zeli serve` (any target) builds and starts this on 127.0.0.1:8080 before the UI on every target, so both the macOS
-//! window (h2c) and the browser (gRPC-Web through the dev server) reach the
-//! same engine. Files land in `$VIDGET_DIR` or `~/Downloads/Vidget`.
+// vidget's backend: the download engine behind `server/api.loam`.
+//
+// `zeli serve` (any target) builds and starts this on 127.0.0.1:8080 before the UI on every target, so both the macOS
+// window (h2c) and the browser (gRPC-Web through the dev server) reach the
+// same engine. Files land in `$VIDGET_DIR` or `~/Downloads/Vidget`.
 
 import "http"
 import "std:sys"

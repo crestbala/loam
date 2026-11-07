@@ -1,4 +1,4 @@
-//! The shape of the piece: length, energy, tempo, pitch, and voices.
+// The shape of the piece: length, energy, tempo, pitch, and voices.
 
 import "zeus"
 import "zui"

@@ -1,4 +1,4 @@
-//! HTTP/2 (h2c) frames and HPACK. Huffman codec is `huff.loam`. Dispatch stays in `http`.
+// HTTP/2 (h2c) frames and HPACK. Huffman codec is `huff.loam`. Dispatch stays in `http`.
 
 import "std:net"
 import "huff.loam"
@@ -557,7 +557,7 @@ fn decode_path(buf: string) -> H2Req {
     return H2Req { ok: good, path: path, method: method, grpc_status: gs, has_gs: has_gs }
 }
 
-/// HPACK string: Huffman when the encoded form is shorter and fits in 7 bits.
+/** *HPACK string: Huffman when the encoded form is shorter and fits in 7 bits. */
 fn hpack_maybe_huff(s: string) -> string {
     let enc = huff.encode(s)
     let mut mode = 0
@@ -650,22 +650,22 @@ fn u32be(n: int) -> string {
     return string_from_bytes(b)
 }
 
-/// GOAWAY. `last` is the highest processed stream id; `code` is the RFC 7540 error.
+/** *GOAWAY. `last` is the highest processed stream id; `code` is the RFC 7540 error. */
 fn goaway_err(last: int, code: int) -> string {
     return frame(7, 0, 0, concat_str(u32be(last), u32be(code)))
 }
 
-/// GOAWAY, `NO_ERROR`. `last` is the highest processed stream id.
+/** *GOAWAY, `NO_ERROR`. `last` is the highest processed stream id. */
 fn goaway(last: int) -> string {
     return goaway_err(last, 0)
 }
 
-/// RST_STREAM. `code` is the RFC 7540 error.
+/** *RST_STREAM. `code` is the RFC 7540 error. */
 fn rst_stream(stream: int, code: int) -> string {
     return frame(3, 0, stream, u32be(code))
 }
 
-/// WINDOW_UPDATE. `n` must be positive.
+/** *WINDOW_UPDATE. `n` must be positive. */
 fn window_update(stream: int, n: int) -> string {
     return frame(8, 0, stream, u32be(n))
 }

@@ -1,6 +1,6 @@
-//! The wider zeus-components catalogue, one page per job an app has: forms,
-//! dashboards, data display, navigation, and overlays. Every demo is live and
-//! sits above the calls that build it.
+// The wider zeus-components catalogue, one page per job an app has: forms,
+// dashboards, data display, navigation, and overlays. Every demo is live and
+// sits above the calls that build it.
 
 import "zeus"
 import "zui:spacing"
@@ -23,7 +23,7 @@ fn PageHead(kicker: string, title: string, lead: string) -> Node {
     }
 }
 
-/// One section: a header, the live demo, then the code.
+/** *One section: a header, the live demo, then the code. */
 fn Section(kicker: string, title: string, lead: string, demo: fn(), code: []string) -> Node {
     return zui.Column(prose.BLOCK_GAP) {
         zui.SectionHeader(kicker, title, lead)
@@ -32,7 +32,7 @@ fn Section(kicker: string, title: string, lead: string, demo: fn(), code: []stri
     }
 }
 
-/// A quiet line that reads a signal, so a demo shows its value changing.
+/** *A quiet line that reads a signal, so a demo shows its value changing. */
 fn Readout(text: fn() -> string) -> Node {
     return zeus.Text(text, style = Style(font = spacing.FONT_BODY, color = colors.mute()))
 }
@@ -194,8 +194,8 @@ fn Forms() -> Node {
 // Charts
 // ═══════════════════════════════════════════════════════════════════
 
-/// Two series over six months. Values go row by row: each month's desktop
-/// figure, then its mobile figure.
+/** *Two series over six months. Values go row by row: each month's desktop */
+/** *figure, then its mobile figure. */
 fn visits(shift: int) -> ChartData {
     let a = []int { 186, 305, 237, 173, 209, 214 }
     let b = []int { 80, 200, 120, 190, 130, 140 }

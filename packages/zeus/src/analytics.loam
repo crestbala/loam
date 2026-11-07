@@ -1,54 +1,54 @@
-//! analytics — site analytics for the web target.
-//!
-//! Page views, clicks, and time on a page go to an endpoint you host. What
-//! the reports show (unique visitors, bounces, top pages) is worked out there
-//! from these events: see "Wire format" below.
-//!
-//! ```
-//! import "zeus"
-//! import "zeus:analytics"
-//!
-//! fn main() {
-//!     zeus.App("app", fn() -> Node {
-//!         analytics.start(AnalyticsProps {})
-//!         return approutes.app()
-//!     })
-//! }
-//!
-//! analytics.event("signup", "pro plan")
-//! ```
-//!
-//! Visitors are a random id in `localStorage`. Nothing here reads an address
-//! or fingerprints a browser, and query strings stay out of paths. Browsers
-//! that send Global Privacy Control or Do Not Track are not tracked, nor are
-//! automated ones or (unless `local`) a dev machine. Tell your visitors you
-//! do this: a stored id can need consent, depending on where they are.
-//!
-//! Clicks are named by a control's accessible label or text, so a control
-//! showing personal data reports it. Pass `clicks = false` for such an app.
-//!
-//! Elsewhere than web these calls do nothing.
-//!
-//! ## Wire format
-//!
-//! Batches are POSTed as JSON (`text/plain`, by `sendBeacon`):
-//!
-//! ```
-//! { "v": 1, "vid": "<visitor>", "events": [ ... ] }
-//! ```
-//!
-//! Every event has `k`, `sid` (session), `ts` (ms since the epoch), `path`,
-//! and `pv` (this view of the page). By kind:
-//!
-//! - `page`: `w` (viewport width), and `ref` (referring host) on a session's
-//!   first page.
-//! - `leave`: `ms`, visible time since the last `leave` of this `pv`. Add
-//!   them up: a page reports every time its tab hides.
-//! - `click`: `name`, and `data` (the link) when there is one.
-//! - `event`: `name`, and `data` when given.
-//!
-//! A session ends after 30 idle minutes. A bounce is a session with one
-//! `page` and no `click` or `event`.
+// analytics — site analytics for the web target.
+//
+// Page views, clicks, and time on a page go to an endpoint you host. What
+// the reports show (unique visitors, bounces, top pages) is worked out there
+// from these events: see "Wire format" below.
+//
+// ```
+// import "zeus"
+// import "zeus:analytics"
+//
+// fn main() {
+//     zeus.App("app", fn() -> Node {
+//         analytics.start(AnalyticsProps {})
+//         return approutes.app()
+//     })
+// }
+//
+// analytics.event("signup", "pro plan")
+// ```
+//
+// Visitors are a random id in `localStorage`. Nothing here reads an address
+// or fingerprints a browser, and query strings stay out of paths. Browsers
+// that send Global Privacy Control or Do Not Track are not tracked, nor are
+// automated ones or (unless `local`) a dev machine. Tell your visitors you
+// do this: a stored id can need consent, depending on where they are.
+//
+// Clicks are named by a control's accessible label or text, so a control
+// showing personal data reports it. Pass `clicks = false` for such an app.
+//
+// Elsewhere than web these calls do nothing.
+//
+// ## Wire format
+//
+// Batches are POSTed as JSON (`text/plain`, by `sendBeacon`):
+//
+// ```
+// { "v": 1, "vid": "<visitor>", "events": [ ... ] }
+// ```
+//
+// Every event has `k`, `sid` (session), `ts` (ms since the epoch), `path`,
+// and `pv` (this view of the page). By kind:
+//
+// - `page`: `w` (viewport width), and `ref` (referring host) on a session's
+//   first page.
+// - `leave`: `ms`, visible time since the last `leave` of this `pv`. Add
+//   them up: a page reports every time its tab hides.
+// - `click`: `name`, and `data` (the link) when there is one.
+// - `event`: `name`, and `data` when given.
+//
+// A session ends after 30 idle minutes. A bounce is a session with one
+// `page` and no `click` or `event`.
 
 import "std:fmt"
 import "std:str"
@@ -57,18 +57,18 @@ import "zeus:router"
 import "zeuscore/platform.loam"
 
 struct AnalyticsProps {
-    /// Where batches are POSTed.
+    /** *Where batches are POSTed. */
     endpoint: string = "/api/track",
-    /// Report clicks on every control.
+    /** *Report clicks on every control. */
     clicks: bool = true,
-    /// Report from localhost too, to try an endpoint in development.
+    /** *Report from localhost too, to try an endpoint in development. */
     local: bool = false,
 }
 
 let mut started = false
 let mut last_path = ""
 
-/// `path` without its query or fragment, which can carry personal data.
+/** *`path` without its query or fragment, which can carry personal data. */
 fn clean_path(path: string) -> string {
     for i in 0..path.len {
         if path[i] == 63 || path[i] == 35 {
@@ -78,8 +78,8 @@ fn clean_path(path: string) -> string {
     return path
 }
 
-/// Start reporting. Call once from the app's root builder, so the first page
-/// view is the page the visitor landed on.
+/** *Start reporting. Call once from the app's root builder, so the first page */
+/** *view is the page the visitor landed on. */
 fn start(p: AnalyticsProps) {
     if started {
         return
@@ -101,14 +101,14 @@ fn start(p: AnalyticsProps) {
     }
 }
 
-/// Report something the page view and click reports cannot see. `data` is one
-/// short detail for the report to group by.
+/** *Report something the page view and click reports cannot see. `data` is one */
+/** *short detail for the report to group by. */
 fn event(name: string, data: string = "") {
     platform.plat_track_send(2, name, data)
 }
 
-/// Stop reporting this browser, and forget its id, until `opt_in`. An owner
-/// viewing their own site uses this to stay out of the numbers.
+/** *Stop reporting this browser, and forget its id, until `opt_in`. An owner */
+/** *viewing their own site uses this to stay out of the numbers. */
 fn opt_out() {
     platform.plat_track_opt_out(1)
 }

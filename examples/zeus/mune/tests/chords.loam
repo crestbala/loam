@@ -1,14 +1,14 @@
-//! Chord reading, scored. Not a test: Mune renders a piece of every style
-//! (two seeds, one minute, no recordings), so every bar's chord is known
-//! (`Score.bar_ch`, a whole step up in a lifted drop), then hears the render
-//! the way it hears a recording and counts the bars each reader names
-//! right: each bar alone (`key.best_chord`) and the decoded sequence
-//! (`key.chord_path`). Bars that split or lean on sus4 or add9 are left out.
-//! Renders are kept in the folder, so a second run only listens.
-//!
-//!   ./bin/loamc examples/zeus/mune/tests/chords.loam -o /tmp/mune-chords-eval && /tmp/mune-chords-eval [/tmp/mune-chords-work]
-//!
-//! `MISS=1` prints every bar the sequence names wrong.
+// Chord reading, scored. Not a test: Mune renders a piece of every style
+// (two seeds, one minute, no recordings), so every bar's chord is known
+// (`Score.bar_ch`, a whole step up in a lifted drop), then hears the render
+// the way it hears a recording and counts the bars each reader names
+// right: each bar alone (`key.best_chord`) and the decoded sequence
+// (`key.chord_path`). Bars that split or lean on sus4 or add9 are left out.
+// Renders are kept in the folder, so a second run only listens.
+//
+//   ./bin/loamc examples/zeus/mune/tests/chords.loam -o /tmp/mune-chords-eval && /tmp/mune-chords-eval [/tmp/mune-chords-work]
+//
+// `MISS=1` prints every bar the sequence names wrong.
 
 import "std:fmt"
 import "std:sys"
@@ -20,8 +20,8 @@ import "../core/sound.loam" as sound
 import "../core/styles.loam" as styles
 import "../core/time.loam" as time
 
-/// Render style `st` with `seed` into `dir` and its 5512 Hz copy, unless
-/// it is there already. Returns the score.
+/** *Render style `st` with `seed` into `dir` and its 5512 Hz copy, unless */
+/** *it is there already. Returns the score. */
 fn rendered(dir: string, st: int, seed: int) -> Score {
     sys.mkdir(dir)
     let mut s = sound.preset(st)

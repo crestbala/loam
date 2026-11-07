@@ -1,20 +1,20 @@
-//! Tests for `core/date.loam`.
-//!
-//! Imported by `app.loam`, so `loam test examples/zeus/dracula/app.loam` runs
-//! them.
-//!
-//! The calendar is where a silent bug is most expensive: a holding period off by
-//! one day flips an exit load at the 365-day boundary, and a misparsed NAV date
-//! reorders a whole series. So the tests here are exhaustive over a range rather
-//! than spot-checks — every day of four years, including a leap year and a
-//! century boundary, round-trips through `to_days` / `from_days`.
+// Tests for `core/date.loam`.
+//
+// Imported by `app.loam`, so `loam test examples/zeus/dracula/app.loam` runs
+// them.
+//
+// The calendar is where a silent bug is most expensive: a holding period off by
+// one day flips an exit load at the 365-day boundary, and a misparsed NAV date
+// reorders a whole series. So the tests here are exhaustive over a range rather
+// than spot-checks — every day of four years, including a leap year and a
+// century boundary, round-trips through `to_days` / `from_days`.
 
 import "std:test"
 import "std:date"
 
-/// A handful of dates with their day numbers, independently computed. The
-/// absolute values anchor the algorithm; the round trip below then covers
-/// everything between them.
+/** *A handful of dates with their day numbers, independently computed. The */
+/** *absolute values anchor the algorithm; the round trip below then covers */
+/** *everything between them. */
 fn anchor(ymd: int, days: int) {
     if date.to_days(ymd) != days {
         test.fail("to_days disagrees with the anchor")
@@ -36,9 +36,9 @@ fn to_days_anchors() {
     anchor(20240229, 19782)
 }
 
-/// Four years of consecutive days, every one of which must survive the round
-/// trip. 2024 is a leap year and 2026 is not, so both branches of the leap rule
-/// are inside the span.
+/** *Four years of consecutive days, every one of which must survive the round */
+/** *trip. 2024 is a leap year and 2026 is not, so both branches of the leap rule */
+/** *are inside the span. */
 #[test]
 fn round_trip_four_years() {
     let start = date.to_days(20230101)
@@ -53,9 +53,9 @@ fn round_trip_four_years() {
     }
 }
 
-/// The same round trip the other way: every date from 1999-01-01 to
-/// 2001-12-31, which brackets the 2000 century boundary — 2000 is divisible by
-/// 400 and *is* a leap year, while 1900 would not have been.
+/** *The same round trip the other way: every date from 1999-01-01 to */
+/** *2001-12-31, which brackets the 2000 century boundary — 2000 is divisible by */
+/** *400 and *is* a leap year, while 1900 would not have been. */
 #[test]
 fn round_trip_across_century() {
     let mut d = date.to_days(19990101)
@@ -69,9 +69,9 @@ fn round_trip_across_century() {
     }
 }
 
-/// A wide sweep by steps of 997 days — coprime with 7 and with the leap cycle,
-/// so it walks through every weekday and every month without enumerating
-/// decades of days.
+/** *A wide sweep by steps of 997 days — coprime with 7 and with the leap cycle, */
+/** *so it walks through every weekday and every month without enumerating */
+/** *decades of days. */
 #[test]
 fn round_trip_sparse_wide_range() {
     let mut d = date.to_days(19000101)
@@ -134,9 +134,9 @@ fn month_lengths() {
 
 // --- weekdays ------------------------------------------------------------
 
-/// Known weekdays. 2026-03-31 is a Tuesday, 2000-01-01 was a Saturday, and
-/// 1970-01-01 (the epoch) was a Thursday — the anchor the whole function is
-/// derived from.
+/** *Known weekdays. 2026-03-31 is a Tuesday, 2000-01-01 was a Saturday, and */
+/** *1970-01-01 (the epoch) was a Thursday — the anchor the whole function is */
+/** *derived from. */
 #[test]
 fn known_weekdays() {
     if date.weekday(19700101) != 4 {
@@ -162,9 +162,9 @@ fn known_weekdays() {
     }
 }
 
-/// The weekday of a date and the next day differ by exactly one, modulo seven,
-/// over a long span. This catches an off-by-one in the epoch offset that a
-/// handful of spot-checks can miss.
+/** *The weekday of a date and the next day differ by exactly one, modulo seven, */
+/** *over a long span. This catches an off-by-one in the epoch offset that a */
+/** *handful of spot-checks can miss. */
 #[test]
 fn weekday_advances_by_one() {
     let mut d = date.to_days(20200101)
@@ -199,7 +199,7 @@ fn weekends() {
 
 // --- days_between --------------------------------------------------------
 
-/// The 365-day exit-load boundary, which is what this function exists for.
+/** *The 365-day exit-load boundary, which is what this function exists for. */
 #[test]
 fn days_between_exit_load_boundary() {
     if date.days_between(20250101, 20260101) != 365 {
@@ -216,7 +216,7 @@ fn days_between_exit_load_boundary() {
     }
 }
 
-/// Across a leap day, which is where a hand-rolled day count goes wrong.
+/** *Across a leap day, which is where a hand-rolled day count goes wrong. */
 #[test]
 fn days_between_across_leap_day() {
     if date.days_between(20240228, 20240229) != 1 {
@@ -242,7 +242,7 @@ fn days_between_across_leap_day() {
     }
 }
 
-/// An invalid date yields 0 rather than a garbage span.
+/** *An invalid date yields 0 rather than a garbage span. */
 #[test]
 fn days_between_rejects_invalid() {
     if date.days_between(0, 20260331) != 0 {
@@ -255,9 +255,9 @@ fn days_between_rejects_invalid() {
 
 // --- AMFI parsing --------------------------------------------------------
 
-/// `DD-Mon-YYYY`, the only shape AMFI publishes. Every rejection case here is
-/// one that would otherwise become a *plausible* wrong date: swapping day and
-/// year, reading `Feb` as `Mar`, or accepting `31-Feb-2026`.
+/** *`DD-Mon-YYYY`, the only shape AMFI publishes. Every rejection case here is */
+/** *one that would otherwise become a *plausible* wrong date: swapping day and */
+/** *year, reading `Feb` as `Mar`, or accepting `31-Feb-2026`. */
 #[test]
 fn parse_amfi_accepts() {
     if date.parse_amfi("01-Jan-2026") != 20260101 {
@@ -364,8 +364,8 @@ fn fmt_date_matches_amfi() {
     }
 }
 
-/// `fmt_date` and `parse_amfi` are inverses over a range, which is what keeps a
-/// cache written by one readable by the other.
+/** *`fmt_date` and `parse_amfi` are inverses over a range, which is what keeps a */
+/** *cache written by one readable by the other. */
 #[test]
 fn fmt_parse_round_trip() {
     let mut d = date.to_days(20240101)
@@ -381,8 +381,8 @@ fn fmt_parse_round_trip() {
 
 // --- month arithmetic and SIP dates --------------------------------------
 
-/// `add_months` clamps to the month end: a SIP on the 31st has no 31st to run
-/// on in February, and rolling into March would move the contribution.
+/** *`add_months` clamps to the month end: a SIP on the 31st has no 31st to run */
+/** *on in February, and rolling into March would move the contribution. */
 #[test]
 fn add_months_clamps() {
     if date.add_months(20260131, 1) != 20260228 {
@@ -399,7 +399,7 @@ fn add_months_clamps() {
     }
 }
 
-/// Year carry in both directions, including across December and January.
+/** *Year carry in both directions, including across December and January. */
 #[test]
 fn add_months_carries_years() {
     if date.add_months(20261201, 1) != 20270101 {
@@ -419,12 +419,12 @@ fn add_months_carries_years() {
     }
 }
 
-/// The SIP schedule: monthly dates from a start, each clamped. This is the walk
-/// `core/strategy.sip` performs, minus the NAV lookup.
-///
-/// Note the third step: once 31 January clamps to 28 February, March keeps the
-/// 28th. That is what a real SIP mandate on the 31st does, and it is the
-/// behavior a naive "next month, same day, else last day" would get wrong.
+/** *The SIP schedule: monthly dates from a start, each clamped. This is the walk */
+/** *`core/strategy.sip` performs, minus the NAV lookup. */
+/** */
+/** *Note the third step: once 31 January clamps to 28 February, March keeps the */
+/** *28th. That is what a real SIP mandate on the 31st does, and it is the */
+/** *behavior a naive "next month, same day, else last day" would get wrong. */
 #[test]
 fn monthly_sip_schedule() {
     let start = 20260131

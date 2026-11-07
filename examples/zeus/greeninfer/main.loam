@@ -1,16 +1,16 @@
-//! main.loam — GreenInfer CLI (component 5): index a folder into the mmap
-//! memory, then run the retrieval + agent pipeline headlessly and print the
-//! results with timings. This is the same engine the desktop app drives;
-//! the only difference is the front end (fmt vs zeus).
-//!
-//! Build & run from the repo root:
-//!   make
-//!   LOAM_LINK_EXTRA="examples/zeus/greeninfer/runtime/greeninfer_runtime.c" \
-//!     ./bin/loamc examples/zeus/greeninfer/main.loam -o greeninfer-macos
-//!   ./greeninfer-macos
-//!
-//! Optional Grok: put your xAI API key in `greeninfer_key.txt` next to the
-//! binary; without it the agent answers from the offline context summary.
+// main.loam — GreenInfer CLI (component 5): index a folder into the mmap
+// memory, then run the retrieval + agent pipeline headlessly and print the
+// results with timings. This is the same engine the desktop app drives;
+// the only difference is the front end (fmt vs zeus).
+//
+// Build & run from the repo root:
+//   make
+//   LOAM_LINK_EXTRA="examples/zeus/greeninfer/runtime/greeninfer_runtime.c" \
+//     ./bin/loamc examples/zeus/greeninfer/main.loam -o greeninfer-macos
+//   ./greeninfer-macos
+//
+// Optional Grok: put your xAI API key in `greeninfer_key.txt` next to the
+// binary; without it the agent answers from the offline context summary.
 
 import "std:fmt"
 import "std:sys"
@@ -37,7 +37,7 @@ fn exts() -> []string {
     return e
 }
 
-/// Trim trailing whitespace/newline bytes off the key file read.
+/** *Trim trailing whitespace/newline bytes off the key file read. */
 fn trim_tail(s: string) -> string {
     let mut n = s.len
     while n > 0 {

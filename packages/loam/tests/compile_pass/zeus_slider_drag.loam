@@ -22,7 +22,7 @@ fn page() -> Node {
     }
 }
 
-/// Paint one frame and return the left edge of the thumb.
+/** *Paint one frame and return the left edge of the thumb. */
 fn thumb_x(s: int) -> int {
     zeus.engine_layout(816, 200)
     zeus.engine_step_dt(16)

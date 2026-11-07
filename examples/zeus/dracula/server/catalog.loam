@@ -1,10 +1,10 @@
-//! Catalog search for `Data.Catalog`.
-//!
-//! Matches a query against the cached scheme codes and names. Every word of
-//! the query has to appear, case-folded, in the name or at the start of the
-//! code. An exact code comes first, then names that start with the first
-//! word, then the rest in catalog order. The caller takes one bounded page;
-//! the full list never crosses the wire.
+// Catalog search for `Data.Catalog`.
+//
+// Matches a query against the cached scheme codes and names. Every word of
+// the query has to appear, case-folded, in the name or at the start of the
+// code. An exact code comes first, then names that start with the first
+// word, then the rest in catalog order. The caller takes one bounded page;
+// the full list never crosses the wire.
 
 import "store.loam"
 
@@ -12,7 +12,7 @@ fn page_max() -> int {
     return 25
 }
 
-/// `limit` clamped to `1..page_max()`. Zero or negative is a full page.
+/** *`limit` clamped to `1..page_max()`. Zero or negative is a full page. */
 fn page_size(limit: int) -> int {
     if limit <= 0 || limit > page_max() {
         return page_max()
@@ -31,7 +31,7 @@ fn is_space(c: int) -> bool {
     return c == 32 || c == 9 || c == 10 || c == 13
 }
 
-/// The query as lowercase words.
+/** *The query as lowercase words. */
 fn words(q: string) -> []string {
     let mut out = []string {}
     let mut i = 0
@@ -64,7 +64,7 @@ fn has_at(hay: string, at: int, needle: string) -> bool {
     return true
 }
 
-/// `needle` is already lowercase.
+/** *`needle` is already lowercase. */
 fn contains(hay: string, needle: string) -> bool {
     if needle.len == 0 {
         return true
@@ -79,7 +79,7 @@ fn contains(hay: string, needle: string) -> bool {
     return false
 }
 
-/// `a` case-folded equals `w`, which is already lowercase.
+/** *`a` case-folded equals `w`, which is already lowercase. */
 fn fold_eq(a: string, w: string) -> bool {
     return a.len == w.len && has_at(a, 0, w)
 }
@@ -96,14 +96,14 @@ fn hit(code: string, name: string, ws: []string) -> bool {
     return true
 }
 
-/// Catalog rows that match `query`, best first. An empty query is every
-/// row in catalog order.
+/** *Catalog rows that match `query`, best first. An empty query is every */
+/** *row in catalog order. */
 fn search(cat: Catalog, query: string) -> []int {
     return search_rows(cat.codes, cat.names, query)
 }
 
-/// `search` over parallel code and name columns. A stock symbol is a code:
-/// `rel` finds `RELIANCE` by its start, `M&M` by itself.
+/** *`search` over parallel code and name columns. A stock symbol is a code: */
+/** *`rel` finds `RELIANCE` by its start, `M&M` by itself. */
 fn search_rows(codes: []string, names: []string, query: string) -> []int {
     let ws = words(query)
     let mut exact = []int {}
@@ -138,7 +138,7 @@ fn search_rows(codes: []string, names: []string, query: string) -> []int {
     return out
 }
 
-/// Rows `offset .. offset + page_size(limit)` of `hits`.
+/** *Rows `offset .. offset + page_size(limit)` of `hits`. */
 fn window(hits: []int, offset: int, limit: int) -> []int {
     let mut from = offset
     if from < 0 {

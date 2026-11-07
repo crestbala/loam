@@ -26,7 +26,7 @@ let mut s_runs: int = 0
 let mut t_runs: int = 0
 let mut l_runs: int = 0
 
-/// A string with the same text in a new heap buffer.
+/** *A string with the same text in a new heap buffer. */
 fn fresh(s: string, n: int) -> string {
     return "{{s}}{{n}}"
 }

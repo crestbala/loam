@@ -1,21 +1,21 @@
-//! RPC surface shared by the backend (`server/main.loam`) and every client
-//! (`studio/store.loam`): `#[proto]` payloads plus the method names.
-//!
-//! The browser has no ffmpeg and no voice tools, so the wasm build cannot
-//! render a piece itself. It talks to `server/main.loam` — the native engine
-//! that owns ffmpeg, the voice classifiers, and the file writes — over
-//! gRPC-Web, exactly the way vidget's UI talks to its download engine. The
-//! macOS window and the browser run the same calls; zeli starts the backend
-//! before the UI on any target (`zeli serve`, see `server/main.loam`).
-//!
-//! `#[proto]` fields are `int`, `string`, or a list of those, so a list of
-//! numbers or labels travels as parallel lists indexed together. Byte counts
-//! travel as KiB: `int` is i32.
+// RPC surface shared by the backend (`server/main.loam`) and every client
+// (`studio/store.loam`): `#[proto]` payloads plus the method names.
+//
+// The browser has no ffmpeg and no voice tools, so the wasm build cannot
+// render a piece itself. It talks to `server/main.loam` — the native engine
+// that owns ffmpeg, the voice classifiers, and the file writes — over
+// gRPC-Web, exactly the way vidget's UI talks to its download engine. The
+// macOS window and the browser run the same calls; zeli starts the backend
+// before the UI on any target (`zeli serve`, see `server/main.loam`).
+//
+// `#[proto]` fields are `int`, `string`, or a list of those, so a list of
+// numbers or labels travels as parallel lists indexed together. Byte counts
+// travel as KiB: `int` is i32.
 
 import "http"
 
-/// How many recordings the running session holds, and whether ffmpeg and the
-/// voice tools are present. `scan` moves when the recordings change.
+/** *How many recordings the running session holds, and whether ffmpeg and the */
+/** *voice tools are present. `scan` moves when the recordings change. */
 #[proto]
 struct StateReq {}
 
@@ -28,7 +28,7 @@ struct StateResp {
     recordings: int,
 }
 
-/// One recording added to the session. Several arrive as separate calls.
+/** *One recording added to the session. Several arrive as separate calls. */
 #[proto]
 struct AddReq {
     name: string,
@@ -50,9 +50,9 @@ struct ResetResp {
     scan: int,
 }
 
-/// Ask for a piece: `style`, `length`, `energy`, `tempo`, `pitch`, `voices`,
-/// the seed, and the on/off flags of the instruments and effects. Parallel
-/// lists keep the contract to `int` / `string`.
+/** *Ask for a piece: `style`, `length`, `energy`, `tempo`, `pitch`, `voices`, */
+/** *the seed, and the on/off flags of the instruments and effects. Parallel */
+/** *lists keep the contract to `int` / `string`. */
 #[proto]
 struct GenerateReq {
     scan: int,
@@ -75,8 +75,8 @@ struct GenerateResp {
     error: string,
 }
 
-/// The running stage. `stage` is a `ST_*` code. `saving` is 1 while a save
-/// job runs; `saved` is the file the last one wrote.
+/** *The running stage. `stage` is a `ST_*` code. `saving` is 1 while a save */
+/** *job runs; `saved` is the file the last one wrote. */
 #[proto]
 struct PollReq {}
 
@@ -92,9 +92,9 @@ struct PollResp {
     saved: string,
 }
 
-/// The finished take. `path` is the WAV, `peaks` the 4..100 waveform bars,
-/// `sections` the kind/‰-start/‰-length triples, `path_target` /
-/// `path_height` the pitch path per bar.
+/** *The finished take. `path` is the WAV, `peaks` the 4..100 waveform bars, */
+/** *`sections` the kind/‰-start/‰-length triples, `path_target` / */
+/** *`path_height` the pitch path per bar. */
 #[proto]
 struct TakeReq {}
 
@@ -114,8 +114,8 @@ struct TakeResp {
     role: []int,
 }
 
-/// Save the current take to `~/Documents/Mune` under `title`, as `format`
-/// (`FMT_*`).
+/** *Save the current take to `~/Documents/Mune` under `title`, as `format` */
+/** *(`FMT_*`). */
 #[proto]
 struct SaveReq {
     id: int,
@@ -149,7 +149,7 @@ struct CancelResp {
     ok: int,
 }
 
-/// `PollResp.stage`.
+/** *`PollResp.stage`. */
 fn st_idle() -> int {
     return 0
 }
@@ -166,7 +166,7 @@ fn st_error() -> int {
     return 3
 }
 
-/// Export formats, indexed by `SaveReq.format`.
+/** *Export formats, indexed by `SaveReq.format`. */
 fn fmt_wav() -> int {
     return 0
 }
@@ -183,9 +183,9 @@ fn state_rpc() -> string {
     return "Mune.State"
 }
 
-/// One poll: advances the engine and answers its stage, progress, and the
-/// status line. The client calls it on its timer (the store already polls),
-/// so it is a plain unary call, not a stream.
+/** *One poll: advances the engine and answers its stage, progress, and the */
+/** *status line. The client calls it on its timer (the store already polls), */
+/** *so it is a plain unary call, not a stream. */
 fn poll_rpc() -> string {
     return "Mune.Poll"
 }
@@ -218,7 +218,7 @@ fn cancel_rpc() -> string {
     return "Mune.Cancel"
 }
 
-/// Keeps `http` imported here so the codecs it injects resolve.
+/** *Keeps `http` imported here so the codecs it injects resolve. */
 fn ping() -> string {
     return http.concat_str("mu", "ne")
 }

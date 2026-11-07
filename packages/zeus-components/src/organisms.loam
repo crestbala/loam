@@ -1,8 +1,8 @@
-//! organisms — the section-level pieces: Card and Comp, Accordion, Popover,
-//! Menu, Drawer, Tooltip, HoverCard, Toast, Dialog, Combobox, Navbar, Table and
-//! VirtualTable, the charts, the calendar / DatePicker, Page, and Carousel.
-//!
-//! Built on `molecules`, `atoms`, and `zeusbase`.
+// organisms — the section-level pieces: Card and Comp, Accordion, Popover,
+// Menu, Drawer, Tooltip, HoverCard, Toast, Dialog, Combobox, Navbar, Table and
+// VirtualTable, the charts, the calendar / DatePicker, Page, and Carousel.
+//
+// Built on `molecules`, `atoms`, and `zeusbase`.
 
 import "zeus:structs"
 import "zeus:enums"
@@ -16,47 +16,47 @@ import "std:fmt"
 import "zeus-components:atoms"
 import "zeus-components:molecules"
 
-/// One column of a `VirtualTable`. `width` 0 means the column takes an equal
-/// share of the row (pair cells with `set_flex_basis_zero(...).grow(1)`); a positive value
-/// is a pixel width. `title` is the header cell.
+/** *One column of a `VirtualTable`. `width` 0 means the column takes an equal */
+/** *share of the row (pair cells with `set_flex_basis_zero(...).grow(1)`); a positive value */
+/** *is a pixel width. `title` is the header cell. */
 struct TableCol {
     title: string,
     width: int,
-    /// Cell alignment for this column: `Align.Start` (default), `Center`,
-    /// or `End` — numbers go `End`. `TableCols` aligns the header and
-    /// `TableRowCols` the body cells.
+    /** *Cell alignment for this column: `Align.Start` (default), `Center`, */
+    /** *or `End` — numbers go `End`. `TableCols` aligns the header and */
+    /** *`TableRowCols` the body cells. */
     align: int = 0,
-    /// true = the header is a sort trigger (see `TableCols`' `sort`).
+    /** *true = the header is a sort trigger (see `TableCols`' `sort`). */
     sortable: bool = false,
 }
 
-/// Extras for `TableCols`: `sort` is the sort state. `0` = none; `i + 1` =
-/// column `i` ascending; `-(i + 1)` = descending. Clicking a sortable header
-/// cycles none → asc → desc → none on its column and clears the others; the
-/// app orders its rows from the signal. An arrow marks the sorted column.
+/** *Extras for `TableCols`: `sort` is the sort state. `0` = none; `i + 1` = */
+/** *column `i` ascending; `-(i + 1)` = descending. Clicking a sortable header */
+/** *cycles none → asc → desc → none on its column and clears the others; the */
+/** *app orders its rows from the signal. An arrow marks the sorted column. */
 struct TableColsProps {
     sort: Option<Signal<int>> = none,
 }
 
-/// Extras for `TableRow` / `TableRowCols`. `zebra` shades every second body
-/// row (counted among the row's siblings, so a header does not count);
-/// `hover` washes the row under the pointer; `on_click` makes the row a
-/// pointer target (hover implied).
+/** *Extras for `TableRow` / `TableRowCols`. `zebra` shades every second body */
+/** *row (counted among the row's siblings, so a header does not count); */
+/** *`hover` washes the row under the pointer; `on_click` makes the row a */
+/** *pointer target (hover implied). */
 struct TableRowProps {
     zebra: bool = false,
     hover: bool = false,
     on_click: Option<fn()> = none,
 }
 
-/// Windowed table. `rows` is `zeus.signal([]T {})` where `T` is a row struct;
-/// `cols` is `[]TableCol` (title + width) for the header. The body is a
-/// `VirtualList` of `build(i, row)` — only visible rows are mounted. The
-/// themed header (`TableCols`) shares its gutter with body rows; build every
-/// cell with `set_flex_basis_zero(...).grow(1)` (or a fixed `.set_width(px)` matching the column)
-/// so body columns line up under the header.
-/// Extras for `VirtualTable`: `sort` wires the header (see `TableColsProps`).
-/// The window owns its row builder, so the app sets the row order:
-/// `rows.set(sort_cells(rows.get(), cells, sort.get()))`.
+/** *Windowed table. `rows` is `zeus.signal([]T {})` where `T` is a row struct; */
+/** *`cols` is `[]TableCol` (title + width) for the header. The body is a */
+/** *`VirtualList` of `build(i, row)` — only visible rows are mounted. The */
+/** *themed header (`TableCols`) shares its gutter with body rows; build every */
+/** *cell with `set_flex_basis_zero(...).grow(1)` (or a fixed `.set_width(px)` matching the column) */
+/** *so body columns line up under the header. */
+/** *Extras for `VirtualTable`: `sort` wires the header (see `TableColsProps`). */
+/** *The window owns its row builder, so the app sets the row order: */
+/** *`rows.set(sort_cells(rows.get(), cells, sort.get()))`. */
 struct VirtualTableProps {
     sort: Option<Signal<int>> = none,
 }
@@ -74,9 +74,9 @@ fn VirtualTable<T>(
     }
 }
 
-/// Build your own widget: extends `Component` via `Box`. Trailing block is
-/// the slot. `bind` / `visible` / `press` are the same lifecycle as every
-/// other widget — pass them here, do not call `ui_push` / `bind` / `show`.
+/** *Build your own widget: extends `Component` via `Box`. Trailing block is */
+/** *the slot. `bind` / `visible` / `press` are the same lifecycle as every */
+/** *other widget — pass them here, do not call `ui_push` / `bind` / `show`. */
 fn Comp(p: BoxProps) -> Node {
     // A clickable custom widget presses like a button.
     let press = p.press || result.is_some(p.on_click)
@@ -108,24 +108,24 @@ fn Comp(p: BoxProps) -> Node {
 
 struct ComboboxProps {
     placeholder: string = "Search",
-    /// `Size` token: the field is `control_h(size)` tall.
+    /** *`Size` token: the field is `control_h(size)` tall. */
     size: int = Size.Md,
-    /// Draws the danger edge (a `Field` with an `error` sets it).
+    /** *Draws the danger edge (a `Field` with an `error` sets it). */
     invalid: bool = false,
-    /// Dims the field and makes it inert.
+    /** *Dims the field and makes it inert. */
     disabled: bool = false,
-    /// Accessible name. Empty uses the placeholder.
+    /** *Accessible name. Empty uses the placeholder. */
     label: string = "",
-    /// Style, merged over the recipe's own: `style = Style(radius = 4)`.
+    /** *Style, merged over the recipe's own: `style = Style(radius = 4)`. */
     style: Option<fn() -> Style> = none,
 }
 
-/// A text field with a filtered option list below it. Clicking the field (or
-/// its chevron), typing, or Down opens the list; an empty query shows every
-/// option. Up / Down move the highlight, Enter picks the highlighted option into
-/// the field, Escape or an outside click closes. `text` is the one piece of state
-/// and belongs to the caller. Options should be unique: the list is keyed by
-/// label (`zeus.Each`).
+/** *A text field with a filtered option list below it. Clicking the field (or */
+/** *its chevron), typing, or Down opens the list; an empty query shows every */
+/** *option. Up / Down move the highlight, Enter picks the highlighted option into */
+/** *the field, Escape or an outside click closes. `text` is the one piece of state */
+/** *and belongs to the caller. Options should be unique: the list is keyed by */
+/** *label (`zeus.Each`). */
 fn Combobox(text: Signal<string>, options: []string, p: ComboboxProps) -> Node {
     // state
     let active = signal(-1)
@@ -205,7 +205,7 @@ fn Combobox(text: Signal<string>, options: []string, p: ComboboxProps) -> Node {
     }
 }
 
-/// One option row of a `Combobox`. Picking writes the label into the field.
+/** *One option row of a `Combobox`. Picking writes the label into the field. */
 fn ComboRow(
     text: Signal<string>,
     active: Signal<int>,
@@ -249,10 +249,10 @@ fn ComboRow(
     }
 }
 
-/// A single-open accordion. `open` is the *only* state: the open item's index,
-/// or `-1` for all closed. Items take the shared signal and their own `index`;
-/// no item owns state. Opening one closes the rest by construction — there is
-/// one index, so two items can never both match it.
+/** *A single-open accordion. `open` is the *only* state: the open item's index, */
+/** *or `-1` for all closed. Items take the shared signal and their own `index`; */
+/** *no item owns state. Opening one closes the rest by construction — there is */
+/** *one index, so two items can never both match it. */
 fn Accordion(open: Signal<int>, p: AccordionProps) -> Node {
     // state. One ref per header, so up / down can hand focus to a sibling.
     let mut heads = []Ref {}
@@ -288,29 +288,29 @@ fn Accordion(open: Signal<int>, p: AccordionProps) -> Node {
 struct AccordionProps {
     bind: Option<Signal<int>> = none,
     items: []AccordionRow,
-    /// Style, merged over the recipe's own: `style = Style(radius = 4)`.
+    /** *Style, merged over the recipe's own: `style = Style(radius = 4)`. */
     style: Option<fn() -> Style> = none,
 }
 
 struct AccordionItemProps {
-    /// The accordion's single open-index signal (`-1` = all closed).
+    /** *The accordion's single open-index signal (`-1` = all closed). */
     open: Signal<int> = Signal { id: 0 },
-    /// This item's index within its accordion.
+    /** *This item's index within its accordion. */
     index: int = 0,
-    /// Header label.
+    /** *Header label. */
     title: Signal<string> = "",
-    /// Body copy, shown while this item is open.
+    /** *Body copy, shown while this item is open. */
     body: Signal<string> = "",
-    /// Optional leading icon markup.
+    /** *Optional leading icon markup. */
     icon: string = "",
-    /// Every header in the accordion, by index (`Accordion` fills it). Up /
-    /// down / Home / End move focus along it; empty, the keys are off.
+    /** *Every header in the accordion, by index (`Accordion` fills it). Up / */
+    /** *down / Home / End move focus along it; empty, the keys are off. */
     heads: []Ref = []Ref {},
 }
 
-/// One row of an `Accordion`. Reads the shared `open` signal and compares it to
-/// `index`, so it holds no state of its own: the chevron rotates on a paint-only
-/// track and the body fades in, both driven by the container's one signal.
+/** *One row of an `Accordion`. Reads the shared `open` signal and compares it to */
+/** *`index`, so it holds no state of its own: the chevron rotates on a paint-only */
+/** *track and the body fades in, both driven by the container's one signal. */
 fn AccordionItem(p: AccordionItemProps) -> Node {
     // state
     let open = p.open
@@ -351,24 +351,24 @@ fn AccordionItem(p: AccordionItemProps) -> Node {
 }
 
 struct PopoverProps {
-    /// Open while true.
+    /** *Open while true. */
     open: Signal<bool> = Signal { id: 0 },
-    /// Preferred side (`Place.*`); flips when it would overflow.
+    /** *Preferred side (`Place.*`); flips when it would overflow. */
     place: int = 0,
     gap: int = 6,
     closeKey: string = "escape",
-    /// The element the panel floats beside; built here, so the panel can
-    /// anchor to it.
+    /** *The element the panel floats beside; built here, so the panel can */
+    /** *anchor to it. */
     trigger: fn() = noop,
-    /// The trailing block: the panel body.
+    /** *The trailing block: the panel body. */
     children: fn() = noop,
-    /// Style, merged over the recipe's own: `style = Style(radius = 4)`.
+    /** *Style, merged over the recipe's own: `style = Style(radius = 4)`. */
     style: Option<fn() -> Style> = none,
 }
 
-/// A floating panel anchored to `trigger`. `open` is a bool signal; outside
-/// click and Escape close it. Edge-aware: `place` is preferred, flipped when
-/// it would leave the safe-area rect. Trailing block is the panel body.
+/** *A floating panel anchored to `trigger`. `open` is a bool signal; outside */
+/** *click and Escape close it. Edge-aware: `place` is preferred, flipped when */
+/** *it would leave the safe-area rect. Trailing block is the panel body. */
 fn Popover(p: PopoverProps) -> Node {
     // state
     let open = p.open
@@ -403,31 +403,31 @@ fn Popover(p: PopoverProps) -> Node {
 }
 
 struct MenuProps {
-    /// Open at this item index; `-1` is closed. The menu's only state. Pass
-    /// one to observe or drive the menu from outside; omitted, the menu owns it.
+    /** *Open at this item index; `-1` is closed. The menu's only state. Pass */
+    /** *one to observe or drive the menu from outside; omitted, the menu owns it. */
     active: Option<Signal<int>> = none,
     items: []MenuRow,
-    /// Runs with the picked row's index. Rows are plain data; this is the one
-    /// callback for the whole menu.
+    /** *Runs with the picked row's index. Rows are plain data; this is the one */
+    /** *callback for the whole menu. */
     on_select: Option<fn(int)> = none,
     label: string = "",
-    /// Preferred side (`Place.*`); flips when it would overflow.
+    /** *Preferred side (`Place.*`); flips when it would overflow. */
     place: int = 0,
     gap: int = 4,
-    /// Chord that dismisses the open menu.
+    /** *Chord that dismisses the open menu. */
     closeKey: string = "escape",
-    /// The element that opens the menu; clicking it toggles.
+    /** *The element that opens the menu; clicking it toggles. */
     trigger: fn() = noop,
-    /// The trailing block: more rows after `items` (`MenuItem`, ...).
+    /** *The trailing block: more rows after `items` (`MenuItem`, ...). */
     children: fn() = noop,
-    /// Style, merged over the recipe's own: `style = Style(radius = 4)`.
+    /** *Style, merged over the recipe's own: `style = Style(radius = 4)`. */
     style: Option<fn() -> Style> = none,
 }
 
-/// A dropdown menu anchored to `trigger`. Clicking the trigger toggles it;
-/// outside click and Escape close it; `place` is preferred and flips near the
-/// viewport edge. The trailing block is the item list (`MenuItem` /
-/// `MenuLabel` / `MenuSeparator`).
+/** *A dropdown menu anchored to `trigger`. Clicking the trigger toggles it; */
+/** *outside click and Escape close it; `place` is preferred and flips near the */
+/** *viewport edge. The trailing block is the item list (`MenuItem` / */
+/** *`MenuLabel` / `MenuSeparator`). */
 fn Menu(p: MenuProps) -> Node {
     // state. `active` is the menu's only state; omitted, the menu owns it.
     let active = if result.is_some(p.active) { p.active.val } else { signal(-1) }
@@ -499,25 +499,25 @@ fn Menu(p: MenuProps) -> Node {
 }
 
 struct MenuItemProps {
-    /// The menu's one signal; the item compares it to `index`.
+    /** *The menu's one signal; the item compares it to `index`. */
     active: Option<Signal<int>> = none,
-    /// This item's position within its menu.
+    /** *This item's position within its menu. */
     index: int = 0,
-    /// How many items the menu has, so Up / Down clamp at the ends. Pass the
-    /// same number to every item.
+    /** *How many items the menu has, so Up / Down clamp at the ends. Pass the */
+    /** *same number to every item. */
     count: int = 0,
     label: Signal<string> = "",
-    /// Optional leading icon markup.
+    /** *Optional leading icon markup. */
     icon: string = "",
     on_click: Option<fn()> = none,
     disabled: bool = false,
-    /// Destructive command: painted in the danger ink.
+    /** *Destructive command: painted in the danger ink. */
     danger: bool = false,
 }
 
-/// One command row. Highlights while `active == index`; the pointer moves
-/// `active` on hover, so pointer and keyboard share one highlight. Owns no
-/// state — the menu's `active` is the only signal.
+/** *One command row. Highlights while `active == index`; the pointer moves */
+/** *`active` on hover, so pointer and keyboard share one highlight. Owns no */
+/** *state — the menu's `active` is the only signal. */
 fn MenuItem(p: MenuItemProps) -> Node {
     // state
     let active = result.some_or(p.active, no_signal())
@@ -594,14 +594,14 @@ fn MenuItem(p: MenuItemProps) -> Node {
     }
 }
 
-/// A non-interactive group heading inside a `Menu`.
+/** *A non-interactive group heading inside a `Menu`. */
 fn MenuLabel(text: Signal<string>) -> Node {
     return Box(style = Style(paddingY = 6, paddingX = 10)) {
         Text(text, style = Style(font = FONT_CAPTION, color = dim()))
     }
 }
 
-/// A hairline between menu groups.
+/** *A hairline between menu groups. */
 fn MenuSeparator() -> Node {
     return Box(style = Style(paddingY = 3)) {
         Separator()
@@ -609,26 +609,26 @@ fn MenuSeparator() -> Node {
 }
 
 struct DrawerProps {
-    /// Edge to slide from (`Side.*`). The top / bottom edges are the sheet shape.
+    /** *Edge to slide from (`Side.*`). The top / bottom edges are the sheet shape. */
     side: int = 1,
-    /// Panel extent: width for the start / end edges, height for top / bottom.
+    /** *Panel extent: width for the start / end edges, height for top / bottom. */
     size: int = 320,
-    /// Radius of the edge that faces the content (the inner edge). `-1` uses
-    /// the sheet default (`RAD_XL`), `0` is square. The outer edge stays square
-    /// so the panel meets the window edge cleanly.
+    /** *Radius of the edge that faces the content (the inner edge). `-1` uses */
+    /** *the sheet default (`RAD_XL`), `0` is square. The outer edge stays square */
+    /** *so the panel meets the window edge cleanly. */
     radius: int = -1,
-    /// Chord that closes the drawer.
+    /** *Chord that closes the drawer. */
     closeKey: string = "escape",
-    /// The trailing block: the body, placed by the component.
+    /** *The trailing block: the body, placed by the component. */
     children: fn() = noop,
-    /// Style, merged over the recipe's own: `style = Style(radius = 4)`.
+    /** *Style, merged over the recipe's own: `style = Style(radius = 4)`. */
     style: Option<fn() -> Style> = none,
 }
 
-/// An edge panel over a scrim. `open` is a bool signal; the scrim closes it on
-/// outside click and Escape closes it while focus is inside. `side` picks the
-/// edge and `size` the extent. Like the Dialog, the panel swallows clicks so a
-/// press inside does not close it. Trailing block is the panel content.
+/** *An edge panel over a scrim. `open` is a bool signal; the scrim closes it on */
+/** *outside click and Escape closes it while focus is inside. `side` picks the */
+/** *edge and `size` the extent. Like the Dialog, the panel swallows clicks so a */
+/** *press inside does not close it. Trailing block is the panel content. */
 fn Drawer(open: Signal<bool>, p: DrawerProps) -> Node {
     // state
     let side = p.side
@@ -694,8 +694,8 @@ fn Drawer(open: Signal<bool>, p: DrawerProps) -> Node {
     }
 }
 
-/// The scrim a drawer sits on, laid out so the panel docks at its edge and
-/// stretches along it.
+/** *The scrim a drawer sits on, laid out so the panel docks at its edge and */
+/** *stretches along it. */
 fn drawer_dock(side: int) -> Style {
     let across = side == Side.SideStart || side == Side.SideEnd
     let at_start = side == Side.SideStart || side == Side.SideTop
@@ -708,31 +708,31 @@ fn drawer_dock(side: int) -> Style {
     )
 }
 
-/// One corner of the sheet: only the corners on the inner edge round, so a
-/// corner rounds when the drawer docks at side `a` or `b`.
+/** *One corner of the sheet: only the corners on the inner edge round, so a */
+/** *corner rounds when the drawer docks at side `a` or `b`. */
 fn drawer_corner(side: int, a: int, b: int, r: int) -> int {
     if side == a || side == b { r } else { 0 }
 }
 
 struct TooltipProps {
     text: Signal<string> = "",
-    /// Where the bubble sits (`Place.*`). The six tooltip placements are
-    /// `PlaceAboveStart` / `PlaceAboveCenter` / `PlaceAboveEnd` and the three
-    /// `PlaceBelow*` — i.e. top-left, top-centre, top-right, bottom-left,
-    /// bottom-centre, bottom-right. `PlaceAbove` / `PlaceBelow` still work and
-    /// are start-aligned. Defaults to top-centre, which is what a tooltip is.
+    /** *Where the bubble sits (`Place.*`). The six tooltip placements are */
+    /** *`PlaceAboveStart` / `PlaceAboveCenter` / `PlaceAboveEnd` and the three */
+    /** *`PlaceBelow*` — i.e. top-left, top-centre, top-right, bottom-left, */
+    /** *bottom-centre, bottom-right. `PlaceAbove` / `PlaceBelow` still work and */
+    /** *are start-aligned. Defaults to top-centre, which is what a tooltip is. */
     place: int = 5,
     gap: int = 6,
-    /// Draw the little caret that points at the trigger. Dropped for the side
-    /// placements, which have no edge facing the trigger.
+    /** *Draw the little caret that points at the trigger. Dropped for the side */
+    /** *placements, which have no edge facing the trigger. */
     arrow: bool = true,
-    /// Delay before showing, in ms (hover intent).
+    /** *Delay before showing, in ms (hover intent). */
     delay: int = 250,
-    /// The element the tooltip describes.
+    /** *The element the tooltip describes. */
     trigger: fn() = noop,
 }
 
-/// 1 when the bubble is above its trigger (so the caret points down).
+/** *1 when the bubble is above its trigger (so the caret points down). */
 fn tooltip_above(place: int) -> bool {
     if place == Place.PlaceBelow ||
         place == Place.PlaceBelowStart ||
@@ -743,7 +743,7 @@ fn tooltip_above(place: int) -> bool {
     return true
 }
 
-/// A caret only makes sense on an edge that faces the trigger.
+/** *A caret only makes sense on an edge that faces the trigger. */
 fn tooltip_arrow_ok(place: int) -> bool {
     if place == Place.PlaceEnd || place == Place.PlaceStart {
         return false
@@ -751,7 +751,7 @@ fn tooltip_arrow_ok(place: int) -> bool {
     return true
 }
 
-/// Slide the caret along the trigger's edge to follow the bubble's alignment.
+/** *Slide the caret along the trigger's edge to follow the bubble's alignment. */
 fn tooltip_justify(place: int) -> int {
     if place == Place.PlaceAboveStart || place == Place.PlaceBelowStart {
         return Align.Start
@@ -762,7 +762,7 @@ fn tooltip_justify(place: int) -> int {
     return Align.Center
 }
 
-/// A small non-interactive label shown while the pointer rests on `trigger`.
+/** *A small non-interactive label shown while the pointer rests on `trigger`. */
 fn Tooltip(p: TooltipProps) -> Node {
     // state
     let hovered = signal(false)
@@ -815,7 +815,7 @@ fn Tooltip(p: TooltipProps) -> Node {
     }
 }
 
-/// The tooltip's caret: an ink square turned 45°.
+/** *The tooltip's caret: an ink square turned 45°. */
 fn TooltipCaret() -> Node {
     return Box(style = Style(
         width = px(TOOLTIP_ARROW),
@@ -825,8 +825,8 @@ fn TooltipCaret() -> Node {
     ))
 }
 
-/// Hover intent: a flag that turns true once `hovered` has held for `delay`
-/// ms, and false the moment it ends — so a passing pointer opens nothing.
+/** *Hover intent: a flag that turns true once `hovered` has held for `delay` */
+/** *ms, and false the moment it ends — so a passing pointer opens nothing. */
 fn hover_intent(hovered: Signal<bool>, delay: int) -> Signal<bool> {
     let shown = signal(false)
     effect(|| {
@@ -846,19 +846,19 @@ fn hover_intent(hovered: Signal<bool>, delay: int) -> Signal<bool> {
 struct HoverCardProps {
     place: int = 1,
     gap: int = 8,
-    /// Delay before showing, in ms. Longer than a tooltip: a hover card is
-    /// larger and should not appear under a passing pointer.
+    /** *Delay before showing, in ms. Longer than a tooltip: a hover card is */
+    /** *larger and should not appear under a passing pointer. */
     delay: int = 300,
-    /// The element that shows the card on hover.
+    /** *The element that shows the card on hover. */
     trigger: fn() = noop,
-    /// The trailing block: the card body.
+    /** *The trailing block: the card body. */
     children: fn() = noop,
-    /// Style, merged over the recipe's own: `style = Style(radius = 4)`.
+    /** *Style, merged over the recipe's own: `style = Style(radius = 4)`. */
     style: Option<fn() -> Style> = none,
 }
 
-/// A hover-triggered panel, larger and interactive where a `Tooltip` is not.
-/// Trailing block is the card body.
+/** *A hover-triggered panel, larger and interactive where a `Tooltip` is not. */
+/** *Trailing block is the card body. */
 fn HoverCard(p: HoverCardProps) -> Node {
     // state. Hover intent, longer than a tooltip's.
     let hovered = signal(false)
@@ -889,19 +889,19 @@ fn HoverCard(p: HoverCardProps) -> Node {
 }
 
 struct ToastProps {
-    /// Auto-dismiss after this many ms.
+    /** *Auto-dismiss after this many ms. */
     ms: int = 3200,
-    /// 0 = bottom, 1 = top.
+    /** *0 = bottom, 1 = top. */
     place: int = 0,
-    /// The trailing block: the body, placed by the component.
+    /** *The trailing block: the body, placed by the component. */
     children: fn() = noop,
-    /// Style, merged over the recipe's own: `style = Style(radius = 4)`.
+    /** *Style, merged over the recipe's own: `style = Style(radius = 4)`. */
     style: Option<fn() -> Style> = none,
 }
 
-/// A transient message pinned to the bottom (or top) of the window. `open` is a
-/// bool signal; it dismisses itself after `ms`, or on click. It comes in from
-/// its edge and falls back to it. Trailing block is the message.
+/** *A transient message pinned to the bottom (or top) of the window. `open` is a */
+/** *bool signal; it dismisses itself after `ms`, or on click. It comes in from */
+/** *its edge and falls back to it. Trailing block is the message. */
 fn Toast(open: Signal<bool>, p: ToastProps) -> Node {
     // controller. Dismisses itself after `ms`.
     effect(|| {
@@ -937,7 +937,7 @@ fn Toast(open: Signal<bool>, p: ToastProps) -> Node {
     }
 }
 
-/// Where the toast sits: 24dp in from the bottom (0) or the top (1).
+/** *Where the toast sits: 24dp in from the bottom (0) or the top (1). */
 fn toast_dock(place: int) -> Style {
     if place == 1 {
         return Style(justify = Align.Start, paddingTop = Space.Lg)
@@ -945,16 +945,16 @@ fn toast_dock(place: int) -> Style {
     return Style(justify = Align.End, paddingBottom = Space.Lg)
 }
 
-/// Named extras for `Dialog` / `AlertDialog`. `title` shares the header
-/// row with the close control (Dialog) or stands alone (AlertDialog).
+/** *Named extras for `Dialog` / `AlertDialog`. `title` shares the header */
+/** *row with the close control (Dialog) or stands alone (AlertDialog). */
 struct DialogProps {
     title: string = "",
-    /// The trailing block: the body, placed by the component.
+    /** *The trailing block: the body, placed by the component. */
     children: fn() = noop,
 }
 
-/// Dialog + AlertDialog chrome. Header is a row: title, then `Grow()`, then
-/// a fixed 28px close slot (Dialog only). No `position` / `top` / `left`.
+/** *Dialog + AlertDialog chrome. Header is a row: title, then `Grow()`, then */
+/** *a fixed 28px close slot (Dialog only). No `position` / `top` / `left`. */
 fn DialogShell(open: Signal<bool>, close_x: bool, title: string, children: fn()) -> Node {
     // keys
     let keys = []KeyBind { key_bind("escape", "dialog.close", fn() { open.set(false) }) }
@@ -1017,19 +1017,19 @@ fn DialogShell(open: Signal<bool>, close_x: bool, title: string, children: fn())
     }
 }
 
-/// Modal dialog: dim scrim, centered card. Pass `title = "..."` so the
-/// heading and close control share one row. Trailing block is the body.
+/** *Modal dialog: dim scrim, centered card. Pass `title = "..."` so the */
+/** *heading and close control share one row. Trailing block is the body. */
 fn Dialog(open: Signal<bool>, p: DialogProps) -> Node {
     return DialogShell(open, true, p.title, p.children)
 }
 
-/// AlertDialog: modal confirm with no X. Pass `title = "..."` for the heading.
+/** *AlertDialog: modal confirm with no X. Pass `title = "..."` for the heading. */
 fn AlertDialog(open: Signal<bool>, p: DialogProps) -> Node {
     return DialogShell(open, false, p.title, p.children)
 }
 
-/// Top bar. `dark = true` (default) includes the appearance switch; pass
-/// `dark = false` to omit it and put Dark in the trailing chrome yourself.
+/** *Top bar. `dark = true` (default) includes the appearance switch; pass */
+/** *`dark = false` to omit it and put Dark in the trailing chrome yourself. */
 fn Navbar(brand: string, dark: bool = true) -> Node {
     return Column(0) {
         Box(
@@ -1053,7 +1053,7 @@ fn Navbar(brand: string, dark: bool = true) -> Node {
     }
 }
 
-/// Docs-style nav item: muted text, a raised fill when active, 36px tall.
+/** *Docs-style nav item: muted text, a raised fill when active, 36px tall. */
 fn NavTab(label: string, page: Signal<int>, index: int) -> Node {
     fn active() -> bool {
         return page.get() == index
@@ -1084,8 +1084,8 @@ fn NavTab(label: string, page: Signal<int>, index: int) -> Node {
     }
 }
 
-/// Header row: muted label cells above a hairline. Cells use zero basis +
-/// grow so columns split the row evenly and line up with `TableRow`.
+/** *Header row: muted label cells above a hairline. Cells use zero basis + */
+/** *grow so columns split the row evenly and line up with `TableRow`. */
 fn TableHead(cols: []string) -> Node {
     return Column(Space.Exs) {
         // Same gutter as `TableRow`, so header and cells share column edges.
@@ -1103,14 +1103,14 @@ fn TableHead(cols: []string) -> Node {
     }
 }
 
-/// Is the node about to be built an odd-numbered body row? Counts the
-/// current slot parent's `TableRow` kids so far (role `row`), so a header
-/// or separator sibling does not shift the stripe.
+/** *Is the node about to be built an odd-numbered body row? Counts the */
+/** *current slot parent's `TableRow` kids so far (role `row`), so a header */
+/** *or separator sibling does not shift the stripe. */
 fn table_row_odd() -> bool {
     return slot_count_role("row") % 2 == 1
 }
 
-/// Shell every body row shares: stripe, hover, click, role `row`.
+/** *Shell every body row shares: stripe, hover, click, role `row`. */
 fn TableRowShell(p: TableRowProps) -> Node {
     let fill = if p.zebra && table_row_odd() { raised() } else { "" }
     let cursor = if result.is_some(p.on_click) { "pointer" } else { "" }
@@ -1130,7 +1130,7 @@ fn TableRowShell(p: TableRowProps) -> Node {
     )
 }
 
-/// A `TableCol.width` as a `Box` width prop: 0 (share the row) is -1 (unset).
+/** *A `TableCol.width` as a `Box` width prop: 0 (share the row) is -1 (unset). */
 fn table_col_width(w: int) -> int {
     if w <= 0 {
         return -1
@@ -1138,7 +1138,7 @@ fn table_col_width(w: int) -> int {
     return w
 }
 
-/// One cell: `width` 0 shares the row, `align` is `Align.*`.
+/** *One cell: `width` 0 shares the row, `align` is `Align.*`. */
 fn TableCell(text: string, width: int, align: int, tint: string) -> Node {
     return Box(style = Style(
         width = if width <= 0 { pct(0) } else { px(table_col_width(width)) },
@@ -1150,8 +1150,8 @@ fn TableCell(text: string, width: int, align: int, tint: string) -> Node {
     }
 }
 
-/// Body row: cells under a hairline, foreground text. Pair with `TableHead`.
-/// `zebra` / `hover` / `on_click` are `TableRowProps`.
+/** *Body row: cells under a hairline, foreground text. Pair with `TableHead`. */
+/** *`zebra` / `hover` / `on_click` are `TableRowProps`. */
 fn TableRow(cols: []string, p: TableRowProps) -> Node {
     let shell = TableRowShell(p) {
         Each(cols, fn(i, t) {
@@ -1162,9 +1162,9 @@ fn TableRow(cols: []string, p: TableRowProps) -> Node {
     return shell
 }
 
-/// Body row laid out by a `[]TableCol` spec: fixed widths and per-column
-/// alignment match the `TableCols` header. `cols` beyond `spec` share the
-/// row, start-aligned.
+/** *Body row laid out by a `[]TableCol` spec: fixed widths and per-column */
+/** *alignment match the `TableCols` header. `cols` beyond `spec` share the */
+/** *row, start-aligned. */
 fn TableRowCols(cols: []string, spec: []TableCol, p: TableRowProps) -> Node {
     let shell = TableRowShell(p) {
         Each(cols, fn(i, t) {
@@ -1177,7 +1177,7 @@ fn TableRowCols(cols: []string, spec: []TableCol, p: TableRowProps) -> Node {
     return shell
 }
 
-/// true when `a` and `b` show the same cells in the same order.
+/** *true when `a` and `b` show the same cells in the same order. */
 fn rows_in_order<T>(a: []T, b: []T, cells: fn(T) -> []string) -> bool {
     if a.len != b.len {
         return false
@@ -1190,9 +1190,9 @@ fn rows_in_order<T>(a: []T, b: []T, cells: fn(T) -> []string) -> bool {
     return true
 }
 
-/// Index of the row whose cells key is `k` in `rows` (-1 when it is gone).
-/// Resolved at click time: a sort moves the row node, so the index it was
-/// built with is not where it sits now.
+/** *Index of the row whose cells key is `k` in `rows` (-1 when it is gone). */
+/** *Resolved at click time: a sort moves the row node, so the index it was */
+/** *built with is not where it sits now. */
 fn table_index_of<T>(rows: Signal<[]T>, cells: fn(T) -> []string, k: string) -> int {
     let xs = rows.get()
     for i in 0..xs.len {
@@ -1203,25 +1203,25 @@ fn table_index_of<T>(rows: Signal<[]T>, cells: fn(T) -> []string, k: string) -> 
     return -1
 }
 
-/// Extras for `Table`.
+/** *Extras for `Table`. */
 struct TableProps {
-    /// Sort state (see `TableColsProps`). A change rewrites `rows` into that
-    /// column's ascending or descending order.
+    /** *Sort state (see `TableColsProps`). A change rewrites `rows` into that */
+    /** *column's ascending or descending order. */
     sort: Option<Signal<int>> = none,
     zebra: bool = false,
     hover: bool = false,
-    /// Row click: index into `rows` as they stand, so `rows.get()[i]` is the item.
+    /** *Row click: index into `rows` as they stand, so `rows.get()[i]` is the item. */
     on_pick: Option<fn(int)> = none,
 }
 
-/// Data table: a `TableCols` header over rows from a `Signal<[]T>`, each
-/// row's text from `cells(t)` (one string per column). Pass `sort` and a
-/// header click writes `rows` into that column's order (`sort_cells`):
-/// ascending, then descending. Rows are keyed by value, so the reorder moves
-/// the existing nodes. A later push is placed by the same column. Clearing
-/// the sort (the third click) leaves the rows where the last column put them.
-/// `zebra` / `hover` / `on_pick` go to every row. A long list wants
-/// `VirtualTable` (windowed) instead.
+/** *Data table: a `TableCols` header over rows from a `Signal<[]T>`, each */
+/** *row's text from `cells(t)` (one string per column). Pass `sort` and a */
+/** *header click writes `rows` into that column's order (`sort_cells`): */
+/** *ascending, then descending. Rows are keyed by value, so the reorder moves */
+/** *the existing nodes. A later push is placed by the same column. Clearing */
+/** *the sort (the third click) leaves the rows where the last column put them. */
+/** *`zebra` / `hover` / `on_pick` go to every row. A long list wants */
+/** *`VirtualTable` (windowed) instead. */
 fn Table<T>(spec: []TableCol, rows: Signal<[]T>, cells: fn(T) -> []string, p: TableProps) -> Node {
     let sort_set = result.is_some(p.sort)
     let sort = result.some_or(p.sort, no_signal())
@@ -1253,9 +1253,9 @@ fn Table<T>(spec: []TableCol, rows: Signal<[]T>, cells: fn(T) -> []string, p: Ta
     }
 }
 
-/// Header from `[]TableCol` (`title` + `width`; 0 = equal share of the row).
-/// A `sortable` column is a button that cycles `sort`; the sorted column
-/// shows a direction arrow (see `TableColsProps`).
+/** *Header from `[]TableCol` (`title` + `width`; 0 = equal share of the row). */
+/** *A `sortable` column is a button that cycles `sort`; the sorted column */
+/** *shows a direction arrow (see `TableColsProps`). */
 fn TableCols(cols: []TableCol, p: TableColsProps) -> Node {
     return Column(Space.Exs) {
         // Same gutter as the body rows (`padding_x = Space.Exs`), so header
@@ -1279,8 +1279,8 @@ fn TableCols(cols: []TableCol, p: TableColsProps) -> Node {
     }
 }
 
-/// One header cell. A sortable column is a button that cycles `sort` and shows
-/// the arrow for the direction it is sorted in.
+/** *One header cell. A sortable column is a button that cycles `sort` and shows */
+/** *the arrow for the direction it is sorted in. */
 fn TableColHead(c: TableCol, i: int, sortable: bool, sort: Signal<int>) -> Node {
     return Box(
         style = Style(
@@ -1305,17 +1305,17 @@ fn TableColHead(c: TableCol, i: int, sortable: bool, sort: Signal<int>) -> Node 
     }
 }
 
-/// Grouped bar chart. One shared y domain.
-/// The plot follows the container: pass the intended width, and the marks
-/// move in place whenever its card measures a different width (nothing is
-/// rebuilt).
+/** *Grouped bar chart. One shared y domain. */
+/** *The plot follows the container: pass the intended width, and the marks */
+/** *move in place whenever its card measures a different width (nothing is */
+/** *rebuilt). */
 fn BarChart(labels: []string, names: []string, vals: []int, w: int, h: int) -> Node {
     return BarChartOf(signal(ChartData { labels: labels, names: names, vals: vals }), w, h)
 }
 
-/// `BarChart` over live data: a write to `data` moves the bars, ticks and
-/// labels through effects. Only a change in the number of categories or
-/// series rebuilds the chart.
+/** *`BarChart` over live data: a write to `data` moves the bars, ticks and */
+/** *labels through effects. Only a change in the number of categories or */
+/** *series rebuilds the chart. */
 fn BarChartOf(data: Signal<ChartData>, w: int, h: int) -> Node {
     let host = Column(Space.Exs)
     let node_id = host.id
@@ -1328,9 +1328,9 @@ fn BarChartOf(data: Signal<ChartData>, w: int, h: int) -> Node {
     })
 }
 
-/// Straight-segment line chart with dots. `p` is `LineChartProps`: a fitted
-/// y axis, implied decimals, a label stride, no dots. A `CHART_GAP` value
-/// is not drawn and breaks its line.
+/** *Straight-segment line chart with dots. `p` is `LineChartProps`: a fitted */
+/** *y axis, implied decimals, a label stride, no dots. A `CHART_GAP` value */
+/** *is not drawn and breaks its line. */
 fn LineChart(
     labels: []string,
     names: []string,
@@ -1350,7 +1350,7 @@ fn LineChart(
     )
 }
 
-/// `LineChart` over live data (see `BarChartOf`).
+/** *`LineChart` over live data (see `BarChartOf`). */
 fn LineChartOf(data: Signal<ChartData>, w: int, h: int, p: LineChartProps) -> Node {
     let host = Column(Space.Exs)
     let node_id = host.id
@@ -1362,12 +1362,12 @@ fn LineChartOf(data: Signal<ChartData>, w: int, h: int, p: LineChartProps) -> No
     })
 }
 
-/// Area chart: tinted fill under the line (fill follows appearance).
+/** *Area chart: tinted fill under the line (fill follows appearance). */
 fn AreaChart(labels: []string, names: []string, vals: []int, w: int, h: int) -> Node {
     return AreaChartOf(signal(ChartData { labels: labels, names: names, vals: vals }), w, h)
 }
 
-/// `AreaChart` over live data (see `BarChartOf`).
+/** *`AreaChart` over live data (see `BarChartOf`). */
 fn AreaChartOf(data: Signal<ChartData>, w: int, h: int) -> Node {
     let host = Column(Space.Exs)
     let node_id = host.id
@@ -1379,8 +1379,8 @@ fn AreaChartOf(data: Signal<ChartData>, w: int, h: int) -> Node {
     })
 }
 
-/// One chart arm: the plot for the shape `d` holds, or nothing when the data
-/// is empty or ragged. Dispatchers, so no builder returns early.
+/** *One chart arm: the plot for the shape `d` holds, or nothing when the data */
+/** *is empty or ragged. Dispatchers, so no builder returns early. */
 fn chart_arm_bars(d: Signal<ChartData>, gw: Signal<int>, h: int) -> Node {
     if chart_drawable(d.peek()) {
         return chart_col_bars(d, gw, h)
@@ -1423,7 +1423,7 @@ fn chart_col_areas(d: Signal<ChartData>, gw: Signal<int>, h: int) -> Node {
     }
 }
 
-/// Ghost icon step button for the month/year rails.
+/** *Ghost icon step button for the month/year rails. */
 fn CalStep(markup: string, label: string, press: fn()) -> Node {
     return Box(
         style = Style(
@@ -1510,8 +1510,8 @@ fn CalCell(y: Signal<int>, m: Signal<int>, d: Signal<int>, open: Signal<bool>, i
     }
 }
 
-/// One 7×6 grid for whichever month `m` names: 42 fixed cells whose content
-/// tracks `y`/`m`/`d` through prop thunks. Built once, no per-month subtrees.
+/** *One 7×6 grid for whichever month `m` names: 42 fixed cells whose content */
+/** *tracks `y`/`m`/`d` through prop thunks. Built once, no per-month subtrees. */
 fn CalGrid(y: Signal<int>, m: Signal<int>, d: Signal<int>, open: Signal<bool>) -> Node {
     return Grid(config = GridConfig(columns = 7, gap = 3)) {
         for i in 0..42 {
@@ -1520,26 +1520,26 @@ fn CalGrid(y: Signal<int>, m: Signal<int>, d: Signal<int>, open: Signal<bool>) -
     }
 }
 
-/// Options for `DatePicker`.
+/** *Options for `DatePicker`. */
 struct DatePickerProps {
-    /// `Size` token: the trigger is `control_h(size)` tall.
+    /** *`Size` token: the trigger is `control_h(size)` tall. */
     size: int = Size.Md,
-    /// Draws the danger edge (a `Field` with an `error` sets it).
+    /** *Draws the danger edge (a `Field` with an `error` sets it). */
     invalid: bool = false,
-    /// Dims the trigger and makes it inert.
+    /** *Dims the trigger and makes it inert. */
     disabled: bool = false,
-    /// The caption above the trigger, and its accessible name. Empty hides it.
+    /** *The caption above the trigger, and its accessible name. Empty hides it. */
     label: string = "Date",
-    /// Style, merged over the trigger's own (`SELECT_W` wide by default).
+    /** *Style, merged over the trigger's own (`SELECT_W` wide by default). */
     style: Option<fn() -> Style> = none,
 }
 
-/// Calendar picker: label, input-like trigger with a calendar icon, and a
-/// floating sheet (kind-9 so the page scroller cannot clip it). Month and
-/// year rails step with chevron icons; picking a day closes the sheet.
-/// Keys, while the sheet is open: arrows move a day / a week (crossing
-/// months), PageUp / PageDown a month, Home / End to the week's ends, Enter
-/// picks, Escape closes.
+/** *Calendar picker: label, input-like trigger with a calendar icon, and a */
+/** *floating sheet (kind-9 so the page scroller cannot clip it). Month and */
+/** *year rails step with chevron icons; picking a day closes the sheet. */
+/** *Keys, while the sheet is open: arrows move a day / a week (crossing */
+/** *months), PageUp / PageDown a month, Home / End to the week's ends, Enter */
+/** *picks, Escape closes. */
 fn DatePicker(y: Signal<int>, m: Signal<int>, d: Signal<int>, p: DatePickerProps) -> Node {
     // state
     let open = signal(false)
@@ -1698,8 +1698,8 @@ fn DatePicker(y: Signal<int>, m: Signal<int>, d: Signal<int>, p: DatePickerProps
     }
 }
 
-/// Page: white background column with breathing room. Sets the native
-/// roles once; every following Component reads them at paint.
+/** *Page: white background column with breathing room. Sets the native */
+/** *roles once; every following Component reads them at paint. */
 fn Page() -> Node {
     ensure_role_colors()
     return Box(style = Style(
@@ -1715,21 +1715,21 @@ fn Page() -> Node {
 // Tier A organisms: menu hosts, dialog presets, sheet
 // ═══════════════════════════════════════════════════════════════════
 
-/// Options for `SplitButton`.
+/** *Options for `SplitButton`. */
 struct SplitButtonProps {
     look: int = Look.Solid,
     size: int = Size.Md,
-    /// The main action.
+    /** *The main action. */
     on_click: Option<fn()> = none,
-    /// The caret's menu.
+    /** *The caret's menu. */
     items: []MenuRow = no_menu_rows(),
     on_select: Option<fn(int)> = none,
-    /// Accessible name of the caret.
+    /** *Accessible name of the caret. */
     menuLabel: string = "More options",
 }
 
-/// A primary action with a caret that opens a `Menu` of related ones
-/// ("Save" ▾ Save as… / Save a copy).
+/** *A primary action with a caret that opens a `Menu` of related ones */
+/** *("Save" ▾ Save as… / Save a copy). */
 fn SplitButton(label: string, p: SplitButtonProps) -> Node {
     // The seam sits on the wrapper, not the caret. The menu anchors to its
     // host, and a margin on the caret would make that host 1px wider than
@@ -1751,7 +1751,7 @@ fn SplitButton(label: string, p: SplitButtonProps) -> Node {
     }
 }
 
-/// The caret half of a `SplitButton`: square, end corners round.
+/** *The caret half of a `SplitButton`: square, end corners round. */
 fn SplitCaret(look: int, size: int, label: string) -> Node {
     return Box(
         style = Style(
@@ -1775,7 +1775,7 @@ fn SplitCaret(look: int, size: int, label: string) -> Node {
     }
 }
 
-/// Options for `DropdownMenu`.
+/** *Options for `DropdownMenu`. */
 struct DropdownMenuProps {
     look: int = Look.Outline,
     size: int = Size.Md,
@@ -1784,24 +1784,24 @@ struct DropdownMenuProps {
     place: int = 0,
 }
 
-/// A button with a trailing chevron that opens a `Menu` of `items`.
+/** *A button with a trailing chevron that opens a `Menu` of `items`. */
 fn DropdownMenu(label: string, p: DropdownMenuProps) -> Node {
     return Menu(items = p.items, on_select = p.on_select, place = p.place, trigger = fn() {
         GroupSegment(label, 0, 1, p.look, p.size, noop, true, IC_CHEV_DOWN)
     })
 }
 
-/// Options for `ContextMenu`.
+/** *Options for `ContextMenu`. */
 struct ContextMenuProps {
     items: []MenuRow = no_menu_rows(),
     on_select: Option<fn(int)> = none,
     disabled: bool = false,
-    /// The region that answers a right-click (or ctrl-click).
+    /** *The region that answers a right-click (or ctrl-click). */
     children: fn() = noop,
 }
 
-/// Wrap a region so a secondary click opens a `Menu` of `items` at the
-/// pointer. Escape, an outside click, or a pick closes it.
+/** *Wrap a region so a secondary click opens a `Menu` of `items` at the */
+/** *pointer. Escape, an outside click, or a pick closes it. */
 fn ContextMenu(p: ContextMenuProps) -> Node {
     // state
     let active = signal(-1)
@@ -1838,19 +1838,19 @@ fn ContextMenu(p: ContextMenuProps) -> Node {
     }
 }
 
-/// Options for `ConfirmDialog`.
+/** *Options for `ConfirmDialog`. */
 struct ConfirmDialogProps {
     title: string = "Are you sure?",
     body: string = "",
     confirm: string = "Confirm",
     cancel: string = "Cancel",
-    /// A destructive confirm: the button turns `Look.Danger`.
+    /** *A destructive confirm: the button turns `Look.Danger`. */
     danger: bool = false,
     on_confirm: Option<fn()> = none,
     on_cancel: Option<fn()> = none,
 }
 
-/// A yes / no question over a scrim. Either button closes it.
+/** *A yes / no question over a scrim. Either button closes it. */
 fn ConfirmDialog(open: Signal<bool>, p: ConfirmDialogProps) -> Node {
     return AlertDialog(open, title = p.title) {
         if p.body.len > 0 {
@@ -1873,18 +1873,18 @@ fn ConfirmDialog(open: Signal<bool>, p: ConfirmDialogProps) -> Node {
     }
 }
 
-/// Options for `PromptDialog`.
+/** *Options for `PromptDialog`. */
 struct PromptDialogProps {
     title: string = "",
     body: string = "",
     placeholder: string = "",
     confirm: string = "OK",
     cancel: string = "Cancel",
-    /// Runs with the text on OK (or Enter in the field).
+    /** *Runs with the text on OK (or Enter in the field). */
     on_submit: Option<fn(string)> = none,
 }
 
-/// A dialog that asks for one line of text, bound to `value`.
+/** *A dialog that asks for one line of text, bound to `value`. */
 fn PromptDialog(open: Signal<bool>, value: Signal<string>, p: PromptDialogProps) -> Node {
     fn ok() {
         open.set(false)
@@ -1902,16 +1902,16 @@ fn PromptDialog(open: Signal<bool>, value: Signal<string>, p: PromptDialogProps)
     }
 }
 
-/// Options for `Sheet`.
+/** *Options for `Sheet`. */
 struct SheetProps {
-    /// Panel height.
+    /** *Panel height. */
     size: int = 360,
     title: string = "",
     children: fn() = noop,
 }
 
-/// A bottom sheet: a `Drawer` from the bottom edge with a grip bar and an
-/// optional title. Outside click and Escape close it.
+/** *A bottom sheet: a `Drawer` from the bottom edge with a grip bar and an */
+/** *optional title. Outside click and Escape close it. */
 fn Sheet(open: Signal<bool>, p: SheetProps) -> Node {
     return Drawer(open, side = Side.SideBottom, size = p.size) {
         Box(style = Style(direction = Direction.Row, justify = Align.Center)) {
@@ -1929,7 +1929,7 @@ fn Sheet(open: Signal<bool>, p: SheetProps) -> Node {
 
 // --- tier B organisms: tree, shell, palette, notifications ---------------
 
-/// True when `xs` holds `v`.
+/** *True when `xs` holds `v`. */
 fn int_has(xs: []int, v: int) -> bool {
     for i in 0..xs.len {
         if xs[i] == v {
@@ -1939,7 +1939,7 @@ fn int_has(xs: []int, v: int) -> bool {
     return false
 }
 
-/// `xs` with `v` added, or removed if it was already there.
+/** *`xs` with `v` added, or removed if it was already there. */
 fn int_toggle(xs: []int, v: int) -> []int {
     let mut out = []int {}
     let mut found = false
@@ -1956,24 +1956,24 @@ fn int_toggle(xs: []int, v: int) -> []int {
     return out
 }
 
-/// One row of a `Tree`. `parent` is the parent's index, or -1 for a root.
-/// `folder` draws a chevron before any child exists, so a caller can append
-/// children from `on_open`.
+/** *One row of a `Tree`. `parent` is the parent's index, or -1 for a root. */
+/** *`folder` draws a chevron before any child exists, so a caller can append */
+/** *children from `on_open`. */
 struct TreeItem {
     label: string = "",
     parent: int = -1,
     folder: bool = false,
 }
 
-/// Options for `Tree`.
+/** *Options for `Tree`. */
 struct TreeProps {
-    /// Runs with the row index when a folder opens.
+    /** *Runs with the row index when a folder opens. */
     on_open: Option<fn(int)> = none,
     label: string = "",
     style: Option<fn() -> Style> = none,
 }
 
-/// A row is shown when every ancestor folder is open. Roots always are.
+/** *A row is shown when every ancestor folder is open. Roots always are. */
 fn tree_shown(rows: []TreeItem, opened: []int, index: int) -> bool {
     let mut p = rows[index].parent
     let mut guard = 0
@@ -2009,7 +2009,7 @@ fn tree_depth(rows: []TreeItem, index: int) -> int {
     return d
 }
 
-/// A chevron is warranted when the row is marked `folder` or already has a child.
+/** *A chevron is warranted when the row is marked `folder` or already has a child. */
 fn tree_folder(rows: []TreeItem, index: int) -> bool {
     if index < 0 || index >= rows.len {
         return false
@@ -2025,7 +2025,7 @@ fn tree_folder(rows: []TreeItem, index: int) -> bool {
     return false
 }
 
-/// Move the selection to the visible row `delta` steps away.
+/** *Move the selection to the visible row `delta` steps away. */
 fn tree_move(visible: Signal<[]int>, selected: Signal<int>, delta: int) {
     let vs = visible.get()
     let mut at = 0
@@ -2040,7 +2040,7 @@ fn tree_move(visible: Signal<[]int>, selected: Signal<int>, delta: int) {
     }
 }
 
-/// One visible tree row: chevron, label, indent of 16px per level.
+/** *One visible tree row: chevron, label, indent of 16px per level. */
 fn tree_noop(index: int) {
     return
 }
@@ -2141,8 +2141,8 @@ fn TreeRow(
     }
 }
 
-/// Expand and collapse, 16px of indent per level, arrows move among the rows
-/// that are open. `open` holds the indices of expanded folders.
+/** *Expand and collapse, 16px of indent per level, arrows move among the rows */
+/** *that are open. `open` holds the indices of expanded folders. */
 fn Tree(
     items: Signal<[]TreeItem>,
     selected: Signal<int>,
@@ -2165,14 +2165,14 @@ fn Tree(
     }
 }
 
-/// Options for `Sidebar`.
+/** *Options for `Sidebar`. */
 struct SidebarProps {
     style: Option<fn() -> Style> = none,
     children: fn() = noop,
 }
 
-/// A side rail: `SIDEBAR_W` (240) open, `SIDEBAR_RAIL` (56) collapsed.
-/// The chevron button is labelled Collapse / Expand.
+/** *A side rail: `SIDEBAR_W` (240) open, `SIDEBAR_RAIL` (56) collapsed. */
+/** *The chevron button is labelled Collapse / Expand. */
 fn Sidebar(collapsed: Signal<bool>, p: SidebarProps) -> Node {
     return Box(
         style = Style(
@@ -2224,14 +2224,14 @@ fn Sidebar(collapsed: Signal<bool>, p: SidebarProps) -> Node {
     }
 }
 
-/// Options for `NavGroup`.
+/** *Options for `NavGroup`. */
 struct NavGroupProps {
-    /// When this is true the heading hides (a collapsed rail).
+    /** *When this is true the heading hides (a collapsed rail). */
     collapsed: Option<Signal<bool>> = none,
     children: fn() = noop,
 }
 
-/// A heading over a stack of `NavItem`s. Hidden while `collapsed` is set.
+/** *A heading over a stack of `NavItem`s. Hidden while `collapsed` is set. */
 fn NavGroup(title: string, p: NavGroupProps) -> Node {
     let has = result.is_some(p.collapsed)
     let col = result.some_or(p.collapsed, no_flag_signal())
@@ -2250,8 +2250,8 @@ fn NavGroup(title: string, p: NavGroupProps) -> Node {
     }
 }
 
-/// One destination in a `Sidebar`. The label hides while `collapsed` is set;
-/// the icon stays, centred on the rail.
+/** *One destination in a `Sidebar`. The label hides while `collapsed` is set; */
+/** *the icon stays, centred on the rail. */
 fn NavItem(
     label: string,
     icon: string,
@@ -2290,18 +2290,18 @@ fn NavItem(
     }
 }
 
-/// Options for `AppShell`.
+/** *Options for `AppShell`. */
 struct AppShellProps {
-    /// The side rail.
+    /** *The side rail. */
     sidebar: fn() = noop,
-    /// A bar across the top of the main column.
+    /** *A bar across the top of the main column. */
     header: fn() = noop,
     style: Option<fn() -> Style> = none,
     children: fn() = noop,
 }
 
-/// Sidebar, then a column of header and the page body. The header is inset
-/// by the same 16px as the body, so its label does not sit on the rail.
+/** *Sidebar, then a column of header and the page body. The header is inset */
+/** *by the same 16px as the body, so its label does not sit on the rail. */
 fn AppShell(p: AppShellProps) -> Node {
     return Box(
         style = Style(
@@ -2324,16 +2324,16 @@ fn AppShell(p: AppShellProps) -> Node {
     }
 }
 
-/// Options for `MasterDetail`.
+/** *Options for `MasterDetail`. */
 struct MasterDetailProps {
     master: fn() = noop,
-    /// Width of the master column.
+    /** *Width of the master column. */
     masterWidth: int = 280,
     style: Option<fn() -> Style> = none,
     children: fn() = noop,
 }
 
-/// A fixed master column, a hairline, and the detail.
+/** *A fixed master column, a hairline, and the detail. */
 fn MasterDetail(p: MasterDetailProps) -> Node {
     let w = if p.masterWidth > 0 { p.masterWidth } else { 280 }
     return Box(
@@ -2366,24 +2366,24 @@ fn MasterDetail(p: MasterDetailProps) -> Node {
     }
 }
 
-/// Options for `SplitPane`.
+/** *Options for `SplitPane`. */
 struct SplitPaneProps {
-    /// The leading pane.
+    /** *The leading pane. */
     first: fn() = noop,
-    /// Leading pane's starting size, in px.
+    /** *Leading pane's starting size, in px. */
     initial: int = 240,
-    /// Narrowest either pane may go (`SPLIT_MIN`).
+    /** *Narrowest either pane may go (`SPLIT_MIN`). */
     min: int = SPLIT_MIN,
-    /// Stack the panes and drag vertically.
+    /** *Stack the panes and drag vertically. */
     vertical: bool = false,
-    /// Cross size: the height of a horizontal split, the width of a vertical one.
+    /** *Cross size: the height of a horizontal split, the width of a vertical one. */
     size: int = 160,
     style: Option<fn() -> Style> = none,
-    /// The trailing pane.
+    /** *The trailing pane. */
     children: fn() = noop,
 }
 
-/// Two panes and a 6px drag handle. Neither pane goes below `min`.
+/** *Two panes and a 6px drag handle. Neither pane goes below `min`. */
 fn SplitPane(p: SplitPaneProps) -> Node {
     let split = signal(if p.initial > 0 { p.initial } else { 240 })
     let host = ref()
@@ -2451,14 +2451,14 @@ fn SplitPane(p: SplitPaneProps) -> Node {
     }
 }
 
-/// One notice in a `NotificationCenter`.
+/** *One notice in a `NotificationCenter`. */
 struct Notice {
     title: string = "",
     body: string = "",
     tint: int = Tint.Info,
 }
 
-/// `xs` plus `n`.
+/** *`xs` plus `n`. */
 fn notice_plus(xs: []Notice, n: Notice) -> []Notice {
     let mut out = []Notice {}
     for i in 0..xs.len {
@@ -2468,7 +2468,7 @@ fn notice_plus(xs: []Notice, n: Notice) -> []Notice {
     return out
 }
 
-/// `xs` without index `drop`.
+/** *`xs` without index `drop`. */
 fn notice_without(xs: []Notice, drop: int) -> []Notice {
     let mut out = []Notice {}
     for i in 0..xs.len {
@@ -2479,7 +2479,7 @@ fn notice_without(xs: []Notice, drop: int) -> []Notice {
     return out
 }
 
-/// A single notice card, `TOAST_W` wide. `on_dismiss` shows the X.
+/** *A single notice card, `TOAST_W` wide. `on_dismiss` shows the X. */
 fn Notification(title: Signal<string>, body: Signal<string>, tint: int, on_dismiss: fn()) -> Node {
     return Box(
         style = Style(
@@ -2521,7 +2521,7 @@ fn Notification(title: Signal<string>, body: Signal<string>, tint: int, on_dismi
     }
 }
 
-/// A read-only row in the notification history.
+/** *A read-only row in the notification history. */
 fn NoticeHistory(title: string, body: string) -> Node {
     return Box(
         style = Style(
@@ -2540,8 +2540,8 @@ fn NoticeHistory(title: string, body: string) -> Node {
     }
 }
 
-/// The live stack (`TOAST_W`) and a History toggle. Dismissing a notice moves
-/// it into `history`.
+/** *The live stack (`TOAST_W`) and a History toggle. Dismissing a notice moves */
+/** *it into `history`. */
 fn NotificationCenter(live: Signal<[]Notice>, history: Signal<[]Notice>) -> Node {
     let show = signal(false)
     fn dismiss(i: int) {
@@ -2571,19 +2571,19 @@ fn NotificationCenter(live: Signal<[]Notice>, history: Signal<[]Notice>) -> Node
     }
 }
 
-/// One command in a `CommandPalette`. `section` groups a run of rows.
+/** *One command in a `CommandPalette`. `section` groups a run of rows. */
 struct CommandItem {
     label: string = "",
     section: string = "",
 }
 
-/// Options for `CommandPalette`.
+/** *Options for `CommandPalette`. */
 struct CommandPaletteProps {
     placeholder: string = "Search commands",
     on_select: Option<fn(int)> = none,
 }
 
-/// Indices of `items` whose label contains `q`.
+/** *Indices of `items` whose label contains `q`. */
 fn command_matches(items: []CommandItem, q: string) -> []int {
     let mut out = []int {}
     for i in 0..items.len {
@@ -2594,7 +2594,7 @@ fn command_matches(items: []CommandItem, q: string) -> []int {
     return out
 }
 
-/// One filtered command, with a section label when the group changes.
+/** *One filtered command, with a section label when the group changes. */
 fn CommandRow(
     items: []CommandItem,
     matches: Signal<[]int>,
@@ -2644,9 +2644,9 @@ fn CommandRow(
     }
 }
 
-/// A modal command list, 600 wide and 400 tall. Type to filter (the same
-/// match `Combobox` uses); Up / Down move, Enter runs the highlighted command,
-/// Escape closes.
+/** *A modal command list, 600 wide and 400 tall. Type to filter (the same */
+/** *match `Combobox` uses); Up / Down move, Enter runs the highlighted command, */
+/** *Escape closes. */
 fn CommandPalette(open: Signal<bool>, items: []CommandItem, p: CommandPaletteProps) -> Node {
     let query = signal("")
     let matches = signal([]int {})
@@ -2740,38 +2740,38 @@ fn CommandPalette(open: Signal<bool>, items: []CommandItem, p: CommandPalettePro
     }
 }
 
-/// Options for `Carousel`.
+/** *Options for `Carousel`. */
 struct CarouselProps {
-    /// Tallest the frame grows, in px. The width follows the parent and the
-    /// height follows the current image's aspect ratio up to this; 0 lifts
-    /// the cap, so every image fills the width.
+    /** *Tallest the frame grows, in px. The width follows the parent and the */
+    /** *height follows the current image's aspect ratio up to this; 0 lifts */
+    /** *the cap, so every image fills the width. */
     height: int = 240,
-    /// How each image sits in the frame. `Fit.Contain` shows the whole image;
-    /// it only letterboxes one taller than `height` allows. `Fit.Cover` fills
-    /// the frame and crops.
+    /** *How each image sits in the frame. `Fit.Contain` shows the whole image; */
+    /** *it only letterboxes one taller than `height` allows. `Fit.Cover` fills */
+    /** *the frame and crops. */
     fit: int = Fit.Contain,
-    /// Accessible name for the whole control.
+    /** *Accessible name for the whole control. */
     label: string = "Carousel",
-    /// Style, layered over the column: `style = Style(maxWidth = 640)`.
+    /** *Style, layered over the column: `style = Style(maxWidth = 640)`. */
     style: Option<fn() -> Style> = none,
-    /// Keyboard actions, after Left / Right / Home / End.
+    /** *Keyboard actions, after Left / Right / Home / End. */
     keys: []KeyBind = no_keys(),
 }
 
-/// A paged row of images. `sources` is the live list of paths, data URIs, or
-/// URLs — the same strings `Image` takes, so `Carousel(photos.get())` follows
-/// the signal. The current image fills the frame width and the frame height
-/// follows its aspect ratio, capped at `height` (pass `fit = Fit.Cover` to
-/// fill and crop instead). The frame clips to its width; a page change glides `shiftX`
-/// on `Motion.Glide`. Each slide is pinned at its own frame offset rather
-/// than laid out in flow: a row of frame-wide slides overflows its width, and
-/// an overflowing row wraps, which would stack the slides under the first. Arrows, dots, and Left / Right / Home / End move the
-/// page and wrap at the ends. An empty list shows a placeholder.
-///
-/// ```
-/// let photos = zeus.signal([]string {})
-/// zui.Carousel(photos.get(), height = 240)
-/// ```
+/** *A paged row of images. `sources` is the live list of paths, data URIs, or */
+/** *URLs — the same strings `Image` takes, so `Carousel(photos.get())` follows */
+/** *the signal. The current image fills the frame width and the frame height */
+/** *follows its aspect ratio, capped at `height` (pass `fit = Fit.Cover` to */
+/** *fill and crop instead). The frame clips to its width; a page change glides `shiftX` */
+/** *on `Motion.Glide`. Each slide is pinned at its own frame offset rather */
+/** *than laid out in flow: a row of frame-wide slides overflows its width, and */
+/** *an overflowing row wraps, which would stack the slides under the first. Arrows, dots, and Left / Right / Home / End move the */
+/** *page and wrap at the ends. An empty list shows a placeholder. */
+/** */
+/** *``` */
+/** *let photos = zeus.signal([]string {}) */
+/** *zui.Carousel(photos.get(), height = 240) */
+/** *``` */
 fn Carousel(sources: Signal<[]string>, p: CarouselProps) -> Node {
     let index = signal(0)
     let frame_w = signal(0)

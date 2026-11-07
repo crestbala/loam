@@ -1,5 +1,5 @@
-//! Fixture for C symbol collisions: `theory.voicing` is `loam_theory_voicing`,
-//! the same symbol a main-module `theory_voicing` would get.
+// Fixture for C symbol collisions: `theory.voicing` is `loam_theory_voicing`,
+// the same symbol a main-module `theory_voicing` would get.
 
 let mut level: int = 10
 

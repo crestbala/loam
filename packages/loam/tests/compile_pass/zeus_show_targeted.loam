@@ -23,7 +23,7 @@ fn snap() -> []string {
     return out
 }
 
-/// The current frame's draw list must equal a forced full repaint.
+/** *The current frame's draw list must equal a forced full repaint. */
 fn same_as_full(what: string) {
     let a = snap()
     arena.mark_paint()

@@ -31,13 +31,13 @@ fn under(dir: string, name: string) -> string {
     return "{{dir}}/{{name}}"
 }
 
-/// Append `s` to `p`: read, join, write. There is no append in `std:sys`.
+/** *Append `s` to `p`: read, join, write. There is no append in `std:sys`. */
 fn append_file(p: string, s: string) {
     sys.write_file(p, cat(sys.read_file(p), s))
 }
 
-/// One request/response over a fresh connection. Every reply from the serve server
-/// ends with `Connection: close`, so reading until EOF is the whole protocol.
+/** *One request/response over a fresh connection. Every reply from the serve server */
+/** *ends with `Connection: close`, so reading until EOF is the whole protocol. */
 fn exchange(port: int, method: string, path: string, ctype: string, body: string) -> string {
     let fd = net.tcp_connect("127.0.0.1", port)
     if fd < 0 {
@@ -63,7 +63,7 @@ fn exchange(port: int, method: string, path: string, ctype: string, body: string
     return resp
 }
 
-/// Where a response's headers end, or `-1`.
+/** *Where a response's headers end, or `-1`. */
 fn headers_len(resp: string) -> int {
     for i in 0..resp.len {
         if i + 3 < resp.len &&
@@ -77,7 +77,7 @@ fn headers_len(resp: string) -> int {
     return -1
 }
 
-/// A response's body, or `""` when it never got that far.
+/** *A response's body, or `""` when it never got that far. */
 fn body_of(resp: string) -> string {
     let at = headers_len(resp)
     if at < 0 {
@@ -86,7 +86,7 @@ fn body_of(resp: string) -> string {
     return slice(resp, at, resp.len)
 }
 
-/// A response's status code, or `0`.
+/** *A response's status code, or `0`. */
 fn status_of(resp: string) -> int {
     for i in 0..resp.len {
         if resp[i] == 32 /* space, before the code */ {
@@ -96,8 +96,8 @@ fn status_of(resp: string) -> int {
     return 0
 }
 
-/// The value of the header `name`, matched case-insensitively in the header block
-/// only. `""` when it is absent.
+/** *The value of the header `name`, matched case-insensitively in the header block */
+/** *only. `""` when it is absent. */
 fn header_of(resp: string, name: string) -> string {
     let head = headers_len(resp)
     if head < 0 {
@@ -127,7 +127,7 @@ fn header_of(resp: string, name: string) -> string {
     return ""
 }
 
-/// `field` without its leading space or its trailing line ending.
+/** *`field` without its leading space or its trailing line ending. */
 fn trim_field(field: string) -> string {
     let mut a = 0
     while a < field.len && (field[a] == 32 || field[a] == 9) {
@@ -140,8 +140,8 @@ fn trim_field(field: string) -> string {
     return slice(field, a, b)
 }
 
-/// Subscribe to the live channel and return the connection. It is held open
-/// across the edit below, which is the whole point of the channel.
+/** *Subscribe to the live channel and return the connection. It is held open */
+/** *across the edit below, which is the whole point of the channel. */
 fn sse_open(port: int) -> int {
     let fd = net.tcp_connect("127.0.0.1", port)
     if fd < 0 {
@@ -154,7 +154,7 @@ fn sse_open(port: int) -> int {
     return fd
 }
 
-/// Read frames until `want` shows up in what has arrived, or `ms` passes.
+/** *Read frames until `want` shows up in what has arrived, or `ms` passes. */
 fn sse_wait(fd: int, want: string, ms: int) -> bool {
     if fd <= 0 {
         return false

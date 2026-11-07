@@ -1,21 +1,21 @@
-//! The client to the native engine (`server/main.loam`).
-//!
-//! The wasm build has no ffmpeg and no voice tools, so it cannot make a
-//! piece itself. These calls reach the engine the way vidget's store reaches
-//! its download engine: `http.client()` is h2c to loopback on macOS and
-//! same-origin (through the dev server's `/Mune/*` proxy) in the browser.
-//!
-//! The store uses this on every target except native — where it keeps its
-//! in-process path — so the same UI drives either. `remote()` is the switch.
+// The client to the native engine (`server/main.loam`).
+//
+// The wasm build has no ffmpeg and no voice tools, so it cannot make a
+// piece itself. These calls reach the engine the way vidget's store reaches
+// its download engine: `http.client()` is h2c to loopback on macOS and
+// same-origin (through the dev server's `/Mune/*` proxy) in the browser.
+//
+// The store uses this on every target except native — where it keeps its
+// in-process path — so the same UI drives either. `remote()` is the switch.
 
 import "http"
 import "std:sys"
 import "zeus"
 import "../server/api.loam" as api
 
-/// Whether to make the piece through the engine rather than in this process.
-/// The browser always does; the macOS window keeps its own path (zeli starts
-/// the engine for it only when the app asks). `MUNE_ENGINE=1` forces it.
+/** *Whether to make the piece through the engine rather than in this process. */
+/** *The browser always does; the macOS window keeps its own path (zeli starts */
+/** *the engine for it only when the app asks). `MUNE_ENGINE=1` forces it. */
 fn remote() -> bool {
     if sys.env("MUNE_ENGINE") == "1" {
         return true
@@ -33,11 +33,11 @@ let mut state_tools: int = 0
 let mut state_voice: int = 0
 let mut state_busy: bool = false
 
-/// Bumped by every call that changes the engine (sync, generate, save,
-/// cancel). A poll sent before it changed answers for the old engine, so
-/// its reply is dropped.
+/** *Bumped by every call that changes the engine (sync, generate, save, */
+/** *cancel). A poll sent before it changed answers for the old engine, so */
+/** *its reply is dropped. */
 let mut epoch: int = 0
-/// Changing calls still on the wire. No poll goes out while any is.
+/** *Changing calls still on the wire. No poll goes out while any is. */
 let mut pending: int = 0
 
 // Sync: the engine's recordings follow the client's list. Reset, then one
@@ -48,12 +48,12 @@ let mut sync_paths: []string = []string {}
 let mut sync_gen: int = 0
 let mut sync_busy: bool = false
 
-/// Bumped on each generate reply; `gen_ok` / `gen_error` describe it.
+/** *Bumped on each generate reply; `gen_ok` / `gen_error` describe it. */
 let mut gen_seq: int = 0
 let mut gen_ok: bool = false
 let mut gen_error: string = ""
 
-/// Bumped on each poll reply that belongs to the current epoch.
+/** *Bumped on each poll reply that belongs to the current epoch. */
 let mut poll_seq: int = 0
 let mut poll_stage: int = 0
 let mut poll_percent: int = 0
@@ -76,11 +76,11 @@ let mut take_detail: []string = []string {}
 let mut take_role: []int = []int {}
 let mut taking: bool = false
 
-/// Set while a poll is on the wire; the store's tick skips when it is. The
-/// browser allows only four fetches at once, so one poll at a time.
+/** *Set while a poll is on the wire; the store's tick skips when it is. The */
+/** *browser allows only four fetches at once, so one poll at a time. */
 let mut polling: bool = false
 
-/// Bumped on each save reply; `save_error` is why the engine refused.
+/** *Bumped on each save reply; `save_error` is why the engine refused. */
 let mut save_seq: int = 0
 let mut save_error: string = ""
 
@@ -95,7 +95,7 @@ fn settled() {
     }
 }
 
-/// Ask the engine how it stands. One request at a time.
+/** *Ask the engine how it stands. One request at a time. */
 fn state() {
     if state_busy {
         return
@@ -115,7 +115,7 @@ fn state() {
     })
 }
 
-/// Make the engine hold exactly these recordings, in this order.
+/** *Make the engine hold exactly these recordings, in this order. */
 fn sync(names: []string, paths: []string) {
     let mut ns = []string {}
     let mut ps = []string {}
@@ -137,7 +137,7 @@ fn synced() -> bool {
     return !sync_busy
 }
 
-/// Step `i` of sync `gen`: -1 resets, then each recording is added.
+/** *Step `i` of sync `gen`: -1 resets, then each recording is added. */
 fn sync_send(gen: int, i: int) {
     if gen != sync_gen {
         // The list moved while this chain ran: start over with the new one.
@@ -165,8 +165,8 @@ fn sync_send(gen: int, i: int) {
     })
 }
 
-/// Ask for a piece. The reply bumps `gen_seq`; `gen_ok` false means the
-/// engine refused and `gen_error` says why.
+/** *Ask for a piece. The reply bumps `gen_seq`; `gen_ok` false means the */
+/** *engine refused and `gen_error` says why. */
 fn generate(
     scan: int,
     seed: int,
@@ -202,10 +202,10 @@ fn generate(
     )
 }
 
-/// One poll step: advances the engine and copies its stage out. Does nothing
-/// while the previous poll is still on the wire, so at most one is in flight,
-/// or while a changing call is, so a reply never describes the engine before
-/// that call.
+/** *One poll step: advances the engine and copies its stage out. Does nothing */
+/** *while the previous poll is still on the wire, so at most one is in flight, */
+/** *or while a changing call is, so a reply never describes the engine before */
+/** *that call. */
 fn poll() {
     if polling || pending > 0 {
         return
@@ -232,8 +232,8 @@ fn poll() {
     })
 }
 
-/// Fetch the finished take. `take_ready` false until the engine has one;
-/// `take_id` tells one take from the next.
+/** *Fetch the finished take. `take_ready` false until the engine has one; */
+/** *`take_id` tells one take from the next. */
 fn take() {
     if taking {
         return
@@ -256,8 +256,8 @@ fn take() {
     })
 }
 
-/// Save take `id` as `title`, `format` (`FMT_*`). The reply bumps
-/// `save_seq`; the job's end shows in the polls (`poll_saving`).
+/** *Save take `id` as `title`, `format` (`FMT_*`). The reply bumps */
+/** *`save_seq`; the job's end shows in the polls (`poll_saving`). */
 fn save(id: int, title: string, format: int) {
     changing()
     http.client().call_async(

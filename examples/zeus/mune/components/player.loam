@@ -1,6 +1,6 @@
-//! The bar along the bottom: Generate, the waveform of the take (its
-//! sections in colour, the playhead, press to seek), the energy arc the
-//! chain walked, play, and save.
+// The bar along the bottom: Generate, the waveform of the take (its
+// sections in colour, the playhead, press to seek), the energy arc the
+// chain walked, play, and save.
 
 import "zeus"
 import "zui"
@@ -13,10 +13,10 @@ import "kit.loam" as kit
 
 let wave_ref = zeus.ref()
 
-/// The longest form has nine sections; the strip keeps a slot for each.
+/** *The longest form has nine sections; the strip keeps a slot for each. */
 const MAX_SECTIONS: int = 9
 
-/// Columns in the pitch path strip.
+/** *Columns in the pitch path strip. */
 const PATH_COLS: int = 60
 
 fn PlayerBar() -> Node {
@@ -94,8 +94,8 @@ fn PlayButton() -> Node {
     }
 }
 
-/// Bars of the take's level over a strip of its sections. Press or drag to
-/// move the playhead.
+/** *Bars of the take's level over a strip of its sections. Press or drag to */
+/** *move the playhead. */
 fn Waveform() -> Node {
     zeus.on_mount(fn() {
         zeus.on_drag(wave_ref, fn() { seek_to(zeus.current_mouse().x) })
@@ -156,7 +156,7 @@ fn bar_color(k: int) -> string {
     return theme.WAVE_IDLE
 }
 
-/// One section on the strip, as wide as its share of the piece.
+/** *One section on the strip, as wide as its share of the piece. */
 fn SectionMark(k: int) -> Node {
     return zeus.Box(
         visible = mark_share(k) > 0,
@@ -182,9 +182,9 @@ fn mark_share(k: int) -> int {
     return if at < s.len { s[at] } else { 0 }
 }
 
-/// How full the phrases are across the take: one column per slice, as
-/// tall as the energy of the phrase heard there. Before the first take it
-/// shows the arc the chain will aim for, faint.
+/** *How full the phrases are across the take: one column per slice, as */
+/** *tall as the energy of the phrase heard there. Before the first take it */
+/** *shows the arc the chain will aim for, faint. */
 fn EnergyArc() -> Node {
     return zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 10)) {
         zeus.Box(style = Style(
@@ -224,7 +224,7 @@ fn PathCol(k: int) -> Node {
     ))
 }
 
-/// Energy 0..1000 at column `k`: what was heard, or a typical arc.
+/** *Energy 0..1000 at column `k`: what was heard, or a typical arc. */
 fn path_value(k: int) -> int {
     let heard = store.path_heard.get()
     if heard.len > 0 {
@@ -250,8 +250,8 @@ fn seek_to(x: int) {
     store.seek(p)
 }
 
-/// Progress while working; otherwise the last error, a notice, or where the
-/// piece was saved.
+/** *Progress while working; otherwise the last error, a notice, or where the */
+/** *piece was saved. */
 fn StatusLine() -> Node {
     return zeus.Box(style = Style(
         direction = Direction.Row,
@@ -304,8 +304,8 @@ fn StatusLine() -> Node {
     }
 }
 
-/// `zui.Button` reads `enabled` when it builds, so each action is two
-/// buttons, an enabled and a disabled one, and only one is shown.
+/** *`zui.Button` reads `enabled` when it builds, so each action is two */
+/** *buttons, an enabled and a disabled one, and only one is shown. */
 fn Gate(on: Signal<bool>, live: fn(), dead: fn()) -> Node {
     return zeus.Box(style = Style(direction = Direction.Row, grow = 1)) {
         zeus.Box(visible = on.get(), style = Style(direction = Direction.Row, grow = 1)) {

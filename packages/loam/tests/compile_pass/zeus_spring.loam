@@ -17,7 +17,7 @@ fn must(ok: bool, what: string) {
     }
 }
 
-/// Frames of `dt` ms until the track pool is idle.
+/** *Frames of `dt` ms until the track pool is idle. */
 fn land(dt: int) -> int {
     let mut i = 0
     while i < 200 && zeus.proof_anim_live() > 0 {
@@ -27,7 +27,7 @@ fn land(dt: int) -> int {
     return i
 }
 
-/// The strongest shadow in the current draw list.
+/** *The strongest shadow in the current draw list. */
 fn strongest_shadow() -> int {
     let mut top = 0
     for i in 0..zeus.draw_count() {

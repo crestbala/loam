@@ -1,6 +1,6 @@
-//! Layers over the stage: the picture itself, and what floats on it when the
-//! controls do not — the empty state, the spinner, the big play button, the
-//! on-screen feedback, the double-tap ripples and the error card.
+// Layers over the stage: the picture itself, and what floats on it when the
+// controls do not — the empty state, the spinner, the big play button, the
+// on-screen feedback, the double-tap ripples and the error card.
 
 import "zeus"
 import "zui"
@@ -9,16 +9,16 @@ import "icons.loam"
 import { WHITE, SOFT, FAINT, GLASS, ACCENT } "../theme.loam"
 import { Centered, Glyph, Pill } "kit.loam"
 
-/// The host paints the current frame into this `Image` (`media:<slot>`). Its
-/// box follows the aspect mode; `fit` does the rest. `fit` is read once, so
-/// the image is rebuilt when the mode changes.
-///
-/// Out of flow, centred by offsets: a box in flow sized from the last stage
-/// size held the stage at its old size when the window shrank, so the page
-/// overflowed and scrolled. Absolute, only the window sizes the stage. The
-/// stage size it reads is refreshed by the stage's `on_resize` in the frame
-/// the window changes size (see `screen.loam`), so entering or leaving full
-/// screen never paints a frame sized for the old window.
+/** *The host paints the current frame into this `Image` (`media:<slot>`). Its */
+/** *box follows the aspect mode; `fit` does the rest. `fit` is read once, so */
+/** *the image is rebuilt when the mode changes. */
+/** */
+/** *Out of flow, centred by offsets: a box in flow sized from the last stage */
+/** *size held the stage at its old size when the window shrank, so the page */
+/** *overflowed and scrolled. Absolute, only the window sizes the stage. The */
+/** *stage size it reads is refreshed by the stage's `on_resize` in the frame */
+/** *the window changes size (see `screen.loam`), so entering or leaving full */
+/** *screen never paints a frame sized for the old window. */
 fn Picture() -> Node {
     return zeus.Box(
         style = Style(
@@ -42,7 +42,7 @@ fn Picture() -> Node {
     }
 }
 
-/// Nothing loaded: the logo, Open, Open URL, and the drop hint.
+/** *Nothing loaded: the logo, Open, Open URL, and the drop hint. */
 fn Empty() -> Node {
     return zeus.Box(
         style = Style(
@@ -107,7 +107,7 @@ fn Empty() -> Node {
     }
 }
 
-/// Loading or waiting for data.
+/** *Loading or waiting for data. */
 fn Busy() -> Node {
     return zeus.Box(
         style = Style(
@@ -134,7 +134,7 @@ fn Busy() -> Node {
     }
 }
 
-/// Big centred play button while paused (and the replay glyph once ended).
+/** *Big centred play button while paused (and the replay glyph once ended). */
 fn CenterPlay() -> Node {
     return zeus.Box(
         style = Style(
@@ -189,7 +189,7 @@ fn CenterPlay() -> Node {
     }
 }
 
-/// Short feedback for a key or gesture ("1.5×", "Volume 60%", "+5s").
+/** *Short feedback for a key or gesture ("1.5×", "Volume 60%", "+5s"). */
 fn Osd() -> Node {
     return zeus.Box(
         style = Style(
@@ -223,7 +223,7 @@ fn Osd() -> Node {
     }
 }
 
-/// The double-tap ripple on one side: « 10s / 10s ».
+/** *The double-tap ripple on one side: « 10s / 10s ». */
 fn TapBubble(side: int) -> Node {
     return zeus.Box(
         style = Style(

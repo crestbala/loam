@@ -1,4 +1,4 @@
-//! HPACK Huffman codec (RFC 7541 Appendix B). `lit` Huffman-encodes when shorter.
+// HPACK Huffman codec (RFC 7541 Appendix B). `lit` Huffman-encodes when shorter.
 
 struct HuffOut {
     ok: int,
@@ -13,7 +13,7 @@ fn bit_mask(n: int) -> i64 {
     return m
 }
 
-/// Huffman-decode `s`. `ok == 0` on truncated input or illegal padding.
+/** *Huffman-decode `s`. `ok == 0` on truncated input or illegal padding. */
 fn decode(s: string) -> HuffOut {
     let nbits = [256]int {
         13, 23, 28, 28, 28, 28, 28, 28, 28, 24, 30, 28, 28, 30, 28, 28,
@@ -138,7 +138,7 @@ fn decode(s: string) -> HuffOut {
     return HuffOut { ok: ok, val: val }
 }
 
-/// Huffman-encode `s`. Empty on input longer than 65536 bytes.
+/** *Huffman-encode `s`. Empty on input longer than 65536 bytes. */
 fn encode(s: string) -> string {
     let nbits = [256]int {
         13, 23, 28, 28, 28, 28, 28, 28, 28, 24, 30, 28, 28, 30, 28, 28,

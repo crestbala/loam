@@ -1,10 +1,10 @@
-//! Level calibration, not a test: every style's instruments rendered one
-//! at a time (slider at 70, no effects) and measured on the premaster,
-//! against the base targets of `graph.style_trim` (styles that lean on an
-//! instrument sit above them). Prints the trim each one needs. Given a
-//! recording too, it measures the recordings alone the same way.
-//!
-//!   ./bin/loamc examples/zeus/mune/tests/stems.loam -o /tmp/mune-stems && /tmp/mune-stems /tmp/stems [song.mp3]
+// Level calibration, not a test: every style's instruments rendered one
+// at a time (slider at 70, no effects) and measured on the premaster,
+// against the base targets of `graph.style_trim` (styles that lean on an
+// instrument sit above them). Prints the trim each one needs. Given a
+// recording too, it measures the recordings alone the same way.
+//
+//   ./bin/loamc examples/zeus/mune/tests/stems.loam -o /tmp/mune-stems && /tmp/mune-stems /tmp/stems [song.mp3]
 
 import "std:fmt"
 import "std:str"
@@ -15,7 +15,7 @@ import "../core/jobs.loam" as jobs
 import "../core/sound.loam" as sound
 import "../core/styles.loam" as styles
 
-/// Integrated loudness of `wav` in LUFS ×10, or -999 when silent.
+/** *Integrated loudness of `wav` in LUFS ×10, or -999 when silent. */
 fn lufs(wav: string) -> int {
     let out = sys.exec(
         "ffmpeg -nostdin -v info -i '{{wav}}' -af ebur128 -f null - 2>&1 | sed -n 's/^ *I: *\\(-*[0-9.]*\\) LUFS.*/\\1/p' | tail -n 1",
@@ -64,7 +64,7 @@ fn only(base: Sound, layer: int) -> Sound {
     return s
 }
 
-/// `-i` for every input the graph reads.
+/** *`-i` for every input the graph reads. */
 fn inputs(g: Graph) -> string {
     let mut out = ""
     for i in 0..g.inputs.len {

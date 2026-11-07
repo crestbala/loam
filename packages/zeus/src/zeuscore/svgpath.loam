@@ -1,23 +1,23 @@
-//! svgpath — inline SVG, parsed once in Loam into path commands.
-//!
-//! An `Icon` / chart / `Svg` node records its markup in the draw list (op kind
-//! 5). At present time `scene` asks this module for the markup's shapes and
-//! hands each host `path` ops — move / line / cubic / close in fixed-point
-//! layout points, plus a fill colour or a stroke width, cap and join — so a host
-//! draws them with its own path API and parses nothing. Every host shares one
-//! set of SVG rules, and the software rasterizer (`zeusraster/svg.loam`) uses
-//! the same lexer, colours and style inheritance.
-//!
-//! The subset: `<svg viewBox>` (default 0 0 24 24, fitted centred and
-//! uniformly), `<g>`, `<path d>` (M L H V C S Q T A Z, absolute and relative,
-//! quadratics and arcs converted to cubics), `<circle>`, `<rect rx>`; the
-//! presentation attributes `fill`, `stroke` (`none`, `currentColor`, `#rgb`,
-//! `#rrggbb`), `stroke-width`, `stroke-linecap`, `stroke-linejoin`, inherited
-//! down the tree. A shape with neither fill nor stroke paints nothing.
-//!
-//! Parses are cached by markup (direct-mapped, `SP_CACHE` slots), in viewBox
-//! units with `currentColor` left symbolic, so one parse serves every size and
-//! colour an icon is drawn at.
+// svgpath — inline SVG, parsed once in Loam into path commands.
+//
+// An `Icon` / chart / `Svg` node records its markup in the draw list (op kind
+// 5). At present time `scene` asks this module for the markup's shapes and
+// hands each host `path` ops — move / line / cubic / close in fixed-point
+// layout points, plus a fill colour or a stroke width, cap and join — so a host
+// draws them with its own path API and parses nothing. Every host shares one
+// set of SVG rules, and the software rasterizer (`zeusraster/svg.loam`) uses
+// the same lexer, colours and style inheritance.
+//
+// The subset: `<svg viewBox>` (default 0 0 24 24, fitted centred and
+// uniformly), `<g>`, `<path d>` (M L H V C S Q T A Z, absolute and relative,
+// quadratics and arcs converted to cubics), `<circle>`, `<rect rx>`; the
+// presentation attributes `fill`, `stroke` (`none`, `currentColor`, `#rgb`,
+// `#rrggbb`), `stroke-width`, `stroke-linecap`, `stroke-linejoin`, inherited
+// down the tree. A shape with neither fill nor stroke paints nothing.
+//
+// Parses are cached by markup (direct-mapped, `SP_CACHE` slots), in viewBox
+// units with `currentColor` left symbolic, so one parse serves every size and
+// colour an icon is drawn at.
 
 const SVG_TAU: float = 6.28318530717959
 const SVG_PI: float = 3.14159265358979
@@ -157,7 +157,7 @@ fn svg_is_cmd(c: int) -> int {
     return 0
 }
 
-/// Whitespace and commas, exactly as the host's `svg_skip`.
+/** *Whitespace and commas, exactly as the host's `svg_skip`. */
 fn svg_skip(s: string, pos: int) -> int {
     let mut i = pos
     while i < s.len {
@@ -179,8 +179,8 @@ fn svg_skip(s: string, pos: int) -> int {
     return i
 }
 
-/// `strtof` for the subset SVG uses. Advances `next` past the number, or leaves
-/// it at `pos` on failure (so a malformed coordinate stops the element).
+/** *`strtof` for the subset SVG uses. Advances `next` past the number, or leaves */
+/** *it at `pos` on failure (so a malformed coordinate stops the element). */
 fn svg_num(s: string, pos: int) -> SvgNum {
     let mut i = svg_skip(s, pos)
     let mut neg = 0
@@ -272,7 +272,7 @@ fn svg_num(s: string, pos: int) -> SvgNum {
     return SvgNum { ok: 1, val: val, next: i }
 }
 
-/// Numeric attribute value, or `def` when absent/malformed.
+/** *Numeric attribute value, or `def` when absent/malformed. */
 fn svg_attr_num(tag: string, name: string, def: float) -> float {
     let a = svg_attr(tag, name)
     if a.found == 1 {
@@ -284,7 +284,7 @@ fn svg_attr_num(tag: string, name: string, def: float) -> float {
     return def
 }
 
-/// Quoted attribute lookup, exactly as the host's `svg_attr`.
+/** *Quoted attribute lookup, exactly as the host's `svg_attr`. */
 fn svg_attr(tag: string, name: string) -> SvgAttr {
     let mut p = 0
     while p < tag.len {
@@ -326,7 +326,7 @@ fn svg_attr(tag: string, name: string) -> SvgAttr {
     return SvgAttr { found: 0, val: "" }
 }
 
-/// Position after a tag's `>`, handling `/` self-close and quoted `>`.
+/** *Position after a tag's `>`, handling `/` self-close and quoted `>`. */
 fn svg_tag_end(s: string, pos: int) -> SvgTagEnd {
     let mut i = pos
     let mut self_close = 0
@@ -378,7 +378,7 @@ fn svg_hex_val(c: int) -> int {
     return -1
 }
 
-/// `none` / `transparent` → off; `currentColor` → `current`; `#rgb` / `#rrggbb`.
+/** *`none` / `transparent` → off; `currentColor` → `current`; `#rgb` / `#rrggbb`. */
 fn svg_color(s: string, current: int) -> SvgColor {
     if s == "none" || s == "transparent" {
         return SvgColor { has: 0, rgb: 0 }
@@ -423,7 +423,7 @@ fn svg_style_default() -> SvgStyle {
     return SvgStyle { has_fill: 0, fill: 0, has_stroke: 0, stroke: 0, sw: 1.0, cap: 1, join: 1 }
 }
 
-/// Inherit `st`, overridden by this tag's presentation attributes.
+/** *Inherit `st`, overridden by this tag's presentation attributes. */
 fn svg_style_from(tag: string, st: SvgStyle, current: int) -> SvgStyle {
     let mut r = st
     let fa = svg_attr(tag, "fill")
@@ -481,19 +481,19 @@ fn svg_style_from(tag: string, st: SvgStyle, current: int) -> SvgStyle {
 
 // --- shapes ---------------------------------------------------------------
 
-/// Path stream commands. In the cache they are floats in viewBox units; in the
-/// frame (`scene.frame_path`) the same codes are followed by ints in 1/64 of a
-/// layout point.
+/** *Path stream commands. In the cache they are floats in viewBox units; in the */
+/** *frame (`scene.frame_path`) the same codes are followed by ints in 1/64 of a */
+/** *layout point. */
 const SP_M: int = 0
 const SP_L: int = 1
 const SP_C: int = 2
 const SP_Z: int = 3
 
-/// A shape's colour: an RGB, or one of these.
+/** *A shape's colour: an RGB, or one of these. */
 const SP_NONE: int = -2
 const SP_CURRENT: int = -1
 
-/// One painted element: its paint, and its commands in `SvgEntry.cmds`.
+/** *One painted element: its paint, and its commands in `SvgEntry.cmds`. */
 struct SvgShape {
     fill: int,
     stroke: int,
@@ -504,7 +504,7 @@ struct SvgShape {
     to: int,
 }
 
-/// A parsed markup string. `ok` is 0 for a string with no `<svg`.
+/** *A parsed markup string. `ok` is 0 for a string with no `<svg`. */
 struct SvgEntry {
     key: string,
     ok: int,
@@ -584,7 +584,7 @@ fn sp_sqrt(x: float) -> float {
     return g
 }
 
-/// sin on [-pi, pi] after reduction; a 9th-order Taylor series is within 4e-6.
+/** *sin on [-pi, pi] after reduction; a 9th-order Taylor series is within 4e-6. */
 fn sp_sin(a: float) -> float {
     let mut x = a
     while x > SVG_PI {
@@ -606,7 +606,7 @@ fn sp_cos(a: float) -> float {
     return sp_sin(a + SVG_HALF_PI)
 }
 
-/// atan2 from a minimax atan on [0, 1] (error under 1e-5 rad).
+/** *atan2 from a minimax atan on [0, 1] (error under 1e-5 rad). */
 fn sp_atan2(y: float, x: float) -> float {
     let ax = sp_abs(x)
     let ay = sp_abs(y)
@@ -634,8 +634,8 @@ fn sp_atan2(y: float, x: float) -> float {
     return r
 }
 
-/// Elliptical arc from (x0, y0) to (x, y), as at most four cubics (SVG 1.1
-/// implementation notes F.6: endpoint to centre parameterisation).
+/** *Elliptical arc from (x0, y0) to (x, y), as at most four cubics (SVG 1.1 */
+/** *implementation notes F.6: endpoint to centre parameterisation). */
 fn pb_arc(x0: float, y0: float, rx_in: float, ry_in: float, rot_deg: float, large: int,
           sweep: int, x: float, y: float) {
     let mut rx = sp_abs(rx_in)
@@ -719,10 +719,10 @@ fn pb_arc(x0: float, y0: float, rx_in: float, ry_in: float, rot_deg: float, larg
     }
 }
 
-/// A `d` attribute, as commands. Implicit repeats follow the host rule (a run
-/// of numbers after `M` is `L`, after anything else repeats the command), a
-/// segment before the first `M` is dropped, and a malformed number ends the
-/// path where it stands.
+/** *A `d` attribute, as commands. Implicit repeats follow the host rule (a run */
+/** *of numbers after `M` is `L`, after anything else repeats the command), a */
+/** *segment before the first `M` is dropped, and a malformed number ends the */
+/** *path where it stands. */
 fn pb_path_d(d: string) {
     let mut cx = 0.0
     let mut cy = 0.0
@@ -907,7 +907,7 @@ fn pb_path_d(d: string) {
     }
 }
 
-/// Circle as four quarter cubics, clockwise from the rightmost point.
+/** *Circle as four quarter cubics, clockwise from the rightmost point. */
 fn pb_circle(cx: float, cy: float, r: float) {
     let k = 0.5522847498 * r
     pb_cmd(SP_M)
@@ -919,7 +919,7 @@ fn pb_circle(cx: float, cy: float, r: float) {
     pb_cmd(SP_Z)
 }
 
-/// Rectangle, its corners rounded by `rx` (already clamped to half a side).
+/** *Rectangle, its corners rounded by `rx` (already clamped to half a side). */
 fn pb_rect(x: float, y: float, w: float, h: float, rx: float) {
     if rx <= 0.0 {
         pb_cmd(SP_M)
@@ -984,8 +984,8 @@ fn pb_element(name: string, tag: string, st: SvgStyle) {
     pb_shape(st, from)
 }
 
-/// Walk tags from `pos` (comments and self-close handled; a closing tag, or
-/// `stop`, returns to the caller), building every path / circle / rect.
+/** *Walk tags from `pos` (comments and self-close handled; a closing tag, or */
+/** *`stop`, returns to the caller), building every path / circle / rect. */
 fn pb_walk(s: string, pos: int, style: SvgStyle, stop: string, depth: int) -> int {
     if depth > 24 {
         return pos
@@ -1122,8 +1122,8 @@ fn sp_slot(s: string) -> int {
     return i32((h ^ (h >> 11)) & i64(SP_CACHE - 1))
 }
 
-/// The cache slot holding `markup`'s parse, parsing it on a miss. Read the
-/// result through `sp_cache[slot]`; it stays valid until the next lookup.
+/** *The cache slot holding `markup`'s parse, parsing it on a miss. Read the */
+/** *result through `sp_cache[slot]`; it stays valid until the next lookup. */
 fn lookup(markup: string) -> int {
     if sp_cache.len == 0 {
         let mut i = 0
@@ -1141,7 +1141,7 @@ fn lookup(markup: string) -> int {
     return k
 }
 
-/// Markup strings parsed since start (cache misses). Exposed for tests.
+/** *Markup strings parsed since start (cache misses). Exposed for tests. */
 fn parse_count() -> int {
     return sp_parses
 }

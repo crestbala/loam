@@ -1,5 +1,5 @@
-//! Headless layout probe: the draw list of the player with a source loaded.
-//!   ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/vidy/tests/probe_layout.loam -o /tmp/vp && /tmp/vp
+// Headless layout probe: the draw list of the player with a source loaded.
+//   ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/vidy/tests/probe_layout.loam -o /tmp/vp && /tmp/vp
 import "zeus"
 import "../app_routes.loam" as approutes
 import "../player/store.loam" as player

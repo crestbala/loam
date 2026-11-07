@@ -21,7 +21,7 @@ fn must(ok: bool, what: string) {
 }
 
 let mut builds: int = 0
-/// Created by the view's build, so a rebuild would recreate it at 0.
+/** *Created by the view's build, so a rebuild would recreate it at 0. */
 let mut local: Signal<int> = Signal { id: 0 }
 
 fn main() {

@@ -1,8 +1,8 @@
-//! Server entry.
-//!
-//! A client build never imports this file. That is what keeps curl and the
-//! cache out of the UI binary. `loam test` on this file runs the fetch seam
-//! and the ingest pipeline; `main` itself is the process that listens.
+// Server entry.
+//
+// A client build never imports this file. That is what keeps curl and the
+// cache out of the UI binary. `loam test` on this file runs the fetch seam
+// and the ingest pipeline; `main` itself is the process that listens.
 
 import "http"
 import "std:test"

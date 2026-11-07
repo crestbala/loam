@@ -1,13 +1,13 @@
-//! Small building blocks every vidy panel uses. Theme colours only: none of
-//! these read the player, so they carry over to any dark media UI.
+// Small building blocks every vidy panel uses. Theme colours only: none of
+// these read the player, so they carry over to any dark media UI.
 
 import "zeus"
 import "zui"
 import { WHITE, GLASS, ACCENT } "../theme.loam"
 
-/// Centre `build`'s content horizontally. Column children stretch to the
-/// column's width, so `align = Center` has nothing to centre; a row sizes its
-/// children to their content and `justify` centres them.
+/** *Centre `build`'s content horizontally. Column children stretch to the */
+/** *column's width, so `align = Center` has nothing to centre; a row sizes its */
+/** *children to their content and `justify` centres them. */
 fn Centered(build: fn()) -> Node {
     return zeus.Box(style = Style(
         direction = Direction.Row,
@@ -19,10 +19,10 @@ fn Centered(build: fn()) -> Node {
     }
 }
 
-/// One of several glyphs that share a button: a `box`-sized layer pinned over
-/// the button and centred both ways, shown while `shown` holds. Stacked, not in
-/// flow, so swapping play ↔ pause never moves anything. (A plain wrapper box
-/// would stretch to the button's width and pin the icon to its left edge.)
+/** *One of several glyphs that share a button: a `box`-sized layer pinned over */
+/** *the button and centred both ways, shown while `shown` holds. Stacked, not in */
+/** *flow, so swapping play ↔ pause never moves anything. (A plain wrapper box */
+/** *would stretch to the button's width and pin the icon to its left edge.) */
 fn Glyph(shown: Signal<bool>, icon: string, size: int, tint: string, box: int) -> Node {
     return zeus.Box(
         style = Style(
@@ -41,7 +41,7 @@ fn Glyph(shown: Signal<bool>, icon: string, size: int, tint: string, box: int) -
     }
 }
 
-/// `build`, shown only while `shown` holds.
+/** *`build`, shown only while `shown` holds. */
 fn When(shown: Signal<bool>, build: fn()) -> Node {
     return zeus.Box(
         style = Style(direction = Direction.Row, align = Align.Center),
@@ -51,7 +51,7 @@ fn When(shown: Signal<bool>, build: fn()) -> Node {
     }
 }
 
-/// A large rounded action button for the empty state.
+/** *A large rounded action button for the empty state. */
 fn Pill(icon: string, text: string, primary: bool, run: fn()) -> Node {
     return zeus.Box(
         style = Style(
@@ -75,7 +75,7 @@ fn Pill(icon: string, text: string, primary: bool, run: fn()) -> Node {
     }
 }
 
-/// A round glass icon button for the top bar.
+/** *A round glass icon button for the top bar. */
 fn Round(icon: string, label: string, run: fn()) -> Node {
     return zeus.Box(
         style = Style(

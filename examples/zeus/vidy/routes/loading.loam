@@ -1,4 +1,4 @@
-//! Shown while a route's loaders are pending.
+// Shown while a route's loaders are pending.
 
 import "zeus"
 

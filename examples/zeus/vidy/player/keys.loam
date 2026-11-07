@@ -1,5 +1,5 @@
-//! Keyboard: every shortcut, and the rows the help sheet shows for them.
-//! Bindings call into the store; nothing here holds state.
+// Keyboard: every shortcut, and the rows the help sheet shows for them.
+// Bindings call into the store; nothing here holds state.
 
 import "zeus"
 import "store.loam" as player
@@ -9,8 +9,8 @@ const K_RIGHT: int = 1001
 const K_UP: int = 1002
 const K_DOWN: int = 1003
 
-/// Arrow keys are global shortcuts, but a focused text field (the URL box)
-/// still needs them for its caret: hand the key back in that case.
+/** *Arrow keys are global shortcuts, but a focused text field (the URL box) */
+/** *still needs them for its caret: hand the key back in that case. */
 fn arrow(key: int, run: fn()) {
     if zeus.engine_focus_captures_text() != 0 {
         zeus.engine_key(key)
@@ -69,9 +69,9 @@ fn keymap() -> []KeyBind {
     return ks
 }
 
-/// The help sheet, as flat pairs: (keys, what they do). Keys are keycaps
-/// split by `|`; `~` between two caps reads as a range ("0 – 9"). A `#` key
-/// opens a section (its pair is the title) and `##` starts the second column.
+/** *The help sheet, as flat pairs: (keys, what they do). Keys are keycaps */
+/** *split by `|`; `~` between two caps reads as a range ("0 – 9"). A `#` key */
+/** *opens a section (its pair is the title) and `##` starts the second column. */
 fn rows() -> []string {
     return []string {
         "#", "Playback",

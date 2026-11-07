@@ -44,7 +44,7 @@ fn pump_until(want: int, n: Signal<int>, done: Signal<int>) {
     }
 }
 
-/// Child: one SSE client, 5 events, then close.
+/** *Child: one SSE client, 5 events, then close. */
 fn sse_srv_main() {
     let l = net.tcp_listen(0)
     if l < 0 {
@@ -75,7 +75,7 @@ fn sse_srv_main() {
     sys.exit(0)
 }
 
-/// Child: one WebSocket client, 5 text frames, then close the socket.
+/** *Child: one WebSocket client, 5 text frames, then close the socket. */
 fn ws_srv_main() {
     let l = net.tcp_listen(0)
     if l < 0 {

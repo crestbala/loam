@@ -29,7 +29,7 @@ fn load(name: string) -> string {
     return s
 }
 
-/// Cached slot for a fixture at its own size, so `image_get_px` can be used.
+/** *Cached slot for a fixture at its own size, so `image_get_px` can be used. */
 fn slot_of(id: int, name: string, w: int, h: int) -> int {
     let s = zeusraster.image_get(id, load(name), w, h)
     must(s >= 0, "image cached")

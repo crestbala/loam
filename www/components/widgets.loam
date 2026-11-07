@@ -1,5 +1,5 @@
-//! The core of zeus-components, live, each next to the call that builds it.
-//! This is a curated set, not the whole library.
+// The core of zeus-components, live, each next to the call that builds it.
+// This is a curated set, not the whole library.
 
 import "zeus"
 import "zui:spacing"
@@ -17,7 +17,7 @@ fn lang_cells(row: LangRow) -> []string {
     return []string { row.name, row.kind, row.year }
 }
 
-/// A live demo on a plate, then the code that builds it.
+/** *A live demo on a plate, then the code that builds it. */
 fn Demo(build: fn()) -> Node {
     return zeus.Box(style = Style(
         direction = Direction.Column,

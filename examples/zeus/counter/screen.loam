@@ -1,8 +1,8 @@
-//! Shared counter UI. Wasm, iOS, macOS, and Android all pass RPC results in.
-//!
-//! Themed chrome comes from `zeus` (design system merged in). `users` /
-//! `jobs` / `uptime` are static strings from `Counter.Stats`; `count0` /
-//! `load0` seed signals.
+// Shared counter UI. Wasm, iOS, macOS, and Android all pass RPC results in.
+//
+// Themed chrome comes from `zeus` (design system merged in). `users` /
+// `jobs` / `uptime` are static strings from `Counter.Stats`; `count0` /
+// `load0` seed signals.
 
 import "zeus"
 import "zui:colors"
@@ -287,8 +287,8 @@ fn Dialog(open: Signal<bool>) -> Node {
     }
 }
 
-/// Page built once from RPC results. `chip` is the host label
-/// (Canvas2D / iOS / macOS / Android). Call from `zeus.App`.
+/** *Page built once from RPC results. `chip` is the host label */
+/** *(Canvas2D / iOS / macOS / Android). Call from `zeus.App`. */
 fn Screen(
     title: string,
     chip: string,

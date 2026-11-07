@@ -1,25 +1,25 @@
-//! Client state and the calls into the engine (`server/api.loam`). Shared by
-//! the macOS window and the wasm build: `http.client()` is h2c to loopback on
-//! native and same-origin gRPC-Web on the web, where Vite proxies `/Vidget/*`
-//! to the backend.
-//!
-//! Signals are created at module init, outside any build scope, so they live
-//! as long as the process. `start()` runs before `zeus.App`, so the
-//! `call_async` state it allocates is not owned by a `Match` / `Each` rebuild.
+// Client state and the calls into the engine (`server/api.loam`). Shared by
+// the macOS window and the wasm build: `http.client()` is h2c to loopback on
+// native and same-origin gRPC-Web on the web, where Vite proxies `/Vidget/*`
+// to the backend.
+//
+// Signals are created at module init, outside any build scope, so they live
+// as long as the process. `start()` runs before `zeus.App`, so the
+// `call_async` state it allocates is not owned by a `Match` / `Each` rebuild.
 
 import "std:async"
 import "http"
 import "zeus"
 import "../server/api.loam"
 
-/// `probe_state` values.
+/** *`probe_state` values. */
 const PROBE_IDLE: int = 0
 const PROBE_LOADING: int = 1
 const PROBE_READY: int = 2
 const PROBE_ERROR: int = 3
 
-/// One job row. Flat on purpose: a signal holding a struct that owns a list
-/// loses the list's elements when set from an async reply.
+/** *One job row. Flat on purpose: a signal holding a struct that owns a list */
+/** *loses the list's elements when set from an async reply. */
 struct Row {
     id: int,
     title: string,
@@ -34,7 +34,7 @@ struct Row {
 }
 
 let url = zeus.signal("")
-/// The preview dialog: opened by a paste or Download, closed by Cancel/Save.
+/** *The preview dialog: opened by a paste or Download, closed by Cancel/Save. */
 let dialog = zeus.signal(false)
 let container = zeus.signal(1)
 let conns_idx = zeus.signal(2)
@@ -59,20 +59,20 @@ let online = zeus.signal(false)
 
 let mut started: bool = false
 let mut probe_seq: int = 0
-/// The job-list stream is open (or opening).
+/** *The job-list stream is open (or opening). */
 let mut watching: bool = false
-/// A Start is out; another Save waits for its reply instead of sending twice.
+/** *A Start is out; another Save waits for its reply instead of sending twice. */
 let mut starting: bool = false
-/// The pending reconnect (`async.after` handle), 0 when none.
+/** *The pending reconnect (`async.after` handle), 0 when none. */
 let mut retry_timer: int = 0
 let mut last_url: string = ""
-/// The field's previous value, to tell a paste (many bytes at once) from typing.
+/** *The field's previous value, to tell a paste (many bytes at once) from typing. */
 let mut last_field: string = ""
 
-/// What the UI says when a reply is missing or cannot be read.
+/** *What the UI says when a reply is missing or cannot be read. */
 const NO_ANSWER: string = "The engine didn't answer. Is `zeli serve` still running?"
 
-/// Parallel connections, by `conns_idx`.
+/** *Parallel connections, by `conns_idx`. */
 fn conn_labels() -> []string {
     return []string { "4 connections", "8 connections", "16 connections", "32 connections" }
 }
@@ -90,10 +90,10 @@ fn conn_count(i: int) -> int {
     return 16
 }
 
-/// How long to wait before reopening the job stream after it dropped.
+/** *How long to wait before reopening the job stream after it dropped. */
 const RETRY_MS: int = 3000
 
-/// Open the job list stream, once.
+/** *Open the job list stream, once. */
 fn start() {
     if started {
         return
@@ -137,12 +137,12 @@ fn slice_lower(s: string, a: int, b: int) -> string {
     return string_from_bytes(x)
 }
 
-/// The field changed. A paste of a link (more than one byte arriving at
-/// once) opens the preview dialog; typing waits for Enter or Download.
-///
-/// Runs from the link bar's effect, so the dialog work is deferred a tick:
-/// opening it inside that effect's `untrack` left the dialog's own bindings
-/// (its `visible`) unsubscribed, and it could not be closed again.
+/** *The field changed. A paste of a link (more than one byte arriving at */
+/** *once) opens the preview dialog; typing waits for Enter or Download. */
+/** */
+/** *Runs from the link bar's effect, so the dialog work is deferred a tick: */
+/** *opening it inside that effect's `untrack` left the dialog's own bindings */
+/** *(its `visible`) unsubscribed, and it could not be closed again. */
 fn url_changed(v: string) {
     let pasted = v.len > last_field.len + 1
     last_field = v
@@ -156,7 +156,7 @@ fn url_changed(v: string) {
     }
 }
 
-/// Show the dialog for `u`, probing unless `u` is already read (or being read).
+/** *Show the dialog for `u`, probing unless `u` is already read (or being read). */
 fn open_dialog(u: string) {
     notice.set("")
     let st = probe_state.peek()
@@ -167,9 +167,9 @@ fn open_dialog(u: string) {
     dialog.set(true)
 }
 
-/// Close the dialog. The preview stays as it was (no skeleton flash while it
-/// fades), so reopening the same link is instant; a probe still out is
-/// dropped and runs again on the next open.
+/** *Close the dialog. The preview stays as it was (no skeleton flash while it */
+/** *fades), so reopening the same link is instant; a probe still out is */
+/** *dropped and runs again on the next open. */
 fn close_dialog() {
     if probe_state.peek() == PROBE_LOADING {
         probe_seq += 1
@@ -180,8 +180,8 @@ fn close_dialog() {
     }
 }
 
-/// Ask the engine what `u` holds; a reply for an older URL is dropped. The
-/// thumbnail (a background ffmpeg grab on the engine) is polled after that.
+/** *Ask the engine what `u` holds; a reply for an older URL is dropped. The */
+/** *thumbnail (a background ffmpeg grab on the engine) is polled after that. */
 fn probe(u: string) {
     probe_seq += 1
     let seq = probe_seq
@@ -220,7 +220,7 @@ fn probe(u: string) {
     })
 }
 
-/// Poll the engine's thumbnail job for `u` (every 400 ms, up to ~25 s).
+/** *Poll the engine's thumbnail job for `u` (every 400 ms, up to ~25 s). */
 fn thumb(u: string, seq: int, tries: int) {
     if seq != probe_seq || tries > 60 {
         return
@@ -243,7 +243,7 @@ fn thumb(u: string, seq: int, tries: int) {
     })
 }
 
-/// The Download button (and Enter in the field): preview the link first.
+/** *The Download button (and Enter in the field): preview the link first. */
 fn download() {
     let u = trim(url.peek())
     if !is_link(u) {
@@ -253,7 +253,7 @@ fn download() {
     open_dialog(u)
 }
 
-/// The dialog's Save: start the picked format, then close.
+/** *The dialog's Save: start the picked format, then close. */
 fn save() {
     if probe_state.peek() != PROBE_READY {
         return
@@ -292,10 +292,10 @@ fn download_format(u: string, format: string, title: string) {
     })
 }
 
-/// One request for the job list: the engine pushes a new list each time a
-/// job moves (`Vidget.JobsWatch`), so nothing polls. When the stream drops
-/// (the engine stopped or restarted), the UI shows offline and reopens it
-/// after `RETRY_MS`.
+/** *One request for the job list: the engine pushes a new list each time a */
+/** *job moves (`Vidget.JobsWatch`), so nothing polls. When the stream drops */
+/** *(the engine stopped or restarted), the UI shows offline and reopens it */
+/** *after `RETRY_MS`. */
 fn watch_jobs() {
     if watching {
         return
@@ -322,7 +322,7 @@ fn watch_jobs() {
     )
 }
 
-/// One pushed job list.
+/** *One pushed job list. */
 fn apply_jobs(raw: string) {
     let r = api.decode_JobsResp(raw)
     let mut out = []Row {}
@@ -374,7 +374,7 @@ fn same_rows(a: []Row, b: []Row) -> bool {
     return true
 }
 
-/// Cancel / reveal / remove. The stream carries the change back.
+/** *Cancel / reveal / remove. The stream carries the change back. */
 fn job_call(name: string, id: int) {
     http.client().call_async(name, api.encode_JobReq(JobReq { id: id }), fn(raw) {
         watch_jobs()
@@ -393,7 +393,7 @@ fn remove(id: int) {
     job_call(api.remove_rpc(), id)
 }
 
-/// Rows still downloading, for the header badge.
+/** *Rows still downloading, for the header badge. */
 fn active() -> int {
     let rs = rows.get()
     let mut n = 0
@@ -437,7 +437,7 @@ fn is_probe_idle(st: int) -> bool {
     return st == PROBE_IDLE
 }
 
-/// "Stream", "Video file", "Web page".
+/** *"Stream", "Video file", "Web page". */
 fn kind_name(k: int) -> string {
     if k == api.kind_stream() {
         return "Stream"
@@ -448,7 +448,7 @@ fn kind_name(k: int) -> string {
     return "Web page"
 }
 
-/// `3:07` / `1:02:45`.
+/** *`3:07` / `1:02:45`. */
 fn clock(secs: int) -> string {
     if secs < 0 {
         return "--:--"
@@ -481,7 +481,7 @@ fn size(kib: int) -> string {
     return "{{g / 100}}.{{fs}} GB"
 }
 
-/// Progress percent 0..100, or -1 for an unknown total (indeterminate bar).
+/** *Progress percent 0..100, or -1 for an unknown total (indeterminate bar). */
 fn percent(r: Row) -> int {
     if r.state == api.st_done() {
         return 100
@@ -496,7 +496,7 @@ fn percent(r: Row) -> int {
     return p
 }
 
-/// "12.4 MB of 80.0 MB · 5.2 MB/s · 0:14 left".
+/** *"12.4 MB of 80.0 MB · 5.2 MB/s · 0:14 left". */
 fn detail(r: Row) -> string {
     if r.state == api.st_done() {
         return "{{size(r.done_kib)}} · saved"

@@ -1,12 +1,12 @@
-//! Shared gallery UI. Hosts are three-line stubs that call `ui.start`.
+// Shared gallery UI. Hosts are three-line stubs that call `ui.start`.
 
 import "zeus"
 import "screen.loam"
 
-/// The gallery typeface. `FONT_FAMILY` is the face's PostScript name: Cocoa
-/// looks the registered face up by it, and the web host uses it as the CSS
-/// family. `FONT_SRC` is relative to the gallery directory: the macOS run
-/// script starts there, and the Vite server maps `/fonts/` onto it.
+/** *The gallery typeface. `FONT_FAMILY` is the face's PostScript name: Cocoa */
+/** *looks the registered face up by it, and the web host uses it as the CSS */
+/** *family. `FONT_SRC` is relative to the gallery directory: the macOS run */
+/** *script starts there, and the Vite server maps `/fonts/` onto it. */
 const FONT_FAMILY: string = "Inter28pt-Medium"
 const FONT_SRC: string = "fonts/Inter_28pt-Medium.ttf"
 

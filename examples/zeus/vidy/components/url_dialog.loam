@@ -1,4 +1,4 @@
-//! The Open URL dialog.
+// The Open URL dialog.
 
 import "zeus"
 import "zui"

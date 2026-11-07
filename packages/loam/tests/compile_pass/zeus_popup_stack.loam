@@ -28,8 +28,8 @@ fn min2(a: int, b: int) -> int {
     return b
 }
 
-/// The menu panel that holds `label`: the first ancestor clearly taller than
-/// the row, and still a panel rather than the page.
+/** *The menu panel that holds `label`: the first ancestor clearly taller than */
+/** *the row, and still a panel rather than the page. */
 fn panel_holding(label: string) -> int {
     let mut id = zeus.engine_find_text(label)
     let mut guard = 0
@@ -48,7 +48,7 @@ fn panel_holding(label: string) -> int {
     return id
 }
 
-/// Last text draw of `label`, or -1. A later index paints above an earlier one.
+/** *Last text draw of `label`, or -1. A later index paints above an earlier one. */
 fn text_draw(label: string) -> int {
     let n = zeus.draw_count()
     let mut found = -1

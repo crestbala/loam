@@ -1,28 +1,28 @@
-//! `checker.loam` — rexim's `checker.c`, in Loam.
-//!
-//! https://gist.github.com/rexim/ef86bf70918034a5a57881456c0a0ccf
-//!
-//! 60 frames of a red/black checkerboard whose 60x60 cells slide one cell per
-//! frame, at the C original's 16:9 * 60 = 960x540. The C program writes
-//! `output-%02d.ppm` and leaves the encode to a hand-run
-//! `ffmpeg -i output-%02d.ppm -r 60 output.mp4`; here the encode is the last
-//! step of the program, so one command produces the video:
-//!
-//!     ./bin/loamc examples/language/ppm/checker.loam --run
-//!
-//! Knobs (all optional): `LOAM_PPM_SCALE` (60), `LOAM_PPM_FRAMES` (60),
-//! `LOAM_PPM_FPS` (60), `LOAM_PPM_OUT` (`out`), `LOAM_PPM_KEEP=1`.
+// `checker.loam` — rexim's `checker.c`, in Loam.
+//
+// https://gist.github.com/rexim/ef86bf70918034a5a57881456c0a0ccf
+//
+// 60 frames of a red/black checkerboard whose 60x60 cells slide one cell per
+// frame, at the C original's 16:9 * 60 = 960x540. The C program writes
+// `output-%02d.ppm` and leaves the encode to a hand-run
+// `ffmpeg -i output-%02d.ppm -r 60 output.mp4`; here the encode is the last
+// step of the program, so one command produces the video:
+//
+//     ./bin/loamc examples/language/ppm/checker.loam --run
+//
+// Knobs (all optional): `LOAM_PPM_SCALE` (60), `LOAM_PPM_FRAMES` (60),
+// `LOAM_PPM_FPS` (60), `LOAM_PPM_OUT` (`out`), `LOAM_PPM_KEEP=1`.
 
 import "std:fmt"
 import "std:sys"
 import "frames.loam"
 
-/// Cell size in pixels. The board slides one cell per frame, so this is also
-/// the per-frame offset.
+/** *Cell size in pixels. The board slides one cell per frame, so this is also */
+/** *the per-frame offset. */
 const CELL: int = 60
 
-/// Frame file numbers are zero-padded to this width, matching the C original's
-/// `output-%02d.ppm`.
+/** *Frame file numbers are zero-padded to this width, matching the C original's */
+/** *`output-%02d.ppm`. */
 const DIGITS: int = 2
 
 fn main() {
@@ -55,9 +55,9 @@ fn main() {
     frames.finish(dir, "checker", DIGITS, count, fps)
 }
 
-/// One frame: red where `(x + i) / CELL` and `(y + i) / CELL` differ in parity,
-/// black otherwise. Adding the frame index to both coordinates slides the whole
-/// board down and to the right by one cell per frame.
+/** *One frame: red where `(x + i) / CELL` and `(y + i) / CELL` differ in parity, */
+/** *black otherwise. Adding the frame index to both coordinates slides the whole */
+/** *board down and to the right by one cell per frame. */
 fn render(w: int, h: int, i: int) -> []int {
     let mut b = frames.image(w, h)
     let mut y = 0

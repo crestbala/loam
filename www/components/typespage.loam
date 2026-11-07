@@ -1,4 +1,4 @@
-//! Data types. Widths, aggregates, and the library containers.
+// Data types. Widths, aggregates, and the library containers.
 
 import "zeus"
 import "zui:spacing"

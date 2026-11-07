@@ -1,13 +1,13 @@
-//! myapp's backend: the server half of `server/api.loam`.
-//!
-//!   ./run.sh myapp backend          # serves 127.0.0.1:8080
-//!
-//! A second entry on purpose. `app.loam` opens a window and a server must not;
-//! keeping this apart is also what keeps `db.loam` out of every client build —
-//! nothing a client compiles imports it.
-//!
-//! Clients reach this through `http.client()`: gRPC-Web from wasm, h2c from
-//! native, with `LOAM_RPC_ADDR` overriding the address on native.
+// myapp's backend: the server half of `server/api.loam`.
+//
+//   ./run.sh myapp backend          # serves 127.0.0.1:8080
+//
+// A second entry on purpose. `app.loam` opens a window and a server must not;
+// keeping this apart is also what keeps `db.loam` out of every client build —
+// nothing a client compiles imports it.
+//
+// Clients reach this through `http.client()`: gRPC-Web from wasm, h2c from
+// native, with `LOAM_RPC_ADDR` overriding the address on native.
 
 import "http"
 // Bare (no `as`): a struct literal cannot be qualified — `api.HelloResp { .. }`

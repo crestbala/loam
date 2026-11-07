@@ -1,21 +1,21 @@
-//! `kv` — file-backed string store (`std:kv`).
-//!
-//! Rows are `string` keys and values. Native hosts persist a length-prefixed
-//! file under the app-data directory (`sys.data_dir`); writes go to `*.tmp`
-//! then `rename` (atomic-ish). Wasm keeps the same API in memory only.
-//!
-//! ```
-//! import "std:kv"
-//!
-//! let s = kv.open("my-app")
-//! kv.set(s, "draft", "hello")
-//! let v = kv.get(s, "draft")
-//! ```
+// `kv` — file-backed string store (`std:kv`).
+//
+// Rows are `string` keys and values. Native hosts persist a length-prefixed
+// file under the app-data directory (`sys.data_dir`); writes go to `*.tmp`
+// then `rename` (atomic-ish). Wasm keeps the same API in memory only.
+//
+// ```
+// import "std:kv"
+//
+// let s = kv.open("my-app")
+// kv.set(s, "draft", "hello")
+// let v = kv.get(s, "draft")
+// ```
 
 import "std:sys"
 import "std:fmt"
 
-/// Copy handle. The rows live in module tables keyed by `id`.
+/** *Copy handle. The rows live in module tables keyed by `id`. */
 struct Store {
     id: int,
 }
@@ -180,8 +180,8 @@ fn safe_app(app: string) -> string {
     return string_from_bytes(b)
 }
 
-/// App-data directory for `app`. `LOAM_KV_DIR` overrides the parent. Empty
-/// when `HOME` is unset (wasm). Desktop: `~/Library/Application Support/<app>`.
+/** *App-data directory for `app`. `LOAM_KV_DIR` overrides the parent. Empty */
+/** *when `HOME` is unset (wasm). Desktop: `~/Library/Application Support/<app>`. */
 fn data_dir(app: string) -> string {
     let name = safe_app(app)
     let ov = sys.env("LOAM_KV_DIR")
@@ -195,8 +195,8 @@ fn data_dir(app: string) -> string {
     return "{{home}}/Library/Application Support/{{name}}"
 }
 
-/// Open a named store under `data_dir(app)` (`kv.dat`). Memory-only if the
-/// directory cannot be created (wasm).
+/** *Open a named store under `data_dir(app)` (`kv.dat`). Memory-only if the */
+/** *directory cannot be created (wasm). */
 fn open(app: string) -> Store {
     let dir = data_dir(app)
     if dir.len == 0 {
@@ -206,7 +206,7 @@ fn open(app: string) -> Store {
     return Store { id: load_file("{{dir}}/kv.dat") }
 }
 
-/// Open a store at an explicit file path. Empty path is memory-only.
+/** *Open a store at an explicit file path. Empty path is memory-only. */
 fn open_path(path: string) -> Store {
     return Store { id: load_file(path) }
 }
@@ -230,7 +230,7 @@ fn find(id: int, key: string) -> int {
     return -1
 }
 
-/// Value for `key`, or empty if missing.
+/** *Value for `key`, or empty if missing. */
 fn get(s: Store, key: string) -> string {
     let at = find(s.id, key)
     if at < 0 {
@@ -239,7 +239,7 @@ fn get(s: Store, key: string) -> string {
     return st_vals[s.id][at]
 }
 
-/// Insert or replace `key`. Persists when the store has a path.
+/** *Insert or replace `key`. Persists when the store has a path. */
 fn set(s: Store, key: string, val: string) {
     let at = find(s.id, key)
     if at >= 0 {
@@ -256,7 +256,7 @@ fn set(s: Store, key: string, val: string) {
     persist(s.id)
 }
 
-/// Drop `key` if present.
+/** *Drop `key` if present. */
 fn delete(s: Store, key: string) {
     let at = find(s.id, key)
     if at < 0 {
@@ -280,7 +280,7 @@ fn delete(s: Store, key: string) {
     persist(s.id)
 }
 
-/// Keys in insertion order.
+/** *Keys in insertion order. */
 fn list(s: Store) -> []string {
     if s.id < 0 {
         return []string {}
@@ -291,7 +291,7 @@ fn list(s: Store) -> []string {
     return st_keys[s.id]
 }
 
-/// Flush (already persisted on each write) so a later `open_path` sees rows.
+/** *Flush (already persisted on each write) so a later `open_path` sees rows. */
 fn close(s: Store) {
     persist(s.id)
 }

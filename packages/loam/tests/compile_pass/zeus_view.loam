@@ -60,8 +60,8 @@ fn Counter(p: CounterProps) -> Node {
     }
 }
 
-/// A component whose tree is another component: the inner frame reports its
-/// root to this one.
+/** *A component whose tree is another component: the inner frame reports its */
+/** *root to this one. */
 fn Wrapped() -> Node {
     return zui.Badge("wrapped", zeus.Tint.Ink)
 }

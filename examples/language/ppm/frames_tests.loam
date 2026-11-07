@@ -1,10 +1,10 @@
-//! In-language tests for `frames` (`frames_tests.loam`).
-//!
-//! Only the pure parts are covered: the naming, the padding, the float -> byte
-//! clamp and the environment reader. `save` / `encode` would need ffmpeg and a
-//! writable directory, which is what the demos themselves already exercise.
-//!
-//!     ./bin/loamc test examples/language/ppm/frames_tests.loam
+// In-language tests for `frames` (`frames_tests.loam`).
+//
+// Only the pure parts are covered: the naming, the padding, the float -> byte
+// clamp and the environment reader. `save` / `encode` would need ffmpeg and a
+// writable directory, which is what the demos themselves already exercise.
+//
+//     ./bin/loamc test examples/language/ppm/frames_tests.loam
 
 import "std:test"
 import "frames.loam"

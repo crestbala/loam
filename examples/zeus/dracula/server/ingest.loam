@@ -1,15 +1,15 @@
-//! One sync: parse, validate, cache.
-//!
-//! `apply` takes the file body. It does not fetch. The live entry points
-//! `sync_live` and `backfill_live` fetch first and then call `apply`, so a
-//! test can run the whole pipeline on a fixture without the network.
-//!
-//! A daily file with at least one data row marks catalog schemes that are
-//! absent from it as dormant. Their NAV files stay. A history file never
-//! does this — it is a date range, not a census. A file that parsed a header
-//! and then no rows does not mark anyone dormant either; that shape is a
-//! truncated download, and treating it as "everyone left" would be the bug
-//! this layer exists to prevent.
+// One sync: parse, validate, cache.
+//
+// `apply` takes the file body. It does not fetch. The live entry points
+// `sync_live` and `backfill_live` fetch first and then call `apply`, so a
+// test can run the whole pipeline on a fixture without the network.
+//
+// A daily file with at least one data row marks catalog schemes that are
+// absent from it as dormant. Their NAV files stay. A history file never
+// does this — it is a date range, not a census. A file that parsed a header
+// and then no rows does not mark anyone dormant either; that shape is a
+// truncated download, and treating it as "everyone left" would be the bug
+// this layer exists to prevent.
 
 import "std:sys"
 import "std:date"
@@ -88,7 +88,7 @@ fn seen(codes: []string, code: string) -> bool {
     return false
 }
 
-/// Parse `text` and merge it into the cache at `root`.
+/** *Parse `text` and merge it into the cache at `root`. */
 fn apply(root: string, text: string, url: string, stamp: string) -> Report {
     if store.ensure(root) != 0 {
         return report_err("cannot create cache")
@@ -272,9 +272,9 @@ fn sync_live() -> Report {
     return apply(root, got.val, DAILY_URL, stamp_now())
 }
 
-/// Inclusive calendar windows of `span` days. The last window is shorter
-/// when the range does not divide evenly. Empty when the dates are backwards
-/// or `span` is below 1.
+/** *Inclusive calendar windows of `span` days. The last window is shorter */
+/** *when the range does not divide evenly. Empty when the dates are backwards */
+/** *or `span` is below 1. */
 struct Span {
     frm: []int
     to: []int

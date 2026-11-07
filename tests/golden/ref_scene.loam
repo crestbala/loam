@@ -1,19 +1,19 @@
-//! Phase 0 reference screen (`docs/mem-baseline.md`). It exercises every
-//! element the visual baseline must cover: body text at 11/13/17 px, a 1px
-//! border, a rounded card with a drop shadow, a vertical gradient, and an
-//! image drawn smaller than a source would be.
-//!
-//! Two halves, deliberately:
-//!
-//!   * The STRUCTURAL golden is the draw-list dump below and is checked now, by
-//!     `run.sh`, at logical 1x. It pins paint order and geometry so no later
-//!     phase can move them silently.
-//!   * The PIXEL golden — this same screen rasterized at 2x and diffed — needs
-//!     the software rasterizer of Phase 4. Until it exists there is no code in
-//!     the tree that can turn this tree into pixels; `capture.sh` writes
-//!     `ref@2x.png` the moment there is.
-//!
-//! Keep this file free of prints: stdout is the golden.
+// Phase 0 reference screen (`docs/mem-baseline.md`). It exercises every
+// element the visual baseline must cover: body text at 11/13/17 px, a 1px
+// border, a rounded card with a drop shadow, a vertical gradient, and an
+// image drawn smaller than a source would be.
+//
+// Two halves, deliberately:
+//
+//   * The STRUCTURAL golden is the draw-list dump below and is checked now, by
+//     `run.sh`, at logical 1x. It pins paint order and geometry so no later
+//     phase can move them silently.
+//   * The PIXEL golden — this same screen rasterized at 2x and diffed — needs
+//     the software rasterizer of Phase 4. Until it exists there is no code in
+//     the tree that can turn this tree into pixels; `capture.sh` writes
+//     `ref@2x.png` the moment there is.
+//
+// Keep this file free of prints: stdout is the golden.
 
 import "zeus"
 

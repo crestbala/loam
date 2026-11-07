@@ -1,4 +1,4 @@
-//! The one screen: paste a link, see what it holds, watch it download.
+// The one screen: paste a link, see what it holds, watch it download.
 
 import "zeus"
 import "zeus:router"

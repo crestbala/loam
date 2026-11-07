@@ -1,4 +1,4 @@
-//! geometry — sizes, colors, flex/overflow constants (GPUI geometry.rs / color.rs).
+// geometry — sizes, colors, flex/overflow constants (GPUI geometry.rs / color.rs).
 
 fn max2(a: int, b: int) -> int {
     if a > b {
@@ -51,13 +51,13 @@ fn overflow_hidden() -> int {
     return 1
 }
 
-/// Vertical auto on a `scroll()` node (page container).
+/** *Vertical auto on a `scroll()` node (page container). */
 fn overflow_scroll() -> int {
     return 2
 }
 
-/// Both-axis auto. `zeus.scroll_xy()` sets this; tables use it so a narrow
-/// viewport can show a horizontal bar without the page scrolling sideways.
+/** *Both-axis auto. `zeus.scroll_xy()` sets this; tables use it so a narrow */
+/** *viewport can show a horizontal bar without the page scrolling sideways. */
 fn overflow_auto() -> int {
     return 3
 }

@@ -1,29 +1,29 @@
-//! Route chunks: which function goes in which wasm module.
-//!
-//! The input is the C the compiler emitted, because it is the one place that
-//! names everything the binary holds, closures and generic clones included. A
-//! function's body names every function it calls or takes the address of, so a
-//! scan of those names gives the whole graph.
-//!
-//! Each function gets a usage signature, the set of routes that reach it. Equal
-//! signatures form a chunk, small chunks merge into larger ones, and anything
-//! most routes need stays in the primary module. Nothing here has to be exact:
-//! a function placed badly costs bytes, and a call into an unloaded chunk is
-//! caught by the loader's placeholder.
+// Route chunks: which function goes in which wasm module.
+//
+// The input is the C the compiler emitted, because it is the one place that
+// names everything the binary holds, closures and generic clones included. A
+// function's body names every function it calls or takes the address of, so a
+// scan of those names gives the whole graph.
+//
+// Each function gets a usage signature, the set of routes that reach it. Equal
+// signatures form a chunk, small chunks merge into larger ones, and anything
+// most routes need stays in the primary module. Nothing here has to be exact:
+// a function placed badly costs bytes, and a call into an unloaded chunk is
+// caught by the loader's placeholder.
 
 import "std:map"
 import "std:str"
 
-/// Below this much C, a chunk costs more in requests than it saves in bytes.
-/// About 8 KB of wasm.
+/** *Below this much C, a chunk costs more in requests than it saves in bytes. */
+/** *About 8 KB of wasm. */
 const MIN_CHUNK_C: int = 12000
-/// Most chunks a route may need. More means slower first paints.
+/** *Most chunks a route may need. More means slower first paints. */
 const MAX_ROUTE_CHUNKS: int = 3
-/// The largest chunk worth fetching on a guess.
+/** *The largest chunk worth fetching on a guess. */
 const MAX_IDLE_BYTES: int = 150000
-/// All a touch screen fetches on a guess beyond `MAX_IDLE_BYTES`, in bytes.
+/** *All a touch screen fetches on a guess beyond `MAX_IDLE_BYTES`, in bytes. */
 const MAX_TOUCH_BYTES: int = 250000
-/// A function used by at least this percent of routes stays in the primary.
+/** *A function used by at least this percent of routes stays in the primary. */
 const PRIMARY_PERCENT: int = 50
 
 struct Graph {
@@ -42,7 +42,7 @@ struct Chunk {
 
 struct Plan {
     chunks: []Chunk,
-    /// Chunk indexes each route needs, by route index.
+    /** *Chunk indexes each route needs, by route index. */
     route_chunks: [][]int,
 }
 
@@ -75,8 +75,8 @@ fn intern(g: &mut Graph, name: string) -> int {
     return id
 }
 
-/// The function a top-level line defines, or "". The name is the identifier
-/// before the last top-level parentheses, which skips `__attribute__((...))`.
+/** *The function a top-level line defines, or "". The name is the identifier */
+/** *before the last top-level parentheses, which skips `__attribute__((...))`. */
 fn defined_name(src: string, from: int, to: int) -> string {
     let mut end = to
     while end > from && src[end - 1] <= 32 {
@@ -113,7 +113,7 @@ fn defined_name(src: string, from: int, to: int) -> string {
     return str.slice(src, a, open)
 }
 
-/// True when `src[at..]` starts with `prefix`.
+/** *True when `src[at..]` starts with `prefix`. */
 fn has_at(src: string, at: int, prefix: string) -> bool {
     if at + prefix.len > src.len {
         return false
@@ -126,7 +126,7 @@ fn has_at(src: string, at: int, prefix: string) -> bool {
     return true
 }
 
-/// Add every `loam_*` / `zeus_*` name in `src[from..to]` to function `f`'s calls.
+/** *Add every `loam_*` / `zeus_*` name in `src[from..to]` to function `f`'s calls. */
 fn scan_body(g: &mut Graph, f: int, src: string, from: int, to: int) {
     let mut i = from
     while i < to {
@@ -150,7 +150,7 @@ fn scan_body(g: &mut Graph, f: int, src: string, from: int, to: int) {
     }
 }
 
-/// Build the call graph from emitted C.
+/** *Build the call graph from emitted C. */
 fn parse_c(src: string) -> Graph {
     let mut g = graph_new()
     let mut i = 0
@@ -192,9 +192,9 @@ fn parse_c(src: string) -> Graph {
     return g
 }
 
-/// The functions the primary must hold: `main`, every module initializer, every
-/// wasm export, and every Loam function the C runtime calls by name (`runtime`
-/// is that source text).
+/** *The functions the primary must hold: `main`, every module initializer, every */
+/** *wasm export, and every Loam function the C runtime calls by name (`runtime` */
+/** *is that source text). */
 fn roots_of(g: &mut Graph, runtime: string) -> []int {
     let mut out = []int {}
     for i in 0..g.names.len {
@@ -223,8 +223,8 @@ fn roots_of(g: &mut Graph, runtime: string) -> []int {
     return out
 }
 
-/// The function whose name ends with `_suffix`, or -1. Generated route builders
-/// carry their module's import alias as a prefix.
+/** *The function whose name ends with `_suffix`, or -1. Generated route builders */
+/** *carry their module's import alias as a prefix. */
 fn find_suffix(g: &Graph, suffix: string) -> int {
     let tail = "_{{suffix}}"
     for i in 0..g.names.len {
@@ -235,7 +235,7 @@ fn find_suffix(g: &Graph, suffix: string) -> int {
     return -1
 }
 
-/// Mark everything reachable from `starts`, never entering a `stop` node.
+/** *Mark everything reachable from `starts`, never entering a `stop` node. */
 fn reach(g: &Graph, starts: []int, stop: []bool, seen: &mut []bool) {
     let mut todo = []int {}
     for i in 0..starts.len {
@@ -304,7 +304,7 @@ fn union_sorted(a: []int, b: []int) -> []int {
     return out
 }
 
-/// Fold chunk `from` into `into`, leaving `from` empty.
+/** *Fold chunk `from` into `into`, leaving `from` empty. */
 fn merge_into(cs: &mut []Chunk, from: int, into: int) {
     let fns = cs[from].fns
     for i in 0..fns.len {
@@ -317,8 +317,8 @@ fn merge_into(cs: &mut []Chunk, from: int, into: int) {
     cs[from].size = 0
 }
 
-/// Fold each undersized chunk into the smallest chunk that already loads on all
-/// of its routes. With none, its code goes to the primary: every route has that.
+/** *Fold each undersized chunk into the smallest chunk that already loads on all */
+/** *of its routes. With none, its code goes to the primary: every route has that. */
 fn merge_small(cs: &mut []Chunk, min_size: int) {
     for i in 0..cs.len {
         if cs[i].size == 0 || cs[i].size >= min_size {
@@ -339,7 +339,7 @@ fn merge_small(cs: &mut []Chunk, min_size: int) {
     }
 }
 
-/// While a route needs too many chunks, fold its two smallest together.
+/** *While a route needs too many chunks, fold its two smallest together. */
 fn enforce_cap(cs: &mut []Chunk, routes: int, cap: int) {
     for r in 0..routes {
         while true {
@@ -368,8 +368,8 @@ fn enforce_cap(cs: &mut []Chunk, routes: int, cap: int) {
     }
 }
 
-/// `entries` are the route builders by route index, `roots` the functions the
-/// primary must hold however little they are used.
+/** *`entries` are the route builders by route index, `roots` the functions the */
+/** *primary must hold however little they are used. */
 fn plan(g: &Graph, roots: []int, entries: []int, min_size: int) -> Plan {
     let n = g.names.len
     let mut stop = []bool {}
@@ -456,9 +456,9 @@ fn plan(g: &Graph, roots: []int, entries: []int, min_size: int) -> Plan {
     return Plan { chunks: out, route_chunks: route_chunks }
 }
 
-/// Chunks worth fetching while the browser is idle: shared by several routes, so
-/// each saves the most next-page waits, and small enough to be a fair guess. Most
-/// shared first. `sizes` are file sizes in bytes, by chunk.
+/** *Chunks worth fetching while the browser is idle: shared by several routes, so */
+/** *each saves the most next-page waits, and small enough to be a fair guess. Most */
+/** *shared first. `sizes` are file sizes in bytes, by chunk. */
 fn idle_chunks(p: &Plan, sizes: []int) -> []int {
     let mut out = []int {}
     let mut users = p.route_chunks.len
@@ -473,9 +473,9 @@ fn idle_chunks(p: &Plan, sizes: []int) -> []int {
     return out
 }
 
-/// What a touch screen also fetches at idle, as it gets no hover to go on: the
-/// smallest of the rest, up to `MAX_TOUCH_BYTES` in all, so it covers the most
-/// pages for the data. `idle` is what `idle_chunks` already took.
+/** *What a touch screen also fetches at idle, as it gets no hover to go on: the */
+/** *smallest of the rest, up to `MAX_TOUCH_BYTES` in all, so it covers the most */
+/** *pages for the data. `idle` is what `idle_chunks` already took. */
 fn touch_chunks(p: &Plan, sizes: []int, idle: []int) -> []int {
     let mut left = []int {}
     for i in 0..p.chunks.len {
@@ -509,8 +509,8 @@ fn touch_chunks(p: &Plan, sizes: []int, idle: []int) -> []int {
     return out
 }
 
-/// The `wasm-split --multi-split` manifest: a chunk name, its functions, a blank
-/// line.
+/** *The `wasm-split --multi-split` manifest: a chunk name, its functions, a blank */
+/** *line. */
 fn manifest(g: &Graph, p: &Plan) -> string {
     let mut lines = []string {}
     for i in 0..p.chunks.len {

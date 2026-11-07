@@ -1,19 +1,19 @@
-//! The instruments, rendered to samples in Loam and written as WAV for the
-//! mixer (`graph.render_voices`). The notes are still `synth.loam`'s: its
-//! hits, humanize, chords, and grooves. Only the sound is made here.
-//!
-//! A note is rendered whole into the buffer, from its onset until it has
-//! decayed 80 dB. Drums and bass are one voice each: a hit cuts the one
-//! before it with a 3 ms fade, the way a drum or a bass string chokes.
-//! Pads, arps, bells, and the counter ring over each other. A loop folds
-//! the tail that runs past its end back onto its start, so the `aloop`
-//! that repeats it has no seam; a line played once stops at its end.
-//!
-//! The levels are those of the `aevalsrc` voices this replaces, so the mix
-//! calibration in `graph.layer_db` still holds. The difference is under the
-//! levels: saws and squares are band-limited, the legato pad's every
-//! oscillator (detuned ones too) fills its loop in whole cycles, and a split
-//! bar's chord change dips like any other.
+// The instruments, rendered to samples in Loam and written as WAV for the
+// mixer (`graph.render_voices`). The notes are still `synth.loam`'s: its
+// hits, humanize, chords, and grooves. Only the sound is made here.
+//
+// A note is rendered whole into the buffer, from its onset until it has
+// decayed 80 dB. Drums and bass are one voice each: a hit cuts the one
+// before it with a 3 ms fade, the way a drum or a bass string chokes.
+// Pads, arps, bells, and the counter ring over each other. A loop folds
+// the tail that runs past its end back onto its start, so the `aloop`
+// that repeats it has no seam; a line played once stops at its end.
+//
+// The levels are those of the `aevalsrc` voices this replaces, so the mix
+// calibration in `graph.layer_db` still holds. The difference is under the
+// levels: saws and squares are band-limited, the legato pad's every
+// oscillator (detuned ones too) fills its loop in whole cycles, and a split
+// bar's chord change dips like any other.
 
 import "std:math"
 import "dsp.loam" as dsp
@@ -22,10 +22,10 @@ import "num.loam" as num
 import "styles.loam" as styles
 import "synth.loam" as synth
 
-/// Samples of the fade where a choked note is cut.
+/** *Samples of the fade where a choked note is cut. */
 const CUT: int = 144
-/// A saw or square has a peak of π/2 or π/4 when summed from harmonics;
-/// these bring the band-limited waves to the same level.
+/** *A saw or square has a peak of π/2 or π/4 when summed from harmonics; */
+/** *these bring the band-limited waves to the same level. */
 const SAW_LEVEL: f64 = 1.5708
 const SQUARE_LEVEL: f64 = 0.7854
 
@@ -37,9 +37,9 @@ fn secs(j: int) -> f64 {
     return f64(j) / f64(dsp.RATE)
 }
 
-/// How long note `i` of `h` sounds, in samples: its natural ring, or for a
-/// choked part until the next hit (a loop's last chokes on its first, one
-/// loop on).
+/** *How long note `i` of `h` sounds, in samples: its natural ring, or for a */
+/** *choked part until the next hit (a loop's last chokes on its first, one */
+/** *loop on). */
 fn note_len(h: Hits, i: int, natural: int, choke: bool, wrap: bool, loop_n: int) -> int {
     let mut len = natural
     if choke && h.at.len > 1 {
@@ -60,7 +60,7 @@ fn note_len(h: Hits, i: int, natural: int, choke: bool, wrap: bool, loop_n: int)
     return len
 }
 
-/// 1, or a ramp to 0 over the last `CUT` samples of a note that was cut.
+/** *1, or a ramp to 0 over the last `CUT` samples of a note that was cut. */
 fn cut_gain(j: int, len: int, cut: bool) -> f64 {
     if cut && j > len - CUT {
         return num.clampf(f64(len - j) / f64(CUT), 0.0, 1.0)
@@ -77,8 +77,8 @@ fn attack(t: f64, a: f64) -> f64 {
 
 // ---- Drums -------------------------------------------------------------------
 
-/// A pitched drop: the phase of base·t + sweep·(1 − e^(−rate·t))/rate, with
-/// `e` the running e^(−rate·t).
+/** *A pitched drop: the phase of base·t + sweep·(1 − e^(−rate·t))/rate, with */
+/** *`e` the running e^(−rate·t). */
 fn swept(base: f64, sweep: f64, rate: f64, t: f64, e: f64) -> f64 {
     return base * t + sweep * (1.0 - e) / rate
 }
@@ -141,7 +141,7 @@ fn kick_note(
     }
 }
 
-/// Three quick bursts and a tail.
+/** *Three quick bursts and a tail. */
 fn clap(t: f64, tail: f64, r: &mut Rng) -> f64 {
     let n = dsp.noise(r)
     let mut v: f64 = 0.0
@@ -155,8 +155,8 @@ fn clap(t: f64, tail: f64, r: &mut Rng) -> f64 {
     return n * v
 }
 
-/// The snare, clap, rim, or high taiko. `gate` above 0 is the noise decay a
-/// build roll asks for; otherwise the style's own.
+/** *The snare, clap, rim, or high taiko. `gate` above 0 is the noise decay a */
+/** *build roll asks for; otherwise the style's own. */
 fn snare_note(
     buf: &mut []f64,
     at: int,
@@ -229,8 +229,8 @@ fn snare_note(
     }
 }
 
-/// Hats keep their decay in the gate. Afrobeats' shaker swells in; its open
-/// voice is a conga.
+/** *Hats keep their decay in the gate. Afrobeats' shaker swells in; its open */
+/** *voice is a conga. */
 fn hat_note(
     buf: &mut []f64,
     at: int,
@@ -288,7 +288,7 @@ fn drum_ring(g: Groove, part: int, gate: f64) -> f64 {
     return dsp.ring(gate, 1.5)
 }
 
-/// One drum voice over its loop.
+/** *One drum voice over its loop. */
 fn drum(g: Groove, part: int, variant: int) -> []f64 {
     let loop_n = samples(g.bar_sec * f64(synth.drum_bars(g)))
     let mut buf = dsp.zeros(loop_n)
@@ -403,7 +403,7 @@ fn bass(g: Groove) -> []f64 {
 
 // ---- Pads ----------------------------------------------------------------------
 
-/// `f` rounded so a whole number of cycles fills `loop` (when above 0).
+/** *`f` rounded so a whole number of cycles fills `loop` (when above 0). */
 fn whole(f: f64, loop: f64) -> f64 {
     if loop <= 0.0 {
         return f
@@ -416,10 +416,10 @@ fn saw_at(f: f64, d: f64, tw: f64, dtw: f64, loop: f64) -> f64 {
     return dsp.saw(fk * tw, fk * dtw / f64(dsp.RATE))
 }
 
-/// One pad oscillator for frequency `f`. `tw` is its clock (warped for the
-/// strings' vibrato), `dtw` that clock's rate, `ts` the time since the note
-/// was struck (the keys decay on it). A `loop` above 0 rounds every
-/// oscillator, the detuned ones too, to whole cycles of it.
+/** *One pad oscillator for frequency `f`. `tw` is its clock (warped for the */
+/** *strings' vibrato), `dtw` that clock's rate, `ts` the time since the note */
+/** *was struck (the keys decay on it). A `loop` above 0 rounds every */
+/** *oscillator, the detuned ones too, to whole cycles of it. */
 fn pad_osc(tone: int, f: f64, tw: f64, dtw: f64, ts: f64, loop: f64) -> f64 {
     if tone == synth.PAD_GLASS {
         let ff = whole(f, loop)
@@ -445,7 +445,7 @@ fn pad_osc(tone: int, f: f64, tw: f64, dtw: f64, ts: f64, loop: f64) -> f64 {
     return SAW_LEVEL * s2 / 2.0
 }
 
-/// Note `v` at the start of bar `b` (a split bar starts on its first chord).
+/** *Note `v` at the start of bar `b` (a split bar starts on its first chord). */
 fn first_note(chords: [][]int, alt: []int, b: int, v: int) -> int {
     if b == chords.len - 1 && alt.len > 0 {
         return synth.note_of(alt, v)
@@ -453,8 +453,8 @@ fn first_note(chords: [][]int, alt: []int, b: int, v: int) -> int {
     return synth.note_of(chords[b], v)
 }
 
-/// Held chords on the loop's clock. A held note never restarts; a voice
-/// whose note changes dips for 25 ms, a split bar's change included.
+/** *Held chords on the loop's clock. A held note never restarts; a voice */
+/** *whose note changes dips for 25 ms, a split bar's change included. */
 fn legato_pad(g: Groove, tone: int) -> []f64 {
     let chords = synth.pad_chords(g, tone)
     let nb = chords.len
@@ -524,9 +524,9 @@ fn legato_pad(g: Groove, tone: int) -> []f64 {
     return buf
 }
 
-/// Chords struck on the stab steps: keys that comp, or supersaw stabs. A
-/// stab rings from its onset and is gone by the next; the bar's last ends
-/// on the bar line.
+/** *Chords struck on the stab steps: keys that comp, or supersaw stabs. A */
+/** *stab rings from its onset and is gone by the next; the bar's last ends */
+/** *on the bar line. */
 fn stab_pad(g: Groove, tone: int) -> []f64 {
     let chords = synth.pad_chords(g, tone)
     let nb = chords.len
@@ -643,7 +643,7 @@ fn arp(g: Groove, tone: int) -> []f64 {
 
 // ---- Lines -------------------------------------------------------------------------
 
-/// The bell, or the felt piano when the style is cinematic.
+/** *The bell, or the felt piano when the style is cinematic. */
 fn bell_note(buf: &mut []f64, at: int, len: int, wrap: bool, vel: f64, f: f64, st: int) {
     let m24 = dsp.decay(2.4)
     let m4 = dsp.decay(4.0)
@@ -675,7 +675,7 @@ fn bell_note(buf: &mut []f64, at: int, len: int, wrap: bool, vel: f64, f: f64, s
     }
 }
 
-/// A sung line over `loop_sec`, played once: no note wraps to the start.
+/** *A sung line over `loop_sec`, played once: no note wraps to the start. */
 fn line(h: Hits, loop_sec: f64, st: int) -> []f64 {
     let mut buf = dsp.zeros(samples(loop_sec))
     let natural = samples(dsp.ring(if st == styles.CINEMA { 1.4 } else { 2.4 }, 4.0))
@@ -685,7 +685,7 @@ fn line(h: Hits, loop_sec: f64, st: int) -> []f64 {
     return buf
 }
 
-/// The bells as a loop, for a part with no line of its own.
+/** *The bells as a loop, for a part with no line of its own. */
 fn bells(g: Groove) -> []f64 {
     let loop_n = samples(g.bar_sec * f64(synth.span_bars(g)))
     let mut buf = dsp.zeros(loop_n)
@@ -702,8 +702,8 @@ fn bells(g: Groove) -> []f64 {
     return buf
 }
 
-/// The counter-melody on the pad's timbre, played once: each note swells
-/// in, holds for its gate, and lets go.
+/** *The counter-melody on the pad's timbre, played once: each note swells */
+/** *in, holds for its gate, and lets go. */
 fn counter(h: Hits, loop_sec: f64, tone: int) -> []f64 {
     let mut buf = dsp.zeros(samples(loop_sec))
     let att: f64 = if tone == synth.PAD_KEYS { 0.004 } else { 0.03 }
@@ -735,7 +735,7 @@ fn counter(h: Hits, loop_sec: f64, tone: int) -> []f64 {
 
 // ---- One-shots -----------------------------------------------------------------------
 
-/// Noise and a rising tone over `sec`, for the bars before a drop.
+/** *Noise and a rising tone over `sec`, for the bars before a drop. */
 fn riser(sec: f64, seed: int) -> []f64 {
     let n = samples(sec)
     let mut buf = dsp.zeros(n)
@@ -749,8 +749,8 @@ fn riser(sec: f64, seed: int) -> []f64 {
     return buf
 }
 
-/// The first beat of a drop: a low boom and a wash, or for cinematic a braam,
-/// a brass cluster on the root whose upper partials die first, with a growl.
+/** *The first beat of a drop: a low boom and a wash, or for cinematic a braam, */
+/** *a brass cluster on the root whose upper partials die first, with a growl. */
 fn impact(g: Groove, sec: f64) -> []f64 {
     let n = samples(sec)
     let mut buf = dsp.zeros(n)

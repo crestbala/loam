@@ -1,17 +1,17 @@
-//! Rolling train and test. The parameter is chosen on the train window and
-//! then frozen: the test window is traded with that same number, and it does
-//! not get a vote in the choice.
-//!
-//! The average on a test bar is allowed to see the train bars. Hiding them
-//! would make the first test months a warm-up, which is not a test of the
-//! rule. What the test window must not see is its own future, and the fit
-//! must not see the test window at all.
-//!
-//! In-sample is the train window traded from fresh cash. Out-of-sample is
-//! the same book carried across the boundary: the capital it opens the test
-//! with is the close of the last train bar, and the rate is from there to
-//! the end of the test. When that rate is below the in-sample rate, the
-//! note says so in one sentence.
+// Rolling train and test. The parameter is chosen on the train window and
+// then frozen: the test window is traded with that same number, and it does
+// not get a vote in the choice.
+//
+// The average on a test bar is allowed to see the train bars. Hiding them
+// would make the first test months a warm-up, which is not a test of the
+// rule. What the test window must not see is its own future, and the fit
+// must not see the test window at all.
+//
+// In-sample is the train window traded from fresh cash. Out-of-sample is
+// the same book carried across the boundary: the capital it opens the test
+// with is the close of the last train bar, and the rate is from there to
+// the end of the test. When that rate is below the in-sample rate, the
+// note says so in one sentence.
 
 import "std:date"
 import "backtest.loam"
@@ -25,18 +25,18 @@ struct Walk {
     train_to: []int,
     test_from: []int,
     test_to: []int,
-    /// The frozen parameter, one per window. For the SMA fold this is the
-    /// bar count.
+    /** *The frozen parameter, one per window. For the SMA fold this is the */
+    /** *bar count. */
     param: []int,
     is_cagr: []f64,
     oos_cagr: []f64,
-    /// Buy-and-hold and monthly SIP on the test window only, starting from
-    /// the same cash the frozen rule carries in, at the same costs.
+    /** *Buy-and-hold and monthly SIP on the test window only, starting from */
+    /** *the same cash the frozen rule carries in, at the same costs. */
     hold_cagr: []f64,
     sip_cagr: []f64,
     is_equity: []i64,
     oos_equity: []i64,
-    /// `1` when the out-of-sample rate is below the in-sample rate.
+    /** *`1` when the out-of-sample rate is below the in-sample rate. */
     degraded: []int,
     note: string,
 }
@@ -67,9 +67,9 @@ fn degraded_note() -> string {
     return "Out of sample, the frozen rule made less than it did on the sample it was fit to."
 }
 
-/// SMA length chosen on each train window from `grid`, frozen, then traded
-/// through the following `test_bars`. The window then steps forward by
-/// `test_bars`. `min_hold` is not fitted; it is the exit-load constraint.
+/** *SMA length chosen on each train window from `grid`, frozen, then traded */
+/** *through the following `test_bars`. The window then steps forward by */
+/** *`test_bars`. `min_hold` is not fitted; it is the exit-load constraint. */
 fn sma(
     s: NavSeries,
     grid: []int,

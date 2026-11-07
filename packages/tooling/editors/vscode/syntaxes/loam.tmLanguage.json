@@ -27,6 +27,11 @@
     },
     "comments": {
       "patterns": [
+        {
+          "name": "comment.block.documentation.loam",
+          "begin": "/\\*\\*(?![*/])",
+          "end": "\\*/"
+        },
         { "name": "comment.line.double-slash.loam", "match": "//.*$" },
         {
           "name": "comment.block.loam",

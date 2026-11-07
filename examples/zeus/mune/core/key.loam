@@ -1,15 +1,15 @@
-//! The key of a recording, from a mono 5512 Hz copy the decode job wrote.
-//!
-//! The file is cut in frames of 2048 samples (0.37 s, 2.7 Hz apart). Each
-//! frame is Hann-windowed and a Goertzel filter measures every semitone
-//! from A2 to C6. The magnitudes, each frame scaled to its own peak, fold
-//! into twelve pitch classes (`chroma_frames`).
-//!
-//! - The key is the Krumhansl–Kessler profile (24 rotations, major and
-//!   minor) that correlates best with the whole file's chroma.
-//! - A phrase's harmony is its chroma bar by bar (`phrase_chroma`); a bar
-//!   is named as the triad it fits best (`best_chord`), and any bar can be
-//!   scored against a chord in a key (`fit`).
+// The key of a recording, from a mono 5512 Hz copy the decode job wrote.
+//
+// The file is cut in frames of 2048 samples (0.37 s, 2.7 Hz apart). Each
+// frame is Hann-windowed and a Goertzel filter measures every semitone
+// from A2 to C6. The magnitudes, each frame scaled to its own peak, fold
+// into twelve pitch classes (`chroma_frames`).
+//
+// - The key is the Krumhansl–Kessler profile (24 rotations, major and
+//   minor) that correlates best with the whole file's chroma.
+// - A phrase's harmony is its chroma bar by bar (`phrase_chroma`); a bar
+//   is named as the triad it fits best (`best_chord`), and any bar can be
+//   scored against a chord in a key (`fit`).
 
 import "std:math"
 import "num.loam" as num
@@ -22,10 +22,10 @@ fn names() -> []string {
 }
 
 struct Tonality {
-    /// Pitch class of the tonic, 0 is C. -1 when there is no tonal centre.
+    /** *Pitch class of the tonic, 0 is C. -1 when there is no tonal centre. */
     tonic: int,
     minor: bool,
-    /// 0..100: how far the best key stands above the next.
+    /** *0..100: how far the best key stands above the next. */
     sure: int,
 }
 
@@ -119,9 +119,9 @@ fn key_of_chroma(c: []f64) -> Tonality {
     return Tonality { tonic: tonic, minor: minor, sure: sure }
 }
 
-/// The key of a recording from its chroma frames (`chroma_frames`): every
-/// frame votes, each already scaled to its own peak, so a loud chorus does
-/// not outvote the rest.
+/** *The key of a recording from its chroma frames (`chroma_frames`): every */
+/** *frame votes, each already scaled to its own peak, so a loud chorus does */
+/** *not outvote the rest. */
 fn key_of_frames(frames: []f64) -> Tonality {
     let mut c = []f64 {}
     for i in 0..12 {
@@ -135,7 +135,7 @@ fn key_of_frames(frames: []f64) -> Tonality {
     return key_of_chroma(c)
 }
 
-/// The tonic of the relative major, so A minor and C major compare equal.
+/** *The tonic of the relative major, so A minor and C major compare equal. */
 fn major_root(k: Tonality) -> int {
     if k.minor {
         return (k.tonic + 3) % 12
@@ -143,7 +143,7 @@ fn major_root(k: Tonality) -> int {
     return k.tonic
 }
 
-/// Semitones (-6..+5) that move `from` onto `to` by the shortest way.
+/** *Semitones (-6..+5) that move `from` onto `to` by the shortest way. */
 fn shift_between(from: Tonality, to: Tonality) -> int {
     if from.tonic < 0 || to.tonic < 0 {
         return 0
@@ -157,37 +157,37 @@ fn shift_between(from: Tonality, to: Tonality) -> int {
 
 // ---- Harmony of a phrase -----------------------------------------------------
 
-/// Blocks per phrase, one per bar of a four-bar loop. A shorter phrase
-/// repeats its bars (block b is bar b % bars), the way it will loop, so
-/// block b always lines up with bar b of the progression.
+/** *Blocks per phrase, one per bar of a four-bar loop. A shorter phrase */
+/** *repeats its bars (block b is bar b % bars), the way it will loop, so */
+/** *block b always lines up with bar b of the progression. */
 const BLOCKS: int = 4
 
-/// The chord register: A2 to C6. Above it is mostly overtones and hats.
+/** *The chord register: A2 to C6. Above it is mostly overtones and hats. */
 const CHORD_LOW: int = 45
 const CHORD_HIGH: int = 84
 
-/// The bass register: C2 to B2. Its strongest pitch class is the chord's
-/// root more often than not; it is what tells C from Am.
+/** *The bass register: C2 to B2. Its strongest pitch class is the chord's */
+/** *root more often than not; it is what tells C from Am. */
 const BASS_LOW: int = 36
 const BASS_HIGH: int = 47
 
-/// A frame quieter than this, relative to the loud frames of the same
-/// recording (−40 dB), is silence. Relative, so a quiet outro still has
-/// chords.
+/** *A frame quieter than this, relative to the loud frames of the same */
+/** *recording (−40 dB), is silence. Relative, so a quiet outro still has */
+/** *chords. */
 const GATE_DB: f64 = 40.0
 
-/// Chroma of every FRAME of the copy, back to back: twelve values a frame,
-/// each frame scaled to its own peak. A near-silent frame is all zero.
+/** *Chroma of every FRAME of the copy, back to back: twelve values a frame, */
+/** *each frame scaled to its own peak. A near-silent frame is all zero. */
 fn chroma_frames(pcm: string) -> []f64 {
     return goertzel_frames(pcm, CHORD_LOW, CHORD_HIGH)
 }
 
-/// The same frames over the bass register only.
+/** *The same frames over the bass register only. */
 fn bass_frames(pcm: string) -> []f64 {
     return goertzel_frames(pcm, BASS_LOW, BASS_HIGH)
 }
 
-/// Energy of each windowed frame.
+/** *Energy of each windowed frame. */
 fn frame_energy(pcm: string, win: []f64) -> []f64 {
     let n = pcm.len / 2
     let frames = n / FRAME
@@ -204,9 +204,9 @@ fn frame_energy(pcm: string, win: []f64) -> []f64 {
     return out
 }
 
-/// The silence gate for these frames: 40 dB under the loud ones (the
-/// 90th percentile), never above the old fixed floor and never under a
-/// whisper.
+/** *The silence gate for these frames: 40 dB under the loud ones (the */
+/** *90th percentile), never above the old fixed floor and never under a */
+/** *whisper. */
 fn gate_of(energy: []f64) -> f64 {
     let fixed: f64 = f64(FRAME) * 40000.0
     let whisper: f64 = f64(FRAME) * 400.0
@@ -246,8 +246,8 @@ fn gate_of(energy: []f64) -> f64 {
     return num.clampf(rel, whisper, fixed)
 }
 
-/// Goertzel magnitudes of every semitone `low..high` over each FRAME,
-/// folded into twelve pitch classes and scaled to the frame's peak.
+/** *Goertzel magnitudes of every semitone `low..high` over each FRAME, */
+/** *folded into twelve pitch classes and scaled to the frame's peak. */
 fn goertzel_frames(pcm: string, low: int, high: int) -> []f64 {
     let mut out = []f64 {}
     let n = pcm.len / 2
@@ -311,8 +311,8 @@ fn goertzel_frames(pcm: string, low: int, high: int) -> []f64 {
     return out
 }
 
-/// Frames `[from, to)` of block `b` of a phrase at `start`, `len` samples
-/// (48 kHz) long and `bars` bars. A shorter phrase repeats its bars.
+/** *Frames `[from, to)` of block `b` of a phrase at `start`, `len` samples */
+/** *(48 kHz) long and `bars` bars. A shorter phrase repeats its bars. */
 fn block_frames(start: int, len: int, bars: int, b: int) -> []int {
     let nb = if bars > 0 { bars } else { BLOCKS }
     let bar = b % nb
@@ -326,9 +326,9 @@ fn block_frames(start: int, len: int, bars: int, b: int) -> []int {
     return []int { fa, fe }
 }
 
-/// Four blocks of chroma per phrase, flattened: `out[p * 48 + b * 12 + pc]`,
-/// each block scaled so its top pitch class is 1000. `bars` 0 is free time:
-/// the phrase is cut in four equal blocks.
+/** *Four blocks of chroma per phrase, flattened: `out[p * 48 + b * 12 + pc]`, */
+/** *each block scaled so its top pitch class is 1000. `bars` 0 is free time: */
+/** *the phrase is cut in four equal blocks. */
 fn phrase_chroma(frames: []f64, starts: []int, lens: []int, bars: []int) -> []int {
     let mut out = []int {}
     let n = frames.len / 12
@@ -362,7 +362,7 @@ fn phrase_chroma(frames: []f64, starts: []int, lens: []int, bars: []int) -> []in
     return out
 }
 
-/// A chord as one int: the root's pitch class, plus 12 when minor.
+/** *A chord as one int: the root's pitch class, plus 12 when minor. */
 fn chord_code(root: int, minor: bool) -> int {
     let r = (root % 12 + 12) % 12
     return if minor { r + 12 } else { r }
@@ -387,14 +387,14 @@ fn chord_name(c: int) -> string {
     return r
 }
 
-/// Pitch classes of the triad: root, third, fifth.
+/** *Pitch classes of the triad: root, third, fifth. */
 fn chord_tones(c: int) -> []int {
     let r = chord_root(c)
     let third = if chord_minor(c) { 3 } else { 4 }
     return []int { r, (r + third) % 12, (r + 7) % 12 }
 }
 
-/// Is pitch class `pc` in the scale of `tonic` (natural minor or major)?
+/** *Is pitch class `pc` in the scale of `tonic` (natural minor or major)? */
 fn in_scale(pc: int, tonic: int, minor: bool) -> bool {
     let d = ((pc - tonic) % 12 + 12) % 12
     let steps = if minor { []int { 0, 2, 3, 5, 7, 8, 10 } } else { []int { 0, 2, 4, 5, 7, 9, 11 } }
@@ -406,8 +406,8 @@ fn in_scale(pc: int, tonic: int, minor: bool) -> bool {
     return false
 }
 
-/// The block at `at` with its floor taken out: what stands above the
-/// broadband wash a drum or a noise leaves in every pitch class.
+/** *The block at `at` with its floor taken out: what stands above the */
+/** *broadband wash a drum or a noise leaves in every pitch class. */
 fn lifted(ch: []int, at: int) -> []int {
     let mut lo = 1000
     for i in 0..12 {
@@ -422,9 +422,9 @@ fn lifted(ch: []int, at: int) -> []int {
     return out
 }
 
-/// How tonal a block is, 0..1000: how far its three strongest pitch
-/// classes stand above its six weakest. A chord stands out; a drum loop or
-/// a hiss spreads evenly and reads near 0.
+/** *How tonal a block is, 0..1000: how far its three strongest pitch */
+/** *classes stand above its six weakest. A chord stands out; a drum loop or */
+/** *a hiss spreads evenly and reads near 0. */
 fn tonal(ch: []int, at: int) -> int {
     if at + 12 > ch.len {
         return 0
@@ -445,9 +445,9 @@ fn tonal(ch: []int, at: int) -> int {
     return num.clampi((contrast - 400) * 1000 / 350, 0, 1000)
 }
 
-/// How well the block at `at` sits on `chord` in the key, 0..1000: weight
-/// on chord tones counts fully, other scale tones half, the rest nothing.
-/// An atonal block fits everything.
+/** *How well the block at `at` sits on `chord` in the key, 0..1000: weight */
+/** *on chord tones counts fully, other scale tones half, the rest nothing. */
+/** *An atonal block fits everything. */
 fn fit(ch: []int, at: int, chord: int, tonic: int, minor: bool) -> int {
     if at + 12 > ch.len || chord < 0 {
         return 1000
@@ -470,9 +470,9 @@ fn fit(ch: []int, at: int, chord: int, tonic: int, minor: bool) -> int {
     return num.clampi(good * 500 / total, 0, 1000)
 }
 
-/// The triad the block at `at` plays, or -1 when it is not tonal enough to
-/// say. Root, third, and fifth weigh 1, 0.8, 0.7; a chord inside the key
-/// wins a near tie.
+/** *The triad the block at `at` plays, or -1 when it is not tonal enough to */
+/** *say. Root, third, and fifth weigh 1, 0.8, 0.7; a chord inside the key */
+/** *wins a near tie. */
 fn best_chord(ch: []int, at: int, tonic: int, minor: bool) -> int {
     if tonal(ch, at) < 250 {
         return -1
@@ -496,7 +496,7 @@ fn best_chord(ch: []int, at: int, tonic: int, minor: bool) -> int {
     return best
 }
 
-/// The block at `at` moved up by `semis`, as a new block of 12.
+/** *The block at `at` moved up by `semis`, as a new block of 12. */
 fn rotate(ch: []int, at: int, semis: int) -> []int {
     let mut out = []int {}
     for i in 0..12 {
@@ -513,26 +513,26 @@ fn rotate(ch: []int, at: int, semis: int) -> []int {
 
 // ---- Chords as a sequence --------------------------------------------------
 
-/// The decoder's states: the 24 triads (`chord_code`), then no chord.
+/** *The decoder's states: the 24 triads (`chord_code`), then no chord. */
 const NO_CHORD: int = 24
 const STATES: int = 25
 
-/// How strongly a frame's chroma speaks, in log-likelihood per frame.
+/** *How strongly a frame's chroma speaks, in log-likelihood per frame. */
 const SURE: f64 = 6.0
-/// What it costs the path to change chord: to a chord in the key, to one
-/// outside it, and into or out of no chord. A frame (0.37 s) smeared by a
-/// drum or a passing note does not pay for a change and back; a chord that
-/// holds does. Chosen on Mune's own renders of every style, where the bar's
-/// chord is known: these sit in the middle of a broad best plateau (84–86%
-/// of bars named right, against 80% for each bar read alone).
+/** *What it costs the path to change chord: to a chord in the key, to one */
+/** *outside it, and into or out of no chord. A frame (0.37 s) smeared by a */
+/** *drum or a passing note does not pay for a change and back; a chord that */
+/** *holds does. Chosen on Mune's own renders of every style, where the bar's */
+/** *chord is known: these sit in the middle of a broad best plateau (84–86% */
+/** *of bars named right, against 80% for each bar read alone). */
 const MOVE_IN_KEY: f64 = 2.5
 const MOVE_OUT_KEY: f64 = 3.4
 const MOVE_NONE: f64 = 1.7
-/// A bar names the chord that holds this share of its frames, or none.
+/** *A bar names the chord that holds this share of its frames, or none. */
 const HOLD_PCT: int = 40
 
-/// How tonal frame `f` is, 0..1: its three strongest pitch classes against
-/// its six weakest, on the scale `tonal` uses for a block.
+/** *How tonal frame `f` is, 0..1: its three strongest pitch classes against */
+/** *its six weakest, on the scale `tonal` uses for a block. */
 fn frame_tonal(c: []f64) -> f64 {
     let mut v = []f64 {}
     for i in 0..12 {
@@ -557,16 +557,16 @@ fn frame_tonal(c: []f64) -> f64 {
     return num.clampf((contrast - 0.4) / 0.35, 0.0, 1.0)
 }
 
-/// How much the bass's strongest note decides the root, in the same units
-/// as the cosine.
+/** *How much the bass's strongest note decides the root, in the same units */
+/** *as the cosine. */
 const BASS_WEIGHT: f64 = 0.35
 
-/// Log-likelihood of each state for one frame of chroma. A triad scores the
-/// cosine between the frame (its floor taken out) and the triad's weights
-/// (root 1, third 0.8, fifth 0.7), damped when the frame is not tonal, plus
-/// how strong its root is in the bass (`bass`, twelve values scaled to their
-/// peak, or empty). No chord scores high on silence, hiss, and drums, and
-/// low on a clear triad.
+/** *Log-likelihood of each state for one frame of chroma. A triad scores the */
+/** *cosine between the frame (its floor taken out) and the triad's weights */
+/** *(root 1, third 0.8, fifth 0.7), damped when the frame is not tonal, plus */
+/** *how strong its root is in the bass (`bass`, twelve values scaled to their */
+/** *peak, or empty). No chord scores high on silence, hiss, and drums, and */
+/** *low on a clear triad. */
 fn emissions(c: []f64, bass: []f64) -> []f64 {
     let mut out = []f64 {}
     let mut lo: f64 = c[0]
@@ -611,7 +611,7 @@ fn in_key(k: int, tonic: int, minor: bool) -> bool {
         in_scale(t[2], tonic, minor)
 }
 
-/// What it costs to go from state `a` to state `b`.
+/** *What it costs to go from state `a` to state `b`. */
 fn move_cost(a: int, b: int, tonic: int, minor: bool) -> f64 {
     if a == b {
         return 0.0
@@ -622,11 +622,11 @@ fn move_cost(a: int, b: int, tonic: int, minor: bool) -> f64 {
     return if in_key(b, tonic, minor) { MOVE_IN_KEY } else { MOVE_OUT_KEY }
 }
 
-/// The most likely chord of every frame (`chord_code`, or −1 for none): a
-/// hidden Markov model over the 24 triads and no chord, decoded with
-/// Viterbi. The whole recording is one path, so a phrase cut from it
-/// inherits chords heard in context, not guessed from its bars alone.
-/// `bass` is `bass_frames` of the same copy, or empty.
+/** *The most likely chord of every frame (`chord_code`, or −1 for none): a */
+/** *hidden Markov model over the 24 triads and no chord, decoded with */
+/** *Viterbi. The whole recording is one path, so a phrase cut from it */
+/** *inherits chords heard in context, not guessed from its bars alone. */
+/** *`bass` is `bass_frames` of the same copy, or empty. */
 fn chord_path(frames: []f64, bass: []f64, tonic: int, minor: bool) -> []int {
     let n = frames.len / 12
     let mut out = []int {}
@@ -717,9 +717,9 @@ fn chord_path(frames: []f64, bass: []f64, tonic: int, minor: bool) -> []int {
     return out
 }
 
-/// Four chords per phrase, one per block (`out[p * 4 + b]`), from the
-/// decoded path: the chord that holds at least `HOLD_PCT` of the block's
-/// frames, else −1.
+/** *Four chords per phrase, one per block (`out[p * 4 + b]`), from the */
+/** *decoded path: the chord that holds at least `HOLD_PCT` of the block's */
+/** *frames, else −1. */
 fn phrase_chords(path: []int, starts: []int, lens: []int, bars: []int) -> []int {
     let mut out = []int {}
     for p in 0..starts.len {
