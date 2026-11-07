@@ -1,4 +1,4 @@
-//! The playlist drawer on the right.
+// The playlist drawer on the right.
 
 import "zeus"
 import "zui"

@@ -1,18 +1,18 @@
-//! A dark listening room and a light studio, with a violet accent.
-//!
-//! Every colour here is a role token (`@slot`), not a hex value. A widget
-//! stores the role and the paint pass resolves it against `appearance()`,
-//! so the theme switch repaints the whole window without a rebuild. A hex
-//! string would be baked in at build time, which is why the switch used to
-//! move only its own thumb.
-//!
-//! Mune's own slots start at `BASE`, above every Zeus role. `install` also
-//! binds the Zeus roles the stock widgets read (paper, ink, rules, the
-//! accent), so a text field or a slider sits in the same room as the cards.
-//!
-//! Each layer and each section has its own colour, used the same way on
-//! the instrument cards, the recording rows, and the waveform. The light
-//! values are deeper so they hold contrast on a pale card.
+// A dark listening room and a light studio, with a violet accent.
+//
+// Every colour here is a role token (`@slot`), not a hex value. A widget
+// stores the role and the paint pass resolves it against `appearance()`,
+// so the theme switch repaints the whole window without a rebuild. A hex
+// string would be baked in at build time, which is why the switch used to
+// move only its own thumb.
+//
+// Mune's own slots start at `BASE`, above every Zeus role. `install` also
+// binds the Zeus roles the stock widgets read (paper, ink, rules, the
+// accent), so a text field or a slider sits in the same room as the cards.
+//
+// Each layer and each section has its own colour, used the same way on
+// the instrument cards, the recording rows, and the waveform. The light
+// values are deeper so they hold contrast on a pale card.
 
 import "zeus"
 
@@ -49,12 +49,12 @@ const SEC_BUILD: string = "@144"
 const SEC_DROP: string = "@145"
 const SEC_BREAK: string = "@146"
 
-/// The energy arc: quiet phrases cool, full ones warm.
+/** *The energy arc: quiet phrases cool, full ones warm. */
 const PATH_LOW: string = "@147"
 const PATH_MID: string = "@148"
 const PATH_HIGH: string = "@149"
 
-/// Rhythm, motif, air.
+/** *Rhythm, motif, air. */
 fn role_color(r: int) -> string {
     if r == 1 {
         return ROLE_MOTIF
@@ -65,7 +65,7 @@ fn role_color(r: int) -> string {
     return C_REC
 }
 
-/// Intro, verse, build, drop, break, outro.
+/** *Intro, verse, build, drop, break, outro. */
 fn section_color(k: int) -> string {
     if k == 1 {
         return SEC_VERSE
@@ -82,7 +82,7 @@ fn section_color(k: int) -> string {
     return SEC_QUIET
 }
 
-/// An energy on the arc, 0..1000, as its colour.
+/** *An energy on the arc, 0..1000, as its colour. */
 fn path_color(h: int) -> string {
     if h < 340 {
         return PATH_LOW
@@ -112,8 +112,8 @@ fn paint_role(s: string, light: int, dark: int) {
 
 let mut installed: bool = false
 
-/// Register both appearances once. Zeus has set its own roles by the time
-/// a window exists; these override the ones Mune cares about.
+/** *Register both appearances once. Zeus has set its own roles by the time */
+/** *a window exists; these override the ones Mune cares about. */
 fn install() {
     if installed {
         return

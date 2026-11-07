@@ -1,44 +1,44 @@
-//! style — the CSS subset a Zeus element takes as one `style` prop.
-//!
-//! Every key is an `Option`: an absent key leaves the element's own value, and
-//! a present one wins, so a negative margin or a zero radius is an ordinary
-//! value rather than an "unset" sentinel. Keys are camelCase and follow the
-//! CSS property they stand for. Every spacing and shape key is one plain
-//! number — a `Space` step, a named constant, or a literal — never a struct:
-//! a CSS shorthand becomes its longhand keys (`paddingY`, `paddingX`).
-//!
-//! ```
-//! Box(style = Style(gap = Space.Exs, paddingY = Space.Exs, paddingX = Space.Xs,
-//!                   radius = 6,
-//!                   background = if on.get() { accent() } else { plate() }))
-//! ```
-//!
-//! A plain value is wrapped in `Some` by the compiler where an `Option` is
-//! expected, so a call site never writes `result.some(...)`. The element runs
-//! `style` in one effect and writes only the keys whose value changed; see
-//! `install_style` in `zeusbase`.
-//!
-//! This module holds data only, so the arena (which keeps the last `Style` of
-//! a reactive element) can import it without a cycle.
+// style — the CSS subset a Zeus element takes as one `style` prop.
+//
+// Every key is an `Option`: an absent key leaves the element's own value, and
+// a present one wins, so a negative margin or a zero radius is an ordinary
+// value rather than an "unset" sentinel. Keys are camelCase and follow the
+// CSS property they stand for. Every spacing and shape key is one plain
+// number — a `Space` step, a named constant, or a literal — never a struct:
+// a CSS shorthand becomes its longhand keys (`paddingY`, `paddingX`).
+//
+// ```
+// Box(style = Style(gap = Space.Exs, paddingY = Space.Exs, paddingX = Space.Xs,
+//                   radius = 6,
+//                   background = if on.get() { accent() } else { plate() }))
+// ```
+//
+// A plain value is wrapped in `Some` by the compiler where an `Option` is
+// expected, so a call site never writes `result.some(...)`. The element runs
+// `style` in one effect and writes only the keys whose value changed; see
+// `install_style` in `zeusbase`.
+//
+// This module holds data only, so the arena (which keeps the last `Style` of
+// a reactive element) can import it without a cycle.
 
 import "std:result"
 
-/// `display`: `Flex` lays the element out, `None` hides it and takes it out
-/// of layout (the subtree is kept). The values are the arena's `show_on`.
+/** *`display`: `Flex` lays the element out, `None` hides it and takes it out */
+/** *of layout (the subtree is kept). The values are the arena's `show_on`. */
 enum Display {
     None = 0,
     Flex = 1,
 }
 
-/// `position`. `Absolute` pins the element against its parent with `top` /
-/// `right` / `bottom` / `left`.
-/// The values are the layout solver's.
+/** *`position`. `Absolute` pins the element against its parent with `top` / */
+/** *`right` / `bottom` / `left`. */
+/** *The values are the layout solver's. */
 enum Position {
     Relative = 0,
     Absolute = 1,
 }
 
-/// `overflow`. The values are the layout solver's.
+/** *`overflow`. The values are the layout solver's. */
 enum Overflow {
     Visible = 0,
     Hidden = 1,
@@ -46,8 +46,8 @@ enum Overflow {
     Auto = 3,
 }
 
-/// A point on a box, for `Float.at` / `Float.on`:
-/// horizontal Left / Center / Right by vertical Top / Center / Bottom.
+/** *A point on a box, for `Float.at` / `Float.on`: */
+/** *horizontal Left / Center / Right by vertical Top / Center / Bottom. */
 enum Attach {
     LeftTop = 0,
     LeftCenter = 1,
@@ -60,9 +60,9 @@ enum Attach {
     RightBottom = 8,
 }
 
-/// What a floating box attaches to.
-/// `None` is in flow; `Parent` is its parent's box; `Root` the window (the
-/// safe area); `Anchor` the node named by `zeus.float_on(r, target)`.
+/** *What a floating box attaches to. */
+/** *`None` is in flow; `Parent` is its parent's box; `Root` the window (the */
+/** *safe area); `Anchor` the node named by `zeus.float_on(r, target)`. */
 enum FloatTo {
     None = 0,
     Parent = 1,
@@ -70,92 +70,92 @@ enum FloatTo {
     Anchor = 3,
 }
 
-/// `text-align` for a single-line label inside a wider box.
+/** *`text-align` for a single-line label inside a wider box. */
 enum TextAlign {
     Left = 0,
     Center = 1,
     Right = 2,
 }
 
-/// A floating box: out of flow, placed by joining
-/// point `at` on itself to point `on` of its target, then moved by
-/// (`x`, `y`). It paints and hit-tests above the page in `zIndex` order and
-/// follows its target through every scroll without a layout.
+/** *A floating box: out of flow, placed by joining */
+/** *point `at` on itself to point `on` of its target, then moved by */
+/** *(`x`, `y`). It paints and hit-tests above the page in `zIndex` order and */
+/** *follows its target through every scroll without a layout. */
 struct Float {
     to: int = 1,
     at: int = 0,
     on: int = 0,
     x: int = 0,
     y: int = 0,
-    /// Grow the box by this many dp on each axis.
+    /** *Grow the box by this many dp on each axis. */
     expandW: int = 0,
     expandH: int = 0,
-    /// Jump to the opposite side when the preferred one leaves the window.
+    /** *Jump to the opposite side when the preferred one leaves the window. */
     flip: bool = false,
-    /// Clip to whatever clips its parent (a scroller's viewport), as an
-    /// in-flow child would be.
+    /** *Clip to whatever clips its parent (a scroller's viewport), as an */
+    /** *in-flow child would be. */
     clip: bool = false,
-    /// The pointer passes through to what lies beneath:
-    /// for tooltips and decorations that must not steal hover.
+    /** *The pointer passes through to what lies beneath: */
+    /** *for tooltips and decorations that must not steal hover. */
     passthrough: bool = false,
 }
 
-/// `floating`: attach to the parent at `on`, by our `at`, offset (`x`, `y`).
+/** *`floating`: attach to the parent at `on`, by our `at`, offset (`x`, `y`). */
 fn float_parent(at: int, on: int, x: int, y: int) -> Float {
     return Float { to: FloatTo.Parent, at: at, on: on, x: x, y: y }
 }
 
-/// `floating`: pin to a point of the window (toasts, FABs, HUDs).
+/** *`floating`: pin to a point of the window (toasts, FABs, HUDs). */
 fn float_root(at: int, on: int, x: int, y: int) -> Float {
     return Float { to: FloatTo.Root, at: at, on: on, x: x, y: y }
 }
 
-/// `floating`: attach to the anchor node (`zeus.float_on`), flipping to stay on
-/// screen — a dropdown is `float_anchor(Attach.LeftTop, Attach.LeftBottom, 0, 4)`.
+/** *`floating`: attach to the anchor node (`zeus.float_on`), flipping to stay on */
+/** *screen — a dropdown is `float_anchor(Attach.LeftTop, Attach.LeftBottom, 0, 4)`. */
 fn float_anchor(at: int, on: int, x: int, y: int) -> Float {
     return Float { to: FloatTo.Anchor, at: at, on: on, x: x, y: y, flip: true }
 }
 
-/// Units a `Len` can carry.
+/** *Units a `Len` can carry. */
 enum LenUnit {
     Px = 0,
     Pct = 1,
 }
 
-/// A length: `px(240)` or `pct(50)`.
+/** *A length: `px(240)` or `pct(50)`. */
 struct Len {
     unit: int = 0,
     v: int = 0,
 }
 
-/// `aspect-ratio`: `ratio(16, 9)`.
+/** *`aspect-ratio`: `ratio(16, 9)`. */
 struct Ratio {
     w: int = 0,
     h: int = 0,
 }
 
-/// The style of one element. Grouped as CSS groups them; every key is
-/// optional. `color` and `font` inherit into text, as in CSS.
+/** *The style of one element. Grouped as CSS groups them; every key is */
+/** *optional. `color` and `font` inherit into text, as in CSS. */
 struct Style {
     // display and flex
     display: Option<int> = none,
-    /// `Direction.Row` / `Direction.Column`.
+    /** *`Direction.Row` / `Direction.Column`. */
     direction: Option<int> = none,
-    /// `flex-wrap` on a container; text wrapping on a label.
+    /** *`flex-wrap` on a container; text wrapping on a label. */
     wrap: Option<bool> = none,
     gap: Option<int> = none,
     rowGap: Option<int> = none,
     columnGap: Option<int> = none,
-    /// `align-items`: an `Align` code.
+    /** *`align-items`: an `Align` code. */
     align: Option<int> = none,
-    /// `justify-content`: an `Align` code.
+    /** *`justify-content`: an `Align` code. */
     justify: Option<int> = none,
     alignSelf: Option<int> = none,
     grow: Option<int> = none,
     shrink: Option<int> = none,
 
     // grid child
-    /// `grid-column: span n`.
+    /** *`grid-column: span n`. */
     span: Option<int> = none,
 
     // box
@@ -166,9 +166,9 @@ struct Style {
     minHeight: Option<int> = none,
     maxHeight: Option<int> = none,
     aspect: Option<Ratio> = none,
-    /// Padding and margin: plain lengths, a `Space` step or a number. The
-    /// shorthand lands first, then the axis, then the side, as in CSS:
-    /// `padding = Space.Sm, paddingTop = 0`.
+    /** *Padding and margin: plain lengths, a `Space` step or a number. The */
+    /** *shorthand lands first, then the axis, then the side, as in CSS: */
+    /** *`padding = Space.Sm, paddingTop = 0`. */
     padding: Option<int> = none,
     paddingX: Option<int> = none,
     paddingY: Option<int> = none,
@@ -186,86 +186,86 @@ struct Style {
 
     // position
     position: Option<int> = none,
-    /// Offsets of a positioned element.
+    /** *Offsets of a positioned element. */
     top: Option<int> = none,
     right: Option<int> = none,
     bottom: Option<int> = none,
     left: Option<int> = none,
     zIndex: Option<int> = none,
     overflow: Option<int> = none,
-    /// Out of flow, attached to a target by points (`Float`).
+    /** *Out of flow, attached to a target by points (`Float`). */
     floating: Option<Float> = none,
 
     // paint
     background: Option<string> = none,
     color: Option<string> = none,
-    /// Percent, 0..100.
+    /** *Percent, 0..100. */
     opacity: Option<int> = none,
-    /// Corner radius; a corner key overrides it for that corner alone.
+    /** *Corner radius; a corner key overrides it for that corner alone. */
     radius: Option<int> = none,
     radiusTopLeft: Option<int> = none,
     radiusTopRight: Option<int> = none,
     radiusBottomRight: Option<int> = none,
     radiusBottomLeft: Option<int> = none,
-    /// Border width in px and color (role token or hex); either may be left
-    /// out, so `borderColor = rule()` recolors without changing the width.
+    /** *Border width in px and color (role token or hex); either may be left */
+    /** *out, so `borderColor = rule()` recolors without changing the width. */
     borderWidth: Option<int> = none,
     borderColor: Option<string> = none,
-    /// Per-side widths, drawn inside the box over the padding (no layout
-    /// space). Unset sides draw nothing.
+    /** *Per-side widths, drawn inside the box over the padding (no layout */
+    /** *space). Unset sides draw nothing. */
     borderTop: Option<int> = none,
     borderRight: Option<int> = none,
     borderBottom: Option<int> = none,
     borderLeft: Option<int> = none,
-    /// A rule of this width between flow children, centred in the gap.
+    /** *A rule of this width between flow children, centred in the gap. */
     borderBetween: Option<int> = none,
-    /// Shadow level 0..4.
+    /** *Shadow level 0..4. */
     elevation: Option<int> = none,
 
     // motion. Paint-only: none of these moves the layout box.
-    /// Clockwise rotation in degrees about the centre.
+    /** *Clockwise rotation in degrees about the centre. */
     rotate: Option<int> = none,
-    /// Scale percent about the centre (100 = identity). Paint only.
+    /** *Scale percent about the centre (100 = identity). Paint only. */
     scale: Option<int> = none,
-    /// Paint offset in dp, along x and y.
+    /** *Paint offset in dp, along x and y. */
     shiftX: Option<int> = none,
     shiftY: Option<int> = none,
-    /// How `opacity`, `rotate`, `scale` and the shifts ease when they change
-    /// (`Motion.*`: a time or a spring). The first value lands at once,
-    /// never animated.
+    /** *How `opacity`, `rotate`, `scale` and the shifts ease when they change */
+    /** *(`Motion.*`: a time or a spring). The first value lands at once, */
+    /** *never animated. */
     transition: Option<int> = none,
 
     // text
     font: Option<int> = none,
-    /// `text-overflow: ellipsis`.
+    /** *`text-overflow: ellipsis`. */
     ellipsis: Option<bool> = none,
-    /// `TextAlign.*` for a single-line label in a wider box.
+    /** *`TextAlign.*` for a single-line label in a wider box. */
     textAlign: Option<int> = none,
 
     // interaction
-    /// CSS cursor name: `"pointer"`, `"text"`, … (`""` = arrow).
+    /** *CSS cursor name: `"pointer"`, `"text"`, … (`""` = arrow). */
     cursor: Option<string> = none,
 }
 
 // --- value constructors ------------------------------------------------------
 
-/// A length in design px (the UI scale is applied where it lands).
+/** *A length in design px (the UI scale is applied where it lands). */
 fn px(v: int) -> Len {
     return Len { unit: LenUnit.Px, v: v }
 }
 
-/// A length in percent of the parent.
+/** *A length in percent of the parent. */
 fn pct(v: int) -> Len {
     return Len { unit: LenUnit.Pct, v: v }
 }
 
-/// `aspect-ratio: w / h`.
+/** *`aspect-ratio: w / h`. */
 fn ratio(w: int, h: int) -> Ratio {
     return Ratio { w: w, h: h }
 }
 
-/// `display` for a condition: `Display.Flex` while true, `Display.None`
-/// otherwise. `Style(display = shown(open.get()))`.
+/** *`display` for a condition: `Display.Flex` while true, `Display.None` */
+/** *otherwise. `Style(display = shown(open.get()))`. */
 fn shown(on: bool) -> int {
     if on {
         return Display.Flex
@@ -273,15 +273,15 @@ fn shown(on: bool) -> int {
     return Display.None
 }
 
-/// No style: the default of every `style` prop.
+/** *No style: the default of every `style` prop. */
 fn no_style() -> Style {
     return Style {}
 }
 
 // --- merge -------------------------------------------------------------------
 
-/// The keys a state style may set: paint only, so hover or press never
-/// reflows. Every other key of `s` is dropped.
+/** *The keys a state style may set: paint only, so hover or press never */
+/** *reflows. Every other key of `s` is dropped. */
 fn paint_only(s: Style) -> Style {
     return Style(
         background = s.background,
@@ -293,14 +293,14 @@ fn paint_only(s: Style) -> Style {
     )
 }
 
-/// `b`'s key where `b` has one, else `a`'s. The engine's cascade: an
-/// element's `restyle` over its `style`, a state style over both. Components
-/// do not call it; they pass the caller's style as `restyle`.
-///
-/// A shorthand in `b` also clears the longhands of `a` under it, as a later
-/// `padding: 12px` beats an earlier `padding-top` in CSS: a caller's
-/// `padding = Space.Xs` sets every side of a component, whatever sides the
-/// component's own style named.
+/** *`b`'s key where `b` has one, else `a`'s. The engine's cascade: an */
+/** *element's `restyle` over its `style`, a state style over both. Components */
+/** *do not call it; they pass the caller's style as `restyle`. */
+/** */
+/** *A shorthand in `b` also clears the longhands of `a` under it, as a later */
+/** *`padding: 12px` beats an earlier `padding-top` in CSS: a caller's */
+/** *`padding = Space.Xs` sets every side of a component, whatever sides the */
+/** *component's own style named. */
 fn merge(a: Style, b: Style) -> Style {
     let pad = result.is_some(b.padding)
     let pad_x = pad || result.is_some(b.paddingX)
@@ -379,7 +379,7 @@ fn merge(a: Style, b: Style) -> Style {
     )
 }
 
-/// `b` when present, else `a`.
+/** *`b` when present, else `a`. */
 fn pick<T>(a: Option<T>, b: Option<T>) -> Option<T> {
     if result.is_some(b) {
         return b
@@ -387,7 +387,7 @@ fn pick<T>(a: Option<T>, b: Option<T>) -> Option<T> {
     return a
 }
 
-/// `a`, unless a shorthand over it clears it.
+/** *`a`, unless a shorthand over it clears it. */
 fn under(a: Option<int>, cleared: bool) -> Option<int> {
     if cleared {
         return result.none(0)
@@ -395,14 +395,14 @@ fn under(a: Option<int>, cleared: bool) -> Option<int> {
     return a
 }
 
-/// The text keys of `s` (`color`, `font`): what a component passes on to the
-/// label inside it.
+/** *The text keys of `s` (`color`, `font`): what a component passes on to the */
+/** *label inside it. */
 fn text_part(s: Style) -> Style {
     return Style(color = s.color, font = s.font)
 }
 
-/// The text keys of an optional style prop, as a `restyle` for a label: a
-/// component's caller recolours or resizes its text without restyling the box.
+/** *The text keys of an optional style prop, as a `restyle` for a label: a */
+/** *component's caller recolours or resizes its text without restyling the box. */
 fn text_of(s: Option<fn() -> Style>) -> Option<fn() -> Style> {
     if !result.is_some(s) {
         return s
@@ -411,7 +411,7 @@ fn text_of(s: Option<fn() -> Style>) -> Option<fn() -> Style> {
     return result.some(fn() -> Style { return text_part(f()) })
 }
 
-/// A `Len` in px, or `d` when it is unset or a percentage.
+/** *A `Len` in px, or `d` when it is unset or a percentage. */
 fn len_or(l: Option<Len>, d: int) -> int {
     if result.is_some(l) && l.val.unit == LenUnit.Px {
         return l.val.v
@@ -419,7 +419,7 @@ fn len_or(l: Option<Len>, d: int) -> int {
     return d
 }
 
-/// The `color` of `s`, or `d` when it has none: an icon tinted like the label.
+/** *The `color` of `s`, or `d` when it has none: an icon tinted like the label. */
 fn text_color(s: Style, d: string) -> string {
     return result.some_or(s.color, d)
 }
@@ -429,7 +429,7 @@ fn text_color(s: Style, d: string) -> string {
 // `""` for some looks, a table column with no fixed width, a pin left unset —
 // becomes an absent key through one of these.
 
-/// A dimension where any negative is unset.
+/** *A dimension where any negative is unset. */
 fn opt_dim(v: int) -> Option<int> {
     if v < 0 {
         return result.none(0)
@@ -437,8 +437,8 @@ fn opt_dim(v: int) -> Option<int> {
     return result.some(v)
 }
 
-/// `v` while `on`, else unset: a key only one branch sets
-/// (`top = opt_when(above, 0), bottom = opt_when(!above, 0)`).
+/** *`v` while `on`, else unset: a key only one branch sets */
+/** *(`top = opt_when(above, 0), bottom = opt_when(!above, 0)`). */
 fn opt_when(on: bool, v: int) -> Option<int> {
     if !on {
         return result.none(0)
@@ -446,7 +446,7 @@ fn opt_when(on: bool, v: int) -> Option<int> {
     return result.some(v)
 }
 
-/// A pixel length where any negative is unset.
+/** *A pixel length where any negative is unset. */
 fn len_px(v: int) -> Option<Len> {
     if v < 0 {
         return result.none(Len {})
@@ -454,7 +454,7 @@ fn len_px(v: int) -> Option<Len> {
     return result.some(px(v))
 }
 
-/// A color or name where `""` is unset.
+/** *A color or name where `""` is unset. */
 fn opt_color(v: string) -> Option<string> {
     if v.len == 0 {
         return result.none("")
@@ -462,7 +462,7 @@ fn opt_color(v: string) -> Option<string> {
     return result.some(v)
 }
 
-/// The `Style` an optional style prop holds now (empty when absent).
+/** *The `Style` an optional style prop holds now (empty when absent). */
 fn style_of(s: Option<fn() -> Style>) -> Style {
     if result.is_some(s) {
         let f = s.val

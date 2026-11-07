@@ -1,22 +1,22 @@
-//! Rules that turn a NAV series into orders.
-//!
-//! A rule sees the bar it is standing on and nothing after it. The order it
-//! writes is filled by the backtest at the next published NAV, so the rule
-//! does not choose a price. Warm-up bars, where the indicator has no opinion,
-//! produce no order.
-//!
-//! Three rules, plus the buy-and-hold every report is measured against:
-//!
-//! - NAV above its 200-day average, and no exit until the lot is already past
-//!   the 365-day exit load. The fill is later than the signal, so the
-//!   redemption itself clears the load.
-//! - Twelve-month momentum, rebalanced on the last published day of the month,
-//!   equal weight in the top N. A name that is not ready is not ranked.
-//! - A monthly SIP of a fixed paise amount.
-//!
-//! `compare` runs the rule and, beside it, a lump-sum buy-and-hold and a
-//! monthly SIP that deploys the same paise over the same dates, at the same
-//! costs.
+// Rules that turn a NAV series into orders.
+//
+// A rule sees the bar it is standing on and nothing after it. The order it
+// writes is filled by the backtest at the next published NAV, so the rule
+// does not choose a price. Warm-up bars, where the indicator has no opinion,
+// produce no order.
+//
+// Three rules, plus the buy-and-hold every report is measured against:
+//
+// - NAV above its 200-day average, and no exit until the lot is already past
+//   the 365-day exit load. The fill is later than the signal, so the
+//   redemption itself clears the load.
+// - Twelve-month momentum, rebalanced on the last published day of the month,
+//   equal weight in the top N. A name that is not ready is not ranked.
+// - A monthly SIP of a fixed paise amount.
+//
+// `compare` runs the rule and, beside it, a lump-sum buy-and-hold and a
+// monthly SIP that deploys the same paise over the same dates, at the same
+// costs.
 
 import "std:date"
 import "backtest.loam"
@@ -52,10 +52,10 @@ fn empty_book_plan() -> BookPlan {
     return BookPlan { orders: backtest.empty_orders(), flows: backtest.empty_flows() }
 }
 
-/// Buy when the NAV is above its `n`-bar average, sell when it is below,
-/// but not until the filled lot is older than `min_hold` days. `min_hold`
-/// of 365 is what keeps the exit on the far side of the exit load. The
-/// 200-day rule is `sma_200`.
+/** *Buy when the NAV is above its `n`-bar average, sell when it is below, */
+/** *but not until the filled lot is older than `min_hold` days. `min_hold` */
+/** *of 365 is what keeps the exit on the far side of the exit load. The */
+/** *200-day rule is `sma_200`. */
 fn sma_orders(s: NavSeries, n: int, min_hold: int, ack: int) -> Orders {
     let line = indicators.sma(s, n, ack)
     let mut dates = []int {}
@@ -93,13 +93,13 @@ fn sma_orders(s: NavSeries, n: int, min_hold: int, ack: int) -> Orders {
     return Orders { dates: dates, sides: sides, amounts: amounts }
 }
 
-/// The v1 trend rule. Two hundred daily bars, and the lot is held past the
-/// exit load before a close is allowed.
+/** *The v1 trend rule. Two hundred daily bars, and the lot is held past the */
+/** *exit load before a close is allowed. */
 fn sma_200(s: NavSeries, ack: int) -> Orders {
     return sma_orders(s, 200, 365, ack)
 }
 
-/// One buy on the first bar, for all free cash. The fill is the next NAV.
+/** *One buy on the first bar, for all free cash. The fill is the next NAV. */
 fn buy_hold(s: NavSeries) -> Orders {
     let mut dates = []int {}
     let mut sides = []int {}
@@ -147,8 +147,8 @@ fn plan_of(dates: []int, amounts: []i64) -> SipPlan {
     }
 }
 
-/// Fixed `amount` paise on the first published bar of each month. The cash
-/// arrives that day; the units are allotted at the next NAV.
+/** *Fixed `amount` paise on the first published bar of each month. The cash */
+/** *arrives that day; the units are allotted at the next NAV. */
 fn monthly_sip(s: NavSeries, amount: i64) -> SipPlan {
     if amount <= 0 {
         return empty_sip()
@@ -165,8 +165,8 @@ fn monthly_sip(s: NavSeries, amount: i64) -> SipPlan {
     return plan_of(dates, amounts)
 }
 
-/// The same paise as a lump sum, split across the months in the window.
-/// The last month takes the remainder so the contributions add up.
+/** *The same paise as a lump sum, split across the months in the window. */
+/** *The last month takes the remainder so the contributions add up. */
 fn capital_sip(s: NavSeries, capital: i64) -> SipPlan {
     if capital <= 0 {
         return empty_sip()
@@ -203,8 +203,8 @@ fn contributed(flows: Flows) -> i64 {
     return s
 }
 
-/// The rule, a lump-sum buy-and-hold, and a monthly SIP. All three deploy
-/// `start_cash` plus whatever `flows` add, on `s`, at `c`.
+/** *The rule, a lump-sum buy-and-hold, and a monthly SIP. All three deploy */
+/** *`start_cash` plus whatever `flows` add, on `s`, at `c`. */
 fn compare_flows(
     s: NavSeries,
     orders: Orders,
@@ -224,8 +224,8 @@ fn compare(s: NavSeries, orders: Orders, c: Costs, start_cash: i64) -> Compared 
     return compare_flows(s, orders, backtest.empty_flows(), c, start_cash)
 }
 
-/// Equal paise in each scheme, signaled on that scheme's first bar.
-/// The last scheme takes the remainder.
+/** *Equal paise in each scheme, signaled on that scheme's first bar. */
+/** *The last scheme takes the remainder. */
 fn buy_hold_book(p: Panel, capital: i64) -> BookOrders {
     let ns = p.codes.len
     if ns == 0 || capital <= 0 {
@@ -256,8 +256,8 @@ fn buy_hold_book(p: Panel, capital: i64) -> BookOrders {
     return BookOrders { dates: dates, sides: sides, amounts: amounts, scheme: scheme }
 }
 
-/// `capital` split across the months of the merged calendar, and each
-/// month split across the schemes. One deposit per month.
+/** *`capital` split across the months of the merged calendar, and each */
+/** *month split across the schemes. One deposit per month. */
 fn sip_book(p: Panel, capital: i64) -> BookPlan {
     let ns = p.codes.len
     if ns == 0 || capital <= 0 {
@@ -339,8 +339,8 @@ fn last_offset(p: Panel, s: int, ymd: int) -> int {
     return found
 }
 
-/// Higher score first. An equal score keeps the smaller scheme index first,
-/// which is the order the schemes were added, so a tie does not flip.
+/** *Higher score first. An equal score keeps the smaller scheme index first, */
+/** *which is the order the schemes were added, so a tie does not flip. */
 fn rank(idx: &mut []int, sc: &mut []f64) {
     let mut i = 1
     while i < idx.len && i < sc.len {
@@ -364,11 +364,11 @@ fn rank(idx: &mut []int, sc: &mut []f64) {
     }
 }
 
-/// Month-end membership of the top `top_n` by `months`-month momentum.
-/// A month in which nothing is ready is skipped, so the warm-up does not
-/// sell the book into cash. `acks` is one entry per scheme, in panel order.
-/// A missing entry is unacknowledged, so that series does not carry an
-/// indicator across a gap.
+/** *Month-end membership of the top `top_n` by `months`-month momentum. */
+/** *A month in which nothing is ready is skipped, so the warm-up does not */
+/** *sell the book into cash. `acks` is one entry per scheme, in panel order. */
+/** *A missing entry is unacknowledged, so that series does not carry an */
+/** *indicator across a gap. */
 fn momentum_targets_each(p: Panel, months: int, top_n: int, acks: []int) -> Targets {
     let mut ready = []int {}
     let mut score = []f64 {}
@@ -448,19 +448,19 @@ fn repeat_ack(n: int, ack: int) -> []int {
     return a
 }
 
-/// The same acknowledgement on every scheme.
+/** *The same acknowledgement on every scheme. */
 fn momentum_targets(p: Panel, months: int, top_n: int, ack: int) -> Targets {
     return momentum_targets_each(p, months, top_n, repeat_ack(p.codes.len, ack))
 }
 
-/// How many names the screen holds. A shorter watchlist holds every name
-/// that is ready.
+/** *How many names the screen holds. A shorter watchlist holds every name */
+/** *that is ready. */
 fn momentum_top() -> int {
     return 5
 }
 
-/// Rank, rebalance, and fill. The orders on the result are the ones the
-/// book actually tried to trade. `acks` follows the panel, one per scheme.
+/** *Rank, rebalance, and fill. The orders on the result are the ones the */
+/** *book actually tried to trade. `acks` follows the panel, one per scheme. */
 fn momentum_book_each(
     p: Panel,
     months: int,

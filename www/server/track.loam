@@ -1,19 +1,19 @@
-//! Receives the batches `zeus:analytics` sends. Everything here came from a browser,
-//! so it is checked and cut to size before it is stored. Native only.
+// Receives the batches `zeus:analytics` sends. Everything here came from a browser,
+// so it is checked and cut to size before it is stored. Native only.
 
 import "std:json"
 import "std:result"
 import "db.loam" as db
 
-/// `json.kind` of an array.
+/** *`json.kind` of an array. */
 const JSON_ARRAY: int = 4
 const MAX_EVENTS: int = 50
 const MAX_TEXT: int = 200
-/// One event's visible time. A day is more than any page holds a person, and a
-/// forged value must not overflow the report's sums.
+/** *One event's visible time. A day is more than any page holds a person, and a */
+/** *forged value must not overflow the report's sums. */
 const MAX_MS: int = 86400000
 const MAX_WIDTH: int = 100000
-/// A browser clock can be wrong: outside this window the server's time is used.
+/** *A browser clock can be wrong: outside this window the server's time is used. */
 const MAX_SKEW_MS: i64 = 86400000
 
 fn is_id(s: string) -> bool {
@@ -29,8 +29,8 @@ fn is_id(s: string) -> bool {
     return true
 }
 
-/// An id as an integer: its last 15 hex digits, which is 60 random bits, plenty to
-/// tell a site's visitors apart. `s` has passed `is_id`.
+/** *An id as an integer: its last 15 hex digits, which is 60 random bits, plenty to */
+/** *tell a site's visitors apart. `s` has passed `is_id`. */
 fn short_id(s: string) -> i64 {
     let mut v: i64 = 0
     for i in 17..32 {
@@ -44,8 +44,8 @@ fn known_kind(k: string) -> bool {
     return k == "page" || k == "leave" || k == "click" || k == "event"
 }
 
-/// `s` cut to `MAX_TEXT` bytes, on a character boundary. Text with control
-/// characters is dropped: it has no honest use here.
+/** *`s` cut to `MAX_TEXT` bytes, on a character boundary. Text with control */
+/** *characters is dropped: it has no honest use here. */
 fn clean_text(s: string) -> string {
     for i in 0..s.len {
         if s[i] < 32 || s[i] == 127 {
@@ -79,7 +79,7 @@ fn text_at(doc: JsonDoc, id: int, key: string) -> string {
     return s.s
 }
 
-/// The whole number at `key`, from 0 to `most`, or -1.
+/** *The whole number at `key`, from 0 to `most`, or -1. */
 fn count_at(doc: JsonDoc, id: int, key: string, most: int) -> int {
     let f = json.field(doc.nodes, id, key, key)
     if f.ok != 1 {
@@ -92,7 +92,7 @@ fn count_at(doc: JsonDoc, id: int, key: string, most: int) -> int {
     return int(n.n)
 }
 
-/// The browser's time for an event, or `now` when that is missing or far off.
+/** *The browser's time for an event, or `now` when that is missing or far off. */
 fn time_at(doc: JsonDoc, id: int, now: i64) -> i64 {
     let f = json.field(doc.nodes, id, "ts", "ts")
     if f.ok != 1 {
@@ -105,7 +105,7 @@ fn time_at(doc: JsonDoc, id: int, now: i64) -> i64 {
     return n.n
 }
 
-/// Add event `id` to `rows`, if it passes. A bad event drops only itself.
+/** *Add event `id` to `rows`, if it passes. A bad event drops only itself. */
 fn add_row(rows: &mut []EventRow, doc: JsonDoc, id: int, vid: i64, now: i64) {
     let kind = text_at(doc, id, "k")
     let sid = text_at(doc, id, "sid")
@@ -132,7 +132,7 @@ fn add_row(rows: &mut []EventRow, doc: JsonDoc, id: int, vid: i64, now: i64) {
     })
 }
 
-/// Store the batch in `body`. Returns the HTTP status to answer with.
+/** *Store the batch in `body`. Returns the HTTP status to answer with. */
 fn receive(body: string, now: i64) -> int {
     let doc = json.parse(body)
     if doc.ok != 1 {

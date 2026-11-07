@@ -1,5 +1,5 @@
-//! The AMFI file shape: blanks, section titles, a short row, and a `;` that
-//! a quoting parser would have protected and this one must not.
+// The AMFI file shape: blanks, section titles, a short row, and a `;` that
+// a quoting parser would have protected and this one must not.
 
 import "std:test"
 import "../core/csvx.loam"
@@ -21,7 +21,7 @@ fn blanks_headers_and_a_short_row() {
     test.assert_eq_str(csvx.field(doc, 1, 3), "31-Mar-2026")
 }
 
-/// Quotes are ordinary characters. The `;` inside them splits the field.
+/** *Quotes are ordinary characters. The `;` inside them splits the field. */
 #[test]
 fn quotes_do_not_protect_a_semicolon() {
     let text = "120000;\"Quoted;Name\";9.00;01-Apr-2026\n"

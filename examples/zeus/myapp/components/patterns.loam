@@ -1,5 +1,5 @@
-//! Patterns page: compositions rather than single widgets — growing lists,
-//! card grids, charts, loading placeholders, and modal overlays.
+// Patterns page: compositions rather than single widgets — growing lists,
+// card grids, charts, loading placeholders, and modal overlays.
 
 import "zeus"
 import "zui:colors"

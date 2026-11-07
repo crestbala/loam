@@ -1,51 +1,51 @@
-//! A tolerant `;`-delimited splitter for AMFI's text files.
-//!
-//! AMFI's daily NAV file is not quite CSV. Sections open with a title line
-//! that has no delimiter (`Open Ended Schemes (Equity Scheme - Large Cap
-//! Fund)`), blank lines separate them, and the column header is repeated
-//! after every title. Fields are not quoted. A `;` always starts a new field,
-//! even when a human would read it as sitting inside quotes — the file does
-//! not use quotes, and pretending it does would hide a broken row.
-//!
-//! What this module does:
-//!
-//! - A blank line (nothing but space, tab, or carriage return) is skipped.
-//! - A line with no `;` is a section header and is skipped. It is not an
-//!   error: the file is full of them on purpose.
-//! - A line with a `;` but fewer than `min_fields` columns is unparseable.
-//!   Its **1-based** line number is recorded and the line is not returned as
-//!   a row. The number counts blank lines and headers, so it matches the file
-//!   a person opens.
-//! - Every other delimited line is a row. Leading and trailing space on a
-//!   field is removed; space inside a field is kept (scheme names have it).
-//!   A carriage return left by a CRLF line ending is removed with the other
-//!   trailing whitespace, so the last field is not `31-Mar-2026\r`.
-//!
-//! The column-header row (`Scheme Code;...`) has enough fields to look like
-//! data. Telling it apart from a scheme is the AMFI parser's job, by content.
-//! This module only knows the shape.
-//!
-//! Rows come back flat. A `[]` of structs that themselves hold a `[]` corrupts
-//! when the compiler copies it, which is the trap `std:json` documents and
-//! works around. So a row is an index: `lines[row]` is the source line,
-//! `counts[row]` is how many fields it has, and those fields sit in `fields`
-//! starting at `starts[row]`. `field` reads one of them.
+// A tolerant `;`-delimited splitter for AMFI's text files.
+//
+// AMFI's daily NAV file is not quite CSV. Sections open with a title line
+// that has no delimiter (`Open Ended Schemes (Equity Scheme - Large Cap
+// Fund)`), blank lines separate them, and the column header is repeated
+// after every title. Fields are not quoted. A `;` always starts a new field,
+// even when a human would read it as sitting inside quotes — the file does
+// not use quotes, and pretending it does would hide a broken row.
+//
+// What this module does:
+//
+// - A blank line (nothing but space, tab, or carriage return) is skipped.
+// - A line with no `;` is a section header and is skipped. It is not an
+//   error: the file is full of them on purpose.
+// - A line with a `;` but fewer than `min_fields` columns is unparseable.
+//   Its **1-based** line number is recorded and the line is not returned as
+//   a row. The number counts blank lines and headers, so it matches the file
+//   a person opens.
+// - Every other delimited line is a row. Leading and trailing space on a
+//   field is removed; space inside a field is kept (scheme names have it).
+//   A carriage return left by a CRLF line ending is removed with the other
+//   trailing whitespace, so the last field is not `31-Mar-2026\r`.
+//
+// The column-header row (`Scheme Code;...`) has enough fields to look like
+// data. Telling it apart from a scheme is the AMFI parser's job, by content.
+// This module only knows the shape.
+//
+// Rows come back flat. A `[]` of structs that themselves hold a `[]` corrupts
+// when the compiler copies it, which is the trap `std:json` documents and
+// works around. So a row is an index: `lines[row]` is the source line,
+// `counts[row]` is how many fields it has, and those fields sit in `fields`
+// starting at `starts[row]`. `field` reads one of them.
 
-/// One parse. `lines`, `counts`, and `starts` are parallel and the same length.
+/** *One parse. `lines`, `counts`, and `starts` are parallel and the same length. */
 struct Csv {
-    /// 1-based source line of each accepted row.
+    /** *1-based source line of each accepted row. */
     lines: []int,
-    /// How many fields that row contributed.
+    /** *How many fields that row contributed. */
     counts: []int,
-    /// Index into `fields` where the row starts.
+    /** *Index into `fields` where the row starts. */
     starts: []int,
-    /// Every accepted field, row after row.
+    /** *Every accepted field, row after row. */
     fields: []string,
-    /// 1-based line numbers of delimited rows that were too short.
+    /** *1-based line numbers of delimited rows that were too short. */
     bad_lines: []int,
 }
 
-/// The bytes of `s` in `[from, to)`, as a fresh string.
+/** *The bytes of `s` in `[from, to)`, as a fresh string. */
 fn slice(s: string, from: int, to: int) -> string {
     let mut b = []int {}
     let mut i = from
@@ -59,7 +59,7 @@ fn slice(s: string, from: int, to: int) -> string {
     return string_from_bytes(b)
 }
 
-/// `s` without leading or trailing space, tab, CR, or LF.
+/** *`s` without leading or trailing space, tab, CR, or LF. */
 fn trim(s: string) -> string {
     let mut a = 0
     while a < s.len {
@@ -82,7 +82,7 @@ fn trim(s: string) -> string {
     return slice(s, a, b)
 }
 
-/// `s` split on `\n`. A trailing newline does not produce a final empty line.
+/** *`s` split on `\n`. A trailing newline does not produce a final empty line. */
 fn split_lines(s: string) -> []string {
     let mut out = []string {}
     let mut start = 0
@@ -100,7 +100,7 @@ fn split_lines(s: string) -> []string {
     return out
 }
 
-/// True when `s` contains a `;`.
+/** *True when `s` contains a `;`. */
 fn has_semi(s: string) -> bool {
     let mut i = 0
     while i < s.len {
@@ -112,8 +112,8 @@ fn has_semi(s: string) -> bool {
     return false
 }
 
-/// Split one line on `;`, trimming each field. Empty fields are kept: `a;;b`
-/// is three fields, and the middle one is empty.
+/** *Split one line on `;`, trimming each field. Empty fields are kept: `a;;b` */
+/** *is three fields, and the middle one is empty. */
 fn split_fields(line: string) -> []string {
     let mut out = []string {}
     let mut start = 0
@@ -129,8 +129,8 @@ fn split_fields(line: string) -> []string {
     return out
 }
 
-/// Split `text`. `min_fields` below 1 is treated as 1, so a caller cannot
-/// accidentally accept every delimited line by passing 0.
+/** *Split `text`. `min_fields` below 1 is treated as 1, so a caller cannot */
+/** *accidentally accept every delimited line by passing 0. */
 fn parse(text: string, min_fields: int) -> Csv {
     let mut need = min_fields
     if need < 1 {
@@ -179,7 +179,7 @@ fn parse(text: string, min_fields: int) -> Csv {
     }
 }
 
-/// Field `col` of accepted row `row`, or `""` when either index is out of range.
+/** *Field `col` of accepted row `row`, or `""` when either index is out of range. */
 fn field(doc: Csv, row: int, col: int) -> string {
     if row < 0 || row >= doc.lines.len {
         return ""

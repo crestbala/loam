@@ -1,9 +1,9 @@
-//! layout — measure + flex/grid/absolute (GPUI taffy.rs).
-//!
-//! Kind 11 (`scroll`): children are not shrunk on the block axis, so extra
-//! height becomes `scroll_y`. Horizontal overflow is off unless `overflow` is
-//! auto (3 / `scroll_xy`): then children keep intrinsic width and `scroll_x`
-//! can move. Page containers use vertical-only so they never grow an H bar.
+// layout — measure + flex/grid/absolute (GPUI taffy.rs).
+//
+// Kind 11 (`scroll`): children are not shrunk on the block axis, so extra
+// height becomes `scroll_y`. Horizontal overflow is off unless `overflow` is
+// auto (3 / `scroll_xy`): then children keep intrinsic width and `scroll_x`
+// can move. Page containers use vertical-only so they never grow an H bar.
 
 import "arena.loam"
 import "nodes.loam"
@@ -586,20 +586,20 @@ fn is_flex_row(id: int) -> int {
     return 0
 }
 
-/// Width a flow child wants on the row's main axis, measured the same way in
-/// every pass (layout pre-pass, wrap measurement).
+/** *Width a flow child wants on the row's main axis, measured the same way in */
+/** *every pass (layout pre-pass, wrap measurement). */
 fn row_child_w(id: int, c: int, inner_width: int) -> int {
     let avail = inner_width - nodes.pin[c].m_l - nodes.pin[c].m_r
     return geometry.fit_avail(arena.sized_w(c, inner_width, 1), avail)
 }
 
-/// A child's width in a WRAPPING row. A percent below 100 shares the row's
-/// gaps: `n` children at `100 / n` percent fill exactly one line, where a
-/// plain share of the width plus the gaps between them would overflow it and
-/// wrap every cell onto its own line (the reason CSS grids reach for
-/// `calc(50% - gap / 2)`). An explicit `pct(100)` is a full line; the
-/// default 100 every node starts with still sizes to the content, as in any
-/// row. Everything else sizes as in any row.
+/** *A child's width in a WRAPPING row. A percent below 100 shares the row's */
+/** *gaps: `n` children at `100 / n` percent fill exactly one line, where a */
+/** *plain share of the width plus the gaps between them would overflow it and */
+/** *wrap every cell onto its own line (the reason CSS grids reach for */
+/** *`calc(50% - gap / 2)`). An explicit `pct(100)` is a full line; the */
+/** *default 100 every node starts with still sizes to the content, as in any */
+/** *row. Everything else sizes as in any row. */
 fn wrap_child_w(id: int, c: int, inner_width: int) -> int {
     let pc = int(nodes.lay[c].w_pct)
     let full = pc == 100 && int(nodes.lay[c].w_pct_set) != 0
@@ -612,10 +612,10 @@ fn wrap_child_w(id: int, c: int, inner_width: int) -> int {
     return row_child_w(id, c, inner_width)
 }
 
-/// A row child may give up main-axis width to keep the row on one line:
-/// flexible children (no explicit width) that are allowed to shrink. These
-/// are exactly the children `grow = 1` marks as elastic (with `shrink = 1`
-/// where the widget default of 0 would refuse to narrow).
+/** *A row child may give up main-axis width to keep the row on one line: */
+/** *flexible children (no explicit width) that are allowed to shrink. These */
+/** *are exactly the children `grow = 1` marks as elastic (with `shrink = 1` */
+/** *where the widget default of 0 would refuse to narrow). */
 fn row_can_absorb(c: int) -> int {
     if nodes.axis_frozen(c, 1) != 0 {
         return 0
@@ -635,9 +635,9 @@ fn row_can_absorb(c: int) -> int {
     return 1
 }
 
-/// Absorb a main-axis deficit (`extra < 0`) by narrowing flexible children,
-/// never below `min_w`. Returns the leftover deficit (still negative) when
-/// the children cannot take it all — the caller wraps those instead.
+/** *Absorb a main-axis deficit (`extra < 0`) by narrowing flexible children, */
+/** *never below `min_w`. Returns the leftover deficit (still negative) when */
+/** *the children cannot take it all — the caller wraps those instead. */
 fn row_flex_absorb(id: int, nk: int, extra: int) -> int {
     let need = -extra
     let mut cap = 0
@@ -688,7 +688,7 @@ fn row_flex_absorb(id: int, nk: int, extra: int) -> int {
     return 0
 }
 
-/// Height a row needs when children wrap at `outer_w` (includes padding).
+/** *Height a row needs when children wrap at `outer_w` (includes padding). */
 fn wrap_row_h(id: int, outer_w: int) -> int {
     let nk = nodes.tree[id].kids.len
     let inner_width = geometry.max2(outer_w - nodes.box_pad_x(id), 0)
@@ -1014,30 +1014,30 @@ fn layout_flex_col(id: int) {
     }
 }
 
-/// Column count a grid resolves to, shared by `measure_node` and
-/// `layout_grid` so the two cannot disagree.
-///
-/// `grid_auto == 0` is the fixed case: `grid_cols` is the count, floored at 1
-/// (`grid_cols == 0`, i.e. `GridConfig {}`, means a single column).
-///
-/// `grid_auto != 0` is auto mode, where a column is a *cell* of a minimum
-/// width and the count is however many such cells fit the width `inner_width` has,
-/// capped by `grid_cols` when the caller gave one and by `flow` children so
-/// the last row is never empty tracks.
-///
-/// The cell width is `grid_min` when the caller set one. With no floor it is
-/// `nat` — the widest child's natural width — because a column has to be at
-/// least wide enough for what goes in it; that is the same rule `measure_node`
-/// uses to guess the grid's own width, so the two agree by construction. If
-/// neither is available (`nat <= 0`: the children report no width of their
-/// own) the count falls back to `grid_cols`, which is the fixed behaviour.
-///
-/// The gap is part of the cell (`cell + gx`), matching the packing in
-/// `layout_grid`, where `cols` cells plus `cols - 1` gaps span `inner_width`.
-///
-/// `flow` is how many children will actually be placed. `0` means the caller
-/// has none to offer (measure saw no flow children) — the cap is skipped
-/// rather than collapsing the count to nothing.
+/** *Column count a grid resolves to, shared by `measure_node` and */
+/** *`layout_grid` so the two cannot disagree. */
+/** */
+/** *`grid_auto == 0` is the fixed case: `grid_cols` is the count, floored at 1 */
+/** *(`grid_cols == 0`, i.e. `GridConfig {}`, means a single column). */
+/** */
+/** *`grid_auto != 0` is auto mode, where a column is a *cell* of a minimum */
+/** *width and the count is however many such cells fit the width `inner_width` has, */
+/** *capped by `grid_cols` when the caller gave one and by `flow` children so */
+/** *the last row is never empty tracks. */
+/** */
+/** *The cell width is `grid_min` when the caller set one. With no floor it is */
+/** *`nat` — the widest child's natural width — because a column has to be at */
+/** *least wide enough for what goes in it; that is the same rule `measure_node` */
+/** *uses to guess the grid's own width, so the two agree by construction. If */
+/** *neither is available (`nat <= 0`: the children report no width of their */
+/** *own) the count falls back to `grid_cols`, which is the fixed behaviour. */
+/** */
+/** *The gap is part of the cell (`cell + gx`), matching the packing in */
+/** *`layout_grid`, where `cols` cells plus `cols - 1` gaps span `inner_width`. */
+/** */
+/** *`flow` is how many children will actually be placed. `0` means the caller */
+/** *has none to offer (measure saw no flow children) — the cap is skipped */
+/** *rather than collapsing the count to nothing. */
 fn grid_cols_at(id: int, inner_width: int, flow: int, nat: int) -> int {
     let mut cols = i32(nodes.pin[id].grid_cols)
     if nodes.pin[id].grid_auto != 0 {
@@ -1236,10 +1236,10 @@ fn layout_overlays(id: int) {
     }
 }
 
-/// `layout_node` calls over the session, counting every re-entry (a probe
-/// holds a whole-tree layout under two visits per node).
+/** *`layout_node` calls over the session, counting every re-entry (a probe */
+/** *holds a whole-tree layout under two visits per node). */
 let mut layout_visits: int = 0
-/// Nodes `measure_node` actually measured (cache hits not counted).
+/** *Nodes `measure_node` actually measured (cache hits not counted). */
 let mut measure_visits: int = 0
 
 // --- layout memo ------------------------------------------------------------
@@ -1264,15 +1264,15 @@ let mut ep_t: int = -1
 let mut ep_r: int = -1
 let mut ep_b: int = -1
 let mut ep_l: int = -1
-/// 1 while the memo is bypassed (the verify pass).
+/** *1 while the memo is bypassed (the verify pass). */
 let mut memo_off: int = 0
-/// -1 until read from the environment, then 0 / 1.
-/// Subtrees the memo skipped, and subtrees it translated (diagnostics).
+/** *-1 until read from the environment, then 0 / 1. */
+/** *Subtrees the memo skipped, and subtrees it translated (diagnostics). */
 let mut layout_skips: int = 0
 let mut layout_shifts: int = 0
 
-/// 1 when `id`'s subtree holds no floater (overlay, anchored or floating box,
-/// z-indexed node), so translating it is exact.
+/** *1 when `id`'s subtree holds no floater (overlay, anchored or floating box, */
+/** *z-indexed node), so translating it is exact. */
 fn shift_ok(id: int) -> int {
     if nodes.is_floater(id) != 0 {
         return 0
@@ -1289,8 +1289,8 @@ fn shift_ok(id: int) -> int {
     return 1
 }
 
-/// Move `id`'s laid-out subtree by (`dx`, `dy`), and the boxes its nodes were
-/// last called with, so the memo keeps matching.
+/** *Move `id`'s laid-out subtree by (`dx`, `dy`), and the boxes its nodes were */
+/** *last called with, so the memo keeps matching. */
 fn shift_subtree(id: int, dx: int, dy: int) {
     nodes.box[id].x = nodes.box[id].x + dx
     nodes.box[id].y = nodes.box[id].y + dy
@@ -1305,7 +1305,7 @@ fn shift_subtree(id: int, dx: int, dy: int) {
     }
 }
 
-/// Bump the epoch when a frame-wide layout input moved since the last layout.
+/** *Bump the epoch when a frame-wide layout input moved since the last layout. */
 fn epoch_check() {
     if ep_gen != arena.measure_gen ||
         ep_w != arena.win_w ||
@@ -1429,8 +1429,8 @@ fn layout(width: int, height: int) {
 // are reused and damage covers only what moved. A content change marked its
 // own node when it was written.
 
-/// Lay the tree out again with the memo off and trap if any box differs from
-/// what the memoized pass produced.
+/** *Lay the tree out again with the memo off and trap if any box differs from */
+/** *what the memoized pass produced. */
 fn verify_memo() {
     let n = nodes.tree.len
     let mut vb = []int {}
@@ -1466,8 +1466,8 @@ fn verify_memo() {
     }
 }
 
-/// Targeted layout frames run (every one solves from the root), and a legacy
-/// counter that is always 0 now that no subtree re-solve climbs (diagnostics).
+/** *Targeted layout frames run (every one solves from the root), and a legacy */
+/** *counter that is always 0 now that no subtree re-solve climbs (diagnostics). */
 let mut relayout_climbs: int = 0
 let mut root_relayouts: int = 0
 
@@ -1507,8 +1507,8 @@ fn box_snapshot() {
     }
 }
 
-/// Paint-mark every live node whose box, scroll extent or scroll offset moved
-/// since `box_snapshot`. Layout allocates no nodes, so the ids line up.
+/** *Paint-mark every live node whose box, scroll extent or scroll offset moved */
+/** *since `box_snapshot`. Layout allocates no nodes, so the ids line up. */
 fn box_mark_moved() {
     let n = nodes.tree.len
     for id in 1..n {
@@ -1527,10 +1527,10 @@ fn box_mark_moved() {
     }
 }
 
-/// Lay out a frame whose layout dirt names nodes (`dirty` is
-/// `arena.take_dirty_layout_nodes()`), paint-marking only what moved. Returns
-/// 0 when there is nothing to target, leaving the caller to solve and repaint
-/// the whole surface.
+/** *Lay out a frame whose layout dirt names nodes (`dirty` is */
+/** *`arena.take_dirty_layout_nodes()`), paint-marking only what moved. Returns */
+/** *0 when there is nothing to target, leaving the caller to solve and repaint */
+/** *the whole surface. */
 fn relayout(dirty: []int) -> int {
     if dirty.len == 0 {
         return 0
@@ -1546,8 +1546,8 @@ fn relayout(dirty: []int) -> int {
     return 1
 }
 
-/// Screen origin of `id` in window points: its content-space x/y less every
-/// scroller offset above it (the inverse of `ptr_in`'s screen-to-content walk).
+/** *Screen origin of `id` in window points: its content-space x/y less every */
+/** *scroller offset above it (the inverse of `ptr_in`'s screen-to-content walk). */
 struct Pt {
     x: int,
     y: int,
@@ -1558,9 +1558,9 @@ fn screen_origin(id: int) -> Pt {
     return Pt { x: nodes.box[id].x - sc.x, y: nodes.box[id].y - sc.y }
 }
 
-/// Sum of the scroll offsets of `id`'s kind-11 ancestors. `screen_origin`
-/// removes these to reach window coordinates; a floater positioned in window
-/// coordinates adds them back to store content coordinates (see `place_node`).
+/** *Sum of the scroll offsets of `id`'s kind-11 ancestors. `screen_origin` */
+/** *removes these to reach window coordinates; a floater positioned in window */
+/** *coordinates adds them back to store content coordinates (see `place_node`). */
 fn screen_scroll(id: int) -> Pt {
     let mut sx = 0
     let mut sy = 0
@@ -1589,11 +1589,11 @@ fn screen_scroll(id: int) -> Pt {
     return Pt { x: sx, y: sy }
 }
 
-/// Position one anchored floater against its anchor's screen rect, flipping to
-/// the opposite side when the preferred one would leave the safe-area rect.
-/// Runs after the normal layout and re-lays-out the moved subtree.
-/// Fraction (0, 50, 100 percent) of a box's width / height at attach point
-/// `p` (`Attach`: Left/Center/Right × Top/Center/Bottom).
+/** *Position one anchored floater against its anchor's screen rect, flipping to */
+/** *the opposite side when the preferred one would leave the safe-area rect. */
+/** *Runs after the normal layout and re-lays-out the moved subtree. */
+/** *Fraction (0, 50, 100 percent) of a box's width / height at attach point */
+/** *`p` (`Attach`: Left/Center/Right × Top/Center/Bottom). */
 fn attach_fx(p: int) -> int {
     return (p / 3) * 50
 }
@@ -1602,9 +1602,9 @@ fn attach_fy(p: int) -> int {
     return (p % 3) * 50
 }
 
-/// Place a floating box (`Style.floating`): join point `at` of the box to
-/// point `on` of its target's window rect, add the offset, flip on overflow if
-/// asked. Window coordinates, like an anchored popup.
+/** *Place a floating box (`Style.floating`): join point `at` of the box to */
+/** *point `on` of its target's window rect, add the offset, flip on overflow if */
+/** *asked. Window coordinates, like an anchored popup. */
 fn place_float(id: int) {
     if arena.want_show(id) == 0 {
         return
@@ -1779,8 +1779,8 @@ fn place_node(id: int) {
     arena.live_anchors = arena.live_anchors + 1
 }
 
-/// A scroll moved under live floaters: re-place every anchored floater against
-/// its trigger's new screen rect, leaving the rest of the tree as laid out.
+/** *A scroll moved under live floaters: re-place every anchored floater against */
+/** *its trigger's new screen rect, leaving the rest of the tree as laid out. */
 fn replace_anchored() {
     if arena.root_id <= 0 {
         return

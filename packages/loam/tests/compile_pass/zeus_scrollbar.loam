@@ -18,8 +18,8 @@ fn must(ok: bool, what: string) {
     }
 }
 
-/// Emulate the host's 16 ms wakes for `ms` of wall time, on a clock this test
-/// moves itself: real sleeps cost seconds and made frame timing a race.
+/** *Emulate the host's 16 ms wakes for `ms` of wall time, on a clock this test */
+/** *moves itself: real sleeps cost seconds and made frame timing a race. */
 fn run_ms(ms: int) {
     let mut t = 0
     while t < ms {
@@ -30,8 +30,8 @@ fn run_ms(ms: int) {
     }
 }
 
-/// Width and alpha of the widest translucent fill at the right edge (x >= 300):
-/// the thumb (and the track when shown).
+/** *Width and alpha of the widest translucent fill at the right edge (x >= 300): */
+/** *the thumb (and the track when shown). */
 fn thumb_w() -> int {
     let mut w = 0
     for i in 0..zeus.draw_count() {
@@ -42,7 +42,7 @@ fn thumb_w() -> int {
     return w
 }
 
-/// Alpha of the thumb fill at the right edge, 0 when none is painted.
+/** *Alpha of the thumb fill at the right edge, 0 when none is painted. */
 fn thumb_a() -> int {
     for i in 0..zeus.draw_count() {
         if zeus.draw_x(i) >= 300 {

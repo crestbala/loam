@@ -3,6 +3,9 @@
 
 (comment) @comment
 
+; Doc comments are `/** *text */`. `/***` stays `(comment)`.
+(doc_comment) @comment.documentation
+
 ; `#[proto]` / `#[test]` attributes
 (attribute
   (identifier) @attribute)

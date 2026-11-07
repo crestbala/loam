@@ -1,29 +1,29 @@
-//! The phrase plan and the energy arc.
-//!
-//! A section is a row of phrases, each `unit` bars (four, or two when a
-//! slow minute has no room for four — the same unit `form` already uses).
-//! A phrase has a label shared across the piece (`0` is a, `1` is b), how
-//! many times that label has been heard (`0` is a, `1` is a′, `2` is a″),
-//! and an ending: open (a question) or closed (an answer). The same label
-//! is the same idea; only the ending, and later the motif's transform,
-//! changes.
-//!
-//!     intro   a open
-//!     verse   a open, a′ closed
-//!     build   b open, b′ open
-//!     drop    A open, A′ closed, B open, A″ closed
-//!     break   b open, a closed
-//!     outro   a closed
-//!
-//! A drop's A is the verse's a. A section longer than its plan repeats the
-//! last two phrases; a shorter one keeps the first and the last. The
-//! second drop copies the first drop's phrases, so the return is the same
-//! labels and the same variations.
+// The phrase plan and the energy arc.
+//
+// A section is a row of phrases, each `unit` bars (four, or two when a
+// slow minute has no room for four — the same unit `form` already uses).
+// A phrase has a label shared across the piece (`0` is a, `1` is b), how
+// many times that label has been heard (`0` is a, `1` is a′, `2` is a″),
+// and an ending: open (a question) or closed (an answer). The same label
+// is the same idea; only the ending, and later the motif's transform,
+// changes.
+//
+//     intro   a open
+//     verse   a open, a′ closed
+//     build   b open, b′ open
+//     drop    A open, A′ closed, B open, A″ closed
+//     break   b open, a closed
+//     outro   a closed
+//
+// A drop's A is the verse's a. A section longer than its plan repeats the
+// last two phrases; a shorter one keeps the first and the last. The
+// second drop copies the first drop's phrases, so the return is the same
+// labels and the same variations.
 
 import "chain.loam" as chain
 import "num.loam" as num
 
-/// Section kinds. The same numbers as `arrange`.
+/** *Section kinds. The same numbers as `arrange`. */
 const INTRO: int = 0
 const VERSE: int = 1
 const BUILD: int = 2
@@ -31,13 +31,13 @@ const DROP: int = 3
 const BREAK: int = 4
 const OUTRO: int = 5
 
-/// A phrase ending. Open is a half cadence; closed is a full one.
+/** *A phrase ending. Open is a half cadence; closed is a full one. */
 const OPEN: int = 0
 const CLOSED: int = 1
 
-/// One phrase row. `varn` is how many times `label` was heard before the
-/// repeats that fill a long section — those repeats keep the variation
-/// they copy, so they share its line.
+/** *One phrase row. `varn` is how many times `label` was heard before the */
+/** *repeats that fill a long section — those repeats keep the variation */
+/** *they copy, so they share its line. */
 struct Phrases {
     bar: []int,
     bars: []int,
@@ -63,7 +63,7 @@ fn spec_len(kind: int) -> int {
     return 2
 }
 
-/// `0` is a (and the drop's A); `1` is b (and the drop's B).
+/** *`0` is a (and the drop's A); `1` is b (and the drop's B). */
 fn spec_label(kind: int, i: int) -> int {
     if kind == BUILD {
         return 1
@@ -94,9 +94,9 @@ fn spec_end(kind: int, i: int) -> int {
     return CLOSED
 }
 
-/// Which plan entry fills phrase `i` of `n`. A long section plays the plan
-/// and then its last two entries again. A short one keeps the first and
-/// the last, with the middle spread between them.
+/** *Which plan entry fills phrase `i` of `n`. A long section plays the plan */
+/** *and then its last two entries again. A short one keeps the first and */
+/** *the last, with the middle spread between them. */
 fn spec_index(i: int, n: int, p: int) -> int {
     if p <= 1 || n <= 1 {
         return 0
@@ -128,8 +128,8 @@ fn push_phrase(p: &mut Phrases, bar: int, bars: int, sec: int, label: int, varn:
     push(p.end, end)
 }
 
-/// Phrases for a piece whose sections are `kinds` and `bars` long, each
-/// phrase `unit` bars. The rows tile the sections.
+/** *Phrases for a piece whose sections are `kinds` and `bars` long, each */
+/** *phrase `unit` bars. The rows tile the sections. */
 fn phrases(kinds: []int, bars: []int, unit: int) -> Phrases {
     let mut out = no_phrases()
     let step0 = if unit > 0 { unit } else { 4 }
@@ -199,11 +199,11 @@ fn phrases(kinds: []int, bars: []int, unit: int) -> Phrases {
     return out
 }
 
-/// Section kinds and lengths for `length_ms` at `bar_s` samples a bar.
-/// A minute is one climb to one drop; longer pieces have two of each with
-/// a break between. Sections are scaled to the length, then trimmed or
-/// grown a phrase at a time so the piece lands within a phrase of it.
-/// The third row is the phrase unit, in bars.
+/** *Section kinds and lengths for `length_ms` at `bar_s` samples a bar. */
+/** *A minute is one climb to one drop; longer pieces have two of each with */
+/** *a break between. Sections are scaled to the length, then trimmed or */
+/** *grown a phrase at a time so the piece lands within a phrase of it. */
+/** *The third row is the phrase unit, in bars. */
 fn form(length_ms: int, bar_s: int) -> [][]int {
     let target = num.clampi(num.roundi(f64(length_ms) * 48.0 / f64(bar_s)), 12, 200)
     let mut kinds = []int {}
@@ -265,10 +265,10 @@ fn form(length_ms: int, bar_s: int) -> [][]int {
     return [][]int { kinds, out_bars, []int { unit } }
 }
 
-/// The energy arc, one target a bar, 0..1000. `kinds` and `bars` are the
-/// sections. The intro rises out of near-silence, a verse sits in the
-/// middle, a build climbs to the drop, a drop is full (the last one
-/// fullest), a break falls away, and the outro settles.
+/** *The energy arc, one target a bar, 0..1000. `kinds` and `bars` are the */
+/** *sections. The intro rises out of near-silence, a verse sits in the */
+/** *middle, a build climbs to the drop, a drop is full (the last one */
+/** *fullest), a break falls away, and the outro settles. */
 fn arc(kinds: []int, bars: []int) -> []int {
     let mut out = []int {}
     let mut last_drop = -1
@@ -307,20 +307,20 @@ fn clamp_path(path: int) -> int {
     return num.clampi(path, 0, 1000)
 }
 
-/// Semitones the lead sits above its home: whole tones, 0 at rest and 12
-/// when the path is full. The same curve the pad lift has always used.
+/** *Semitones the lead sits above its home: whole tones, 0 at rest and 12 */
+/** *when the path is full. The same curve the pad lift has always used. */
 fn register(path: int) -> int {
     return num.roundi(f64(clamp_path(path)) * 6.0 / 1000.0) * 2
 }
 
-/// How busy the bar is, 0..1000. The path itself, so a build climbs.
+/** *How busy the bar is, 0..1000. The path itself, so a build climbs. */
 fn density(path: int) -> int {
     return clamp_path(path)
 }
 
-/// How far the harmony leans, 0..1000. A build carries the path; a drop's
-/// first bar is 0 so the downbeat can resolve; later drop bars sit halfway
-/// up; everything else stays near triads.
+/** *How far the harmony leans, 0..1000. A build carries the path; a drop's */
+/** *first bar is 0 so the downbeat can resolve; later drop bars sit halfway */
+/** *up; everything else stays near triads. */
 fn dissonance(path: int, kind: int, bar: int) -> int {
     if kind == DROP && bar == 0 {
         return 0
@@ -335,20 +335,20 @@ fn dissonance(path: int, kind: int, bar: int) -> int {
     return p / 5
 }
 
-/// Synth-bed level in centi-dB. Rest is −6 dB; a full bar is 0 dB.
+/** *Synth-bed level in centi-dB. Rest is −6 dB; a full bar is 0 dB. */
 fn dynamics(path: int) -> int {
     let p = clamp_path(path)
     return -600 + p * 600 / 1000
 }
 
-/// 0..1000 back from a `dynamics` level, for velocities and generator keys.
+/** *0..1000 back from a `dynamics` level, for velocities and generator keys. */
 fn dyn_amt(db: int) -> int {
     return num.clampi((db + 600) * 1000 / 600, 0, 1000)
 }
 
-/// Sixteenths one chord is held. A quiet bar holds two bars (32). A high
-/// bar changes every bar (16). The last bar of a build changes at the half
-/// (8).
+/** *Sixteenths one chord is held. A quiet bar holds two bars (32). A high */
+/** *bar changes every bar (16). The last bar of a build changes at the half */
+/** *(8). */
 fn harm_hold(path: int, kind: int, last_bar: bool) -> int {
     if kind == BUILD && last_bar {
         return 8
@@ -359,8 +359,8 @@ fn harm_hold(path: int, kind: int, last_bar: bool) -> int {
     return 32
 }
 
-/// How `diss` colours a free bar. 0 is a triad, 1 a seventh, 2 sus4, 3 add9.
-/// A build earns sus4 and add9; other sections stop at the seventh.
+/** *How `diss` colours a free bar. 0 is a triad, 1 a seventh, 2 sus4, 3 add9. */
+/** *A build earns sus4 and add9; other sections stop at the seventh. */
 fn tension_color(diss: int, kind: int) -> int {
     if diss <= 0 {
         return 0

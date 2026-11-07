@@ -1,10 +1,10 @@
-//! Hand-checked indicators on a 20-bar ramp.
-//!
-//! Bars 0..10 rise by 100 paise a bar from 1000 to 2000. Bars 11..19 fall by
-//! 100 paise a bar back to 1100. Dates are the twenty days from 2026-01-01,
-//! so nothing in the fixture is a gap. The warmup and the gap are separate
-//! cases, because a 200-day average cannot be checked on twenty bars and a
-//! gap must not be hidden inside the arithmetic.
+// Hand-checked indicators on a 20-bar ramp.
+//
+// Bars 0..10 rise by 100 paise a bar from 1000 to 2000. Bars 11..19 fall by
+// 100 paise a bar back to 1100. Dates are the twenty days from 2026-01-01,
+// so nothing in the fixture is a gap. The warmup and the gap are separate
+// cases, because a 200-day average cannot be checked on twenty bars and a
+// gap must not be hidden inside the arithmetic.
 
 import "std:test"
 import "std:math"

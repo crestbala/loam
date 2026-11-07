@@ -1,4 +1,4 @@
-//! Compiler, formatter, language server, tests, and the zeli CLI.
+// Compiler, formatter, language server, tests, and the zeli CLI.
 
 import "zeus"
 import "zui:spacing"

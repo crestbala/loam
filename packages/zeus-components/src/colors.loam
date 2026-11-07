@@ -1,13 +1,13 @@
-//! colors — the colour API of the design system: the accessors a caller writes
-//! (`ink`, `paper`, `plate`, `rule`, `mute`, `dim`, `ok`, `warn`, `danger`, the
-//! `*_fill` pair, the accent, and `tint_of`). Each returns a role token — a
-//! sentinel the paint pass resolves against `appearance()` every frame, so a
-//! theme switch repaints a retained tree with no effects and no rebuild.
-//!
-//! The palette data (`LIGHT` / `DARK` / `NEUTRAL_*` / the semantic tiers) and the
-//! engine that registers it — `ensure_role_colors`, `role_rgb_now`, `role_token`,
-//! `role_color` — stay in `zeusbase`. The host entry calls the initializer before
-//! the first paint, and a lower module may not import upward.
+// colors — the colour API of the design system: the accessors a caller writes
+// (`ink`, `paper`, `plate`, `rule`, `mute`, `dim`, `ok`, `warn`, `danger`, the
+// `*_fill` pair, the accent, and `tint_of`). Each returns a role token — a
+// sentinel the paint pass resolves against `appearance()` every frame, so a
+// theme switch repaints a retained tree with no effects and no rebuild.
+//
+// The palette data (`LIGHT` / `DARK` / `NEUTRAL_*` / the semantic tiers) and the
+// engine that registers it — `ensure_role_colors`, `role_rgb_now`, `role_token`,
+// `role_color` — stay in `zeusbase`. The host entry calls the initializer before
+// the first paint, and a lower module may not import upward.
 
 import "zeus:structs"
 import "zeus:enums"
@@ -17,76 +17,76 @@ import "zeus:flow"
 // --- surfaces -------------------------------------------------------------
 // `ink`, `accent`, and `danger` live in `zeusbase`, under the primitives.
 
-/// Page background.
+/** *Page background. */
 fn paper() -> string { return role_token(ROLE.Paper) }
 
-/// Card / popover / dialog surface.
+/** *Card / popover / dialog surface. */
 fn plate() -> string { return role_token(ROLE.Plate) }
 
-/// Raised fill: hover washes, chips, the tab tray.
+/** *Raised fill: hover washes, chips, the tab tray. */
 fn raised() -> string { return role_token(ROLE.Raised) }
 
-/// Soft fill for code blocks and inset panels.
+/** *Soft fill for code blocks and inset panels. */
 fn wash() -> string { return role_token(ROLE.Wash) }
 
-/// Skeleton fill.
+/** *Skeleton fill. */
 fn bone() -> string { return role_token(ROLE.Bone) }
 
-/// Modal scrim behind dialogs and popovers.
+/** *Modal scrim behind dialogs and popovers. */
 fn scrim() -> string { return role_token(ROLE.Scrim) }
 
 // --- text and lines -------------------------------------------------------
 
-/// Secondary text and labels.
+/** *Secondary text and labels. */
 fn mute() -> string { return role_token(ROLE.Mute) }
 
-/// Faint text: captions, overlines, placeholders.
+/** *Faint text: captions, overlines, placeholders. */
 fn dim() -> string { return role_token(ROLE.Dim) }
 
-/// Hairline: borders, dividers, input strokes, tracks.
+/** *Hairline: borders, dividers, input strokes, tracks. */
 fn rule() -> string { return role_token(ROLE.Rule) }
 
-/// Stronger line: grips, rules that must read on a raised fill.
+/** *Stronger line: grips, rules that must read on a raised fill. */
 fn hard() -> string { return role_token(ROLE.Hard) }
 
 // --- accent ---------------------------------------------------------------
 
-/// Soft accent surface: soft buttons, pressed toggles.
+/** *Soft accent surface: soft buttons, pressed toggles. */
 fn accent_soft() -> string { return role_token(ROLE.AccentSoft) }
 
-/// Text on `ink` / `accent` fills.
+/** *Text on `ink` / `accent` fills. */
 fn on_ink() -> string { return role_token(ROLE.OnInk) }
 
-/// Text on the accent's solid fill, picked by contrast.
+/** *Text on the accent's solid fill, picked by contrast. */
 fn on_accent() -> string { return role_token(ROLE.OnAccent) }
 
 // --- status ---------------------------------------------------------------
 
-/// Success text and marks.
+/** *Success text and marks. */
 fn ok() -> string { return role_token(ROLE.Ok) }
 
-/// Solid success fill (ok badges); white text holds on it.
+/** *Solid success fill (ok badges); white text holds on it. */
 fn ok_solid() -> string { return role_token(ROLE.OkSolid) }
 
-/// Warning text and marks.
+/** *Warning text and marks. */
 fn warn() -> string { return role_token(ROLE.Warn) }
 
-/// Warning border.
+/** *Warning border. */
 fn warn_edge() -> string { return role_token(ROLE.WarnEdge) }
 
-/// Destructive fill (destructive buttons, filled danger badges).
+/** *Destructive fill (destructive buttons, filled danger badges). */
 fn danger_solid() -> string { return role_token(ROLE.DangerSolid) }
 
-/// Destructive border.
+/** *Destructive border. */
 fn danger_edge() -> string { return role_token(ROLE.DangerEdge) }
 
-/// Text on danger fills.
+/** *Text on danger fills. */
 fn on_danger() -> string { return role_token(ROLE.OnFill) }
 
-/// Text on ok fills.
+/** *Text on ok fills. */
 fn on_ok() -> string { return role_token(ROLE.OnFill) }
 
-/// The text colour of a `Tint`.
+/** *The text colour of a `Tint`. */
 fn tint_of(kind: int) -> string {
     switch kind {
         case Tint.Ok:
@@ -104,9 +104,9 @@ fn tint_of(kind: int) -> string {
     }
 }
 
-/// Choose between a light and a dark value for the current appearance.
-/// Reads the appearance signal, so a caller inside a reactive prop follows
-/// a theme switch automatically.
+/** *Choose between a light and a dark value for the current appearance. */
+/** *Reads the appearance signal, so a caller inside a reactive prop follows */
+/** *a theme switch automatically. */
 fn pick_by_appearance(lit: string, dim: string) -> string {
     if appearance().get() == 1 {
         return dim
@@ -148,10 +148,10 @@ fn scale_at(sc: Scale, step: int) -> string {
     return sc.s12
 }
 
-/// Neutral ramp, light. A cool grey with a trace of blue, so a surface reads
-/// as glass and metal rather than paper. Step 1 is the white card; the page
-/// sits on step 2 (`#f6f7f9`). The hairline (`rule` = 6) is `#e0e3e8`. Text is
-/// step 12 (`#15181d`).
+/** *Neutral ramp, light. A cool grey with a trace of blue, so a surface reads */
+/** *as glass and metal rather than paper. Step 1 is the white card; the page */
+/** *sits on step 2 (`#f6f7f9`). The hairline (`rule` = 6) is `#e0e3e8`. Text is */
+/** *step 12 (`#15181d`). */
 const NEUTRAL_L: Scale = Scale(
     s1 = "#ffffff",
     s2 = "#f6f7f9",
@@ -167,10 +167,10 @@ const NEUTRAL_L: Scale = Scale(
     s12 = "#15181d",
 )
 
-/// Neutral ramp, dark. Cool near-black, not the light ramp reversed: steps 1–5
-/// stay tight so a card still separates from the page, and 11–12 stay apart
-/// as text. The page is step 1 (`#0b0c0f`), cards are step 3 (`#14161b`),
-/// text is step 12 (`#eceef2`).
+/** *Neutral ramp, dark. Cool near-black, not the light ramp reversed: steps 1–5 */
+/** *stay tight so a card still separates from the page, and 11–12 stay apart */
+/** *as text. The page is step 1 (`#0b0c0f`), cards are step 3 (`#14161b`), */
+/** *text is step 12 (`#eceef2`). */
 const NEUTRAL_D: Scale = Scale(
     s1 = "#0b0c0f",
     s2 = "#101216",
@@ -193,9 +193,9 @@ const NEUTRAL_D: Scale = Scale(
 // natural hues. The solids differ in both appearances, and so do the soft
 // steps (s3), so a nested accent scope still swaps.
 
-/// Ink — the default. Near-black in light, near-white in dark, so a primary
-/// button is a solid rectangle of the page's own ink. Step 11 clears AA on
-/// steps 1–3; `best_on` picks the opposite ink for step 9.
+/** *Ink — the default. Near-black in light, near-white in dark, so a primary */
+/** *button is a solid rectangle of the page's own ink. Step 11 clears AA on */
+/** *steps 1–3; `best_on` picks the opposite ink for step 9. */
 const ACCENT_INK_L: Scale = Scale(
     s1 = "#fafafa",
     s2 = "#f5f5f5",
@@ -225,8 +225,8 @@ const ACCENT_INK_D: Scale = Scale(
     s12 = "#fafafa",
 )
 
-/// Graphite — a mid charcoal. Lighter than ink in light (`#404040`), softer
-/// than ink in dark (`#d4d4d4`). Step 11 still clears AA on steps 1–3.
+/** *Graphite — a mid charcoal. Lighter than ink in light (`#404040`), softer */
+/** *than ink in dark (`#d4d4d4`). Step 11 still clears AA on steps 1–3. */
 const ACCENT_GRAPHITE_L: Scale = Scale(
     s1 = "#fafafa",
     s2 = "#f5f5f5",
@@ -256,8 +256,8 @@ const ACCENT_GRAPHITE_D: Scale = Scale(
     s12 = "#f7f7f7",
 )
 
-/// Stone — the lightest solid in light (`#525252`) and the darkest solid in
-/// dark (`#b0b0b0`). `best_on` still clears the component contrast bar.
+/** *Stone — the lightest solid in light (`#525252`) and the darkest solid in */
+/** *dark (`#b0b0b0`). `best_on` still clears the component contrast bar. */
 const ACCENT_STONE_L: Scale = Scale(
     s1 = "#fafafa",
     s2 = "#f4f4f4",
@@ -287,7 +287,7 @@ const ACCENT_STONE_D: Scale = Scale(
     s12 = "#f5f5f5",
 )
 
-/// Ocean — a lake blue. Step 9 is the solid; step 11 clears AA on steps 1–3.
+/** *Ocean — a lake blue. Step 9 is the solid; step 11 clears AA on steps 1–3. */
 const ACCENT_OCEAN_L: Scale = Scale(
     s1 = "#f5f9fc",
     s2 = "#ecf3f9",
@@ -317,7 +317,7 @@ const ACCENT_OCEAN_D: Scale = Scale(
     s12 = "#d9edfc",
 )
 
-/// Forest — a leaf green. Step 9 is the solid; step 11 clears AA on steps 1–3.
+/** *Forest — a leaf green. Step 9 is the solid; step 11 clears AA on steps 1–3. */
 const ACCENT_FOREST_L: Scale = Scale(
     s1 = "#f6faf7",
     s2 = "#edf4ef",
@@ -347,8 +347,8 @@ const ACCENT_FOREST_D: Scale = Scale(
     s12 = "#dbf5e2",
 )
 
-/// Terracotta — a fired-earth red. Step 9 is the solid; step 11 clears AA
-/// on steps 1–3.
+/** *Terracotta — a fired-earth red. Step 9 is the solid; step 11 clears AA */
+/** *on steps 1–3. */
 const ACCENT_TERRA_L: Scale = Scale(
     s1 = "#fcf7f6",
     s2 = "#f9f0ed",
@@ -378,7 +378,7 @@ const ACCENT_TERRA_D: Scale = Scale(
     s12 = "#ffe2d7",
 )
 
-/// Accent choices, in picker order. `set_accent` takes one of these.
+/** *Accent choices, in picker order. `set_accent` takes one of these. */
 enum ACCENT {
     Ink = 0,
     Graphite = 1,
@@ -406,7 +406,7 @@ fn accent_scale_dark(which: int) -> Scale {
     return ACCENT_INK_D
 }
 
-/// Display name, for the gallery's accent picker.
+/** *Display name, for the gallery's accent picker. */
 fn accent_name(which: int) -> string {
     if which == ACCENT.Graphite { return "Graphite" }
     if which == ACCENT.Stone { return "Stone" }
@@ -502,7 +502,7 @@ const INFO_D: Tier = Tier(
 // returned garbage for mid-tones, which is exactly the kind of bug a
 // contrast checker must not have.
 
-/// sRGB 8-bit channel → linear light, ×100000.
+/** *sRGB 8-bit channel → linear light, ×100000. */
 const SRGB_LIN: []int = []int {
     0, 30, 61, 91, 121, 152, 182, 212,
     243, 273, 304, 335, 368, 402, 439, 478,
@@ -538,7 +538,7 @@ const SRGB_LIN: []int = []int {
     93869, 94731, 95597, 96469, 97345, 98225, 99110, 100000,
 }
 
-/// WCAG relative luminance of a packed rgb, ×100000.
+/** *WCAG relative luminance of a packed rgb, ×100000. */
 fn luminance(rgb: int) -> int {
     let r = SRGB_LIN[(rgb / 65536) % 256]
     let g = SRGB_LIN[(rgb / 256) % 256]
@@ -546,7 +546,7 @@ fn luminance(rgb: int) -> int {
     return (2126 * r + 7152 * g + 722 * b) / 10000
 }
 
-/// Contrast ratio between two packed rgb colors, ×100 (so 4.5:1 is 450).
+/** *Contrast ratio between two packed rgb colors, ×100 (so 4.5:1 is 450). */
 fn contrast_ratio(a: int, b: int) -> int {
     let la = luminance(a)
     let lb = luminance(b)
@@ -560,7 +560,7 @@ fn contrast_ratio(a: int, b: int) -> int {
     return (hi + 5000) * 100 / (lo + 5000)
 }
 
-/// 1 when `fg` on `bg` clears WCAG AA for body text (4.5:1).
+/** *1 when `fg` on `bg` clears WCAG AA for body text (4.5:1). */
 fn meets_aa(fg: int, bg: int) -> int {
     if contrast_ratio(fg, bg) >= 450 {
         return 1
@@ -568,7 +568,7 @@ fn meets_aa(fg: int, bg: int) -> int {
     return 0
 }
 
-/// 1 when `fg` on `bg` clears AA for large text / UI components (3:1).
+/** *1 when `fg` on `bg` clears AA for large text / UI components (3:1). */
 fn meets_aa_large(fg: int, bg: int) -> int {
     if contrast_ratio(fg, bg) >= 300 {
         return 1
@@ -576,8 +576,8 @@ fn meets_aa_large(fg: int, bg: int) -> int {
     return 0
 }
 
-/// The ink — near-black or near-white — that reads best on `bg`. A light fill
-/// gets near-black text; a dark fill gets white.
+/** *The ink — near-black or near-white — that reads best on `bg`. A light fill */
+/** *gets near-black text; a dark fill gets white. */
 fn best_on(bg: int) -> int {
     let dark = parse_hex_color("#18181b")
     let light = parse_hex_color("#ffffff")
@@ -588,12 +588,12 @@ fn best_on(bg: int) -> int {
 }
 
 // --- the live accent ------------------------------------------------------
-/// Ink. `set_accent` replaces it; the other ramps stay available.
+/** *Ink. `set_accent` replaces it; the other ramps stay available. */
 let mut accent_which: int = 0
 
-/// The accent in effect. Changing it re-registers the twelve A-slots, so the
-/// next paint picks up the new ramp with no rebuild and no effect runs — the
-/// same paint-time resolution that makes the light/dark switch free.
+/** *The accent in effect. Changing it re-registers the twelve A-slots, so the */
+/** *next paint picks up the new ramp with no rebuild and no effect runs — the */
+/** *same paint-time resolution that makes the light/dark switch free. */
 fn accent_choice() -> int {
     return accent_which
 }
@@ -629,8 +629,8 @@ fn register_tier(base: int, light: Tier, dark: Tier) {
     theme(base + 4, parse_hex_color(light.ink), parse_hex_color(dark.ink))
 }
 
-/// The role palette `Scope(accent = which)` paints with: the same roles
-/// `register_accent` sets app-wide, built once per accent.
+/** *The role palette `Scope(accent = which)` paints with: the same roles */
+/** *`register_accent` sets app-wide, built once per accent. */
 let mut accent_pals: []int = []int {}
 
 fn accent_palette(which: int) -> int {
@@ -679,7 +679,7 @@ fn register_accent() {
 }
 
 // --- scale accessors ------------------------------------------------------
-/// `step` held to the 1..12 ramp.
+/** *`step` held to the 1..12 ramp. */
 fn ramp_step(step: int) -> int {
     if step < 1 {
         return 1
@@ -690,19 +690,19 @@ fn ramp_step(step: int) -> int {
     return step
 }
 
-/// Neutral ramp step 1..12 as a role token (see the ROLE enum for what each
-/// step means).
+/** *Neutral ramp step 1..12 as a role token (see the ROLE enum for what each */
+/** *step means). */
 fn n(step: int) -> string {
     return role_token(ROLE.N1 + ramp_step(step) - 1)
 }
 
-/// Accent ramp step 1..12 as a role token. Follows `set_accent`.
+/** *Accent ramp step 1..12 as a role token. Follows `set_accent`. */
 fn ac(step: int) -> string {
     return role_token(ROLE.A1 + ramp_step(step) - 1)
 }
 
-/// Wash / border / ink for a `Tint`, so a widget takes one token and gets a
-/// consistent tier instead of picking three colours by hand.
+/** *Wash / border / ink for a `Tint`, so a widget takes one token and gets a */
+/** *consistent tier instead of picking three colours by hand. */
 fn tint_bg(kind: int) -> string {
     if kind == Tint.Ok { return ok_bg() }
     if kind == Tint.Warn { return warn_bg() }
@@ -729,9 +729,9 @@ fn tint_ink(kind: int) -> string {
     return n(12)
 }
 
-/// Register every theme role once, before the first paint: the palette roles,
-/// the neutral / status / accent ramps, and the flat roles bound onto them.
-/// `theme` from two hex strings, for the long role table below.
+/** *Register every theme role once, before the first paint: the palette roles, */
+/** *the neutral / status / accent ramps, and the flat roles bound onto them. */
+/** *`theme` from two hex strings, for the long role table below. */
 fn theme_hex(role: int, light: string, dark: string) {
     theme(role, parse_hex_color(light), parse_hex_color(dark))
 }
@@ -815,10 +815,10 @@ fn ensure_role_colors() {
     theme_hex(ROLE.DangerEdge, DANGER_L.line, DANGER_D.line)
 }
 
-/// Every (ink, surface) pair the design system can produce, checked against
-/// WCAG AA and reported as `pass`/`FAIL` lines. This is the §2 contrast
-/// requirement made executable rather than asserted in prose — the in-language
-/// test runs it for both appearances and fails on any `FAIL`.
+/** *Every (ink, surface) pair the design system can produce, checked against */
+/** *WCAG AA and reported as `pass`/`FAIL` lines. This is the §2 contrast */
+/** *requirement made executable rather than asserted in prose — the in-language */
+/** *test runs it for both appearances and fails on any `FAIL`. */
 fn tokens_contrast_report() -> string {
     ensure_role_colors()
     let mut out = ""
@@ -888,8 +888,8 @@ fn tokens_contrast_report() -> string {
     return out
 }
 
-/// Resolve a role to a packed rgb for the appearance in effect. The paint
-/// pass does this per draw; the contrast report needs it up front.
+/** *Resolve a role to a packed rgb for the appearance in effect. The paint */
+/** *pass does this per draw; the contrast report needs it up front. */
 fn role_rgb_now(slot: int) -> int {
     // The roles are registered lazily, and a caller outside the paint path
     // (a test, a contrast check, an accent picker) may be the first to ask.
@@ -897,7 +897,7 @@ fn role_rgb_now(slot: int) -> int {
     return paint_rgb(role_color(slot))
 }
 
-/// Identity at scale 1.0. `x * 100 / 100 == x` for every non-negative int.
+/** *Identity at scale 1.0. `x * 100 / 100 == x` for every non-negative int. */
 struct Palette {
     bg: string,
     card: string,
@@ -915,30 +915,30 @@ struct Palette {
     danger_solid: string,
     success: string,
     success_fill: string,
-    /// Warning tint: text, pips, icons (ochre).
+    /** *Warning tint: text, pips, icons (ochre). */
     warn: string,
-    /// Warning wash (alert fills, soft warning badges).
+    /** *Warning wash (alert fills, soft warning badges). */
     warn_fill: string,
-    /// Warning border: soft in light, full in dark.
+    /** *Warning border: soft in light, full in dark. */
     warn_edge: string,
-    /// Destructive border: destructive/50 in light, full in dark.
+    /** *Destructive border: destructive/50 in light, full in dark. */
     danger_edge: string,
-    /// Solid success fill for badges and other ok-on-surface marks.
+    /** *Solid success fill for badges and other ok-on-surface marks. */
     ok_solid: string,
-    /// Text on colored status fills (ok/danger solids) — white in both
-    /// appearances.
+    /** *Text on colored status fills (ok/danger solids) — white in both */
+    /** *appearances. */
     on_fill: string,
-    /// Modal scrim (behind dialogs and popovers).
+    /** *Modal scrim (behind dialogs and popovers). */
     scrim: string,
-    /// Tooltip border.
+    /** *Tooltip border. */
     chart_edge: string,
-    /// Series strokes (the default chart palette).
+    /** *Series strokes (the default chart palette). */
     chart1: string,
     chart2: string,
     chart3: string,
     chart4: string,
     chart5: string,
-    /// Per-series area wash, one entry per appearance.
+    /** *Per-series area wash, one entry per appearance. */
     fill1: string,
     fill2: string,
     fill3: string,
@@ -946,9 +946,9 @@ struct Palette {
     fill5: string,
 }
 
-/// Light chrome. Paint reads the neutral ramp, not these surface fields.
-/// `accent` is the first pass `register_accent` overwrites with Ink.
-/// Status fields mirror the tiers. Chart series are the natural hues.
+/** *Light chrome. Paint reads the neutral ramp, not these surface fields. */
+/** *`accent` is the first pass `register_accent` overwrites with Ink. */
+/** *Status fields mirror the tiers. Chart series are the natural hues. */
 const LIGHT: Palette = Palette(
     bg = "#f6f7f9",
     card = "#ffffff",
@@ -986,8 +986,8 @@ const LIGHT: Palette = Palette(
     fill5 = "#f6e7e2",
 )
 
-/// Dark chrome. Same split as `LIGHT`: the neutral ramp is what paints,
-/// status fields mirror the tiers, and the chart series are the natural hues.
+/** *Dark chrome. Same split as `LIGHT`: the neutral ramp is what paints, */
+/** *status fields mirror the tiers, and the chart series are the natural hues. */
 const DARK: Palette = Palette(
     bg = "#0b0c0f",
     card = "#14161b",
@@ -1029,35 +1029,35 @@ fn empty_view() -> Node {
     return Node { id: 0 }
 }
 
-/// 2D grid configuration.
+/** *2D grid configuration. */
 struct GridConfig {
-    /// Column count. In auto mode (see `autoColumns`) it is instead the cap
-    /// on the count, and `0` means no cap — the width alone decides.
-    /// `GridConfig {}`, like any count `< 1`, is a single column.
+    /** *Column count. In auto mode (see `autoColumns`) it is instead the cap */
+    /** *on the count, and `0` means no cap — the width alone decides. */
+    /** *`GridConfig {}`, like any count `< 1`, is a single column. */
     columns: int = 0,
     gap: int = 0,
     padding: int = 0,
-    /// The narrowest a cell may be, in points like `gap`. This is what makes
-    /// the grid responsive: the count becomes how many cells at least this
-    /// wide fit the width the grid is given, capped by `columns` and by the
-    /// child count. With `gap = Space.Xs` and `autoColumns = 220`, a grid with 1000
-    /// points of content width fits four cells (and `columns = 3` takes it back
-    /// to three), 620 points fits two, 420 fits one. The gap is part of the
-    /// cell, because `cols` cells leave `cols - 1` gaps.
-    ///
-    /// `0` is the same thing with the width taken from the children instead —
-    /// a cell is as wide as the widest child wants to be — so the count
-    /// follows the content and needs no number to pick. `-1` (the default)
-    /// keeps the fixed `columns` behaviour.
-    ///
-    /// A constant, not a signal: a cell width is a layout parameter, so
-    /// re-resolving it every frame would buy nothing.
+    /** *The narrowest a cell may be, in points like `gap`. This is what makes */
+    /** *the grid responsive: the count becomes how many cells at least this */
+    /** *wide fit the width the grid is given, capped by `columns` and by the */
+    /** *child count. With `gap = Space.Xs` and `autoColumns = 220`, a grid with 1000 */
+    /** *points of content width fits four cells (and `columns = 3` takes it back */
+    /** *to three), 620 points fits two, 420 fits one. The gap is part of the */
+    /** *cell, because `cols` cells leave `cols - 1` gaps. */
+    /** */
+    /** *`0` is the same thing with the width taken from the children instead — */
+    /** *a cell is as wide as the widest child wants to be — so the count */
+    /** *follows the content and needs no number to pick. `-1` (the default) */
+    /** *keeps the fixed `columns` behaviour. */
+    /** */
+    /** *A constant, not a signal: a cell width is a layout parameter, so */
+    /** *re-resolving it every frame would buy nothing. */
     autoColumns: int = -1,
 }
 
-/// Control density (`Density.*`), one global knob next to `appearance()`.
-/// `control_h` and friends read it, so reading them inside a style closure
-/// keeps a control live to a density switch.
+/** *Control density (`Density.*`), one global knob next to `appearance()`. */
+/** *`control_h` and friends read it, so reading them inside a style closure */
+/** *keeps a control live to a density switch. */
 let mut density_sid: int = 0
 
 fn density() -> Signal<int> {

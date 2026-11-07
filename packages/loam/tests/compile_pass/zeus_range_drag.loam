@@ -21,7 +21,7 @@ fn by_label(label: string) -> int {
     return 0
 }
 
-/// The `nth` low thumb, while both still hold 20 (its label has the value).
+/** *The `nth` low thumb, while both still hold 20 (its label has the value). */
 fn thumb_of(nth: int) -> int {
     let mut seen = 0
     for id in 1..zeus.arena_nodes() {

@@ -53,7 +53,7 @@ fn Card(p: CardProps) -> int {
     return 0
 }
 
-/// Forwarding an optional handler is one field, absent or present.
+/** *Forwarding an optional handler is one field, absent or present. */
 fn Inner(p: CardProps) -> int {
     return Card(title = "forwarded", on_click = p.on_click)
 }

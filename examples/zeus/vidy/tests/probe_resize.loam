@@ -1,6 +1,6 @@
-//! Headless resize probe: lay out big, shrink the window, and check the stage
-//! and the picture follow it (nothing may overflow and scroll).
-//!   ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/vidy/tests/probe_resize.loam -o /tmp/vr && /tmp/vr
+// Headless resize probe: lay out big, shrink the window, and check the stage
+// and the picture follow it (nothing may overflow and scroll).
+//   ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/vidy/tests/probe_resize.loam -o /tmp/vr && /tmp/vr
 import "zeus"
 import "std:fmt"
 import "../app_routes.loam" as approutes

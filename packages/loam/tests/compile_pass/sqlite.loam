@@ -17,7 +17,7 @@ fn expect(good: bool, what: string) {
     }
 }
 
-/// `r` failed, and its error mentions `text`.
+/** *`r` failed, and its error mentions `text`. */
 fn expect_err(r: Result<bool>, text: string, what: string) {
     if result.is_ok(r) {
         fmt.println("FAIL", what, "succeeded")
@@ -344,8 +344,8 @@ fn write_events(add: Stmt, start: i64, day: i64) -> Result<bool> {
     return result.res_ok(true)
 }
 
-/// The SQL phase 5 ports from Postgres: a recursive CTE for quiet days, joins, and
-/// window functions, with times as integer milliseconds.
+/** *The SQL phase 5 ports from Postgres: a recursive CTE for quiet days, joins, and */
+/** *window functions, with times as integer milliseconds. */
 fn report_sql() -> Result<bool> {
     let mut db = Db {}
     sqlite.open(":memory:", OpenProps {}, &mut db)?

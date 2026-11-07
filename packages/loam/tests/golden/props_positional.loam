@@ -20,8 +20,8 @@ fn first<T>(a: T, b: T) -> T {
     return a
 }
 
-/// The last parameter is a plain struct: a value whose type is an unresolved
-/// generic (`first(...)` returns `T`) is that struct, not a props fill.
+/** *The last parameter is a plain struct: a value whose type is an unresolved */
+/** *generic (`first(...)` returns `T`) is that struct, not a props fill. */
 fn show_cell(label: string, c: Cell) {
     fmt.println("{{label}}={{c.id}}")
 }

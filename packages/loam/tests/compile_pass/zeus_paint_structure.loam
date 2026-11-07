@@ -34,8 +34,8 @@ fn draw_sum() -> int {
     return s
 }
 
-/// One frame for the current state: it must patch (no full record), and the
-/// patched list must equal a full record of the same state.
+/** *One frame for the current state: it must patch (no full record), and the */
+/** *patched list must equal a full record of the same state. */
 fn step(what: string) {
     zeus.engine_layout(320, 400)
     let full0 = zeus.paint_full_frames()

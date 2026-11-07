@@ -20,7 +20,7 @@ fn must(ok: bool, what: string) {
     }
 }
 
-/// Step the clock by `ms` in 16 ms frames, painting each one.
+/** *Step the clock by `ms` in 16 ms frames, painting each one. */
 fn run_ms(ms: int) {
     let mut t = 0
     while t < ms {

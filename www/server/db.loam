@@ -1,16 +1,16 @@
-//! The analytics database. Native only: the wasm never imports this.
+// The analytics database. Native only: the wasm never imports this.
 
 import "std:result"
 import "sqlite"
 import "std:str"
 
 const DAY_MS: i64 = 86400000
-/// Events are kept 13 months, so the table cannot fill the disk.
+/** *Events are kept 13 months, so the table cannot fill the disk. */
 const KEEP_MS: i64 = DAY_MS * 395
 
-/// One event, checked by `track`. An empty `name`, `data`, or `ref` and a negative
-/// `ms` or `width` are stored as NULL. The ids are `track.short_id`s: integers keep
-/// the table small and make the reports' grouping about twice as fast.
+/** *One event, checked by `track`. An empty `name`, `data`, or `ref` and a negative */
+/** *`ms` or `width` are stored as NULL. The ids are `track.short_id`s: integers keep */
+/** *the table small and make the reports' grouping about twice as fast. */
 struct EventRow {
     vid: i64,
     sid: i64,
@@ -28,7 +28,7 @@ struct EventRow {
 let mut store = Db {}
 let mut insert_event = Stmt {}
 
-/// Open the database at `path`, and make its tables.
+/** *Open the database at `path`, and make its tables. */
 fn open(path: string) -> Result<bool> {
     sqlite.open(path, OpenProps {}, &mut store)?
     sqlite.exec(store, "CREATE TABLE IF NOT EXISTS events (
@@ -64,7 +64,7 @@ fn close() -> Result<bool> {
     return sqlite.close(&mut store)
 }
 
-/// The connection, for the report queries.
+/** *The connection, for the report queries. */
 fn connection() -> Db {
     return store
 }
@@ -103,13 +103,13 @@ fn write_rows(rows: []EventRow) -> Result<bool> {
     return result.res_ok(true)
 }
 
-/// Store a batch in one transaction: all of it, or none.
+/** *Store a batch in one transaction: all of it, or none. */
 fn insert(rows: []EventRow) -> Result<bool> {
     sqlite.begin(store)?
     return sqlite.finish(store, write_rows(rows))
 }
 
-/// Delete what has aged out, as of `now`.
+/** *Delete what has aged out, as of `now`. */
 fn prune(now: i64) -> Result<bool> {
     let mut st = Stmt {}
     sqlite.prepare(store, "DELETE FROM events WHERE ts < ?", &mut st)?
@@ -120,8 +120,8 @@ fn prune(now: i64) -> Result<bool> {
 }
 
 
-/// How many logins failed since `since`. A negative number means it could not be
-/// read, which callers treat as over the limit.
+/** *How many logins failed since `since`. A negative number means it could not be */
+/** *read, which callers treat as over the limit. */
 fn failures_since(since: i64) -> int {
     let mut st = Stmt {}
     if result.is_err(sqlite.prepare(store, "SELECT count(*) FROM login_failures WHERE at > ?", &mut st)) {
@@ -138,7 +138,7 @@ fn failures_since(since: i64) -> int {
     return count
 }
 
-/// Note a failed login at `now`, and forget those over a day old.
+/** *Note a failed login at `now`, and forget those over a day old. */
 fn add_failure(now: i64) -> Result<bool> {
     let mut add = Stmt {}
     sqlite.prepare(store, "INSERT INTO login_failures (at) VALUES (?)", &mut add)?

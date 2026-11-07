@@ -10,17 +10,17 @@ import "std:kv"
 
 let mut ram_armed: int = 0
 
-/// Host memory in KB as "12.3 MB" (one decimal). Integer MB rounded the
-/// wasm live heap — a few hundred KB — down to "0 MB", which read as broken.
+/** *Host memory in KB as "12.3 MB" (one decimal). Integer MB rounded the */
+/** *wasm live heap — a few hundred KB — down to "0 MB", which read as broken. */
 fn fmt_mb(kb: int) -> string {
     let tenths = kb * 10 / 1024
     return "{{tenths / 10}}.{{tenths % 10}} MB"
 }
 
-/// Navbar RAM chip: refreshes twice a second through the async timer, so the
-/// chip shows live host memory (phys_footprint on Apple, resident set on
-/// Linux / Android, live wasm heap on web). Reads once at mount so the chip
-/// is never blank.
+/** *Navbar RAM chip: refreshes twice a second through the async timer, so the */
+/** *chip shows live host memory (phys_footprint on Apple, resident set on */
+/** *Linux / Android, live wasm heap on web). Reads once at mount so the chip */
+/** *is never blank. */
 fn RamChip() -> Node {
     let ram = zeus.signal(zeus.memory_kb())
     if ram_armed == 0 {
@@ -72,11 +72,11 @@ fn Navbar(page: Signal<int>) -> Node {
     }
 }
 
-/// Accent picker: one swatch per grey ramp (Ink, Graphite, Stone). Ink is the
-/// default. `set_accent` re-registers the twelve A-slots in place, so every
-/// themed control follows on the next
-/// paint with no rebuild and no effect runs — the same trick that makes the
-/// light / dark switch free. The ring marks the ramp in effect.
+/** *Accent picker: one swatch per grey ramp (Ink, Graphite, Stone). Ink is the */
+/** *default. `set_accent` re-registers the twelve A-slots in place, so every */
+/** *themed control follows on the next */
+/** *paint with no rebuild and no effect runs — the same trick that makes the */
+/** *light / dark switch free. The ring marks the ramp in effect. */
 fn AccentDots() -> Node {
     let which = zeus.signal(colors.accent_choice())
     let mut idx = []int {}
@@ -797,9 +797,9 @@ fn Catalogue() -> Node {
     }
 }
 
-/// The rest of the catalogue: inline type, small display pieces, the
-/// remaining form controls, layout frames, and the dialog presets. Each row
-/// names what it shows so the gallery covers every public widget.
+/** *The rest of the catalogue: inline type, small display pieces, the */
+/** *remaining form controls, layout frames, and the dialog presets. Each row */
+/** *names what it shows so the gallery covers every public widget. */
 fn Primitives() -> Node {
     let guests = zeus.signal(2)
     let lo = zeus.signal(20)
@@ -1270,15 +1270,15 @@ fn Feedback() -> Node {
     }
 }
 
-/// One field in the state matrix. `edge` is the border token, `off` dims and
-/// inerts it through the shared disabled state, `bad` records the shared
-/// `invalid` state (the border color is how the chrome shows it).
-///
-/// These are REAL fields, not pictures of fields. They used to be a Box with a
-/// Text in it, which read as a field but could not take a caret, so the
-/// "resting" one could not be typed into — the one thing the row is for. A
-/// `TextInput` bound to its own signal gives the resting and invalid rows a
-/// caret and a working keyboard, and disabled keeps its inert state.
+/** *One field in the state matrix. `edge` is the border token, `off` dims and */
+/** *inerts it through the shared disabled state, `bad` records the shared */
+/** *`invalid` state (the border color is how the chrome shows it). */
+/** */
+/** *These are REAL fields, not pictures of fields. They used to be a Box with a */
+/** *Text in it, which read as a field but could not take a caret, so the */
+/** *"resting" one could not be typed into — the one thing the row is for. A */
+/** *`TextInput` bound to its own signal gives the resting and invalid rows a */
+/** *caret and a working keyboard, and disabled keeps its inert state. */
 fn StateField(text: string, edge: string, off: int, bad: int) -> Node {
     let value = zeus.signal(text)
     let f = zui.TextInput(
@@ -1295,11 +1295,11 @@ fn StateField(text: string, edge: string, off: int, bad: int) -> Node {
     return f
 }
 
-/// Capstone: each control resting beside the states it can be posed in.
-/// Disabled and loading are static props; invalid is the shared state model
-/// (`invalid`), which an app's own chrome reads through `state_invalid`.
-/// Hover, press and focus are live — the engine drives them from the pointer
-/// and the keyboard, so they are shown by using the control, not posed.
+/** *Capstone: each control resting beside the states it can be posed in. */
+/** *Disabled and loading are static props; invalid is the shared state model */
+/** *(`invalid`), which an app's own chrome reads through `state_invalid`. */
+/** *Hover, press and focus are live — the engine drives them from the pointer */
+/** *and the keyboard, so they are shown by using the control, not posed. */
 fn States() -> Node {
     return Column(spacing.SECTION) {
         zui.SectionHeader(

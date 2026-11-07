@@ -1,20 +1,20 @@
-//! Stock close cache. Separate from the AMFI NAV cache: its own directory,
-//! its own logs, and nothing in it is a fund.
-//!
-//! ```
-//! <root>/symbols.txt      symbol;name;isin;last_date;last_paise;bars
-//! <root>/fetches.txt      id;stamp;url;day;accepted;rejected;warnings
-//! <root>/rejects.txt      id;line;symbol;date;reason
-//! <root>/px/<file>.csv    date;paise;fetch_id
-//! ```
-//!
-//! `<file>` is the symbol with any byte outside `A-Z 0-9` written as `_`
-//! and two hex digits, so `M&M` is `M_26M`.
-//!
-//! Append-only in date order. A row is cached only when its date is after
-//! the last cached date for that symbol, checked against the price file
-//! itself as well as the index, so a run that stopped half way cannot write
-//! a day twice. Every write is a `.tmp` sibling renamed over the file.
+// Stock close cache. Separate from the AMFI NAV cache: its own directory,
+// its own logs, and nothing in it is a fund.
+//
+// ```
+// <root>/symbols.txt      symbol;name;isin;last_date;last_paise;bars
+// <root>/fetches.txt      id;stamp;url;day;accepted;rejected;warnings
+// <root>/rejects.txt      id;line;symbol;date;reason
+// <root>/px/<file>.csv    date;paise;fetch_id
+// ```
+//
+// `<file>` is the symbol with any byte outside `A-Z 0-9` written as `_`
+// and two hex digits, so `M&M` is `M_26M`.
+//
+// Append-only in date order. A row is cached only when its date is after
+// the last cached date for that symbol, checked against the price file
+// itself as well as the index, so a run that stopped half way cannot write
+// a day twice. Every write is a `.tmp` sibling renamed over the file.
 
 import "std:sys"
 import "std:kv"
@@ -40,7 +40,7 @@ struct Closes {
 
 struct DayReport {
     ok: int,
-    /// `1` when the exchange had no session that day.
+    /** *`1` when the exchange had no session that day. */
     closed: int,
     fetch_id: int,
     accepted: int,
@@ -61,7 +61,7 @@ fn day_err(msg: string) -> DayReport {
     }
 }
 
-/// `~/Library/Application Support/dracula/stocks`. Beside `nav`, never in it.
+/** *`~/Library/Application Support/dracula/stocks`. Beside `nav`, never in it. */
 fn tape_root() -> string {
     let d = kv.data_dir("dracula")
     if d.len == 0 {
@@ -183,7 +183,7 @@ fn closes(root: string, symbol: string) -> Closes {
     return out
 }
 
-/// Date on the last line of a price file, or 0.
+/** *Date on the last line of a price file, or 0. */
 fn last_date_in(text: string) -> int {
     let mut end = text.len
     while end > 0 && (text[end - 1] == 10 || text[end - 1] == 13) {
@@ -228,7 +228,7 @@ fn append_line(path: string, line: string) -> int {
     return store.write_atomic(path, "{{prev}}{{line}}\n")
 }
 
-/// Reject reason for a close on `day` after `last` cached, or empty.
+/** *Reject reason for a close on `day` after `last` cached, or empty. */
 fn review(last: int, day: int, paise: i64) -> string {
     if paise <= i64(0) {
         return "bad close"
@@ -242,9 +242,9 @@ fn review(last: int, day: int, paise: i64) -> string {
     return ""
 }
 
-/// A move of more than 20% on an unadjusted close is usually a split or a
-/// bonus. It is cached and counted as a warning, not rejected: the next
-/// close would otherwise be judged against a price the stock no longer has.
+/** *A move of more than 20% on an unadjusted close is usually a split or a */
+/** *bonus. It is cached and counted as a warning, not rejected: the next */
+/** *close would otherwise be judged against a price the stock no longer has. */
 fn big_move(prev: i64, now: i64) -> bool {
     if prev <= i64(0) {
         return false
@@ -256,7 +256,7 @@ fn big_move(prev: i64, now: i64) -> bool {
     return d * i64(5) > prev
 }
 
-/// Cache one parsed day. `url` and `stamp` go to the fetch log.
+/** *Cache one parsed day. `url` and `stamp` go to the fetch log. */
 fn apply(root: string, b: Bhav, url: string, stamp: string) -> DayReport {
     if b.ok == 0 {
         return day_err(b.err)
@@ -355,7 +355,7 @@ fn apply(root: string, b: Bhav, url: string, stamp: string) -> DayReport {
     }
 }
 
-/// Fetch and cache one trading day. A day with no session is `closed`.
+/** *Fetch and cache one trading day. A day with no session is `closed`. */
 fn day_live(ymd: int, stamp: string) -> DayReport {
     if !date.is_valid(ymd) {
         return day_err("not a date")
@@ -385,7 +385,7 @@ fn day_live(ymd: int, stamp: string) -> DayReport {
     return apply(root, nse.parse(got.body, ymd), nse.bhav_url(ymd), stamp)
 }
 
-/// Last fetch as `id;stamp;url;day;accepted;rejected;warnings` fields, or empty.
+/** *Last fetch as `id;stamp;url;day;accepted;rejected;warnings` fields, or empty. */
 fn last_fetch(root: string) -> []string {
     let lines = csvx.split_lines(sys.read_file("{{root}}/fetches.txt"))
     let mut i = lines.len - 1
@@ -399,8 +399,8 @@ fn last_fetch(root: string) -> []string {
     return []string {}
 }
 
-/// Up to `cap` reject lines `line;symbol;date;reason` for fetch `id`, and
-/// the full count.
+/** *Up to `cap` reject lines `line;symbol;date;reason` for fetch `id`, and */
+/** *the full count. */
 fn rejects_for(root: string, id: int, cap: int) -> []string {
     let lines = csvx.split_lines(sys.read_file("{{root}}/rejects.txt"))
     let mut out = []string {}

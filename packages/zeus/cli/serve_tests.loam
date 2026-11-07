@@ -14,7 +14,7 @@ import "std:test"
 import "zeli.loam" as zeli
 import "chunks.loam" as chunks
 
-/// Shorthand, so the assertions below read as the behaviour they check.
+/** *Shorthand, so the assertions below read as the behaviour they check. */
 fn has(hay: string, needle: string) -> bool {
     return zeli.contains_str(hay, needle)
 }

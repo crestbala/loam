@@ -1,53 +1,53 @@
-//! Language-level seam (`docs/boundary.md`).
-//!
-//! Bodyless `fn`s resolve to `loam_sys_<name>` in `loam_rt`. No protocol here.
+// Language-level seam (`docs/boundary.md`).
+//
+// Bodyless `fn`s resolve to `loam_sys_<name>` in `loam_rt`. No protocol here.
 
-/// Compile `--target`: `"wasm"`, `"ios"`, `"android"`, or `"native"`.
+/** *Compile `--target`: `"wasm"`, `"ios"`, `"android"`, or `"native"`. */
 fn target() -> string {}
 
-/// `1` if the environment variable is set and non-empty.
+/** *`1` if the environment variable is set and non-empty. */
 fn env_set(name: string) -> int {}
 
-/// Exit the process with `code`.
+/** *Exit the process with `code`. */
 fn exit(code: int) {}
 
-/// Value of `name`, or empty if unset. Native only; wasm returns empty.
+/** *Value of `name`, or empty if unset. Native only; wasm returns empty. */
 fn env(name: string) -> string {}
 
-/// Write `body` to `path`. `0` on success. Native only; wasm returns `1`.
+/** *Write `body` to `path`. `0` on success. Native only; wasm returns `1`. */
 fn write_file(path: string, body: string) -> int {}
 
-/// Run `cmd` via the shell; capture stdout (redirect `2>&1` to include stderr).
-/// Native only; wasm returns empty. `exec_status` is the exit code.
+/** *Run `cmd` via the shell; capture stdout (redirect `2>&1` to include stderr). */
+/** *Native only; wasm returns empty. `exec_status` is the exit code. */
 fn exec(cmd: string) -> string {}
 
-/// Exit code of the last `exec` (`1` if it could not start).
+/** *Exit code of the last `exec` (`1` if it could not start). */
 fn exec_status() -> int {}
 
-/// `1` if stdout is a terminal, so output may be redrawn in place. A child of
-/// `exec` cannot tell, its stdout being the capture pipe. Wasm returns `0`.
+/** *`1` if stdout is a terminal, so output may be redrawn in place. A child of */
+/** *`exec` cannot tell, its stdout being the capture pipe. Wasm returns `0`. */
 fn stdout_tty() -> int {}
 
-/// Read the whole file. Empty if missing or over 1 GiB. Native only; wasm
-/// returns empty.
+/** *Read the whole file. Empty if missing or over 1 GiB. Native only; wasm */
+/** *returns empty. */
 fn read_file(path: string) -> string {}
 
-/// Create `path` and parents (`mkdir -p`). `0` on success. Native only;
-/// wasm returns `1`.
+/** *Create `path` and parents (`mkdir -p`). `0` on success. Native only; */
+/** *wasm returns `1`. */
 fn mkdir(path: string) -> int {}
 
-/// Rename `from` to `to`. `0` on success. Native only; wasm returns `1`.
+/** *Rename `from` to `to`. `0` on success. Native only; wasm returns `1`. */
 fn rename(from: string, to: string) -> int {}
 
-/// Command-line argument count, the program path included. `0` on iOS,
-/// Android and wasm, where no command line reaches the program.
+/** *Command-line argument count, the program path included. `0` on iOS, */
+/** *Android and wasm, where no command line reaches the program. */
 fn argc() -> int {}
 
-/// Argument `i` as the shell gave it: `arg(0)` is the program path. Empty when
-/// `i` is out of range. Native only; wasm returns empty.
+/** *Argument `i` as the shell gave it: `arg(0)` is the program path. Empty when */
+/** *`i` is out of range. Native only; wasm returns empty. */
 fn arg(i: int) -> string {}
 
-/// Every argument, `arg(0)` first. The convenience form of `argc` / `arg`.
+/** *Every argument, `arg(0)` first. The convenience form of `argc` / `arg`. */
 fn args() -> []string {
     let mut out = []string {}
     for i in 0..argc() {
@@ -56,23 +56,23 @@ fn args() -> []string {
     return out
 }
 
-/// `1` if `path` exists, whatever it is. Native only; wasm returns `0`.
+/** *`1` if `path` exists, whatever it is. Native only; wasm returns `0`. */
 fn exists(path: string) -> int {}
 
-/// `1` if `path` is a directory. Native only; wasm returns `0`.
+/** *`1` if `path` is a directory. Native only; wasm returns `0`. */
 fn is_dir(path: string) -> int {}
 
-/// Number of entries in the directory `path`, `.` and `..` excluded. `0` when
-/// `path` is not a readable directory. Native only; wasm returns `0`.
+/** *Number of entries in the directory `path`, `.` and `..` excluded. `0` when */
+/** *`path` is not a readable directory. Native only; wasm returns `0`. */
 fn dir_count(path: string) -> int {}
 
-/// Entry `i` of `path`, sorted by name, as a fresh string — a caller that keeps
-/// it keeps its own copy. Empty when `i` is out of range. Native only; wasm
-/// returns empty.
+/** *Entry `i` of `path`, sorted by name, as a fresh string — a caller that keeps */
+/** *it keeps its own copy. Empty when `i` is out of range. Native only; wasm */
+/** *returns empty. */
 fn dir_entry(path: string, i: int) -> string {}
 
-/// Every entry of `path`, sorted. The convenience form of `dir_count` /
-/// `dir_entry`.
+/** *Every entry of `path`, sorted. The convenience form of `dir_count` / */
+/** *`dir_entry`. */
 fn list_dir(path: string) -> []string {
     let mut out = []string {}
     for i in 0..dir_count(path) {
@@ -81,38 +81,38 @@ fn list_dir(path: string) -> []string {
     return out
 }
 
-/// Remove `path`, recursing into a directory. `0` on success, including when
-/// `path` is already gone. Native only; wasm returns `1`.
+/** *Remove `path`, recursing into a directory. `0` on success, including when */
+/** *`path` is already gone. Native only; wasm returns `1`. */
 fn remove_path(path: string) -> int {}
 
-/// The process's working directory, absolute. Empty when it cannot be read, and
-/// on wasm, where there is none.
+/** *The process's working directory, absolute. Empty when it cannot be read, and */
+/** *on wasm, where there is none. */
 fn cwd() -> string {}
 
-/// Open a filesystem watcher, for the paths `watch_add` is then given. Returns a
-/// handle (> 0), or `0` when this host has no kernel watcher — macOS and the
-/// BSDs do, wasm and Linux do not yet.
+/** *Open a filesystem watcher, for the paths `watch_add` is then given. Returns a */
+/** *handle (> 0), or `0` when this host has no kernel watcher — macOS and the */
+/** *BSDs do, wasm and Linux do not yet. */
 fn watch_open() -> int {}
 
-/// Watch one path — a directory or a file — under `handle`. Returns a
-/// registration id (> 0), which is also a descriptor the caller closes with
-/// `watch_close`. `0` when the path cannot be opened.
-///
-/// The id is the caller's to keep: the mapping from id back to path is the
-/// caller's business, because the watcher itself holds no state.
+/** *Watch one path — a directory or a file — under `handle`. Returns a */
+/** *registration id (> 0), which is also a descriptor the caller closes with */
+/** *`watch_close`. `0` when the path cannot be opened. */
+/** */
+/** *The id is the caller's to keep: the mapping from id back to path is the */
+/** *caller's business, because the watcher itself holds no state. */
 fn watch_add(handle: int, path: string) -> int {}
 
-/// Wait for one change, and return the id of the watcher that fired — or `0`
-/// when nothing happened in time.
-///
-/// `timeout_ms` follows `poll(2)`: negative blocks until something changes, `0`
-/// returns at once, positive waits at most that long. Block with a negative
-/// value for the first event of a burst, then drain the rest with `0`.
-///
-/// A file fires when its contents change. A directory fires when an entry inside
-/// it is added, removed or renamed — so a caller that wants the *name* of a new
-/// file has to list the directory it was handed.
+/** *Wait for one change, and return the id of the watcher that fired — or `0` */
+/** *when nothing happened in time. */
+/** */
+/** *`timeout_ms` follows `poll(2)`: negative blocks until something changes, `0` */
+/** *returns at once, positive waits at most that long. Block with a negative */
+/** *value for the first event of a burst, then drain the rest with `0`. */
+/** */
+/** *A file fires when its contents change. A directory fires when an entry inside */
+/** *it is added, removed or renamed — so a caller that wants the *name* of a new */
+/** *file has to list the directory it was handed. */
 fn watch_next(handle: int, timeout_ms: int) -> int {}
 
-/// Close a descriptor from `watch_open` or `watch_add`. Returns `0`.
+/** *Close a descriptor from `watch_open` or `watch_add`. Returns `0`. */
 fn watch_close(fd: int) -> int {}

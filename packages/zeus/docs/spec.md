@@ -563,7 +563,7 @@ checked in at `examples/zeus/myapp/` and built by the test gate, so the tree
 - A one-line `{ ... }` keeps the space its author wrote after the brace on both
   sides: `{ x, y }`, never `{ x, y}`.
 - At most one blank line; one trailing newline.
-- Comments (`//`, `///`, `//!`, and block comments including every continuation
+- Comments (`//`, `/* */`, `/** *text */`, including every continuation
   line) and string literals are copied verbatim — it scans rather than using the
   parser, because the parser discards comments.
 

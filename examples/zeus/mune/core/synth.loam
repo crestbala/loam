@@ -1,16 +1,16 @@
-//! What the instruments play: the notes, not the sound.
-//!
-//! Each instrument is a loop (a phrase of drums, up to four bars of
-//! harmony) at the piece tempo, as a list of hits — time, velocity,
-//! frequency, gate — with its humanize. `voices.loam` renders those hits to
-//! samples and the graph repeats each loop with `aloop`. Sustained pads are
-//! not hits but chords a bar (`pad_chords`), held on the loop's own clock.
-//!
-//! Each style has its own kit and players (see `styles.loam`): taiko,
-//! legato strings, a low ostinato, and a braam for cinematic; an 808 for
-//! trap; supersaw stabs for future bass; shaker, congas, rim, a log-drum
-//! bass, and mallets for afrobeats. Hats keep their decay in the gate; a
-//! snare hit with a gate above 0 decays at that rate (a build roll).
+// What the instruments play: the notes, not the sound.
+//
+// Each instrument is a loop (a phrase of drums, up to four bars of
+// harmony) at the piece tempo, as a list of hits — time, velocity,
+// frequency, gate — with its humanize. `voices.loam` renders those hits to
+// samples and the graph repeats each loop with `aloop`. Sustained pads are
+// not hits but chords a bar (`pad_chords`), held on the loop's own clock.
+//
+// Each style has its own kit and players (see `styles.loam`): taiko,
+// legato strings, a low ostinato, and a braam for cinematic; an 808 for
+// trap; supersaw stabs for future bass; shaker, congas, rim, a log-drum
+// bass, and mallets for afrobeats. Hats keep their decay in the gate; a
+// snare hit with a gate above 0 decays at that rate (a build roll).
 
 import "key.loam" as key
 import "num.loam" as num
@@ -27,11 +27,11 @@ const LIGHT: int = 0
 const FULL: int = 1
 const BUILD: int = 2
 const INTRO: int = 3
-/// Hats only (and congas, for afrobeats): the recording already carries
-/// the kick and the snare.
+/** *Hats only (and congas, for afrobeats): the recording already carries */
+/** *the kick and the snare. */
 const TOPS: int = 4
 
-/// Players besides the kit.
+/** *Players besides the kit. */
 const P_BASS: int = 10
 const P_LEAD: int = 11
 const P_COUNTER: int = 12
@@ -47,7 +47,7 @@ const PAD_SUPER: int = 4
 const ARP_PLUCK: int = 0
 const ARP_SAW: int = 1
 const ARP_SQUARE: int = 2
-/// Short bowed strings, low: the cinematic ostinato.
+/** *Short bowed strings, low: the cinematic ostinato. */
 const ARP_STRINGS: int = 3
 const ARP_MALLET: int = 4
 
@@ -59,44 +59,44 @@ fn arp_names() -> []string {
     return []string { "Pluck", "Saw", "Square", "Strings", "Mallet" }
 }
 
-/// What every instrument needs to agree on.
+/** *What every instrument needs to agree on. */
 struct Groove {
     bar_sec: f64,
     tonic: int,
     minor: bool,
-    /// Four chords, one a bar, as `key.chord_code`s.
+    /** *Four chords, one a bar, as `key.chord_code`s. */
     prog: []int,
     style: int,
     energy: int,
     seed: int,
-    /// Semitones the harmony voices sit above their home register. The
-    /// arranger raises it with the energy; the bass stays down.
+    /** *Semitones the harmony voices sit above their home register. The */
+    /** *arranger raises it with the energy; the bass stays down. */
     lift: int,
-    /// Phrase length in bars for this loop. 0 is the part's old default
-    /// (four bars of harmony, two of drums). 1 is the build's last bar.
+    /** *Phrase length in bars for this loop. 0 is the part's old default */
+    /** *(four bars of harmony, two of drums). 1 is the build's last bar. */
     bars: int,
-    /// How busy the loop is, 0..1000 (`plan.density`). Arp step follows it.
+    /** *How busy the loop is, 0..1000 (`plan.density`). Arp step follows it. */
     den: int,
-    /// How hard the hits land, 0..1000 (`plan.dyn_amt`). 1000 is full.
+    /** *How hard the hits land, 0..1000 (`plan.dyn_amt`). 1000 is full. */
     dyn: int,
-    /// One colour a bar from `plan.tension_color`, or empty. A missing bar,
-    /// or a value below 0, keeps the style's own voicing (triads, or
-    /// sevenths where the style uses them). 0 forces a triad.
+    /** *One colour a bar from `plan.tension_color`, or empty. A missing bar, */
+    /** *or a value below 0, keeps the style's own voicing (triads, or */
+    /** *sevenths where the style uses them). 0 forces a triad. */
     color: []int,
-    /// Chord code for the first half of the last bar, or -1 when the bar
-    /// holds one chord. The second half is `prog`.
+    /** *Chord code for the first half of the last bar, or -1 when the bar */
+    /** *holds one chord. The second half is `prog`. */
     split: int,
-    /// False on the build's last bar: the kit plays, the kick does not.
+    /** *False on the build's last bar: the kit plays, the kick does not. */
     kick: bool,
-    /// `plan.OPEN` or `plan.CLOSED`. A closed lead's last note is softer.
-    /// Loops leave this open, so one phrase's ending is not baked in.
+    /** *`plan.OPEN` or `plan.CLOSED`. A closed lead's last note is softer. */
+    /** *Loops leave this open, so one phrase's ending is not baked in. */
     ending: int,
-    /// Sixteenth where the melody is highest, or −1 for the middle of the loop.
+    /** *Sixteenth where the melody is highest, or −1 for the middle of the loop. */
     peak: int,
-    /// Hats over a recorded groove (`TOPS`) stay within ±4 ms.
+    /** *Hats over a recorded groove (`TOPS`) stay within ±4 ms. */
     tight: bool,
-    /// Section kind. Straight styles swing a little when the energy is calm,
-    /// and a drop does not.
+    /** *Section kind. Straight styles swing a little when the energy is calm, */
+    /** *and a drop does not. */
     kind: int,
 }
 
@@ -118,7 +118,7 @@ fn add(h: &mut Hits, at: f64, vel: f64, freq: f64, gate: f64) {
     push(h.gate, gate)
 }
 
-/// Sort hits by time (insertion sort; a loop holds a few dozen).
+/** *Sort hits by time (insertion sort; a loop holds a few dozen). */
 fn sorted(h: Hits) -> Hits {
     let mut idx = []int {}
     for i in 0..h.at.len {
@@ -147,9 +147,9 @@ fn sixteenth(g: Groove) -> f64 {
     return g.bar_sec / 16.0
 }
 
-/// Extra swing, as a percent of a sixteenth. The style's own swing is the
-/// feel; this is only for a straight style played calmly, and a drop stays
-/// straight. The amount is chosen once per take.
+/** *Extra swing, as a percent of a sixteenth. The style's own swing is the */
+/** *feel; this is only for a straight style played calmly, and a drop stays */
+/** *straight. The amount is chosen once per take. */
 fn extra_swing(g: Groove) -> int {
     if styles.swing(g.style) != 0 {
         return 0
@@ -163,7 +163,7 @@ fn extra_swing(g: Groove) -> int {
     return 2 + num.hash(g.seed, 4242) % 3
 }
 
-/// Start of sixteenth `k`, swung: odd sixteenths land late.
+/** *Start of sixteenth `k`, swung: odd sixteenths land late. */
 fn step_time(g: Groove, k: int) -> f64 {
     let s = sixteenth(g)
     let mut t = f64(k) * s
@@ -173,8 +173,8 @@ fn step_time(g: Groove, k: int) -> f64 {
     return t
 }
 
-/// Bars a harmony loop renders. `g.bars` is the phrase (1..4); 0 is the
-/// old four-bar loop.
+/** *Bars a harmony loop renders. `g.bars` is the phrase (1..4); 0 is the */
+/** *old four-bar loop. */
 fn span_bars(g: Groove) -> int {
     if g.bars >= 1 && g.bars <= 4 {
         return g.bars
@@ -182,8 +182,8 @@ fn span_bars(g: Groove) -> int {
     return 4
 }
 
-/// Bars of one drum loop: the phrase, so its last half-bar is the breath.
-/// One bar is the build's dip, and it breathes on its own back half.
+/** *Bars of one drum loop: the phrase, so its last half-bar is the breath. */
+/** *One bar is the build's dip, and it breathes on its own back half. */
 fn drum_bars(g: Groove) -> int {
     if g.bars >= 1 {
         return g.bars
@@ -191,8 +191,8 @@ fn drum_bars(g: Groove) -> int {
     return 2
 }
 
-/// Sixteenth nearest `at`. Swing shifts an odd step by less than half, so
-/// the round trip lands on the step that was asked for.
+/** *Sixteenth nearest `at`. Swing shifts an odd step by less than half, so */
+/** *the round trip lands on the step that was asked for. */
 fn hit_step(g: Groove, at: f64) -> int {
     let s = sixteenth(g)
     if s <= 0.0 {
@@ -205,7 +205,7 @@ fn hit_step(g: Groove, at: f64) -> int {
     return n
 }
 
-/// The last half-bar of a phrase keeps eighths and drops the rest.
+/** *The last half-bar of a phrase keeps eighths and drops the rest. */
 fn keep_step(g: Groove, step: int) -> bool {
     let start = span_bars(g) * 16 - 8
     if step >= start && step % 2 == 1 {
@@ -216,26 +216,26 @@ fn keep_step(g: Groove, step: int) -> bool {
 
 // ---- Drums ---------------------------------------------------------------
 
-/// A hit on sixteenth `step`, a little uneven in velocity, the way a
-/// player is.
+/** *A hit on sixteenth `step`, a little uneven in velocity, the way a */
+/** *player is. */
 fn hit(h: &mut Hits, g: Groove, step: int, vel: f64, decay: f64) {
     let wobble = f64(num.hash(g.seed * 31 + step, h.at.len + 7) % 1000) / 1000.0
     add(h, step_time(g, step), vel * (0.9 + 0.1 * wobble), 0.0, decay)
 }
 
-/// A hit at `at` seconds into the loop, for rolls between the sixteenths.
+/** *A hit at `at` seconds into the loop, for rolls between the sixteenths. */
 fn hit_at(h: &mut Hits, at: f64, vel: f64, decay: f64) {
     add(h, at, vel, 0.0, decay)
 }
 
-/// Every step in `steps`, at `vel`.
+/** *Every step in `steps`, at `vel`. */
 fn hits(h: &mut Hits, g: Groove, steps: []int, vel: f64, decay: f64) {
     for i in 0..steps.len {
         hit(h, g, steps[i], vel, decay)
     }
 }
 
-/// Two bars of `part` for the style, at `variant` intensity.
+/** *Two bars of `part` for the style, at `variant` intensity. */
 fn drum_hits(g: Groove, part: int, variant: int) -> Hits {
     let mut h = no_hits()
     let full = variant == FULL || (variant == LIGHT && g.energy == styles.DRIVE)
@@ -496,8 +496,8 @@ fn drum_hits(g: Groove, part: int, variant: int) -> Hits {
     return h
 }
 
-/// Hits of `h` whose step is in `[0, limit)`, with a breath from `start`:
-/// the kick rests, hats fall to eighths, and a snare that was playing fills.
+/** *Hits of `h` whose step is in `[0, limit)`, with a breath from `start`: */
+/** *the kick rests, hats fall to eighths, and a snare that was playing fills. */
 fn breathe(g: Groove, part: int, h: Hits, start: int, limit: int) -> Hits {
     let mut out = no_hits()
     let mut had_snare = false
@@ -531,9 +531,9 @@ fn breathe(g: Groove, part: int, h: Hits, start: int, limit: int) -> Hits {
     return out
 }
 
-/// The two-bar pattern tiled across the phrase, then a breath on the last
-/// half-bar. A one-bar loop is the first bar of the pattern, breathing on
-/// its own back half: the build's last bar.
+/** *The two-bar pattern tiled across the phrase, then a breath on the last */
+/** *half-bar. A one-bar loop is the first bar of the pattern, breathing on */
+/** *its own back half: the build's last bar. */
 fn drum_phrase(g: Groove, part: int, variant: int) -> Hits {
     let bars = drum_bars(g)
     let cell = drum_hits(g, part, variant)
@@ -551,7 +551,7 @@ fn drum_phrase(g: Groove, part: int, variant: int) -> Hits {
     return breathe(g, part, h, bars * 16 - 8, bars * 16)
 }
 
-/// Velocities follow the dynamics channel. Full is unchanged; rest is half.
+/** *Velocities follow the dynamics channel. Full is unchanged; rest is half. */
 fn scaled(h: Hits, g: Groove) -> Hits {
     let gain = 0.5 + 0.5 * f64(num.clampi(g.dyn, 0, 1000)) / 1000.0
     let mut o = no_hits()
@@ -561,8 +561,8 @@ fn scaled(h: Hits, g: Groove) -> Hits {
     return o
 }
 
-/// How long `part` loops. The kit uses the drum phrase; everyone else the
-/// harmony span.
+/** *How long `part` loops. The kit uses the drum phrase; everyone else the */
+/** *harmony span. */
 fn play_loop(g: Groove, part: int) -> f64 {
     if part == KICK || part == SNARE || part == HAT || part == OPEN_HAT {
         return g.bar_sec * f64(drum_bars(g))
@@ -582,8 +582,8 @@ fn loop_steps(g: Groove, part: int) -> int {
     return n
 }
 
-/// Sixteenth of the highest note, or −1 when the line is empty. Call this
-/// on the grid times, before `humanize` moves them.
+/** *Sixteenth of the highest note, or −1 when the line is empty. Call this */
+/** *on the grid times, before `humanize` moves them. */
 fn peak_step(g: Groove, h: Hits) -> int {
     if h.at.len == 0 || h.freq.len == 0 {
         return -1
@@ -598,8 +598,8 @@ fn peak_step(g: Groove, h: Hits) -> int {
     return hit_step(g, h.at[best])
 }
 
-/// Random half-width, in milliseconds. The snare and the lead also sit late
-/// (`bias_ms`); `bound_ms` is how far the sum may land from the grid.
+/** *Random half-width, in milliseconds. The snare and the lead also sit late */
+/** *(`bias_ms`); `bound_ms` is how far the sum may land from the grid. */
 fn half_ms(g: Groove, part: int) -> f64 {
     if part == KICK {
         return 2.0
@@ -635,7 +635,7 @@ fn bias_ms(part: int) -> f64 {
     return 0.0
 }
 
-/// Furthest a hit of `part` may sit from its grid time, in milliseconds.
+/** *Furthest a hit of `part` may sit from its grid time, in milliseconds. */
 fn bound_ms(g: Groove, part: int) -> f64 {
     return half_ms(g, part) + bias_ms(part)
 }
@@ -648,7 +648,7 @@ fn offset_ms(g: Groove, part: int, phrase: int, i: int) -> f64 {
     return bias_ms(part) + rnd
 }
 
-/// Downbeat, the other quarters, the eighths, then the off-sixteenths.
+/** *Downbeat, the other quarters, the eighths, then the off-sixteenths. */
 fn accent_of(step: int) -> f64 {
     let s = ((step % 16) + 16) % 16
     if s == 0 {
@@ -677,19 +677,19 @@ fn wrap_time(t0: f64, loop: f64) -> f64 {
     return t
 }
 
-/// Timing and velocity, after the hits exist and after `scaled`. Seeded by
-/// the take, the part, and the phrase: a loop repeats its own feel, and the
-/// next phrase draws again. Times fold into the loop so the wrap stays one
-/// gesture. Velocity is the hit, times the phrase arch (loudest where the
-/// melody peaks), times the beat, times a seeded ±8%, then clamped to (0, 1].
-/// The last note of a closed lead is softer.
+/** *Timing and velocity, after the hits exist and after `scaled`. Seeded by */
+/** *the take, the part, and the phrase: a loop repeats its own feel, and the */
+/** *next phrase draws again. Times fold into the loop so the wrap stays one */
+/** *gesture. Velocity is the hit, times the phrase arch (loudest where the */
+/** *melody peaks), times the beat, times a seeded ±8%, then clamped to (0, 1]. */
+/** *The last note of a closed lead is softer. */
 fn humanize(h: Hits, g: Groove, part: int, phrase: int) -> Hits {
     return humanize_of(h, g, part, phrase, true)
 }
 
-/// `humanize` for a line played once: a note nudged before the start or
-/// past the end stays inside the phrase instead of wrapping to the other
-/// end of it.
+/** *`humanize` for a line played once: a note nudged before the start or */
+/** *past the end stays inside the phrase instead of wrapping to the other */
+/** *end of it. */
 fn humanize_once(h: Hits, g: Groove, part: int, phrase: int) -> Hits {
     return humanize_of(h, g, part, phrase, false)
 }
@@ -748,9 +748,9 @@ fn humanize_of(h: Hits, g: Groove, part: int, phrase: int, wrap: bool) -> Hits {
     return sorted(out)
 }
 
-/// One phrase of one drum voice, humanized. Empty when the pattern is, or
-/// when the kick sits out the bar before a drop. Hats over `TOPS` stay close
-/// enough that they do not flam the recording.
+/** *One phrase of one drum voice, humanized. Empty when the pattern is, or */
+/** *when the kick sits out the bar before a drop. Hats over `TOPS` stay close */
+/** *enough that they do not flam the recording. */
 fn kit_hits(g: Groove, part: int, variant: int) -> Hits {
     if part == KICK && !g.kick {
         return no_hits()
@@ -764,8 +764,8 @@ fn kit_hits(g: Groove, part: int, variant: int) -> Hits {
 
 // ---- Harmony -------------------------------------------------------------
 
-/// Chord code sounding at sixteenth `local` of bar `b`. The last bar's
-/// first half can be `g.split`.
+/** *Chord code sounding at sixteenth `local` of bar `b`. The last bar's */
+/** *first half can be `g.split`. */
 fn code_at(g: Groove, b: int, local: int) -> int {
     if g.prog.len == 0 {
         return 0
@@ -776,7 +776,7 @@ fn code_at(g: Groove, b: int, local: int) -> int {
     return g.prog[b % g.prog.len]
 }
 
-/// Colour of bar `b`: below 0 keeps the style's voicing.
+/** *Colour of bar `b`: below 0 keeps the style's voicing. */
 fn color_at(g: Groove, b: int) -> int {
     if b >= 0 && b < g.color.len {
         return g.color[b]
@@ -784,7 +784,7 @@ fn color_at(g: Groove, b: int) -> int {
     return -1
 }
 
-/// `code` voiced around `centre`. A colour of 0 or more replaces the style.
+/** *`code` voiced around `centre`. A colour of 0 or more replaces the style. */
 fn voiced_code(g: Groove, code: int, bar: int, centre: int) -> []int {
     let color = color_at(g, bar)
     if color >= 0 {
@@ -793,8 +793,8 @@ fn voiced_code(g: Groove, code: int, bar: int, centre: int) -> []int {
     return theory.voicing(code, styles.sevenths(g.style), g.tonic, g.minor, centre)
 }
 
-/// Chord tones of bar `b` as MIDI notes around `centre`. This is the bar's
-/// own chord: on a split bar, the second half. The first half is `g.split`.
+/** *Chord tones of bar `b` as MIDI notes around `centre`. This is the bar's */
+/** *own chord: on a split bar, the second half. The first half is `g.split`. */
 fn bar_chord(g: Groove, b: int, centre: int) -> []int {
     if g.prog.len == 0 {
         return []int {}
@@ -813,8 +813,8 @@ fn root_hz(g: Groove, b: int, local: int, centre: int) -> f64 {
     return num.midi_hz(theory.bass_at(code_at(g, b, local), centre))
 }
 
-/// A styled figure keeps its rhythm; its approach lands on the last
-/// eighth. A held bass walks on beat four.
+/** *A styled figure keeps its rhythm; its approach lands on the last */
+/** *eighth. A held bass walks on beat four. */
 fn approach_step(style: int) -> int {
     if style == styles.HOUSE ||
         style == styles.WAVE ||
@@ -826,7 +826,7 @@ fn approach_step(style: int) -> int {
     return 12
 }
 
-/// The scale tone a step from MIDI `m` in direction `dir` (±1).
+/** *The scale tone a step from MIDI `m` in direction `dir` (±1). */
 fn scale_step(m: int, dir: int, tonic: int, minor: bool) -> int {
     let scale = theory.scale(minor)
     for k in 1..3 {
@@ -841,16 +841,16 @@ fn scale_step(m: int, dir: int, tonic: int, minor: bool) -> int {
     return m + dir
 }
 
-/// Does the bass come down into bar `b + 1`? It moves against the lead:
-/// down while the melody is still climbing to its peak, up after it.
+/** *Does the bass come down into bar `b + 1`? It moves against the lead: */
+/** *down while the melody is still climbing to its peak, up after it. */
 fn bass_falls(g: Groove, b: int) -> bool {
     let peak = if g.peak >= 0 { g.peak } else { span_bars(g) * 8 }
     return (b + 1) * 16 <= peak
 }
 
-/// The note that leads into bar `b + 1`'s root: a diatonic step above when
-/// the bass falls, else a semitone or a scale step below. −1 when the next
-/// bar keeps this bar's root, so the figure plays on.
+/** *The note that leads into bar `b + 1`'s root: a diatonic step above when */
+/** *the bass falls, else a semitone or a scale step below. −1 when the next */
+/** *bar keeps this bar's root, so the figure plays on. */
 fn approach_note(g: Groove, b: int, centre: int) -> int {
     let n = span_bars(g)
     let here = theory.bass_at(code_at(g, b, approach_step(g.style)), centre)
@@ -867,9 +867,9 @@ fn approach_note(g: Groove, b: int, centre: int) -> int {
     return scale_step(target, -1, g.tonic, g.minor)
 }
 
-/// Bar `b`'s hits from index `first` gain the approach: a hit already on
-/// the approach step takes its pitch, otherwise one is added there and the
-/// note before it is cut to make room.
+/** *Bar `b`'s hits from index `first` gain the approach: a hit already on */
+/** *the approach step takes its pitch, otherwise one is added there and the */
+/** *note before it is cut to make room. */
 fn approach(h: &mut Hits, g: Groove, b: int, first: int, centre: int) {
     let m = approach_note(g, b, centre)
     if m < 0 {
@@ -892,8 +892,8 @@ fn approach(h: &mut Hits, g: Groove, b: int, first: int, centre: int) {
     add(h, at, 0.75, num.midi_hz(m), s * f64(16 - ap) - 0.02)
 }
 
-/// Root on the downbeat, the style's figure, then an approach into the
-/// next bar's chord.
+/** *Root on the downbeat, the style's figure, then an approach into the */
+/** *next bar's chord. */
 fn bass_hits(g: Groove) -> Hits {
     let mut h = no_hits()
     let s = sixteenth(g)
@@ -964,17 +964,17 @@ fn bass_hits(g: Groove) -> Hits {
     return h
 }
 
-/// Does this tone play rhythm (stabs) rather than hold its chords?
+/** *Does this tone play rhythm (stabs) rather than hold its chords? */
 fn pad_stabs(style: int, tone: int) -> bool {
     return tone == PAD_KEYS || (tone == PAD_SUPER && style == styles.FUTURE)
 }
 
-/// Does the pad play rhythm (stabs) rather than hold its chords?
+/** *Does the pad play rhythm (stabs) rather than hold its chords? */
 fn stabbed(g: Groove, tone: int) -> bool {
     return pad_stabs(g.style, tone)
 }
 
-/// Sixteenths a bar the pad strikes on, when it plays rhythm.
+/** *Sixteenths a bar the pad strikes on, when it plays rhythm. */
 fn stab_steps(g: Groove, tone: int) -> []int {
     let st = g.style
     if tone == PAD_SUPER {
@@ -1005,7 +1005,7 @@ fn pad_chords(g: Groove, tone: int) -> [][]int {
     return chords
 }
 
-/// The first half of the last bar, when that bar holds two chords.
+/** *The first half of the last bar, when that bar holds two chords. */
 fn split_chord(g: Groove, tone: int) -> []int {
     if g.split < 0 {
         return []int {}
@@ -1024,14 +1024,14 @@ fn most_notes(chords: [][]int) -> int {
     return most
 }
 
-/// Note `v` of a chord; a triad in a seventh progression doubles its root.
+/** *Note `v` of a chord; a triad in a seventh progression doubles its root. */
 fn note_of(c: []int, v: int) -> int {
     return if v < c.len { c[v] } else { c[0] + 12 }
 }
 
-/// One bar of stab times, nudged like any other pad onset and folded back
-/// into the bar. The bar repeats, and the last stab still ends on the bar
-/// line so a chord change stays clean.
+/** *One bar of stab times, nudged like any other pad onset and folded back */
+/** *into the bar. The bar repeats, and the last stab still ends on the bar */
+/** *line so a chord change stays clean. */
 fn stab_onsets(g: Groove, tone: int) -> []f64 {
     let steps = stab_steps(g, tone)
     let mut h = no_hits()
@@ -1049,8 +1049,8 @@ fn stab_onsets(g: Groove, tone: int) -> []f64 {
     return at
 }
 
-/// Sixteenths between arp attacks. Below 340 the line is quarters, below
-/// 670 eighths, and above that sixteenths.
+/** *Sixteenths between arp attacks. Below 340 the line is quarters, below */
+/** *670 eighths, and above that sixteenths. */
 fn arp_step(g: Groove) -> int {
     if g.den < 340 {
         return 4
@@ -1078,12 +1078,12 @@ fn arp_steps(g: Groove) -> []int {
     return steps
 }
 
-/// Highest arp note (E6, 1.3 kHz). The register lift and the arp's second
-/// octave would otherwise climb past 2.5 kHz, where a saw turns to a whistle.
+/** *Highest arp note (E6, 1.3 kHz). The register lift and the arp's second */
+/** *octave would otherwise climb past 2.5 kHz, where a saw turns to a whistle. */
 const ARP_TOP: int = 88
 
-/// Chord tones at sixteenth `local` of bar `b`, across two octaves. A tone
-/// over `ARP_TOP` folds down an octave.
+/** *Chord tones at sixteenth `local` of bar `b`, across two octaves. A tone */
+/** *over `ARP_TOP` folds down an octave. */
 fn arp_tones(g: Groove, b: int, local: int, centre: int) -> []int {
     let c = voiced_code(g, code_at(g, b, local), b, centre)
     let mut tones = []int {}
@@ -1104,8 +1104,8 @@ fn arp_tones(g: Groove, b: int, local: int, centre: int) -> []int {
     return tones
 }
 
-/// The arpeggio's notes. Density picks the step; a split bar changes chord
-/// at the half.
+/** *The arpeggio's notes. Density picks the step; a split bar changes chord */
+/** *at the half. */
 fn arp_hits(g: Groove, tone: int) -> Hits {
     let mut h = no_hits()
     let s = sixteenth(g)
@@ -1157,7 +1157,7 @@ fn arp_hits(g: Groove, tone: int) -> Hits {
     return h
 }
 
-/// A seeded melody on the chord tones, high, with space between phrases.
+/** *A seeded melody on the chord tones, high, with space between phrases. */
 fn bell_hits(g: Groove) -> Hits {
     let mut h = no_hits()
     let rhythms = [][]int {
@@ -1194,7 +1194,7 @@ fn bell_hits(g: Groove) -> Hits {
 
 // ---- One-shots -----------------------------------------------------------
 
-/// Sparse clicks for the vinyl layer.
+/** *Sparse clicks for the vinyl layer. */
 fn crackle_expr() -> string {
     return "if(gt(random(9),0.9993),(random(8)-0.5)*1.4,0)"
 }

@@ -1,8 +1,8 @@
-//! Time and rate as people read them. Pure: no signals, no host.
+// Time and rate as people read them. Pure: no signals, no host.
 
 import "std:str"
 
-/// `m:ss`, or `h:mm:ss` past an hour. Negative times read as 0:00.
+/** *`m:ss`, or `h:mm:ss` past an hour. Negative times read as 0:00. */
 fn clock(ms: int) -> string {
     let mut s = ms / 1000
     if s < 0 {
@@ -16,8 +16,8 @@ fn clock(ms: int) -> string {
     return "{{m}}:{{pad2(s % 60)}}"
 }
 
-/// A playback rate in percent as a multiplier: 100 → `1×`, 150 → `1.5×`,
-/// 105 → `1.05×`.
+/** *A playback rate in percent as a multiplier: 100 → `1×`, 150 → `1.5×`, */
+/** *105 → `1.05×`. */
 fn rate_label(pct: int) -> string {
     if pct % 100 == 0 {
         return "{{pct / 100}}×"
@@ -28,7 +28,7 @@ fn rate_label(pct: int) -> string {
     return "{{pct / 100}}.{{pad2(pct % 100)}}×"
 }
 
-/// Two digits, zero-padded.
+/** *Two digits, zero-padded. */
 fn pad2(n: int) -> string {
     return str.pad_start("{{n}}", 2, 48 /* 0 */ )
 }

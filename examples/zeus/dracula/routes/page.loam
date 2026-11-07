@@ -24,10 +24,10 @@ fn hit_spec() -> []TableCol {
     return h
 }
 
-/// The search results under the card. `MatchBy` keeps the arm while the
-/// search state (and whether anything matched) holds; the rows are an `Each`
-/// over the hits, so a refined query keeps the rows that still match, and
-/// adding a fund swaps only that row's action.
+/** *The search results under the card. `MatchBy` keeps the arm while the */
+/** *search state (and whether anything matched) holds; the rows are an `Each` */
+/** *over the hits, so a refined query keeps the rows that still match, and */
+/** *adding a fund swaps only that row's action. */
 fn hits_arm(v: Signal<FundSearch>) -> Node {
     let x = v.peek()
     if x.state == 0 {
@@ -78,8 +78,8 @@ fn hit_action(code: string, on: bool) {
     }
 }
 
-/// The holdings table: one arm while the list is empty or not; the rows are an
-/// `Each`, so a fetch that changes one row's NAV rebuilds that row only.
+/** *The holdings table: one arm while the list is empty or not; the rows are an */
+/** *`Each`, so a fetch that changes one row's NAV rebuilds that row only. */
 fn rows_arm(v: Signal<RowList>) -> Node {
     if v.peek().rows.len == 0 {
         return zui.Empty(

@@ -1,5 +1,5 @@
-//! Root shell: theme + top bar. Retained across navigation, so the nav and
-//! the light/dark switch survive. Only the page slot rebuilds.
+// Root shell: theme + top bar. Retained across navigation, so the nav and
+// the light/dark switch survive. Only the page slot rebuilds.
 
 import "zeus"
 import "zui"

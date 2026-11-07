@@ -1,21 +1,21 @@
-//! Effects, as filter-graph text. Each function returns one chain (no
-//! labels) or a source; `graph.loam` wires them.
-//!
-//! - Echo is a ping-pong send: left repeats on odd beats of the delay,
-//!   right on even ones, darker each time.
-//! - Reverb is convolution with a generated room: decorrelated noise in
-//!   each ear with an exponential decay (RT60 of the space), a short
-//!   pre-delay, and the lows and highs taken out so it does not muddy.
-//! - The centre mask is the voice cleaner for a recording with no voice
-//!   map: per frequency bin, sound that is identical in both ears (where a
-//!   lead voice sits) is removed between 120 Hz and 16 kHz.
+// Effects, as filter-graph text. Each function returns one chain (no
+// labels) or a source; `graph.loam` wires them.
+//
+// - Echo is a ping-pong send: left repeats on odd beats of the delay,
+//   right on even ones, darker each time.
+// - Reverb is convolution with a generated room: decorrelated noise in
+//   each ear with an exponential decay (RT60 of the space), a short
+//   pre-delay, and the lows and highs taken out so it does not muddy.
+// - The centre mask is the voice cleaner for a recording with no voice
+//   map: per frequency bin, sound that is identical in both ears (where a
+//   lead voice sits) is removed between 120 Hz and 16 kHz.
 
 import "std:math"
 import "num.loam" as num
 import "sound.loam" as sound
 import "time.loam" as time
 
-/// Echo time in ms for `which` (`sound.ECHO_*`) at `bpm_c`.
+/** *Echo time in ms for `which` (`sound.ECHO_*`) at `bpm_c`. */
 fn echo_ms(which: int, bpm_c: int) -> int {
     let beat = 6000000 / num.clampi(bpm_c, 3000, 30000)
     if which == sound.ECHO_8 {
@@ -30,7 +30,7 @@ fn echo_ms(which: int, bpm_c: int) -> int {
     return beat * 3 / 4
 }
 
-/// Wet-only ping-pong from stereo `[in]` to stereo `[out]`.
+/** *Wet-only ping-pong from stereo `[in]` to stereo `[out]`. */
 fn echo_lines(input: string, output: string, amount: int, which: int, bpm_c: int) -> []string {
     let d = echo_ms(which, bpm_c)
     let fb = 0.3 + 0.4 * f64(amount) / 100.0
@@ -63,7 +63,7 @@ fn rt60(space: int) -> f64 {
     return 2.4
 }
 
-/// The impulse response: two ears of decaying noise, unit energy.
+/** *The impulse response: two ears of decaying noise, unit energy. */
 fn reverb_ir(space: int) -> string {
     let rt = rt60(space)
     let k = 6.908 / rt
@@ -73,7 +73,7 @@ fn reverb_ir(space: int) -> string {
     return "aevalsrc=exprs='{{scale}}*(random(0)*2-1)*exp(-{{kk}}*t)*gte(t,0.018)|{{scale}}*(random(1)*2-1)*exp(-{{kk}}*t)*gte(t,0.023)':s=48000:d={{d}},highpass=f=240,lowpass=f=6500"
 }
 
-/// Convolution of stereo `[in]` with the room, to `[out]`.
+/** *Convolution of stereo `[in]` with the room, to `[out]`. */
 fn reverb_lines(input: string, output: string, amount: int, space: int) -> []string {
     let gain = -16.0 + 15.0 * f64(amount) / 100.0
     let mut out = []string {}
@@ -85,7 +85,7 @@ fn reverb_lines(input: string, output: string, amount: int, space: int) -> []str
     return out
 }
 
-/// Chorus, phaser, or flanger for the pad and arp bus; empty for none.
+/** *Chorus, phaser, or flanger for the pad and arp bus; empty for none. */
 fn modulation(kind: int, amount: int) -> string {
     let a = f64(num.clampi(amount, 0, 100)) / 100.0
     if kind == sound.MOD_CHORUS {
@@ -102,19 +102,19 @@ fn modulation(kind: int, amount: int) -> string {
     return ""
 }
 
-/// Spectral centre removal. `afftfilt` delays by 3/4 of its window, so the
-/// chain pads first and trims after: the length and the timing stay.
+/** *Spectral centre removal. `afftfilt` delays by 3/4 of its window, so the */
+/** *chain pads first and trims after: the length and the timing stay. */
 fn centre_mask() -> string {
     let e = "st(0,re*real(b,1-ch)+im*imag(b,1-ch));st(1,re*re+im*im+real(b,1-ch)*real(b,1-ch)+imag(b,1-ch)*imag(b,1-ch)+1e-20);st(2,clip((2*ld(0)/ld(1)-0.6)/0.4,0,1));st(3,between(b*sr/4096,120,16000));1-ld(3)*pow(ld(2),0.5)"
     return "apad=pad_len=3072,afftfilt=real='re*({{e}})':imag='im*({{e}})':win_size=4096,atrim=start_sample=3072,asetpts=PTS-STARTPTS"
 }
 
-/// The voice band, lowered, for a phrase that still had a voice in it.
+/** *The voice band, lowered, for a phrase that still had a voice in it. */
 fn voice_duck() -> string {
     return "equalizer=f=900:t=o:w=2:g=-9,equalizer=f=3000:t=o:w=1.2:g=-6"
 }
 
-/// Tape and bit-depth wear on the whole mix; empty at 0.
+/** *Tape and bit-depth wear on the whole mix; empty at 0. */
 fn lofi(amount: int) -> string {
     if amount <= 0 {
         return ""
@@ -127,7 +127,7 @@ fn lofi(amount: int) -> string {
     return "acrusher=level_in=1:level_out=1:bits={{bits}}:mode=log:aa=1:mix={{mix}},lowpass=f={{cut}},vibrato=f=0.55:d={{wow}}"
 }
 
-/// Crackle and hiss for the lo-fi layer, `sec` long, stereo.
+/** *Crackle and hiss for the lo-fi layer, `sec` long, stereo. */
 fn vinyl(amount: int, sec: f64, crackle: string) -> string {
     let a = f64(num.clampi(amount, 0, 100)) / 100.0
     let gain = num.f3(-34.0 + 12.0 * a)
@@ -135,7 +135,7 @@ fn vinyl(amount: int, sec: f64, crackle: string) -> string {
     return "aevalsrc=exprs='{{crackle}}':s=48000:d={{d}}:c=mono,highpass=f=700,lowpass=f=7000,aformat=channel_layouts=stereo,volume={{gain}}dB"
 }
 
-/// Soft saturation; empty at 0.
+/** *Soft saturation; empty at 0. */
 fn warmth(amount: int) -> string {
     if amount <= 0 {
         return ""
@@ -144,7 +144,7 @@ fn warmth(amount: int) -> string {
     return "volume={{num.f3(drive)}}dB,asoftclip=type=tanh,volume={{num.f3(-drive * 0.8)}}dB"
 }
 
-/// Stereo width: 0 leaves the image, 100 widens the side by 80%.
+/** *Stereo width: 0 leaves the image, 100 widens the side by 80%. */
 fn width(amount: int) -> string {
     if amount <= 0 {
         return ""
@@ -153,9 +153,9 @@ fn width(amount: int) -> string {
     return "extrastereo=m={{num.f3(m)}}:c=false"
 }
 
-/// The rumble cut and the last three seconds fading. The premaster is
-/// float, so nothing clips here; the render job sets the level and limits
-/// the peaks (`jobs.render_script`).
+/** *The rumble cut and the last three seconds fading. The premaster is */
+/** *float, so nothing clips here; the render job sets the level and limits */
+/** *the peaks (`jobs.render_script`). */
 fn master(total_s: int) -> string {
     let fade = 144000
     let at = total_s - fade

@@ -1,59 +1,59 @@
-//! `fmt` — write to stdout. No heap, no printf, no C strings.
-//!
-//! Import it, then call `fmt.println` with any mix of `string`, `int`, `bool`, and `float`.
-//!
-//! Example:
-//! ```
-//! import "std:fmt"
-//!
-//! fn main() {
-//!     fmt.println("hello,", 42, true)
-//! }
-//! ```
-//!
-//! `println` is not a real function: the compiler turns the arguments into
-//! `write` / `write_int` / `write_bool` plus a newline. Empty bodies below
-//! are runtime hooks (`loam_fmt_*` in loam_rt.h).
+// `fmt` — write to stdout. No heap, no printf, no C strings.
+//
+// Import it, then call `fmt.println` with any mix of `string`, `int`, `bool`, and `float`.
+//
+// Example:
+// ```
+// import "std:fmt"
+//
+// fn main() {
+//     fmt.println("hello,", 42, true)
+// }
+// ```
+//
+// `println` is not a real function: the compiler turns the arguments into
+// `write` / `write_int` / `write_bool` plus a newline. Empty bodies below
+// are runtime hooks (`loam_fmt_*` in loam_rt.h).
 
-/// Write `s` to stdout (`write(2)`). Uses `s.len` bytes; no trailing NUL.
-///
-/// Example:
-/// ```
-/// fmt.write("hi")
-/// ```
+/** *Write `s` to stdout (`write(2)`). Uses `s.len` bytes; no trailing NUL. */
+/** */
+/** *Example: */
+/** *``` */
+/** *fmt.write("hi") */
+/** *``` */
 fn write(s: string) {}
 
-/// Write integer `n` in decimal. Uses a small stack buffer, then `write`.
-///
-/// Example:
-/// ```
-/// fmt.write_int(42)
-/// ```
+/** *Write integer `n` in decimal. Uses a small stack buffer, then `write`. */
+/** */
+/** *Example: */
+/** *``` */
+/** *fmt.write_int(42) */
+/** *``` */
 fn write_int(n: int) {}
 
-/// Write `true` or `false` (no quotes).
+/** *Write `true` or `false` (no quotes). */
 fn write_bool(b: bool) {}
 
-/// Write a float in decimal (`%.15g`).
+/** *Write a float in decimal (`%.15g`). */
 fn write_float(x: float) {}
 
-/// Write a single newline.
+/** *Write a single newline. */
 fn writeln() {}
 
-/// Print the arguments and a newline. Accepts mixed `string` / `int` / `bool` / `float`.
-///
-/// Example:
-/// ```
-/// fmt.println("count:", 3, true)
-/// ```
+/** *Print the arguments and a newline. Accepts mixed `string` / `int` / `bool` / `float`. */
+/** */
+/** *Example: */
+/** *``` */
+/** *fmt.println("count:", 3, true) */
+/** *``` */
 fn println() {}
 
-/// Length-based string equality. Loam strings are not C `strcmp` / NUL-terminated.
-///
-/// Example:
-/// ```
-/// if fmt.eq(name, "ok") {
-///     fmt.println("yes")
-/// }
-/// ```
+/** *Length-based string equality. Loam strings are not C `strcmp` / NUL-terminated. */
+/** */
+/** *Example: */
+/** *``` */
+/** *if fmt.eq(name, "ok") { */
+/** *fmt.println("yes") */
+/** *} */
+/** *``` */
 fn eq(a: string, b: string) -> bool {}

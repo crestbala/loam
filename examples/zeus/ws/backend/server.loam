@@ -1,9 +1,9 @@
-//! Tiny WebSocket demo backend: one client at a time on the blocking accept
-//! loop (the chat-class reactor is a later phase). Every 500ms it pushes a
-//! `tick-N` text frame. Closed clients (tab close/refresh) are caught with a
-//! zero-timeout poll each round, so the accept loop never starves on a ghost
-//! connection. Run `./run.sh` in the demo root, then open http://127.0.0.1:5173
-//! and watch the wasm page count ticks.
+// Tiny WebSocket demo backend: one client at a time on the blocking accept
+// loop (the chat-class reactor is a later phase). Every 500ms it pushes a
+// `tick-N` text frame. Closed clients (tab close/refresh) are caught with a
+// zero-timeout poll each round, so the accept loop never starves on a ghost
+// connection. Run `./run.sh` in the demo root, then open http://127.0.0.1:5173
+// and watch the wasm page count ticks.
 
 import "http"
 import "std:net"

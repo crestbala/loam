@@ -1,12 +1,12 @@
-//! The filter graph for a score: one ffmpeg run renders the premaster.
-//!
-//! Each recording is decoded once and split. A loop is cut on the sample,
-//! cleaned when it has to be, shifted and stretched onto the piece, locked
-//! to a whole number of bars, faded a few milliseconds at the seam,
-//! repeated with `aloop`, and delayed onto its bar. Each synth loop is
-//! rendered once and shared the same way. Buses get their EQ and
-//! character, the echo and reverb are sends, and the master glues, limits,
-//! and fades. Every placement is in samples, so nothing drifts.
+// The filter graph for a score: one ffmpeg run renders the premaster.
+//
+// Each recording is decoded once and split. A loop is cut on the sample,
+// cleaned when it has to be, shifted and stretched onto the piece, locked
+// to a whole number of bars, faded a few milliseconds at the seam,
+// repeated with `aloop`, and delayed onto its bar. Each synth loop is
+// rendered once and shared the same way. Buses get their EQ and
+// character, the echo and reverb are sends, and the master glues, limits,
+// and fades. Every placement is in samples, so nothing drifts.
 
 import "std:math"
 import "std:str"
@@ -25,12 +25,12 @@ import "voices.loam" as voices
 
 struct Graph {
     text: string,
-    /// `-i` paths in order; `[0:a]` is the first. The recordings, then the
-    /// instrument voices.
+    /** *`-i` paths in order; `[0:a]` is the first. The recordings, then the */
+    /** *instrument voices. */
     inputs: []string,
-    /// One row per instrument voice the graph reads: the WAV `render_voices`
-    /// writes, and what to render into it. `voice_drum` is the kit piece of
-    /// a drum voice, or −1.
+    /** *One row per instrument voice the graph reads: the WAV `render_voices` */
+    /** *writes, and what to render into it. `voice_drum` is the kit piece of */
+    /** *a drum voice, or −1. */
     voice_path: []string,
     voice_layer: []int,
     voice_variant: []int,
@@ -38,14 +38,14 @@ struct Graph {
     voice_drum: []int,
 }
 
-/// Voices are written at a quarter of their level (−12 dB of headroom in
-/// the 24-bit file) and brought back up as they are read.
+/** *Voices are written at a quarter of their level (−12 dB of headroom in */
+/** *the 24-bit file) and brought back up as they are read. */
 const VOICE_WRITE: f64 = 0.25
 const VOICE_READ: string = "4"
 
-/// Each layer's level (dB) before the listener's slider, so the defaults
-/// sit together: recordings near -18.5 LUFS alone, drums -19, bass -21,
-/// pads -23, arp and bells -25. Measured on stems rendered alone.
+/** *Each layer's level (dB) before the listener's slider, so the defaults */
+/** *sit together: recordings near -18.5 LUFS alone, drums -19, bass -21, */
+/** *pads -23, arp and bells -25. Measured on stems rendered alone. */
 fn layer_db(layer: int, s: Sound) -> f64 {
     if layer == arrange.L_DRUMS {
         if s.style == styles.DREAM {
@@ -87,14 +87,14 @@ fn layer_db(layer: int, s: Sound) -> f64 {
     return -10.0
 }
 
-/// Per style, tenths of a dB on top of `layer_db`, from `tests/stems.loam`:
-/// each instrument rendered alone at 70 and brought to its style's target
-/// (drums -21.9, bass -23.9, pad -25.9, arp and bells -27.9 LUFS on the
-/// premaster, which the render then lifts to -14 as a whole; except where a
-/// style leans on one: trap's 808 and bell lead, cinematic's strings,
-/// ostinato and piano, future bass's supersaw, afrobeats' keys and
-/// mallets, each 2 dB over its target). Measured on the voices Loam
-/// renders (`voices.loam`).
+/** *Per style, tenths of a dB on top of `layer_db`, from `tests/stems.loam`: */
+/** *each instrument rendered alone at 70 and brought to its style's target */
+/** *(drums -21.9, bass -23.9, pad -25.9, arp and bells -27.9 LUFS on the */
+/** *premaster, which the render then lifts to -14 as a whole; except where a */
+/** *style leans on one: trap's 808 and bell lead, cinematic's strings, */
+/** *ostinato and piano, future bass's supersaw, afrobeats' keys and */
+/** *mallets, each 2 dB over its target). Measured on the voices Loam */
+/** *renders (`voices.loam`). */
 fn style_trim(style: int, layer: int) -> int {
     let mut t = []int { 0, 0, 0, 0, 0 }
     if style == styles.DREAM {
@@ -155,7 +155,7 @@ fn labels(xs: []string) -> string {
     return str.join(parts, "")
 }
 
-/// `n` copies of `[from]`: `[from_0]` … `[from_{n-1}]`.
+/** *`n` copies of `[from]`: `[from_0]` … `[from_{n-1}]`. */
 fn split(from: string, n: int) -> string {
     if n <= 1 {
         return "[{{from}}]anull[{{from}}_0]"
@@ -167,7 +167,7 @@ fn split(from: string, n: int) -> string {
     return "[{{from}}]asplit={{n}}{{labels(outs)}}"
 }
 
-/// A plain sum (no normalising, no ducking) of `xs` into `[dest]`.
+/** *A plain sum (no normalising, no ducking) of `xs` into `[dest]`. */
 fn sum(xs: []string, dest: string) -> string {
     if xs.len == 1 {
         let x = xs[0]
@@ -180,7 +180,7 @@ fn seconds(samples: int) -> f64 {
     return f64(samples) / f64(time.RATE)
 }
 
-/// Shift by `semis` and stretch by `tempo` (×1e6), or nothing.
+/** *Shift by `semis` and stretch by `tempo` (×1e6), or nothing. */
 fn shift_stretch(semis: int, tempo: int) -> string {
     let t = f64(tempo) / 1000000.0
     let mut parts = []string {}
@@ -217,7 +217,7 @@ fn log2(x: f64) -> f64 {
     return math.ln(x) / math.LOG2
 }
 
-/// One recording loop, from `[from]` to `[lp{i}]`.
+/** *One recording loop, from `[from]` to `[lp{i}]`. */
 fn loop_line(sc: Score, i: int, from: string, src_mono: bool) -> string {
     let unit = sc.lp_unit[i]
     let reps = sc.lp_reps[i]
@@ -295,7 +295,7 @@ fn groove_of(sc: Score, s: Sound) -> Groove {
     }
 }
 
-/// Four chords for part `i`, or the piece progression when it has no row.
+/** *Four chords for part `i`, or the piece progression when it has no row. */
 fn prog_of(sc: Score, i: int) -> []int {
     if i < 0 || i >= sc.sy_pg.len || sc.sy_pg[i] < 0 {
         return sc.prog
@@ -308,7 +308,7 @@ fn prog_of(sc: Score, i: int) -> []int {
     return out
 }
 
-/// Four colours for part `i`. Empty when the part keeps the style's voice.
+/** *Four colours for part `i`. Empty when the part keeps the style's voice. */
 fn color_of(sc: Score, i: int) -> []int {
     if i < 0 || i >= sc.sy_pg.len || sc.sy_pg[i] < 0 {
         return []int {}
@@ -321,7 +321,7 @@ fn color_of(sc: Score, i: int) -> []int {
     return out
 }
 
-/// Split chord of part `i`, or −1.
+/** *Split chord of part `i`, or −1. */
 fn split_of(sc: Score, i: int) -> int {
     if i < 0 || i >= sc.sy_pg.len || sc.sy_pg[i] < 0 {
         return -1
@@ -362,7 +362,7 @@ fn line_of(sc: Score, part: int) -> int {
     return sc.sy_line[part]
 }
 
-/// Samples one generated loop of `layer` lasts. A phrase line is the phrase.
+/** *Samples one generated loop of `layer` lasts. A phrase line is the phrase. */
 fn unit_of(sc: Score, layer: int, part: int) -> int {
     if line_of(sc, part) >= 0 {
         let b = if part < sc.sy_bars.len && sc.sy_bars[part] > 0 { sc.sy_bars[part] } else { 1 }
@@ -401,9 +401,9 @@ fn kind_at(sc: Score, bar: int) -> int {
     return sc.sec_kind[sec]
 }
 
-/// 1 when this part is swung past the style: a straight style, played
-/// calmly, outside a drop. That swing is baked into the loop, so a drop
-/// does not share the verse's generator.
+/** *1 when this part is swung past the style: a straight style, played */
+/** *calmly, outside a drop. That swing is baked into the loop, so a drop */
+/** *does not share the verse's generator. */
 fn swing_bit(sc: Score, s: Sound, i: int) -> int {
     if styles.swing(s.style) != 0 || s.energy != styles.CALM {
         return 0
@@ -415,8 +415,8 @@ fn swing_bit(sc: Score, s: Sound, i: int) -> int {
     return 1
 }
 
-/// Grid sixteenth of the melody covering `bar`, or −1. A line that starts
-/// on `bar` wins; otherwise any line that plays there.
+/** *Grid sixteenth of the melody covering `bar`, or −1. A line that starts */
+/** *on `bar` wins; otherwise any line that plays there. */
 fn line_peak(sc: Score, bar: int) -> int {
     let mut peak = -1
     for i in 0..sc.sy_layer.len {
@@ -441,8 +441,8 @@ fn line_peak(sc: Score, bar: int) -> int {
     return peak
 }
 
-/// True when part `i` sits in the lifted drop and plays pitches: it
-/// renders a whole step up, with the recordings there.
+/** *True when part `i` sits in the lifted drop and plays pitches: it */
+/** *renders a whole step up, with the recordings there. */
 fn raised(sc: Score, i: int) -> bool {
     if sc.lift_from < 0 || i < 0 || i >= sc.sy_bar.len {
         return false
@@ -454,7 +454,7 @@ fn raised(sc: Score, i: int) -> bool {
     return sc.sy_bar[i] >= sc.lift_from && sc.sy_bar[i] < sc.lift_to
 }
 
-/// A chord code a whole step up.
+/** *A chord code a whole step up. */
 fn up_tone(code: int) -> int {
     if code < 0 {
         return code
@@ -547,8 +547,8 @@ fn hits_of_line(sc: Score, line: int) -> Hits {
     return h
 }
 
-/// The groove generator `part` renders with: the piece's, narrowed to the
-/// part's bars, chords, density, dynamics, lift, and key.
+/** *The groove generator `part` renders with: the piece's, narrowed to the */
+/** *part's bars, chords, density, dynamics, lift, and key. */
 fn groove_for(sc: Score, g0: Groove, layer: int, variant: int, part: int) -> Groove {
     let unit = unit_of(sc, layer, part)
     let mut g = g0
@@ -596,8 +596,8 @@ fn groove_for(sc: Score, g0: Groove, layer: int, variant: int, part: int) -> Gro
     return g
 }
 
-/// A voice the graph reads from a WAV: its input, at its level, exactly
-/// `unit` samples long. Returns the head of the chain.
+/** *A voice the graph reads from a WAV: its input, at its level, exactly */
+/** *`unit` samples long. Returns the head of the chain. */
 fn voice_src(
     gr: &mut Graph,
     dir: string,
@@ -619,8 +619,8 @@ fn voice_src(
     return "[{{k}}:a]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=mono,volume={{VOICE_READ}},apad=whole_len={{unit}},atrim=end_sample={{unit}}"
 }
 
-/// Lines that play generator `key` to `[g{key}]`, one loop long, from the
-/// voices `render_voices` writes.
+/** *Lines that play generator `key` to `[g{key}]`, one loop long, from the */
+/** *voices `render_voices` writes. */
 fn generator(
     lines: &mut []string,
     gr: &mut Graph,
@@ -744,7 +744,7 @@ fn generator(
     push(lines, "{{head}},{{filt}},atrim=end_sample={{unit}}[{{tag}}]")
 }
 
-/// The samples of voice `k` of `gr`.
+/** *The samples of voice `k` of `gr`. */
 fn voice_samples(sc: Score, s: Sound, gr: Graph, k: int) -> []f64 {
     let layer = gr.voice_layer[k]
     let variant = gr.voice_variant[k]
@@ -779,11 +779,11 @@ fn voice_samples(sc: Score, s: Sound, gr: Graph, k: int) -> []f64 {
     return voices.impact(g, seconds(unit))
 }
 
-/// Render every instrument voice `gr` reads to its WAV. `0` when all were
-/// written. Runs before the render job, in this process.
-///
-/// A take has dozens of voices and each costs up to a second, so a UI
-/// thread must not call this: it walks `render_voice` one tick at a time.
+/** *Render every instrument voice `gr` reads to its WAV. `0` when all were */
+/** *written. Runs before the render job, in this process. */
+/** */
+/** *A take has dozens of voices and each costs up to a second, so a UI */
+/** *thread must not call this: it walks `render_voice` one tick at a time. */
 fn render_voices(sc: Score, s: Sound, gr: Graph, dir: string) -> int {
     let mut failed = 0
     for k in 0..gr.voice_path.len {
@@ -794,7 +794,7 @@ fn render_voices(sc: Score, s: Sound, gr: Graph, dir: string) -> int {
     return failed
 }
 
-/// Render voice `k` of `gr` to its WAV. `0` when it was written.
+/** *Render voice `k` of `gr` to its WAV. `0` when it was written. */
 fn render_voice(sc: Score, s: Sound, gr: Graph, dir: string, k: int) -> int {
     if k == 0 {
         sys.mkdir("{{dir}}/voices")
@@ -803,7 +803,7 @@ fn render_voice(sc: Score, s: Sound, gr: Graph, dir: string, k: int) -> int {
     return dsp.write_wav(gr.voice_path[k], buf, VOICE_WRITE)
 }
 
-/// A graph with nothing in it, for a variable that holds one later.
+/** *A graph with nothing in it, for a variable that holds one later. */
 fn empty() -> Graph {
     return Graph {
         text: "",
@@ -816,7 +816,7 @@ fn empty() -> Graph {
     }
 }
 
-/// One synth part from copy `[from]` of its generator to `[sy{i}]`.
+/** *One synth part from copy `[from]` of its generator to `[sy{i}]`. */
 fn part_line(sc: Score, s: Sound, i: int, from: string) -> string {
     let layer = sc.sy_layer[i]
     let unit = unit_of(sc, layer, i)
@@ -841,7 +841,7 @@ fn part_line(sc: Score, s: Sound, i: int, from: string) -> string {
     return "{{chain}}{{joined}}[sy{{i}}]"
 }
 
-/// A bus: its members summed, then `fx` (may be empty), to `[dest]`.
+/** *A bus: its members summed, then `fx` (may be empty), to `[dest]`. */
 fn bus(lines: &mut []string, members: []string, dest: string, chain: string) -> bool {
     if members.len == 0 {
         return false
@@ -865,9 +865,9 @@ fn joined_fx(xs: []string) -> string {
     return str.join(parts, ",")
 }
 
-/// The graph for `sc`. `paths` are the decoded recordings, `splits` their
-/// voice-free stems (same index; may be empty strings), `mono` per source.
-/// `dir` is the work folder the instrument voices go in (`render_voices`).
+/** *The graph for `sc`. `paths` are the decoded recordings, `splits` their */
+/** *voice-free stems (same index; may be empty strings), `mono` per source. */
+/** *`dir` is the work folder the instrument voices go in (`render_voices`). */
 fn build(
     sc: Score,
     s: Sound,

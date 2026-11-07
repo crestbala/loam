@@ -1,12 +1,12 @@
-//! Where Mune keeps things.
-//!
-//! Work is temporary and lives in `~/Library/Application Support/mune/work`:
-//! a session folder holds the decoded recordings and what was heard in
-//! them, and `takes/` holds the current take. Only the newest take is
-//! kept; the one before it is deleted when a new one is ready. The session
-//! goes when the recordings change, and the whole work folder is cleared
-//! when the app starts. What the listener saves is a copy in
-//! `~/Documents/Mune`, and nothing in it is ever deleted.
+// Where Mune keeps things.
+//
+// Work is temporary and lives in `~/Library/Application Support/mune/work`:
+// a session folder holds the decoded recordings and what was heard in
+// them, and `takes/` holds the current take. Only the newest take is
+// kept; the one before it is deleted when a new one is ready. The session
+// goes when the recordings change, and the whole work folder is cleared
+// when the app starts. What the listener saves is a copy in
+// `~/Documents/Mune`, and nothing in it is ever deleted.
 
 import "std:kv"
 import "std:str"
@@ -24,7 +24,7 @@ fn work_root() -> string {
     return "{{app_root()}}/work"
 }
 
-/// A fresh, empty work folder. Earlier runs left nothing worth keeping.
+/** *A fresh, empty work folder. Earlier runs left nothing worth keeping. */
 fn reset_work() {
     sys.remove_path(work_root())
     sys.mkdir(work_root())
@@ -34,8 +34,8 @@ fn session_dir(n: int) -> string {
     return "{{work_root()}}/session{{n}}"
 }
 
-/// Takes live outside the session, so changing the recordings does not
-/// delete the piece that is playing.
+/** *Takes live outside the session, so changing the recordings does not */
+/** *delete the piece that is playing. */
 fn takes_dir() -> string {
     let d = "{{work_root()}}/takes"
     sys.mkdir(d)
@@ -50,7 +50,7 @@ fn take_peaks(n: int) -> string {
     return "{{takes_dir()}}/take{{n}}.peaks"
 }
 
-/// Remove a take and everything that marks it.
+/** *Remove a take and everything that marks it. */
 fn drop_take(n: int) {
     if n <= 0 {
         return
@@ -62,7 +62,7 @@ fn drop_take(n: int) {
     sys.remove_path(take_peaks(n))
 }
 
-/// `~/Documents/Mune`, created on first use.
+/** *`~/Documents/Mune`, created on first use. */
 fn export_dir() -> string {
     let home = sys.env("HOME")
     let d = if home.len > 0 { "{{home}}/Documents/Mune" } else { "/tmp/Mune" }
@@ -70,8 +70,8 @@ fn export_dir() -> string {
     return d
 }
 
-/// A file name from the listener's title: no slashes or colons, no leading
-/// dot, at most 80 bytes.
+/** *A file name from the listener's title: no slashes or colons, no leading */
+/** *dot, at most 80 bytes. */
 fn safe_name(title: string) -> string {
     let t = str.trim(title)
     let mut b = []int {}
@@ -93,7 +93,7 @@ fn safe_name(title: string) -> string {
     return s
 }
 
-/// `dir/name.ext`, or `dir/name 2.ext`, … — never an existing file.
+/** *`dir/name.ext`, or `dir/name 2.ext`, … — never an existing file. */
 fn unique_path(dir: string, name: string, ext: string) -> string {
     let first = "{{dir}}/{{name}}.{{ext}}"
     if sys.exists(first) != 1 {
@@ -110,7 +110,7 @@ fn unique_path(dir: string, name: string, ext: string) -> string {
     return "{{dir}}/{{name}} {{n}}.{{ext}}"
 }
 
-/// Show `path` selected in Finder (or open the folder).
+/** *Show `path` selected in Finder (or open the folder). */
 fn reveal(path: string) {
     if sys.target() != "native" || path.len == 0 {
         return
@@ -123,8 +123,8 @@ fn reveal(path: string) {
     sys.exec("open -R {{q}} >/dev/null 2>&1 &")
 }
 
-/// `~/Documents/Mune/x.wav` → `~/Documents/Mune/x.wav` with the home folder
-/// written as `~`, for the screen.
+/** *`~/Documents/Mune/x.wav` → `~/Documents/Mune/x.wav` with the home folder */
+/** *written as `~`, for the screen. */
 fn short(path: string) -> string {
     let home = sys.env("HOME")
     if home.len > 0 && str.starts_with(path, home) {

@@ -1,14 +1,14 @@
-//! Protobuf varint and gRPC 5-byte framing. Bytes are 0..255 in `[]int`.
-//! `http.put_varint` is the proto3 codec (signed bits); this copy is the
-//! non-negative helper used by `frame` tests.
+// Protobuf varint and gRPC 5-byte framing. Bytes are 0..255 in `[]int`.
+// `http.put_varint` is the proto3 codec (signed bits); this copy is the
+// non-negative helper used by `frame` tests.
 
-/// Decoded varint and the index after it.
+/** *Decoded varint and the index after it. */
 struct Varint {
     val: int,
     next: int,
 }
 
-/// Encode `v` as a proto3 varint. `v < 0` is stored as 0.
+/** *Encode `v` as a proto3 varint. `v < 0` is stored as 0. */
 fn put_varint(v: int) -> []int {
     let mut out = []int {}
     let mut u = v
@@ -32,7 +32,7 @@ fn put_varint(v: int) -> []int {
     return out
 }
 
-/// Read a varint starting at `i`. Truncated input yields `val: 0`.
+/** *Read a varint starting at `i`. Truncated input yields `val: 0`. */
 fn get_varint(buf: &[]int, i: int) -> Varint {
     let mut n = 0
     let mut shift = 1
@@ -71,7 +71,7 @@ fn push_u32be(out: &mut []int, n: int) {
     out.push(n % 256)
 }
 
-/// gRPC data frame: 1-byte compressed flag (0) + 4-byte big-endian length + payload.
+/** *gRPC data frame: 1-byte compressed flag (0) + 4-byte big-endian length + payload. */
 fn frame(payload: &[]int) -> []int {
     let mut out = []int {}
     out.push(0)
@@ -82,8 +82,8 @@ fn frame(payload: &[]int) -> []int {
     return out
 }
 
-/// Strip a gRPC data frame header. Short input yields an empty buffer. The length
-/// comes off the wire, so a frame claiming more than arrived stops at what did.
+/** *Strip a gRPC data frame header. Short input yields an empty buffer. The length */
+/** *comes off the wire, so a frame claiming more than arrived stops at what did. */
 fn unframe(buf: &[]int) -> []int {
     let mut out = []int {}
     if buf.len >= 5 {

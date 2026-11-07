@@ -1,9 +1,9 @@
-//! Drive the engine without a server or window:
-//!
-//!   ./bin/loamc examples/zeus/vidget/tests/engine_cli.loam -o /tmp/vg && /tmp/vg probe <url>
-//!   /tmp/vg get <url> [format] [container]     # downloads, printing progress
-//!
-//! `VIDGET_DIR=/tmp/vg-out` keeps test downloads out of ~/Downloads.
+// Drive the engine without a server or window:
+//
+//   ./bin/loamc examples/zeus/vidget/tests/engine_cli.loam -o /tmp/vg && /tmp/vg probe <url>
+//   /tmp/vg get <url> [format] [container]     # downloads, printing progress
+//
+// `VIDGET_DIR=/tmp/vg-out` keeps test downloads out of ~/Downloads.
 
 import "std:async"
 import "std:fmt"

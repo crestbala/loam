@@ -1,9 +1,9 @@
-//! Sync status and rejected rows from `Data.Status` and `Data.Rejects`.
-//!
-//! `start` is called from `app.loam` before `zeus.App`. `call_async` hands a
-//! transport failure or a timeout to the callback as an empty body. A
-//! status reply always carries `live: 1`, so an empty body there is a dead
-//! server, and the page says so instead of loading forever.
+// Sync status and rejected rows from `Data.Status` and `Data.Rejects`.
+//
+// `start` is called from `app.loam` before `zeus.App`. `call_async` hands a
+// transport failure or a timeout to the callback as an empty body. A
+// status reply always carries `live: 1`, so an empty body there is a dead
+// server, and the page says so instead of loading forever.
 
 import "std:date"
 import "http"
@@ -55,12 +55,12 @@ fn status_text() -> string {
     return status_line
 }
 
-/// The last status reply was a dead server.
+/** *The last status reply was a dead server. */
 fn server_down() -> bool {
     return down == 1
 }
 
-/// Label, value, caption triples for the last fetch.
+/** *Label, value, caption triples for the last fetch. */
 fn stat_cells() -> []string {
     return stat_texts
 }
@@ -176,7 +176,7 @@ fn reload() {
     fetch_rejects()
 }
 
-/// Ask for status and rejects again, after the server was down.
+/** *Ask for status and rejects again, after the server was down. */
 fn retry() {
     if gen.id == 0 {
         return

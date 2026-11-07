@@ -1,10 +1,10 @@
-//! Formatting and the chart downsample for the screens.
-//!
-//! A bucket keeps its last published price, and a signal or fill date is
-//! kept as well, so a marker sits on a NAV that was actually printed.
-//! Paise are scaled into i32 by one common divisor. Prices are never
-//! averaged into a bucket. The 200-day average is its own series, read at
-//! the same kept bars, and it is a gap wherever it is still warming up.
+// Formatting and the chart downsample for the screens.
+//
+// A bucket keeps its last published price, and a signal or fill date is
+// kept as well, so a marker sits on a NAV that was actually printed.
+// Paise are scaled into i32 by one common divisor. Prices are never
+// averaged into a bucket. The 200-day average is its own series, read at
+// the same kept bars, and it is a gap wherever it is still warming up.
 
 import "std:date"
 import "std:math"
@@ -19,9 +19,9 @@ struct Plot {
     vals: []int,
 }
 
-/// A price chart: flat row-major values for `names`, and the implied
-/// decimals a value prints with (2 when the divisor is 1, so paise read as
-/// rupees).
+/** *A price chart: flat row-major values for `names`, and the implied */
+/** *decimals a value prints with (2 when the divisor is 1, so paise read as */
+/** *rupees). */
 struct PriceChart {
     labels: []string,
     names: []string,
@@ -35,13 +35,13 @@ struct Mom {
     line: string,
 }
 
-/// Opening account, in paise. One lakh rupees. The SIP deploys the same sum.
+/** *Opening account, in paise. One lakh rupees. The SIP deploys the same sum. */
 fn opening_cash() -> i64 {
     return i64(10000000)
 }
 
-/// Rejected rows the data page mounts. One wrapped text node per row of a
-/// thousand-line sync stalls the first layout of that route.
+/** *Rejected rows the data page mounts. One wrapped text node per row of a */
+/** *thousand-line sync stalls the first layout of that route. */
 fn reject_limit() -> int {
     return 20
 }
@@ -56,8 +56,8 @@ fn reject_shown(total: int) -> int {
     return reject_limit()
 }
 
-/// Empty when every row is on the page. Otherwise names the window and the
-/// full count from the sync.
+/** *Empty when every row is on the page. Otherwise names the window and the */
+/** *full count from the sync. */
 fn reject_head(total: int) -> string {
     let shown = reject_shown(total)
     if shown == 0 || shown == total {
@@ -156,7 +156,7 @@ fn join_ws(xs: []string) -> string {
     return s
 }
 
-/// Decimal paise. Empty or any non-digit is `-1`.
+/** *Decimal paise. Empty or any non-digit is `-1`. */
 fn parse_i64(s: string) -> i64 {
     let mut n: i64 = 0
     let mut i = 0
@@ -212,7 +212,7 @@ fn pad2(n: int) -> string {
     return "{{n}}"
 }
 
-/// Paise as rupees, two decimals.
+/** *Paise as rupees, two decimals. */
 fn rupees(paise: i64) -> string {
     let mut n = paise
     let mut sign = ""
@@ -227,7 +227,7 @@ fn rupees(paise: i64) -> string {
     return "{{sign}}{{w}}.{{f}}"
 }
 
-/// A ratio as a percent with two decimals. `0.15` is `15.00%`.
+/** *A ratio as a percent with two decimals. `0.15` is `15.00%`. */
 fn pct(x: f64) -> string {
     let scaled = math.round(x * f64(10000))
     let mut n = i64(scaled)
@@ -243,7 +243,7 @@ fn pct(x: f64) -> string {
     return "{{sign}}{{w}}.{{f}}%"
 }
 
-/// A ratio with two decimals. `1.5` is `1.50`.
+/** *A ratio with two decimals. `1.5` is `1.50`. */
 fn ratio(x: f64) -> string {
     let scaled = math.round(x * f64(100))
     let mut n = i64(scaled)
@@ -259,7 +259,7 @@ fn ratio(x: f64) -> string {
     return "{{sign}}{{w}}.{{f}}"
 }
 
-/// `YYYY-MM-DD` or AMFI's `DD-Mon-YYYY`. Anything else is `0`.
+/** *`YYYY-MM-DD` or AMFI's `DD-Mon-YYYY`. Anything else is `0`. */
 fn parse_day(s: string) -> int {
     let t = trim(s)
     let iso = date.parse_iso(t)
@@ -273,7 +273,7 @@ fn parse_day(s: string) -> int {
     return 0
 }
 
-/// Inclusive calendar days from `frm` through `to`. Empty when `frm` is later.
+/** *Inclusive calendar days from `frm` through `to`. Empty when `frm` is later. */
 fn day_list(frm: int, to: int) -> []int {
     if !date.is_valid(frm) || !date.is_valid(to) {
         return []int {}
@@ -493,8 +493,8 @@ fn ended_line(name: string, r: Report) -> string {
     return "{{name}} ended at {{cash}} rupees, {{rate}} a year."
 }
 
-/// Ending equity and CAGR of the rule and both benchmarks, as label,
-/// value, caption triples for stat cards.
+/** *Ending equity and CAGR of the rule and both benchmarks, as label, */
+/** *value, caption triples for stat cards. */
 fn end_cells(name: string, rule: Report, hold: Report, sip: Report) -> []string {
     let mut out = []string {}
     push(out, name)
@@ -512,9 +512,9 @@ fn end_cells(name: string, rule: Report, hold: Report, sip: Report) -> []string 
     return out
 }
 
-/// The rest of a report, for the rule the screen has selected.
-/// Sharpe and Sortino annualise daily equity changes with a 252-day year
-/// and no risk-free rate. Drawdown length is in published bars.
+/** *The rest of a report, for the rule the screen has selected. */
+/** *Sharpe and Sortino annualise daily equity changes with a 252-day year */
+/** *and no risk-free rate. Drawdown length is in published bars. */
 fn score_line(r: Report) -> string {
     let xr = pct(r.xirr)
     let sh = ratio(r.sharpe)
@@ -642,8 +642,8 @@ fn row_at(cells: []string, cols: int, r: int) -> []string {
     return out
 }
 
-/// Ready schemes first, higher score first. A tie keeps the smaller index.
-/// A scheme that is not ready stays behind every ready one, in index order.
+/** *Ready schemes first, higher score first. A tie keeps the smaller index. */
+/** *A scheme that is not ready stays behind every ready one, in index order. */
 fn rank_indexes(score: []f64, ready: []int) -> []int {
     let mut n = score.len
     if ready.len < n {
@@ -760,8 +760,8 @@ fn empty_plot() -> Plot {
     return Plot { labels: []string {}, vals: []int {} }
 }
 
-/// Bars a chart keeps: the last bar of each of `buckets` buckets, plus every
-/// bar whose date is in `marks`. Ascending.
+/** *Bars a chart keeps: the last bar of each of `buckets` buckets, plus every */
+/** *bar whose date is in `marks`. Ascending. */
 fn keep_bars(dates: []int, n: int, buckets: int, marks: []int) -> []int {
     let mut bins = buckets
     if bins < 1 {
@@ -806,8 +806,8 @@ fn scaled(v: i64, div: i64) -> int {
     return int(x)
 }
 
-/// Last price in each bucket, plus every `marks` date that is a bar.
-/// `buckets` is the target count before marks are added.
+/** *Last price in each bucket, plus every `marks` date that is a bar. */
+/** *`buckets` is the target count before marks are added. */
 fn downsample(dates: []int, paise: []i64, buckets: int, marks: []int) -> Plot {
     let mut n = dates.len
     if paise.len < n {
@@ -830,7 +830,7 @@ fn downsample(dates: []int, paise: []i64, buckets: int, marks: []int) -> Plot {
     return Plot { labels: labels, vals: vals }
 }
 
-/// Implied decimals for values divided by `div` out of paise.
+/** *Implied decimals for values divided by `div` out of paise. */
 fn decimals_for(div: i64) -> int {
     if div == i64(1) {
         return 2
@@ -841,7 +841,7 @@ fn decimals_for(div: i64) -> int {
     return 0
 }
 
-/// Chart range. `0` one year, `1` three years, anything else full history.
+/** *Chart range. `0` one year, `1` three years, anything else full history. */
 fn range_labels() -> []string {
     let mut out = []string {}
     push(out, "1 year")
@@ -850,7 +850,7 @@ fn range_labels() -> []string {
     return out
 }
 
-/// First date a range keeps, counted back from `last`. `0` keeps every bar.
+/** *First date a range keeps, counted back from `last`. `0` keeps every bar. */
 fn range_from(last: int, which: int) -> int {
     if last == 0 || !date.is_valid(last) {
         return 0
@@ -864,7 +864,7 @@ fn range_from(last: int, which: int) -> int {
     return 0
 }
 
-/// First bar on or after `from`.
+/** *First bar on or after `from`. */
 fn first_bar(dates: []int, from: int) -> int {
     let mut i = 0
     while i < dates.len {
@@ -880,11 +880,11 @@ fn empty_chart() -> PriceChart {
     return PriceChart { labels: []string {}, names: []string {}, vals: []int {}, decimals: 0 }
 }
 
-/// Price series for a chart: dates and paise from `from` on, the last price
-/// in each of about 200 buckets plus each `marks` date. With `avg` set, a
-/// second series is `avg`-day average read at the same bars, computed over
-/// the whole history so a window that starts late is not in warm-up again,
-/// and `zui.CHART_GAP` wherever the average is not ready.
+/** *Price series for a chart: dates and paise from `from` on, the last price */
+/** *in each of about 200 buckets plus each `marks` date. With `avg` set, a */
+/** *second series is `avg`-day average read at the same bars, computed over */
+/** *the whole history so a window that starts late is not in warm-up again, */
+/** *and `zui.CHART_GAP` wherever the average is not ready. */
 fn price_chart(
     s: NavSeries,
     name: string,
@@ -941,7 +941,7 @@ fn plot_series(dates: []int, paise: []i64, marks: []int) -> Plot {
     return downsample(dates, paise, 200, marks)
 }
 
-/// Last price as rupees, or empty.
+/** *Last price as rupees, or empty. */
 fn last_price(s: NavSeries) -> string {
     let n = series.len(s)
     if n == 0 {
@@ -950,7 +950,7 @@ fn last_price(s: NavSeries) -> string {
     return rupees(s.navs[n - 1])
 }
 
-/// Last date as `YYYY-MM-DD`, or empty.
+/** *Last date as `YYYY-MM-DD`, or empty. */
 fn last_day(s: NavSeries) -> string {
     let n = series.len(s)
     if n == 0 {
@@ -959,8 +959,8 @@ fn last_day(s: NavSeries) -> string {
     return date.fmt_iso(s.dates[n - 1])
 }
 
-/// The 200-day rule on the last bar, short enough for a table cell. The
-/// full sentence is `trend_line`.
+/** *The 200-day rule on the last bar, short enough for a table cell. The */
+/** *full sentence is `trend_line`. */
 fn signal_word(s: NavSeries, n: int, ack: int) -> string {
     let bars = series.len(s)
     if bars == 0 {
@@ -989,8 +989,8 @@ fn push3(out: []string, a: string, b: string, c: string) -> []string {
     return o
 }
 
-/// Latest reading of each indicator as label, value, caption triples. A
-/// value that is still warming up reads `Warm-up`, never zero.
+/** *Latest reading of each indicator as label, value, caption triples. A */
+/** *value that is still warming up reads `Warm-up`, never zero. */
 fn stat_cells(s: NavSeries, ack: int) -> []string {
     let mut out = []string {}
     let bars = series.len(s)
@@ -1075,8 +1075,8 @@ fn reject_cols() -> int {
     return 4
 }
 
-/// A reject line `line;code;date;reason` as table cells: file line, code,
-/// ISO date, reason. A reason that held a `;` keeps the rest of the line.
+/** *A reject line `line;code;date;reason` as table cells: file line, code, */
+/** *ISO date, reason. A reason that held a `;` keeps the rest of the line. */
 fn reject_cells(line: string) -> []string {
     let bits = split_semi(line)
     let mut out = []string {}
@@ -1106,9 +1106,9 @@ fn reject_cells(line: string) -> []string {
     return out
 }
 
-/// Latest close of a stock and what the cache holds, as label, value,
-/// caption triples. Closes are unadjusted, so a one-day move over 20% is
-/// counted: it is more often a split or bonus than a market move.
+/** *Latest close of a stock and what the cache holds, as label, value, */
+/** *caption triples. Closes are unadjusted, so a one-day move over 20% is */
+/** *counted: it is more often a split or bonus than a market move. */
 fn close_cells(s: NavSeries) -> []string {
     let mut out = []string {}
     let bars = series.len(s)

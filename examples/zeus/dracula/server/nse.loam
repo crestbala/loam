@@ -1,27 +1,27 @@
-//! NSE daily closes: the capital-market bhavcopy in the UDiFF layout.
-//!
-//! Source, one zip per trading day, public, no key:
-//!
-//! ```
-//! https://nsearchives.nseindia.com/content/cm/BhavCopy_NSE_CM_0_0_0_<YYYYMMDD>_F_0000.csv.zip
-//! ```
-//!
-//! The zip holds one comma-separated file with a header row. Fields are
-//! found by header name, not position. The ones read here:
-//!
-//! | Field         | Meaning                                  |
-//! |---------------|------------------------------------------|
-//! | `TradDt`      | trade date, `YYYY-MM-DD`                 |
-//! | `TckrSymb`    | NSE symbol, e.g. `RELIANCE`, `M&M`       |
-//! | `SctySrs`     | series; only `EQ` is kept                |
-//! | `FinInstrmNm` | security name                            |
-//! | `ISIN`        | ISIN                                     |
-//! | `ClsPric`     | official closing price, rupees, 2 places |
-//!
-//! Closes are as published: not adjusted for splits, bonuses, or dividends.
-//! This URL has files from 2 Jan 2024. A day with no session (weekend or
-//! exchange holiday) answers 404 with an HTML page, which is "closed", not
-//! a failure. The CDN resets a request that carries no browser User-Agent.
+// NSE daily closes: the capital-market bhavcopy in the UDiFF layout.
+//
+// Source, one zip per trading day, public, no key:
+//
+// ```
+// https://nsearchives.nseindia.com/content/cm/BhavCopy_NSE_CM_0_0_0_<YYYYMMDD>_F_0000.csv.zip
+// ```
+//
+// The zip holds one comma-separated file with a header row. Fields are
+// found by header name, not position. The ones read here:
+//
+// | Field         | Meaning                                  |
+// |---------------|------------------------------------------|
+// | `TradDt`      | trade date, `YYYY-MM-DD`                 |
+// | `TckrSymb`    | NSE symbol, e.g. `RELIANCE`, `M&M`       |
+// | `SctySrs`     | series; only `EQ` is kept                |
+// | `FinInstrmNm` | security name                            |
+// | `ISIN`        | ISIN                                     |
+// | `ClsPric`     | official closing price, rupees, 2 places |
+//
+// Closes are as published: not adjusted for splits, bonuses, or dividends.
+// This URL has files from 2 Jan 2024. A day with no session (weekend or
+// exchange holiday) answers 404 with an HTML page, which is "closed", not
+// a failure. The CDN resets a request that carries no browser User-Agent.
 
 import "std:sys"
 import "../core/csvx.loam"
@@ -43,7 +43,7 @@ struct Bhav {
 }
 
 struct Got {
-    /// `0` a body, `1` no session that day, `2` failure.
+    /** *`0` a body, `1` no session that day, `2` failure. */
     state: int,
     body: string,
     err: string,
@@ -55,7 +55,7 @@ fn bhav_url(ymd: int) -> string {
     return "https://nsearchives.nseindia.com/content/cm/BhavCopy_NSE_CM_0_0_0_{{ymd}}_F_0000.csv.zip"
 }
 
-/// First day this layout exists at `bhav_url`.
+/** *First day this layout exists at `bhav_url`. */
 fn first_day() -> int {
     return 20240102
 }
@@ -76,7 +76,7 @@ fn empty_bhav(err: string) -> Bhav {
     }
 }
 
-/// Split one line on `,`. The file has no quoting.
+/** *Split one line on `,`. The file has no quoting. */
 fn split_commas(line: string) -> []string {
     let mut out = []string {}
     let mut start = 0
@@ -103,7 +103,7 @@ fn col(head: []string, name: string) -> int {
     return -1
 }
 
-/// `YYYY-MM-DD` as `YYYYMMDD`, or 0.
+/** *`YYYY-MM-DD` as `YYYYMMDD`, or 0. */
 fn iso_day(s: string) -> int {
     if s.len != 10 || s[4] != 45 || s[7] != 45 {
         return 0
@@ -123,9 +123,9 @@ fn iso_day(s: string) -> int {
     return n
 }
 
-/// Parse one bhavcopy for `want` (`YYYYMMDD`). A file without the header
-/// fields, or with a row for another trade date, is refused whole. A row
-/// with a bad close is kept in `bad_*` with its reason.
+/** *Parse one bhavcopy for `want` (`YYYYMMDD`). A file without the header */
+/** *fields, or with a row for another trade date, is refused whole. A row */
+/** *with a bad close is kept in `bad_*` with its reason. */
 fn parse(text: string, want: int) -> Bhav {
     let lines = csvx.split_lines(text)
     if lines.len == 0 {
@@ -205,7 +205,7 @@ fn parse(text: string, want: int) -> Bhav {
     return out
 }
 
-/// Download and unzip one day. The zip is removed on every path.
+/** *Download and unzip one day. The zip is removed on every path. */
 fn fetch_day(ymd: int) -> Got {
     let tmp = BHAV_TMP
     let url = bhav_url(ymd)

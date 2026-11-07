@@ -1,12 +1,12 @@
-//! HLS playlists, read in Loam so a stream downloads the aria2c way: every
-//! segment of the chosen variant goes into one aria2c input list and arrives
-//! over parallel connections, then ffmpeg joins the local copy.
-//!
-//! A master playlist lists variants (`#EXT-X-STREAM-INF`) and alternate
-//! audio (`#EXT-X-MEDIA:TYPE=AUDIO`); a media playlist lists segments. The
-//! local rewrite keeps every tag and swaps each URI — segment, `EXT-X-MAP`
-//! init, `EXT-X-KEY` key — for a file name in the job directory, so ffmpeg
-//! decrypts and joins exactly what the server would have streamed.
+// HLS playlists, read in Loam so a stream downloads the aria2c way: every
+// segment of the chosen variant goes into one aria2c input list and arrives
+// over parallel connections, then ffmpeg joins the local copy.
+//
+// A master playlist lists variants (`#EXT-X-STREAM-INF`) and alternate
+// audio (`#EXT-X-MEDIA:TYPE=AUDIO`); a media playlist lists segments. The
+// local rewrite keeps every tag and swaps each URI — segment, `EXT-X-MAP`
+// init, `EXT-X-KEY` key — for a file name in the job directory, so ffmpeg
+// decrypts and joins exactly what the server would have streamed.
 
 import "text.loam"
 import "extract.loam"
@@ -32,17 +32,17 @@ struct Master {
     audios: []Audio,
 }
 
-/// A media playlist rewritten for local files. `urls[i]` downloads to
-/// `names[i]`; `local` is the playlist text that points at those names.
+/** *A media playlist rewritten for local files. `urls[i]` downloads to */
+/** *`names[i]`; `local` is the playlist text that points at those names. */
 struct Local {
     local: string,
     urls: []string,
     names: []string,
     segments: int,
     duration: int,
-    /// No `#EXT-X-ENDLIST`: a live stream, which only ffmpeg can follow.
+    /** *No `#EXT-X-ENDLIST`: a live stream, which only ffmpeg can follow. */
     live: bool,
-    /// `#EXT-X-BYTERANGE` segments share a file; left to ffmpeg too.
+    /** *`#EXT-X-BYTERANGE` segments share a file; left to ffmpeg too. */
     byterange: bool,
 }
 
@@ -54,7 +54,7 @@ fn is_master(body: string) -> bool {
     return text.contains(body, "#EXT-X-STREAM-INF")
 }
 
-/// The value of `key` in an attribute list (`KEY=v` or `KEY="v"`), or "".
+/** *The value of `key` in an attribute list (`KEY=v` or `KEY="v"`), or "". */
 fn attr(line: string, key: string) -> string {
     let mut from = 0
     while true {
@@ -84,7 +84,7 @@ fn attr(line: string, key: string) -> string {
     return ""
 }
 
-/// `640x360` -> (640, 360); -1s when absent.
+/** *`640x360` -> (640, 360); -1s when absent. */
 fn res_w(r: string) -> int {
     let x = text.index_of(r, "x")
     if x < 0 {
@@ -158,8 +158,8 @@ fn parse_master(body: string, base: string) -> Master {
     return Master { variants: vs, audios: auds }
 }
 
-/// The audio rendition a variant names (its group's default, else the
-/// group's first), or "" when the variant carries its own audio.
+/** *The audio rendition a variant names (its group's default, else the */
+/** *group's first), or "" when the variant carries its own audio. */
 fn audio_for(m: Master, v: Variant) -> string {
     if v.audio == "" {
         return ""
@@ -179,7 +179,7 @@ fn audio_for(m: Master, v: Variant) -> string {
     return first
 }
 
-/// `URI="…"` in `line` replaced by `URI="name"`.
+/** *`URI="…"` in `line` replaced by `URI="name"`. */
 fn swap_uri(line: string, name: string) -> string {
     let a = text.index_of(line, "URI=\"")
     if a < 0 {
@@ -192,7 +192,7 @@ fn swap_uri(line: string, name: string) -> string {
     return "{{text.slice(line, 0, a + 5)}}{{name}}{{text.slice(line, end, line.len)}}"
 }
 
-/// Zero-padded `n` (5 digits), so segment names sort in playlist order.
+/** *Zero-padded `n` (5 digits), so segment names sort in playlist order. */
 fn pad5(n: int) -> string {
     if n < 10 {
         return "0000{{n}}"
@@ -209,7 +209,7 @@ fn pad5(n: int) -> string {
     return "{{n}}"
 }
 
-/// The extension a segment keeps locally (ffmpeg's HLS demuxer checks it).
+/** *The extension a segment keeps locally (ffmpeg's HLS demuxer checks it). */
 fn seg_ext(url: string) -> string {
     let e = text.url_ext(url)
     if e == "ts" ||
@@ -224,8 +224,8 @@ fn seg_ext(url: string) -> string {
     return "ts"
 }
 
-/// Rewrite media playlist `body` (fetched from `base`) to local names with
-/// prefix `tag` (`v` video, `a` audio) so two playlists share one directory.
+/** *Rewrite media playlist `body` (fetched from `base`) to local names with */
+/** *prefix `tag` (`v` video, `a` audio) so two playlists share one directory. */
 fn localize(body: string, base: string, tag: string) -> Local {
     let ls = text.lines(body)
     let mut out = []string {}
@@ -312,7 +312,7 @@ fn localize(body: string, base: string, tag: string) -> Local {
     }
 }
 
-/// aria2c input-file text: each URL, then its indented `out=` option.
+/** *aria2c input-file text: each URL, then its indented `out=` option. */
 fn aria2_list(urls: []string, names: []string) -> string {
     let mut b = []int {}
     for i in 0..urls.len {
@@ -324,7 +324,7 @@ fn aria2_list(urls: []string, names: []string) -> string {
     return string_from_bytes(b)
 }
 
-/// `xargs -n 2` input for the curl fallback: `name url` per line.
+/** *`xargs -n 2` input for the curl fallback: `name url` per line. */
 fn curl_list(urls: []string, names: []string) -> string {
     let mut b = []int {}
     for i in 0..urls.len {
@@ -336,7 +336,7 @@ fn curl_list(urls: []string, names: []string) -> string {
     return string_from_bytes(b)
 }
 
-/// "1080p · 5.2 Mbps · avc1" for a variant.
+/** *"1080p · 5.2 Mbps · avc1" for a variant. */
 fn variant_label(v: Variant) -> string {
     let mut l = ""
     if v.height > 0 {

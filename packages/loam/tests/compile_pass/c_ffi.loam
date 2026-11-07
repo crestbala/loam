@@ -53,7 +53,7 @@ fn c_floor(x: f64) -> f64 {}
 #[c("c_ffi_missing")]
 fn missing() {}
 
-/// Named like a runtime function: the wrapper has to be renamed, not collide.
+/** *Named like a runtime function: the wrapper has to be renamed, not collide. */
 #[c("strlen")]
 fn str_copy(s: string) -> i64 {}
 

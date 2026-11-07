@@ -15,7 +15,7 @@ fn must(ok: bool, what: string) {
     }
 }
 
-/// Height of the box that owns the text `label` (the control around it).
+/** *Height of the box that owns the text `label` (the control around it). */
 fn owner_h(label: string) -> int {
     let t = zeus.engine_find_text(label)
     must(t > 0, "found {{label}}")

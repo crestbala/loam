@@ -80,7 +80,7 @@ fn main() {
     fmt.println("contract ok")
 }
 
-/// True when a 2px fill sits on the bottom edge of `id` and spans its width.
+/** *True when a 2px fill sits on the bottom edge of `id` and spans its width. */
 fn rule_under(id: int) -> bool {
     let x = zeus.node_x(id)
     let y = zeus.node_y(id) + zeus.node_height(id) - 2

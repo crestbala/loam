@@ -1,5 +1,5 @@
-//! The app, as every host starts it: the store first (signals and the job
-//! stream live outside any rebuild), then the generated route table.
+// The app, as every host starts it: the store first (signals and the job
+// stream live outside any rebuild), then the generated route table.
 
 import "zeus"
 import "app_routes.loam" as approutes

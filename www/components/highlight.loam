@@ -1,5 +1,5 @@
-//! Loam token colors. A span is one string: the first byte is a kind marker
-//! and the rest is the text, so a line stays a slice of strings.
+// Loam token colors. A span is one string: the first byte is a kind marker
+// and the rest is the text, so a line stays a slice of strings.
 
 import "zeus"
 import "zui:colors"
@@ -7,7 +7,7 @@ import "zui:spacing"
 import "zui"
 import "std:str"
 
-/// Font size of code, in the editor and in code blocks.
+/** *Font size of code, in the editor and in code blocks. */
 const CODE_FONT: int = 13
 
 const MARK_TEXT: int = 116
@@ -69,7 +69,7 @@ fn pack(kind: int, text: string) -> string {
     return "{{m}}{{text}}"
 }
 
-/// Tokens of one line. An empty line is a single space so the row has height.
+/** *Tokens of one line. An empty line is a single space so the row has height. */
 fn spans(line: string) -> []string {
     let mut out = []string {}
     if line.len == 0 {

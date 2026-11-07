@@ -1,9 +1,9 @@
-//! Headless end-to-end: the real screen, a pasted link, a finished download.
-//! Needs the engine and the fixtures running:
-//!
-//!   sh examples/zeus/vidget/tests/fixtures.sh &              # :8765
-//!   VIDGET_DIR=/tmp/vg-ui ./bin/loamc --run examples/zeus/vidget/server/main.loam &
-//!   ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/vidget/tests/ui_e2e.loam -o /tmp/vg-ui && /tmp/vg-ui
+// Headless end-to-end: the real screen, a pasted link, a finished download.
+// Needs the engine and the fixtures running:
+//
+//   sh examples/zeus/vidget/tests/fixtures.sh &              # :8765
+//   VIDGET_DIR=/tmp/vg-ui ./bin/loamc --run examples/zeus/vidget/server/main.loam &
+//   ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/vidget/tests/ui_e2e.loam -o /tmp/vg-ui && /tmp/vg-ui
 
 import "std:async"
 import "std:fmt"
@@ -17,7 +17,7 @@ fn fail(what: string) {
     sys.exit(1)
 }
 
-/// Pump frames until `label` paints, for up to `ms`.
+/** *Pump frames until `label` paints, for up to `ms`. */
 fn wait_for(label: string, ms: int) -> bool {
     let mut left = ms
     while left > 0 {

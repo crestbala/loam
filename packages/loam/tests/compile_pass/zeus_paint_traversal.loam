@@ -19,8 +19,8 @@ fn must(ok: bool, what: string) {
     sys.exit(1)
 }
 
-/// A checksum over every field of every op, so any difference — and any order
-/// difference — shows up.
+/** *A checksum over every field of every op, so any difference — and any order */
+/** *difference — shows up. */
 fn draw_sum() -> int {
     let n = zeus.draw_count()
     let mut s = 0

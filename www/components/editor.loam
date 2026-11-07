@@ -1,16 +1,16 @@
-//! The playground's code editor. Typing is handled here, so each token keeps
-//! its own color; a text field paints one color.
-//!
-//! The box is marked `capture_text`, so typed text, paste, and IME input
-//! arrive as `KEY_TEXT` events, and editing keys arrive as key codes. Keys:
-//!
-//! - arrows move; Shift extends the selection; Alt moves by word; Cmd/Ctrl
-//!   with arrows jumps to the line or document edge; Home / End, PageUp / PageDown
-//! - Enter keeps the indent and indents after `{`, `(`, `[`, or `:`
-//! - Tab / Shift+Tab indent and dedent (whole lines when a selection spans lines)
-//! - Backspace removes an indent step inside leading spaces
-//! - Cmd/Ctrl + A, C, X, V, Z, Shift+Z, Y, / (toggle `//`), Enter (run)
-//! - Esc leaves the editor, so Tab moves focus again
+// The playground's code editor. Typing is handled here, so each token keeps
+// its own color; a text field paints one color.
+//
+// The box is marked `capture_text`, so typed text, paste, and IME input
+// arrive as `KEY_TEXT` events, and editing keys arrive as key codes. Keys:
+//
+// - arrows move; Shift extends the selection; Alt moves by word; Cmd/Ctrl
+//   with arrows jumps to the line or document edge; Home / End, PageUp / PageDown
+// - Enter keeps the indent and indents after `{`, `(`, `[`, or `:`
+// - Tab / Shift+Tab indent and dedent (whole lines when a selection spans lines)
+// - Backspace removes an indent step inside leading spaces
+// - Cmd/Ctrl + A, C, X, V, Z, Shift+Z, Y, / (toggle `//`), Enter (run)
+// - Esc leaves the editor, so Tab moves focus again
 
 import "zeus"
 import "zui:colors"
@@ -30,7 +30,7 @@ struct EdSnap {
     caret: int,
 }
 
-/// Editor state. Every field is a signal, so the struct is a cheap handle.
+/** *Editor state. Every field is a signal, so the struct is a cheap handle. */
 struct EdState {
     src: Signal<string>,
     caret: Signal<int>,
@@ -148,7 +148,7 @@ fn is_word(c: int) -> bool {
     return c == 95 || c >= 128
 }
 
-/// Previous UTF-8 boundary.
+/** *Previous UTF-8 boundary. */
 fn prev_char(s: string, at: int) -> int {
     let mut i = clamp_at(s, at)
     if i == 0 {
@@ -161,7 +161,7 @@ fn prev_char(s: string, at: int) -> int {
     return i
 }
 
-/// Next UTF-8 boundary.
+/** *Next UTF-8 boundary. */
 fn next_char(s: string, at: int) -> int {
     let mut i = clamp_at(s, at)
     if i >= s.len {
@@ -202,7 +202,7 @@ fn word_right(s: string, at: int) -> int {
     return i
 }
 
-/// Drop carriage returns and turn tabs into four spaces.
+/** *Drop carriage returns and turn tabs into four spaces. */
 fn clean(t: string) -> string {
     let mut out = []int {}
     for i in 0..t.len {
@@ -271,8 +271,8 @@ fn pop_snap(list: Signal<[]EdSnap>) -> EdSnap {
     return last
 }
 
-/// Replace `[a, b)` with `text`, leaving the caret after it. `typing` edits
-/// in a row share one undo step.
+/** *Replace `[a, b)` with `text`, leaving the caret after it. `typing` edits */
+/** *in a row share one undo step. */
 fn replace(st: EdState, a: int, b: int, text: string, typing: bool) {
     let s = st.src.get()
     let lo = clamp_at(s, a)
@@ -291,7 +291,7 @@ fn replace(st: EdState, a: int, b: int, text: string, typing: bool) {
     st.typing.set(typing)
 }
 
-/// Replace the whole buffer as one undo step, then select `[a, c)`.
+/** *Replace the whole buffer as one undo step, then select `[a, c)`. */
 fn rewrite(st: EdState, text: string, a: int, c: int) {
     let s = st.src.get()
     push_snap(st.undo, EdSnap { text: s, caret: st.caret.get() })
@@ -384,7 +384,7 @@ fn newline(st: EdState) {
     replace(st, lo, hi, "\n{{spaces(ind)}}", false)
 }
 
-/// Start of each line touched by `[lo, hi]`.
+/** *Start of each line touched by `[lo, hi]`. */
 fn touched_lines(s: string, lo: int, hi: int) -> []int {
     let mut out = []int {}
     let mut ls = line_start_of(s, lo)
@@ -404,7 +404,7 @@ fn touched_lines(s: string, lo: int, hi: int) -> []int {
     return out
 }
 
-/// Indent (`dir` 1) or dedent (-1) every line in the selection by 4.
+/** *Indent (`dir` 1) or dedent (-1) every line in the selection by 4. */
 fn shift_lines(st: EdState, dir: int) {
     let s = st.src.get()
     let lo = sel_lo(st)
@@ -459,7 +459,7 @@ fn starts_comment(s: string, at: int) -> bool {
     return at + 1 < s.len && s[at] == 47 && s[at + 1] == 47
 }
 
-/// Cmd/Ctrl + /: comment the selected lines out, or back in.
+/** *Cmd/Ctrl + /: comment the selected lines out, or back in. */
 fn toggle_comment(st: EdState) {
     let s = st.src.get()
     let lo = sel_lo(st)
@@ -721,8 +721,8 @@ fn on_key(st: EdState, run: fn()) {
 
 // ---- geometry ----
 
-/// x of column `col` in `line`, measured span by span the way the row lays
-/// the spans out.
+/** *x of column `col` in `line`, measured span by span the way the row lays */
+/** *the spans out. */
 fn col_x(line: string, col: int) -> int {
     let spans = highlight.spans(line)
     let mut x = 0
@@ -745,7 +745,7 @@ fn col_x(line: string, col: int) -> int {
     return x
 }
 
-/// The column nearest `x` in `line`.
+/** *The column nearest `x` in `line`. */
 fn col_at(line: string, x: int) -> int {
     if x <= 0 {
         return 0
@@ -893,7 +893,7 @@ fn GutterRow(st: EdState, index: int) -> Node {
     }
 }
 
-/// A program editor bound to `src`. `run` is called for Cmd/Ctrl+Enter.
+/** *A program editor bound to `src`. `run` is called for Cmd/Ctrl+Enter. */
 fn CodeEditor(src: Signal<string>, run: fn()) -> Node {
     let st = EdState {
         src: src,

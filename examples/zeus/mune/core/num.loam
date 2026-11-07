@@ -1,9 +1,9 @@
-//! Small f64 helpers the analysis and the graph share.
-//!
-//! `std:math` has no trigonometry, so `sin` / `cos` are here: range
-//! reduction to ±π/4 and a short Taylor series, good to ~1e-12. Filter
-//! text never uses Loam's own float printing; `fixed` writes plain decimals
-//! (ffmpeg's parser takes `0.000010`, not `1e-05`).
+// Small f64 helpers the analysis and the graph share.
+//
+// `std:math` has no trigonometry, so `sin` / `cos` are here: range
+// reduction to ±π/4 and a short Taylor series, good to ~1e-12. Filter
+// text never uses Loam's own float printing; `fixed` writes plain decimals
+// (ffmpeg's parser takes `0.000010`, not `1e-05`).
 
 import "std:math"
 
@@ -92,12 +92,12 @@ fn roundi(x: f64) -> int {
     return i32(math.floor(x + 0.5))
 }
 
-/// Frequency ratio of `semis` semitones (12 is 2.0).
+/** *Frequency ratio of `semis` semitones (12 is 2.0). */
 fn semitone_ratio(semis: f64) -> f64 {
     return math.pow(2.0, semis / 12.0)
 }
 
-/// Equal-temperament frequency of MIDI note `m` (69 is A4, 440 Hz).
+/** *Equal-temperament frequency of MIDI note `m` (69 is A4, 440 Hz). */
 fn midi_hz(m: int) -> f64 {
     return 440.0 * semitone_ratio(f64(m - 69))
 }
@@ -110,7 +110,7 @@ fn pad_left(s: string, width: int) -> string {
     return out
 }
 
-/// `x` as plain decimal text with `digits` places: fixed(1.5, 3) is "1.500".
+/** *`x` as plain decimal text with `digits` places: fixed(1.5, 3) is "1.500". */
 fn fixed(x: f64, digits: int) -> string {
     let mut scale: i64 = i64(1)
     let mut d = 0
@@ -137,7 +137,7 @@ fn fixed(x: f64, digits: int) -> string {
     return "{{sign}}{{whole}}.{{ft}}"
 }
 
-/// Six places, enough for a filter time or a gain.
+/** *Six places, enough for a filter time or a gain. */
 fn f6(x: f64) -> string {
     return fixed(x, 6)
 }
@@ -146,13 +146,13 @@ fn f3(x: f64) -> string {
     return fixed(x, 3)
 }
 
-/// Linear gain for `db` decibels.
+/** *Linear gain for `db` decibels. */
 fn db_gain(db: f64) -> f64 {
     return math.pow(10.0, db / 20.0)
 }
 
-/// A deterministic hash in 0..1000002, for seeded choices (melodies,
-/// phrase order). Arithmetic only, so it never overflows.
+/** *A deterministic hash in 0..1000002, for seeded choices (melodies, */
+/** *phrase order). Arithmetic only, so it never overflows. */
 fn hash(a: int, b: int) -> int {
     let p: i64 = i64(1000003)
     let mut h: i64 = (i64(absi(a)) * i64(7919) + i64(absi(b)) * i64(104729) + i64(12345)) % p
@@ -172,7 +172,7 @@ fn mean_i(xs: []int) -> int {
     return i32(s / i64(xs.len))
 }
 
-/// The `pct` percentile (0..100) of `xs`, by a sorted copy.
+/** *The `pct` percentile (0..100) of `xs`, by a sorted copy. */
 fn percentile(xs: []int, pct: int) -> int {
     if xs.len == 0 {
         return 0
@@ -187,7 +187,7 @@ fn percentile(xs: []int, pct: int) -> int {
     return s[at]
 }
 
-/// Shell sort; the arrays here are a few thousand long at most.
+/** *Shell sort; the arrays here are a few thousand long at most. */
 fn sort_ints(xs: &mut []int) {
     let n = xs.len
     let mut gap = n / 2

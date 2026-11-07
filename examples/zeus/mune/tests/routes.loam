@@ -1,6 +1,6 @@
-//! The screen, headless. Does not start the poller and does not open the picker.
-//!
-//!   ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/mune/tests/routes.loam -o /tmp/mune-routes && /tmp/mune-routes
+// The screen, headless. Does not start the poller and does not open the picker.
+//
+//   ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/mune/tests/routes.loam -o /tmp/mune-routes && /tmp/mune-routes
 
 import "std:fmt"
 import "std:sys"
@@ -30,7 +30,7 @@ fn frame() {
     zeus.engine_paint()
 }
 
-/// Open the dropdown named `label` and pick the row reading `option`.
+/** *Open the dropdown named `label` and pick the row reading `option`. */
 fn choose(label: string, option: string) {
     let id = zeus.engine_find_text(label)
     if id <= 0 {
@@ -53,7 +53,7 @@ fn choose(label: string, option: string) {
     frame()
 }
 
-/// Click the dropdown named `label` open.
+/** *Click the dropdown named `label` open. */
 fn open_menu(label: string) {
     let id = zeus.engine_find_text(label)
     if id <= 0 {
@@ -64,7 +64,7 @@ fn open_menu(label: string) {
     frame()
 }
 
-/// Colour of the first fill as large as the window: the room itself.
+/** *Colour of the first fill as large as the window: the room itself. */
 fn room_rgb() -> int {
     for i in 0..zeus.draw_count() {
         let k = zeus.draw_op(i)
@@ -75,12 +75,12 @@ fn room_rgb() -> int {
     return -1
 }
 
-/// Luminance-ish brightness of a packed rgb, 0..255.
+/** *Luminance-ish brightness of a packed rgb, 0..255. */
 fn bright(rgb: int) -> int {
     return (rgb / 65536 % 256 * 3 + rgb / 256 % 256 * 6 + rgb % 256) / 10
 }
 
-/// Colour of the text op that reads `label`.
+/** *Colour of the text op that reads `label`. */
 fn text_rgb(label: string) -> int {
     for i in 0..zeus.draw_count() {
         if zeus.draw_text(i) == label {

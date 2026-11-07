@@ -1,21 +1,21 @@
-//! NAV cache. One CSV per scheme code, plus three logs next to it.
-//!
-//! ```
-//! <root>/schemes.txt     code;name;isin_g;isin_d;dormant;last_seen;gap_from;gap_ack
-//! <root>/schemes.bak     the catalog from before the latest sync
-//! <root>/syncs.txt       id;stamp;url;kind;accepted;rejected;warnings;rolled
-//! <root>/rejects.txt     id;line;code;date;reason
-//! <root>/warnings.txt    same shape, for rows that were cached with a flag
-//! <root>/nav/<code>.csv  date;paise;sync_id
-//! ```
-//!
-//! Every write goes to a `.tmp` sibling and is renamed over the destination.
-//! A crash mid-write leaves the previous file in place. Rollback puts
-//! `schemes.bak` back and drops NAV rows tagged with the latest sync id.
-//! History of a scheme that has gone dormant is not deleted.
-//!
-//! `root` is passed in. The server uses `nav_root`, which is
-//! `kv.data_dir("dracula")/nav`. Tests pass a directory under `/tmp`.
+// NAV cache. One CSV per scheme code, plus three logs next to it.
+//
+// ```
+// <root>/schemes.txt     code;name;isin_g;isin_d;dormant;last_seen;gap_from;gap_ack
+// <root>/schemes.bak     the catalog from before the latest sync
+// <root>/syncs.txt       id;stamp;url;kind;accepted;rejected;warnings;rolled
+// <root>/rejects.txt     id;line;code;date;reason
+// <root>/warnings.txt    same shape, for rows that were cached with a flag
+// <root>/nav/<code>.csv  date;paise;sync_id
+// ```
+//
+// Every write goes to a `.tmp` sibling and is renamed over the destination.
+// A crash mid-write leaves the previous file in place. Rollback puts
+// `schemes.bak` back and drops NAV rows tagged with the latest sync id.
+// History of a scheme that has gone dormant is not deleted.
+//
+// `root` is passed in. The server uses `nav_root`, which is
+// `kv.data_dir("dracula")/nav`. Tests pass a directory under `/tmp`.
 
 import "std:sys"
 import "std:kv"
@@ -138,8 +138,8 @@ fn write_atomic(path: string, body: string) -> int {
     return 0
 }
 
-/// `~/Library/Application Support/dracula/nav`, or under `LOAM_KV_DIR`.
-/// Empty when there is no home directory.
+/** *`~/Library/Application Support/dracula/nav`, or under `LOAM_KV_DIR`. */
+/** *Empty when there is no home directory. */
 fn nav_root() -> string {
     let d = kv.data_dir("dracula")
     if d.len == 0 {
@@ -268,7 +268,7 @@ fn write_catalog(root: string, cat: Catalog) -> int {
     return write_atomic("{{root}}/schemes.txt", finish(b))
 }
 
-/// Copy the current catalog aside so the latest sync can be undone.
+/** *Copy the current catalog aside so the latest sync can be undone. */
 fn snapshot(root: string) -> int {
     let cur = sys.read_file("{{root}}/schemes.txt")
     return write_atomic("{{root}}/schemes.bak", cur)
@@ -348,7 +348,7 @@ fn next_id(root: string) -> int {
     return m + 1
 }
 
-/// Index of the latest sync that has not been rolled back, or `-1`.
+/** *Index of the latest sync that has not been rolled back, or `-1`. */
 fn latest_open(log: SyncLog) -> int {
     let mut i = log.ids.len - 1
     while i >= 0 {
@@ -410,7 +410,7 @@ fn add_warning(root: string, id: int, line: int, code: string, ymd: int, reason:
     return append_note("{{root}}/warnings.txt", id, line, code, ymd, reason)
 }
 
-/// Lines `line;code;date;reason` for one sync, from `rejects.txt` or `warnings.txt`.
+/** *Lines `line;code;date;reason` for one sync, from `rejects.txt` or `warnings.txt`. */
 fn notes(path: string, id: int) -> []string {
     let text = sys.read_file(path)
     let mut out = []string {}
@@ -445,7 +445,7 @@ fn find_code(cat: Catalog, code: string) -> int {
     return -1
 }
 
-/// Acknowledge the open gap on `code`. Returns 1 when there was one.
+/** *Acknowledge the open gap on `code`. Returns 1 when there was one. */
 fn ack_gap(root: string, code: string) -> int {
     let mut cat = read_catalog(root)
     let at = find_code(cat, code)
@@ -483,7 +483,7 @@ fn open_gaps(cat: Catalog) -> int {
     return n
 }
 
-/// Drop NAV rows from sync `id` in every scheme file. An emptied file is removed.
+/** *Drop NAV rows from sync `id` in every scheme file. An emptied file is removed. */
 fn strip_sync(root: string, id: int) -> int {
     let dir = "{{root}}/nav"
     let names = sys.list_dir(dir)
@@ -528,7 +528,7 @@ fn strip_sync(root: string, id: int) -> int {
     return 0
 }
 
-/// Undo the latest sync that is still applied. Returns 1 on success.
+/** *Undo the latest sync that is still applied. Returns 1 on success. */
 fn rollback(root: string) -> int {
     let mut log = read_syncs(root)
     let at = latest_open(log)

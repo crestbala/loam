@@ -1,17 +1,17 @@
-//! zeusbase — the reactive core (signals, effects, derivations, context) and the
-//! C boundary hooks the Zeus runtime implements. Everything the components and
-//! `zeus` build on lives here, at the bottom of the stack, so a layer above can
-//! name it without importing back up into `zeus`.
-//!
-//! `Node` and `Signal<T>` come from the `structs` leaf module; the internal
-//! modules `arena`, `track`, and `platform` come from `zeuscore`. The C side
-//! provides `loam_zeusbase_on_action`, `loam_zeusbase_on_range`, and friends
-//! (see `packages/loam/runtime/zeus_plat.c`), and `zeus` re-exports them.
-//!
-//! Dependency direction is one-way: `zeus` imports this file, so this file must
-//! never import `zeus` (that is an import cycle). Enums, consts, and fns
-//! declared elsewhere reach here only by importing the module that declares
-//! them — struct/type names resolve by name across loaded modules.
+// zeusbase — the reactive core (signals, effects, derivations, context) and the
+// C boundary hooks the Zeus runtime implements. Everything the components and
+// `zeus` build on lives here, at the bottom of the stack, so a layer above can
+// name it without importing back up into `zeus`.
+//
+// `Node` and `Signal<T>` come from the `structs` leaf module; the internal
+// modules `arena`, `track`, and `platform` come from `zeuscore`. The C side
+// provides `loam_zeusbase_on_action`, `loam_zeusbase_on_range`, and friends
+// (see `packages/loam/runtime/zeus_plat.c`), and `zeus` re-exports them.
+//
+// Dependency direction is one-way: `zeus` imports this file, so this file must
+// never import `zeus` (that is an import cycle). Enums, consts, and fns
+// declared elsewhere reach here only by importing the module that declares
+// them — struct/type names resolve by name across loaded modules.
 
 import "structs.loam"
 import "enums.loam"
@@ -31,25 +31,25 @@ import "std:result"
 
 // --- handles --------------------------------------------------------------
 
-/// Wrap a raw arena slot as a `Signal<int>`. Same reason as `node_handle`:
-/// the engine speaks ids, the API speaks handles.
+/** *Wrap a raw arena slot as a `Signal<int>`. Same reason as `node_handle`: */
+/** *the engine speaks ids, the API speaks handles. */
 fn signal_handle(id: int) -> Signal<int> {
     return Signal { id: id }
 }
 
 // --- signals (live Copy state) ---
 
-/// Allocate a live cell. `T` is inferred from `value`.
-///
-/// Example:
-/// ```
-/// let count = zeus.signal(0)
-/// zui.Button("+", on_click = fn() => count.set(count.get() + 1))
-/// ```
-/// Allocations made while an `Each` / `refit` rebuild is running are owned by
-/// that host (the C alloc hook records them) and are freed when the host
-/// rebuilds or is torn down, so builders that create state do not grow the
-/// signal arena.
+/** *Allocate a live cell. `T` is inferred from `value`. */
+/** */
+/** *Example: */
+/** *``` */
+/** *let count = zeus.signal(0) */
+/** *zui.Button("+", on_click = fn() => count.set(count.get() + 1)) */
+/** *``` */
+/** *Allocations made while an `Each` / `refit` rebuild is running are owned by */
+/** *that host (the C alloc hook records them) and are freed when the host */
+/** *rebuilds or is torn down, so builders that create state do not grow the */
+/** *signal arena. */
 fn signal<T>(value: T) -> Signal<T> {
     arena.ensure()
     let id = __sig_push(value)
@@ -60,10 +60,10 @@ fn signal<T>(value: T) -> Signal<T> {
     return Signal { id: id }
 }
 
-/// A process-lifetime signal, owned by no build scope or computation. For
-/// lazily created app-wide state (`appearance()`, `density()`): created by
-/// `signal` inside a list row's build, it would be filed under that row and
-/// freed with it, leaving the global pointing at a recycled cell.
+/** *A process-lifetime signal, owned by no build scope or computation. For */
+/** *lazily created app-wide state (`appearance()`, `density()`): created by */
+/** *`signal` inside a list row's build, it would be filed under that row and */
+/** *freed with it, leaving the global pointing at a recycled cell. */
 fn global_signal<T>(value: T) -> Signal<T> {
     arena.ensure()
     let previous = arena.scope_begin(0)
@@ -72,10 +72,10 @@ fn global_signal<T>(value: T) -> Signal<T> {
     return Signal { id: id }
 }
 
-/// Read the current value of `sig`. Reading inside a reactive scope (an
-/// `effect`, a `computed`, or the thunk behind any widget prop) records
-/// `sig` as a dependency of that scope, so a later `set` re-runs it.
-/// Call as `sig.get()`.
+/** *Read the current value of `sig`. Reading inside a reactive scope (an */
+/** *`effect`, a `computed`, or the thunk behind any widget prop) records */
+/** *`sig` as a dependency of that scope, so a later `set` re-runs it. */
+/** *Call as `sig.get()`. */
 fn get<T>(sig: Signal<T>) -> T {
     arena.ensure()
     // A memo behind `sig` may be stale; a read is the point of observation.
@@ -83,28 +83,28 @@ fn get<T>(sig: Signal<T>) -> T {
     track.note_read(sig.id)
     __sig_load(sig.id)
 }
-/// Write `value` into `sig`, then re-run every reactive scope that read it.
-/// Writing the value it already holds is a no-op: nothing is notified, so
-/// derivations built on `sig` do not recompute. Call as `sig.set(value)`.
+/** *Write `value` into `sig`, then re-run every reactive scope that read it. */
+/** *Writing the value it already holds is a no-op: nothing is notified, so */
+/** *derivations built on `sig` do not recompute. Call as `sig.set(value)`. */
 fn set<T>(sig: Signal<T>, value: T) {
     arena.ensure()
     __sig_store(sig.id, value)
 }
 
-/// Read `sig` *without* subscribing the enclosing scope to it. Use when an
-/// effect needs the current value but must not re-run when it changes —
-/// notably read-modify-write (`c.set(c.peek() + 1)` inside an effect).
+/** *Read `sig` *without* subscribing the enclosing scope to it. Use when an */
+/** *effect needs the current value but must not re-run when it changes — */
+/** *notably read-modify-write (`c.set(c.peek() + 1)` inside an effect). */
 fn peek<T>(sig: Signal<T>) -> T {
     arena.ensure()
     track.pull(sig.id)
     __sig_load(sig.id)
 }
 
-/// An optional signal as the optional reader an element slot takes. The
-/// compiler inserts these where a component forwards an `Option<Signal<T>>`
-/// prop to an `Option<fn() -> T>` one (`label = p.label`); the read happens
-/// inside the element's own binding, so it stays live. One per `T`: a
-/// generic `Option<fn() -> T>` does not monomorphize.
+/** *An optional signal as the optional reader an element slot takes. The */
+/** *compiler inserts these where a component forwards an `Option<Signal<T>>` */
+/** *prop to an `Option<fn() -> T>` one (`label = p.label`); the read happens */
+/** *inside the element's own binding, so it stays live. One per `T`: a */
+/** *generic `Option<fn() -> T>` does not monomorphize. */
 fn opt_reader_string(s: Option<Signal<string>>) -> Option<fn() -> string> {
     let sig = s.val
     let read = fn() -> string { return get(sig) }
@@ -132,8 +132,8 @@ fn opt_reader_int(s: Option<Signal<int>>) -> Option<fn() -> int> {
     return result.none(read)
 }
 
-/// Run `body` with dependency tracking suspended: signals read inside it
-/// become dependencies of nothing. Writes still notify as usual.
+/** *Run `body` with dependency tracking suspended: signals read inside it */
+/** *become dependencies of nothing. Writes still notify as usual. */
 fn untrack(body: fn()) {
     track.mute_begin()
     body()
@@ -142,10 +142,10 @@ fn untrack(body: fn()) {
 
 // --- interned handlers ----------------------------------------------------
 
-/// Intern a handler or thunk, and record it as owned by the open rebuild
-/// scope if there is one. A `Each`/`refit` rebuild interns fresh closures per
-/// row; when the host is torn down the recorded ids are freed and recycled,
-/// so streaming lists do not leak handler envs.
+/** *Intern a handler or thunk, and record it as owned by the open rebuild */
+/** *scope if there is one. A `Each`/`refit` rebuild interns fresh closures per */
+/** *row; when the host is torn down the recorded ids are freed and recycled, */
+/** *so streaming lists do not leak handler envs. */
 fn intern_fn(h: fn()) -> int {
     let id = runtime.intern_fn(h)
     arena.record_intern(id, arena.owner_now())
@@ -172,10 +172,10 @@ fn intern_str(h: fn() -> string) -> int {
 
 // --- scope owner ----------------------------------------------------------
 
-/// Slot parents currently being built, innermost last. `ui_push` / `ui_pop`
-/// bracket a `Box(...) { ... }` trailing block; the top of this stack is the
-/// owner of any reactive scope created inside that block, so an effect dies
-/// with the component's subtree instead of outliving it.
+/** *Slot parents currently being built, innermost last. `ui_push` / `ui_pop` */
+/** *bracket a `Box(...) { ... }` trailing block; the top of this stack is the */
+/** *owner of any reactive scope created inside that block, so an effect dies */
+/** *with the component's subtree instead of outliving it. */
 let mut ui_parents: []int = []int {}
 
 let mut ui_hooks_set: int = 0
@@ -189,7 +189,7 @@ fn ui_push(id: int) {
     push(ui_parents, id)
 }
 
-/// Pop the build stack back to `depth` (trap recovery).
+/** *Pop the build stack back to `depth` (trap recovery). */
 fn ui_trim(depth: int) {
     while ui_parents.len > depth {
         pop(ui_parents)
@@ -202,9 +202,9 @@ fn ui_pop() {
     }
 }
 
-/// Owner for a free-standing reactive scope: the `slot` parent currently
-/// being built. An effect created inside a component therefore dies with
-/// that component's subtree. 0 at top level — those live for the process.
+/** *Owner for a free-standing reactive scope: the `slot` parent currently */
+/** *being built. An effect created inside a component therefore dies with */
+/** *that component's subtree. 0 at top level — those live for the process. */
 fn effect_owner() -> int {
     if ui_parents.len > 0 {
         return ui_parents[ui_parents.len - 1]
@@ -219,15 +219,15 @@ fn effect_owner() -> int {
 // cells — the one generic store — so the open-scope stack itself is just ints
 // (signal ids) and needs no per-type copy of the machinery.
 
-/// A typed key for `provide` / `use_context`. The default travels on the
-/// handle, so lookups need no side table; `T` must be Copy, as for `Signal`.
+/** *A typed key for `provide` / `use_context`. The default travels on the */
+/** *handle, so lookups need no side table; `T` must be Copy, as for `Signal`. */
 struct Context<T> {
     id: int,
     default_value: T,
 }
 
 let mut ctx_next_id: int = 1
-/// Open `provide` scopes, as parallel stacks of (context id, value cell).
+/** *Open `provide` scopes, as parallel stacks of (context id, value cell). */
 let mut ctx_stack_ctx: []int = []int {}
 let mut ctx_stack_sig: []int = []int {}
 
@@ -250,7 +250,7 @@ fn ctx_pop() {
     pop(ctx_stack_sig)
 }
 
-/// Cell id of the topmost `provide` for `context_id`, or -1 when none is open.
+/** *Cell id of the topmost `provide` for `context_id`, or -1 when none is open. */
 fn ctx_cell(context_id: int) -> int {
     let n = ctx_stack_ctx.len
     let mut i = n
@@ -263,16 +263,16 @@ fn ctx_cell(context_id: int) -> int {
     return -1
 }
 
-/// Create a typed context whose value is `default_value` until something `provide`s
-/// one. `T` is inferred from `default_value`.
+/** *Create a typed context whose value is `default_value` until something `provide`s */
+/** *one. `T` is inferred from `default_value`. */
 fn create_context<T>(default_value: T) -> Context<T> {
     arena.ensure()
     return Context { id: ctx_take_id(), default_value: default_value }
 }
 
-/// Make `value` the current binding of `ctx` for the dynamic extent of
-/// `body`. Call as `provide(ctx, value, fn() { ... })`; scopes nest, and the
-/// innermost binding wins.
+/** *Make `value` the current binding of `ctx` for the dynamic extent of */
+/** *`body`. Call as `provide(ctx, value, fn() { ... })`; scopes nest, and the */
+/** *innermost binding wins. */
 fn provide<T>(ctx: Context<T>, value: T, body: fn()) {
     arena.ensure()
     let cell = signal(value)
@@ -281,8 +281,8 @@ fn provide<T>(ctx: Context<T>, value: T, body: fn()) {
     ctx_pop()
 }
 
-/// The topmost provided value for `ctx`, else the default it was created with.
-/// Reading a context does not subscribe the caller to anything.
+/** *The topmost provided value for `ctx`, else the default it was created with. */
+/** *Reading a context does not subscribe the caller to anything. */
 fn use_context<T>(ctx: Context<T>) -> T {
     arena.ensure()
     let signal_id = ctx_cell(ctx.id)
@@ -301,22 +301,22 @@ fn use_context<T>(ctx: Context<T>) -> T {
 // cached value. Both are ordinary reactive scopes — they read signals through
 // `get`, so their dependencies are discovered, not declared.
 
-/// Run `body` once now, then again whenever a signal it read changes.
-/// Effects are the edges of the graph: `body` writes a signal, an arena
-/// field, or the outside world — it never rebuilds the tree. Prefer a text
-/// thunk (`Text("{{n.get()}}")`) for anything a widget can express; reach
-/// for `effect` for the rest (logging, sync, imperative host calls).
-///
-/// ```
-/// let n = zeus.signal(0)
-/// zeus.effect(|| { fmt.println("n is now", n.get()) })
-/// ```
+/** *Run `body` once now, then again whenever a signal it read changes. */
+/** *Effects are the edges of the graph: `body` writes a signal, an arena */
+/** *field, or the outside world — it never rebuilds the tree. Prefer a text */
+/** *thunk (`Text("{{n.get()}}")`) for anything a widget can express; reach */
+/** *for `effect` for the rest (logging, sync, imperative host calls). */
+/** */
+/** *``` */
+/** *let n = zeus.signal(0) */
+/** *zeus.effect(|| { fmt.println("n is now", n.get()) }) */
+/** *``` */
 fn effect(body: fn()) {
     effect_eid(body)
 }
 
-/// `effect`, returning the effect id so a `computed` can record itself as the
-/// producer of its output signal (see `track.mark_produced`).
+/** *`effect`, returning the effect id so a `computed` can record itself as the */
+/** *producer of its output signal (see `track.mark_produced`). */
 fn effect_eid(body: fn()) -> int {
     arena.ensure()
     let effect_id = track.alloc(intern_fn(body), effect_owner())
@@ -327,46 +327,46 @@ fn effect_eid(body: fn()) -> int {
     return effect_id
 }
 
-/// Batch `body`'s signal writes: each `set` re-runs no effect until the
-/// outermost `batch` returns, then every affected effect runs once, in
-/// dependency order. Use it when a handler writes several signals that feed
-/// the same derivation, so it recomputes once instead of once per write.
-///
-/// ```
-/// zeus.batch(fn() {
-///     x.set(1)
-///     y.set(2)
-/// })
-/// ```
+/** *Batch `body`'s signal writes: each `set` re-runs no effect until the */
+/** *outermost `batch` returns, then every affected effect runs once, in */
+/** *dependency order. Use it when a handler writes several signals that feed */
+/** *the same derivation, so it recomputes once instead of once per write. */
+/** */
+/** *``` */
+/** *zeus.batch(fn() { */
+/** *x.set(1) */
+/** *y.set(2) */
+/** *}) */
+/** *``` */
 fn batch(body: fn()) {
     track.batch_begin()
     body()
     arena.batch_end()
 }
 
-/// Run `body` in a nested computation scope: it runs now and re-runs whenever a
-/// signal it read changes, and **every reactive computation created inside it is
-/// disposed before it re-runs**. Use it for a group of derived state that must
-/// not outlive the run that created it (a per-run subscription, a transient
-/// derivation). A plain `effect` instead keeps what it created across re-runs,
-/// so its children are owned by the surrounding node, not by the effect.
-///
-/// The scope owns the arena too: signals and interned handlers created in its
-/// body are recycled with it, so a scope that re-runs on every change does not
-/// grow the arena. That is why structure belongs *outside* a scope — a re-run
-/// must not build the tree.
-///
-/// ```
-/// zeus.scope(|| {
-///     let room = active_room.get()
-///     zeus.effect(|| subscribe(room))   // disposed when `active_room` moves
-/// })
-/// ```
+/** *Run `body` in a nested computation scope: it runs now and re-runs whenever a */
+/** *signal it read changes, and **every reactive computation created inside it is */
+/** *disposed before it re-runs**. Use it for a group of derived state that must */
+/** *not outlive the run that created it (a per-run subscription, a transient */
+/** *derivation). A plain `effect` instead keeps what it created across re-runs, */
+/** *so its children are owned by the surrounding node, not by the effect. */
+/** */
+/** *The scope owns the arena too: signals and interned handlers created in its */
+/** *body are recycled with it, so a scope that re-runs on every change does not */
+/** *grow the arena. That is why structure belongs *outside* a scope — a re-run */
+/** *must not build the tree. */
+/** */
+/** *``` */
+/** *zeus.scope(|| { */
+/** *let room = active_room.get() */
+/** *zeus.effect(|| subscribe(room))   // disposed when `active_room` moves */
+/** *}) */
+/** *``` */
 fn scope(body: fn()) {
     scope_eid(body)
 }
 
-/// `scope`, returning the scope's effect id.
+/** *`scope`, returning the scope's effect id. */
 fn scope_eid(body: fn()) -> int {
     arena.ensure()
     let effect_id = track.alloc_scope(intern_fn(body), effect_owner())
@@ -375,30 +375,30 @@ fn scope_eid(body: fn()) -> int {
     return effect_id
 }
 
-/// Register `body` to run before the enclosing `effect` re-runs, so a
-/// subscription the effect opened is closed before its body runs again.
-/// Call inside an effect; a no-op outside one.
+/** *Register `body` to run before the enclosing `effect` re-runs, so a */
+/** *subscription the effect opened is closed before its body runs again. */
+/** *Call inside an effect; a no-op outside one. */
 fn on_cleanup(body: fn()) {
     track.set_cleanup(track.current_eid(), intern_fn(body))
 }
 
-/// A cached derivation, generic over its value type. `calc` runs now, and
-/// re-runs only when one of the signals *it* read actually changed value — not on
-/// every read, and not when some unrelated signal moves. The result is a plain
-/// `Signal<T>`, so a reader subscribes to the derivation rather than to its
-/// inputs.
-///
-/// A derivation is lazy: when an input moves it is only marked stale, and the
-/// body re-runs when something reads it (or when the frame's flush reaches one of
-/// its readers). Each input's generation is recorded at read time, so a memo
-/// whose inputs did not in fact move is skipped instead of recomputed.
-///
-/// ```
-/// let first = zeus.signal("Ada")
-/// let last = zeus.signal("Lovelace")
-/// let full = zeus.computed(|| { "{{first.get()}} {{last.get()}}" })
-/// zeus.Text("{{full.get()}}")
-/// ```
+/** *A cached derivation, generic over its value type. `calc` runs now, and */
+/** *re-runs only when one of the signals *it* read actually changed value — not on */
+/** *every read, and not when some unrelated signal moves. The result is a plain */
+/** *`Signal<T>`, so a reader subscribes to the derivation rather than to its */
+/** *inputs. */
+/** */
+/** *A derivation is lazy: when an input moves it is only marked stale, and the */
+/** *body re-runs when something reads it (or when the frame's flush reaches one of */
+/** *its readers). Each input's generation is recorded at read time, so a memo */
+/** *whose inputs did not in fact move is skipped instead of recomputed. */
+/** */
+/** *``` */
+/** *let first = zeus.signal("Ada") */
+/** *let last = zeus.signal("Lovelace") */
+/** *let full = zeus.computed(|| { "{{first.get()}} {{last.get()}}" }) */
+/** *zeus.Text("{{full.get()}}") */
+/** *``` */
 fn computed<T>(calc: fn() -> T) -> Signal<T> {
     arena.ensure()
     // The owner that will dispose this memo: the innermost live `scope`, else the
@@ -434,25 +434,25 @@ fn computed<T>(calc: fn() -> T) -> Signal<T> {
     return out
 }
 
-/// `computed` for a string derivation.
+/** *`computed` for a string derivation. */
 fn computed_str(calc: fn() -> string) -> Signal<string> {
     return computed(calc)
 }
 
-/// `computed` for a bool derivation.
+/** *`computed` for a bool derivation. */
 fn computed_bool(calc: fn() -> bool) -> Signal<bool> {
     return computed(calc)
 }
 
-/// Wrap a raw arena slot as a `Node`. Ids are the only thing the engine
-/// stores, so every allocator hands one back through here rather than
-/// letting callers build a `Node` literal and desync from the arena.
+/** *Wrap a raw arena slot as a `Node`. Ids are the only thing the engine */
+/** *stores, so every allocator hands one back through here rather than */
+/** *letting callers build a `Node` literal and desync from the arena. */
 fn node_handle(id: int) -> Node {
     return Node { id: id }
 }
 // --- unstyled allocators ---
-/// Kinds: 1 box/row/col, 2 grid, 3 label, 4 button, 5 spacer, 6 progress,
-/// 7 toggle, 8 check, 9 overlay, 10 input, 11 scroll, 12 svg, 13 slider.
+/** *Kinds: 1 box/row/col, 2 grid, 3 label, 4 button, 5 spacer, 6 progress, */
+/** *7 toggle, 8 check, 9 overlay, 10 input, 11 scroll, 12 svg, 13 slider. */
 
 fn raw_row() -> Node {
     let id = arena.alloc_node(1)
@@ -535,12 +535,12 @@ fn raw_hover(node: Node, sig: Signal<int>) -> Node {
     return node
 }
 
-/// Text currently in an input (typed buffer, else placeholder).
+/** *Text currently in an input (typed buffer, else placeholder). */
 fn input_value(node: Node) -> string {
     return arena.input_shown(node.id)
 }
 
-/// Replace the typed buffer for `node`. No-op if it is not an input.
+/** *Replace the typed buffer for `node`. No-op if it is not an input. */
 fn set_input(node: Node, text: string) -> Node {
     if node.id <= 0 {
         return node
@@ -558,21 +558,21 @@ fn set_input(node: Node, text: string) -> Node {
 
 // --- tree ---
 
-/// How many handler invokes were refused because the interned slot held a
-/// closure of another signature. Zero is the contract. The intern table is
-/// shared by the void / int / bool / string kinds, so a non-zero count means a
-/// handler was interned as one kind and invoked as another — which used to be
-/// undefined behaviour: a garbage return value on native (it landed in a signal
-/// and read as a jittering UI) and a hard trap on wasm, which type-checks the
-/// call. Exposed so a test can pin it at zero rather than hope.
+/** *How many handler invokes were refused because the interned slot held a */
+/** *closure of another signature. Zero is the contract. The intern table is */
+/** *shared by the void / int / bool / string kinds, so a non-zero count means a */
+/** *handler was interned as one kind and invoked as another — which used to be */
+/** *undefined behaviour: a garbage return value on native (it landed in a signal */
+/** *and read as a jittering UI) and a hard trap on wasm, which type-checks the */
+/** *call. Exposed so a test can pin it at zero rather than hope. */
 fn intern_kind_mismatch_count() -> int {
     return runtime.intern_kind_mismatch_count()
 }
 
-/// Run `build` in the current slot, then aim the node it just attached at
-/// `handler`. A menu trigger is that node: it is the hit target, including
-/// when it floats above another menu's scrim, so the toggle has to sit on
-/// it rather than on the host behind it.
+/** *Run `build` in the current slot, then aim the node it just attached at */
+/** *`handler`. A menu trigger is that node: it is the hit target, including */
+/** *when it floats above another menu's scrim, so the toggle has to sit on */
+/** *it rather than on the host behind it. */
 fn click_built(build: fn(), handler: fn()) -> Node {
     let slot_id = current_slot()
     let mut before = 0
@@ -594,7 +594,7 @@ fn click_built(build: fn(), handler: fn()) -> Node {
     return node_handle(id)
 }
 
-/// Attach `node` under `parent`. Used by `ui_emit` for trailing blocks.
+/** *Attach `node` under `parent`. Used by `ui_emit` for trailing blocks. */
 fn child(parent: Node, node: Node) -> Node {
     arena.ensure()
     push(nodes.tree[parent.id].kids, node.id)
@@ -603,9 +603,9 @@ fn child(parent: Node, node: Node) -> Node {
     return parent
 }
 
-/// Run `handler` now and again whenever a `Signal` it `get`s changes.
-/// The closure only updates paint state on existing nodes — it must not
-/// call `child` or rebuild the tree.
+/** *Run `handler` now and again whenever a `Signal` it `get`s changes. */
+/** *The closure only updates paint state on existing nodes — it must not */
+/** *call `child` or rebuild the tree. */
 fn styled(node: Node, handler: fn()) -> Node {
     arena.ensure()
     let effect_id = track.alloc(intern_fn(handler), node.id)
@@ -619,7 +619,7 @@ fn styled(node: Node, handler: fn()) -> Node {
 // rather than by re-running a build closure. `child` above is the append form;
 // `insert_child(parent, node, count)` says the same thing at an explicit index.
 
-/// Number of direct children of `node`.
+/** *Number of direct children of `node`. */
 fn child_count(node: Node) -> int {
     arena.ensure()
     if node.id <= 0 {
@@ -631,8 +631,8 @@ fn child_count(node: Node) -> int {
     return nodes.tree[node.id].kids.len
 }
 
-/// The `i`-th direct child of `node` (0-based), or the empty handle when out of
-/// range.
+/** *The `i`-th direct child of `node` (0-based), or the empty handle when out of */
+/** *range. */
 fn child_at(node: Node, i: int) -> Node {
     arena.ensure()
     if node.id <= 0 {
@@ -650,13 +650,13 @@ fn child_at(node: Node, i: int) -> Node {
     return node_handle(nodes.tree[node.id].kids[i])
 }
 
-/// Position of `node` in `parent`'s children, or -1 when it is not one of them.
+/** *Position of `node` in `parent`'s children, or -1 when it is not one of them. */
 fn child_index(parent: Node, node: Node) -> int {
     arena.ensure()
     return nodes.child_index(parent.id, node.id)
 }
 
-/// The parent of `node`, or the empty handle at the root.
+/** *The parent of `node`, or the empty handle at the root. */
 fn parent_of(node: Node) -> Node {
     arena.ensure()
     if node.id <= 0 {
@@ -668,17 +668,17 @@ fn parent_of(node: Node) -> Node {
     return node_handle(nodes.tree[node.id].parent)
 }
 
-/// Attach `node` under `parent` at `index` (clamped to `0..child_count`).
-/// Detaches from any previous parent first, so a node has one parent. Returns
-/// `parent` for chaining.
+/** *Attach `node` under `parent` at `index` (clamped to `0..child_count`). */
+/** *Detaches from any previous parent first, so a node has one parent. Returns */
+/** *`parent` for chaining. */
 fn insert_child(parent: Node, node: Node, index: int) -> Node {
     arena.ensure()
     arena.child_insert(parent.id, node.id, index)
     return parent
 }
 
-/// Detach `node` from `parent`. No-op when `parent` does not hold it, so a
-/// stale handle cannot pull a node out of an unrelated subtree.
+/** *Detach `node` from `parent`. No-op when `parent` does not hold it, so a */
+/** *stale handle cannot pull a node out of an unrelated subtree. */
 fn remove_child(parent: Node, node: Node) -> Node {
     arena.ensure()
     if parent.id > 0 {
@@ -693,8 +693,8 @@ fn remove_child(parent: Node, node: Node) -> Node {
     return parent
 }
 
-/// Move `node` to position `index` under `parent`, which must already hold it.
-/// Reorder without rebuilding: ids, focus, and per-row state survive.
+/** *Move `node` to position `index` under `parent`, which must already hold it. */
+/** *Reorder without rebuilding: ids, focus, and per-row state survive. */
 fn move_child(parent: Node, node: Node, index: int) -> Node {
     arena.ensure()
     arena.child_move(parent.id, node.id, index)
@@ -708,7 +708,7 @@ fn root(node: Node) -> Node {
 }
 
 // --- style ---
-/// Field writers used by `Box` / `apply_int`. Not app-facing.
+/** *Field writers used by `Box` / `apply_int`. Not app-facing. */
 
 fn grow(node: Node, weight: int) -> Node {
     nodes.lay[node.id].grow = weight
@@ -721,8 +721,8 @@ fn shrink(node: Node, weight: int) -> Node {
     return node
 }
 
-/// Inset all four edges. Padding lives on the node rather than on a wrapper
-/// box so a widget stays one node and layout stays one pass.
+/** *Inset all four edges. Padding lives on the node rather than on a wrapper */
+/** *box so a widget stays one node and layout stays one pass. */
 fn set_padding(node: Node, all: int) -> Node {
     nodes.lay[node.id].pad = u16(all)
     nodes.lay[node.id].pad_t = u16(all)
@@ -732,41 +732,41 @@ fn set_padding(node: Node, all: int) -> Node {
     touched(node.id, 1)
     return node
 }
-/// Inset left and right only — the common case for control chrome, where
-/// horizontal breathing room is set independently of height.
+/** *Inset left and right only — the common case for control chrome, where */
+/** *horizontal breathing room is set independently of height. */
 fn set_padding_x(node: Node, px: int) -> Node {
     nodes.lay[node.id].pad_l = u16(px)
     nodes.lay[node.id].pad_r = u16(px)
     touched(node.id, 1)
     return node
 }
-/// Inset top and bottom only, the vertical half of `set_padding_x`.
+/** *Inset top and bottom only, the vertical half of `set_padding_x`. */
 fn set_padding_y(node: Node, py: int) -> Node {
     nodes.lay[node.id].pad_t = u16(py)
     nodes.lay[node.id].pad_b = u16(py)
     touched(node.id, 1)
     return node
 }
-/// Inset one edge. The per-edge setters exist so a recipe can override a
-/// single side without restating the other three.
+/** *Inset one edge. The per-edge setters exist so a recipe can override a */
+/** *single side without restating the other three. */
 fn set_padding_top(node: Node, px: int) -> Node {
     nodes.lay[node.id].pad_t = u16(px)
     touched(node.id, 1)
     return node
 }
-/// Inset one edge; see `set_padding_top`.
+/** *Inset one edge; see `set_padding_top`. */
 fn set_padding_right(node: Node, px: int) -> Node {
     nodes.lay[node.id].pad_r = u16(px)
     touched(node.id, 1)
     return node
 }
-/// Inset one edge; see `set_padding_top`.
+/** *Inset one edge; see `set_padding_top`. */
 fn set_padding_bottom(node: Node, px: int) -> Node {
     nodes.lay[node.id].pad_b = u16(px)
     touched(node.id, 1)
     return node
 }
-/// Inset one edge; see `set_padding_top`.
+/** *Inset one edge; see `set_padding_top`. */
 fn set_padding_left(node: Node, px: int) -> Node {
     nodes.lay[node.id].pad_l = u16(px)
     touched(node.id, 1)
@@ -829,29 +829,29 @@ fn border_color(node: Node, rgb: int) -> Node {
     return node
 }
 
-/// Space between children. Gap belongs to the parent, not to each child's
-/// margin, so adding or removing a child cannot leave a stray edge gap.
+/** *Space between children. Gap belongs to the parent, not to each child's */
+/** *margin, so adding or removing a child cannot leave a stray edge gap. */
 fn set_spacing(node: Node, g: int) -> Node {
     nodes.lay[node.id].gap = u16(g)
     touched(node.id, 1)
     return node
 }
-/// Row-axis gap for wrapped and grid layouts, where the two axes need
-/// different spacing and one `set_spacing` cannot express it.
+/** *Row-axis gap for wrapped and grid layouts, where the two axes need */
+/** *different spacing and one `set_spacing` cannot express it. */
 fn set_spacing_row(node: Node, g: int) -> Node {
     nodes.lay[node.id].gap_row = u16(g)
     touched(node.id, 1)
     return node
 }
-/// Column-axis gap; the other half of `set_spacing_row`.
+/** *Column-axis gap; the other half of `set_spacing_row`. */
 fn set_spacing_col(node: Node, g: int) -> Node {
     nodes.lay[node.id].gap_col = u16(g)
     touched(node.id, 1)
     return node
 }
 
-/// Default node width is 100% of the parent. `.set_width(px)` pins a pixel width
-/// and clears the percentage. `.set_width(-1)` restores the 100% default.
+/** *Default node width is 100% of the parent. `.set_width(px)` pins a pixel width */
+/** *and clears the percentage. `.set_width(-1)` restores the 100% default. */
 fn set_width(node: Node, px: int) -> Node {
     if px < 0 {
         nodes.lay[node.id].explicit_width = -1
@@ -864,31 +864,31 @@ fn set_width(node: Node, px: int) -> Node {
     touched(node.id, 1)
     return node
 }
-/// Pin a pixel height, clearing any percentage. The chaining form of the
-/// `height` prop, for code that already holds a `Node` (recipes, engine
-/// paths) and cannot go back through a props struct.
+/** *Pin a pixel height, clearing any percentage. The chaining form of the */
+/** *`height` prop, for code that already holds a `Node` (recipes, engine */
+/** *paths) and cannot go back through a props struct. */
 fn set_height(node: Node, px: int) -> Node {
     nodes.lay[node.id].explicit_height = px
     touched(node.id, 1)
     return node
 }
 
-/// Zero basis: the node's measured content no longer sets its row slot width;
-/// `grow` then divides the whole free line evenly. This is the table recipe —
-/// header labels and row cells all use `set_flex_basis_zero(...).grow(1)`, so every column
-/// boundary comes from the row width alone, not from text lengths. Cells that
-/// must keep a fixed pixel width use `.set_width(px)` instead.
+/** *Zero basis: the node's measured content no longer sets its row slot width; */
+/** *`grow` then divides the whole free line evenly. This is the table recipe — */
+/** *header labels and row cells all use `set_flex_basis_zero(...).grow(1)`, so every column */
+/** *boundary comes from the row width alone, not from text lengths. Cells that */
+/** *must keep a fixed pixel width use `.set_width(px)` instead. */
 fn set_flex_basis_zero(node: Node) -> Node {
     nodes.lay[node.id].w_pct = 0
     nodes.lay[node.id].w_pct_set = 0
     touched(node.id, 1)
     return node
 }
-/// `.set_width(px).set_height(px)` in one call. Named `size_px`, not `size`: themed widgets
-/// expose `.size()` for the sm/md/lg token, and two chain methods sharing a
-/// name and a `(Node, int)` shape resolve by import order — which is how
-/// `.size(ui.sm())` once silently became a 0x0 box. The `_px` suffix also
-/// keeps the unit at the call site, next to the themed token form.
+/** *`.set_width(px).set_height(px)` in one call. Named `size_px`, not `size`: themed widgets */
+/** *expose `.size()` for the sm/md/lg token, and two chain methods sharing a */
+/** *name and a `(Node, int)` shape resolve by import order — which is how */
+/** *`.size(ui.sm())` once silently became a 0x0 box. The `_px` suffix also */
+/** *keeps the unit at the call site, next to the themed token form. */
 fn size_px(node: Node, px: int) -> Node {
     return node.set_width(px).set_height(px)
 }
@@ -904,40 +904,40 @@ fn height_pct(node: Node, percent_value: int) -> Node {
     touched(node.id, 1)
     return node
 }
-/// Floor the width. Min/max bounds are how a flexible child stays readable
-/// when its parent shrinks, without giving up `grow`.
+/** *Floor the width. Min/max bounds are how a flexible child stays readable */
+/** *when its parent shrinks, without giving up `grow`. */
 fn set_min_width(node: Node, px: int) -> Node {
     nodes.lay[node.id].min_w = px
     touched(node.id, 1)
     return node
 }
-/// Cap the width, so a growing child cannot run past a comfortable measure.
+/** *Cap the width, so a growing child cannot run past a comfortable measure. */
 fn set_max_width(node: Node, px: int) -> Node {
     nodes.lay[node.id].max_w = px
     touched(node.id, 1)
     return node
 }
-/// Floor the height; the vertical counterpart of `set_min_width`.
+/** *Floor the height; the vertical counterpart of `set_min_width`. */
 fn set_min_height(node: Node, px: int) -> Node {
     nodes.lay[node.id].min_h = px
     touched(node.id, 1)
     return node
 }
-/// Cap the height, so scrollable content clips instead of stretching.
+/** *Cap the height, so scrollable content clips instead of stretching. */
 fn set_max_height(node: Node, px: int) -> Node {
     nodes.lay[node.id].max_h = px
     touched(node.id, 1)
     return node
 }
-/// Make a grid responsive. `px > 0` is a minimum *cell* width, in dp like
-/// `gap` (not a scaled style prop — the layout it feeds is unscaled). `px == 0`
-/// also turns it on but takes the cell width from the children: the widest
-/// child's natural width is what a column has to hold, so the grid fits as
-/// many as the content allows, capped by `columns`. `px < 0` turns it off and
-/// restores the fixed `columns`.
-///
-/// Reached from `GridConfig.autoColumns`; public so a caller building a node
-/// by hand can set it.
+/** *Make a grid responsive. `px > 0` is a minimum *cell* width, in dp like */
+/** *`gap` (not a scaled style prop — the layout it feeds is unscaled). `px == 0` */
+/** *also turns it on but takes the cell width from the children: the widest */
+/** *child's natural width is what a column has to hold, so the grid fits as */
+/** *many as the content allows, capped by `columns`. `px < 0` turns it off and */
+/** *restores the fixed `columns`. */
+/** */
+/** *Reached from `GridConfig.autoColumns`; public so a caller building a node */
+/** *by hand can set it. */
 fn set_auto_columns(node: Node, px: int) -> Node {
     // Both fields move together, so `grid_auto != 0` never leaves a stale
     // floor behind for `grid_cols_at` to pick up.
@@ -1055,23 +1055,23 @@ fn z_index(node: Node, z: int) -> Node {
     return node
 }
 
-/// Fill color as a packed rgb int. Takes an int, not a string, because it
-/// is the post-parse form the scene writes — call sites pass `"#rrggbb"`
-/// through the `background` prop and `parse_hex_color` converts once.
+/** *Fill color as a packed rgb int. Takes an int, not a string, because it */
+/** *is the post-parse form the scene writes — call sites pass `"#rrggbb"` */
+/** *through the `background` prop and `parse_hex_color` converts once. */
 fn set_background(node: Node, rgb: int) -> Node {
     nodes.look[node.id].bg = rgb
     touched(node.id, 0)
     return node
 }
 
-/// Second stop of a vertical gradient (`bg` → `bg2`). Solid fill when unset.
+/** *Second stop of a vertical gradient (`bg` → `bg2`). Solid fill when unset. */
 fn set_background_end(node: Node, rgb: int) -> Node {
     nodes.look[node.id].bg2 = rgb
     touched(node.id, 0)
     return node
 }
-/// Foreground (text and glyph) color as a packed rgb int; the `color` prop
-/// is the string-facing form.
+/** *Foreground (text and glyph) color as a packed rgb int; the `color` prop */
+/** *is the string-facing form. */
 fn set_color(node: Node, rgb: int) -> Node {
     nodes.look[node.id].fg = rgb
     touched(node.id, 0)
@@ -1083,28 +1083,28 @@ fn radius(node: Node, px: int) -> Node {
     return node
 }
 
-/// All four corners at once, clockwise from the top-left. `radius` stays the
-/// uniform fallback for anything not set here.
+/** *All four corners at once, clockwise from the top-left. `radius` stays the */
+/** *uniform fallback for anything not set here. */
 fn radius4(node: Node, tl: int, tr: int, br: int, bl: int) -> Node {
     nodes.set_corners(node.id, tl, tr, br, bl)
     return node
 }
 
-/// One corner: 0 top-left, 1 top-right, 2 bottom-right, 3 bottom-left.
+/** *One corner: 0 top-left, 1 top-right, 2 bottom-right, 3 bottom-left. */
 fn radius_corner(node: Node, corner: int, px: int) -> Node {
     nodes.set_corner(node.id, corner, px)
     return node
 }
 
-/// Round the top pair of corners, near `radius`'s bookkeeping: a top-rounded
-/// sheet / tab header, with the bottom left square or whatever `radius` says.
+/** *Round the top pair of corners, near `radius`'s bookkeeping: a top-rounded */
+/** *sheet / tab header, with the bottom left square or whatever `radius` says. */
 fn radius_top(node: Node, px: int) -> Node {
     nodes.set_corner(node.id, 0, px)
     nodes.set_corner(node.id, 1, px)
     return node
 }
 
-/// Round the bottom pair of corners.
+/** *Round the bottom pair of corners. */
 fn radius_bottom(node: Node, px: int) -> Node {
     nodes.set_corner(node.id, 2, px)
     nodes.set_corner(node.id, 3, px)
@@ -1127,19 +1127,19 @@ fn font(node: Node, px: int) -> Node {
     return node
 }
 
-/// Rotate a text node `deg` clockwise on screen around its top-left corner
-/// (0 = horizontal). Used for chart axis labels that must not collide.
+/** *Rotate a text node `deg` clockwise on screen around its top-left corner */
+/** *(0 = horizontal). Used for chart axis labels that must not collide. */
 fn text_rot(node: Node, deg: int) -> Node {
     nodes.look[node.id].text_rot = u16(deg)
     touched(node.id, 0)
     return node
 }
 
-/// Truncate this label with a trailing `…` when it is wider than its box,
-/// instead of overflowing. Opt-in because overflow is the right default for
-/// pinned and rotated chart text. Layout also lets a truncating label absorb
-/// a row deficit, so `Table` cells, `Select` triggers, chips, and tabs
-/// narrow rather than pushing siblings onto a second line.
+/** *Truncate this label with a trailing `…` when it is wider than its box, */
+/** *instead of overflowing. Opt-in because overflow is the right default for */
+/** *pinned and rotated chart text. Layout also lets a truncating label absorb */
+/** *a row deficit, so `Table` cells, `Select` triggers, chips, and tabs */
+/** *narrow rather than pushing siblings onto a second line. */
 fn text_ellipsis(node: Node) -> Node {
     nodes.look[node.id].ellipsis = 1
     touched(node.id, 1)
@@ -1147,8 +1147,8 @@ fn text_ellipsis(node: Node) -> Node {
 }
 
 // --- reactivity ---
-/// `show` / `show_eq` / `show_ne` / `show_ge` / `show_le` hide a node from
-/// layout when the predicate is false.
+/** *`show` / `show_eq` / `show_ne` / `show_ge` / `show_le` hide a node from */
+/** *layout when the predicate is false. */
 
 fn bind(label: Node, sig: Signal<int>) -> Node {
     nodes.ui[label.id].bind_sig = sig.id
@@ -1170,8 +1170,8 @@ fn click() -> int {
     return 1
 }
 
-/// Attach a handler for an engine event code. The generic form behind
-/// `on_click`; event codes keep the arena free of per-event fields.
+/** *Attach a handler for an engine event code. The generic form behind */
+/** *`on_click`; event codes keep the arena free of per-event fields. */
 fn on_event(node: Node, event: int, handler: fn()) -> Node {
     if event == 1 {
         nodes.ui[node.id].click_fn = intern_fn(handler)
@@ -1179,7 +1179,7 @@ fn on_event(node: Node, event: int, handler: fn()) -> Node {
     return node
 }
 
-/// Click handler. `n.on_click(h)` is `n.on(zeus.click(), h)`.
+/** *Click handler. `n.on_click(h)` is `n.on(zeus.click(), h)`. */
 fn on_click(node: Node, handler: fn()) -> Node {
     return on_event(node, click(), handler)
 }
@@ -1208,17 +1208,17 @@ fn show_ne(node: Node, sig: Signal<int>, value: int) -> Node {
     return node
 }
 // --- keyboard ---
-/// A chord on a focused node resolves to a named action; a handler on that
-/// same node writes a signal. App remaps (`map_key` / `remap_key`) still use
-/// the action name, so a shortcut can move without the Component changing.
-/// Context is the family of the first action (`button.press` → `button`).
-///
-/// mode: 0 inc, 1 toggle, 2 set, 3 add — the same codes on_click_* uses.
+/** *A chord on a focused node resolves to a named action; a handler on that */
+/** *same node writes a signal. App remaps (`map_key` / `remap_key`) still use */
+/** *the action name, so a shortcut can move without the Component changing. */
+/** *Context is the family of the first action (`button.press` → `button`). */
+/** */
+/** *mode: 0 inc, 1 toggle, 2 set, 3 add — the same codes on_click_* uses. */
 
-/// Action name for a `key` prop: the caller's, else one derived from the
-/// chord. The `key.` family becomes the keymap context, so every
-/// prop-bound shortcut shares one context and the innermost focused node
-/// wins — which is what "the same chord on two widgets" should do.
+/** *Action name for a `key` prop: the caller's, else one derived from the */
+/** *chord. The `key.` family becomes the keymap context, so every */
+/** *prop-bound shortcut shares one context and the innermost focused node */
+/** *wins — which is what "the same chord on two widgets" should do. */
 fn key_action_name(spec: string, action: string) -> string {
     if action.len > 0 {
         return action
@@ -1226,8 +1226,8 @@ fn key_action_name(spec: string, action: string) -> string {
     return "key.{{spec}}"
 }
 
-/// Install a `key` prop: map the chord to an action, then bind the action to
-/// `handler_fn` (an interned id). Node-scoped unless `is_global`.
+/** *Install a `key` prop: map the chord to an action, then bind the action to */
+/** *`handler_fn` (an interned id). Node-scoped unless `is_global`. */
 fn install_key(node: Node, spec: string, action: string, handler_fn: int, is_global: bool) -> Node {
     if spec.len == 0 {
         return node
@@ -1255,42 +1255,42 @@ fn install_key(node: Node, spec: string, action: string, handler_fn: int, is_glo
 // appends the caller's bindings to its own (`keys_concat(own, p.keys)`), so
 // both stay active, and the list is data a devtools pane can show.
 
-/// One keyboard action on an element.
+/** *One keyboard action on an element. */
 struct KeyBind {
-    /// `"cmd+s"`, `"ctrl+shift+p"`, or a sequence like `"g d"`.
+    /** *`"cmd+s"`, `"ctrl+shift+p"`, or a sequence like `"g d"`. */
     chord: string,
-    /// Name the chord resolves to, so an app can remap it with `remap_key`
-    /// without touching the element. `""` = `"key.<chord>"`.
+    /** *Name the chord resolves to, so an app can remap it with `remap_key` */
+    /** *without touching the element. `""` = `"key.<chord>"`. */
     action: string = "",
-    /// What the chord runs. Absent = the element's `on_click`, so a button and
-    /// its shortcut share one handler (`key_bind_click`).
+    /** *What the chord runs. Absent = the element's `on_click`, so a button and */
+    /** *its shortcut share one handler (`key_bind_click`). */
     run: Option<fn()> = none,
-    /// true = fires wherever focus is; false = only while focus is on this
-    /// element or inside it.
+    /** *true = fires wherever focus is; false = only while focus is on this */
+    /** *element or inside it. */
     global: bool = false,
 }
 
-/// `spec` runs `run` while focus is on the element (or inside it).
+/** *`spec` runs `run` while focus is on the element (or inside it). */
 fn key_bind(spec: string, action: string, run: fn()) -> KeyBind {
     return KeyBind(chord = spec, action = action, run = run)
 }
 
-/// `spec` runs `run` wherever focus is.
+/** *`spec` runs `run` wherever focus is. */
 fn key_bind_global(spec: string, action: string, run: fn()) -> KeyBind {
     return KeyBind(chord = spec, action = action, run = run, global = true)
 }
 
-/// `spec` presses the element: it runs the element's `on_click`.
+/** *`spec` presses the element: it runs the element's `on_click`. */
 fn key_bind_click(spec: string) -> KeyBind {
     return KeyBind(chord = spec)
 }
 
-/// No bindings: the default of every `keys` prop.
+/** *No bindings: the default of every `keys` prop. */
 fn no_keys() -> []KeyBind {
     return []KeyBind {}
 }
 
-/// `own` followed by `more`: a component's bindings plus its caller's.
+/** *`own` followed by `more`: a component's bindings plus its caller's. */
 fn keys_concat(own: []KeyBind, more: []KeyBind) -> []KeyBind {
     let mut out = []KeyBind {}
     for i in 0..own.len {
@@ -1302,8 +1302,8 @@ fn keys_concat(own: []KeyBind, more: []KeyBind) -> []KeyBind {
     return out
 }
 
-/// Install `keys` on `node`. A binding with no `run` uses the node's click
-/// handler, so install after `on_click`.
+/** *Install `keys` on `node`. A binding with no `run` uses the node's click */
+/** *handler, so install after `on_click`. */
 fn install_keys(node: Node, keys: []KeyBind) -> Node {
     for i in 0..keys.len {
         let k = keys[i]
@@ -1341,10 +1341,10 @@ fn capture_text(node: Node) -> Node {
     return node
 }
 
-/// Chord → action on this node. The action family (`button.press` → `button`)
-/// is the keymap context; `key_context` is only needed to override that name.
-/// Implies `.focusable()` — a node with a key binding needs focus to receive
-/// it, so components don't chain both.
+/** *Chord → action on this node. The action family (`button.press` → `button`) */
+/** *is the keymap context; `key_context` is only needed to override that name. */
+/** *Implies `.focusable()` — a node with a key binding needs focus to receive */
+/** *it, so components don't chain both. */
 fn key(node: Node, spec: string, action: string) -> Node {
     let mut ctx = nodes.ui[node.id].key_ctx
     if ctx == 0 {
@@ -1393,18 +1393,18 @@ fn hover_fade(node: Node) -> Node {
     return node
 }
 
-/// Opt-in press scale (96% while the pointer is down) on top of the press
-/// wash. Needs `press = true` as well. Themed buttons leave this off: a press
-/// only darkens. No layout pass reads the scale, so pressing never reflows.
+/** *Opt-in press scale (96% while the pointer is down) on top of the press */
+/** *wash. Needs `press = true` as well. Themed buttons leave this off: a press */
+/** *only darkens. No layout pass reads the scale, so pressing never reflows. */
 fn press_scale(node: Node) -> Node {
     nodes.anim[node.id].press_scale = 1
     touched(node.id, 0)
     return node
 }
 
-/// Lift a node's shadow to elevation `level` while hovered (paint-only; the
-/// hover wash is dropped in favour of the lift). Off unless a caller sets
-/// `lift`. Themed cards stay flat.
+/** *Lift a node's shadow to elevation `level` while hovered (paint-only; the */
+/** *hover wash is dropped in favour of the lift). Off unless a caller sets */
+/** *`lift`. Themed cards stay flat. */
 fn hover_lift(node: Node, level: int) -> Node {
     let mut l = level
     if l < 0 {
@@ -1425,30 +1425,30 @@ fn hover_off(node: Node) -> Node {
     return node
 }
 
-/// Exit transition: when `Each`, `Match`, or a lazy `Show` removes `node`, it
-/// fades out over `ms` — pinned where it was, inert — before it is freed. Its
-/// siblings take its place at once. Put it on the row / arm root.
+/** *Exit transition: when `Each`, `Match`, or a lazy `Show` removes `node`, it */
+/** *fades out over `ms` — pinned where it was, inert — before it is freed. Its */
+/** *siblings take its place at once. Put it on the row / arm root. */
 fn exit_fade(node: Node, ms: int = 100) -> Node {
     arena.set_exit(node.id, 1, 0, ms)
     return node
 }
 
-/// Exit transition: fade out while sliding `dy` dp (down when positive).
+/** *Exit transition: fade out while sliding `dy` dp (down when positive). */
 fn exit_slide(node: Node, dy: int = 8, ms: int = 120) -> Node {
     arena.set_exit(node.id, 2, dy, ms)
     return node
 }
 
-/// Exit transition: fade out while scaling to `to` percent.
+/** *Exit transition: fade out while scaling to `to` percent. */
 fn exit_scale(node: Node, to: int = 95, ms: int = 100) -> Node {
     arena.set_exit(node.id, 3, to, ms)
     return node
 }
 
-/// Mark the child picked by `selected` (its index among `node`'s children) with
-/// one indicator that travels between them: a pill in `color` behind it, or
-/// with `line` a 2dp rule along its foot. `node`'s `color` is the indicator's.
-/// Paint-only: choosing never runs layout, and the children stay plain.
+/** *Mark the child picked by `selected` (its index among `node`'s children) with */
+/** *one indicator that travels between them: a pill in `color` behind it, or */
+/** *with `line` a 2dp rule along its foot. `node`'s `color` is the indicator's. */
+/** *Paint-only: choosing never runs layout, and the children stay plain. */
 fn slide_indicator(node: Node, selected: Signal<int>, line: bool = false) -> Node {
     nodes.anim[node.id].ind_kind = if line { u8(2) } else { u8(1) }
     nodes.anim[node.id].ind_sig = selected.id
@@ -1459,7 +1459,7 @@ fn slide_indicator(node: Node, selected: Signal<int>, line: bool = false) -> Nod
     return node
 }
 
-/// Where a `slide_indicator` paints right now, from `node`'s left edge (dp).
+/** *Where a `slide_indicator` paints right now, from `node`'s left edge (dp). */
 fn indicator_x(node: Node) -> int {
     return nodes.anim[node.id].ind_x / 16
 }
@@ -1467,8 +1467,8 @@ fn indicator_w(node: Node) -> int {
     return nodes.anim[node.id].ind_w / 16
 }
 
-/// Entrance motion added to a fade (`arena.ENTER_*` flags): it plays on each
-/// show, and runs back on each hide.
+/** *Entrance motion added to a fade (`arena.ENTER_*` flags): it plays on each */
+/** *show, and runs back on each hide. */
 fn enter_motion(node: Node, fx: int) -> Node {
     nodes.anim[node.id].enter_fx = u8(fx)
     return node
@@ -1481,10 +1481,10 @@ fn enter_fade(node: Node) -> Node {
     return node
 }
 
-/// Reveal the node top-down when it is shown: paint clips to an animated share
-/// of its height and slides the content up by the rest. Paint-only — layout
-/// gives the box its full height at once, so an opening disclosure never runs
-/// the layout pass per frame. Hiding snaps (there is no reveal-out).
+/** *Reveal the node top-down when it is shown: paint clips to an animated share */
+/** *of its height and slides the content up by the rest. Paint-only — layout */
+/** *gives the box its full height at once, so an opening disclosure never runs */
+/** *the layout pass per frame. Hiding snaps (there is no reveal-out). */
 fn enter_reveal(node: Node) -> Node {
     nodes.anim[node.id].reveal = 1
     arena.mark_chrome()
@@ -1497,8 +1497,8 @@ fn enter_reveal(node: Node) -> Node {
 // selected / invalid. Components set these once; the engine's paint and hit
 // test consult the same overlay instead of each recipe re-deriving them.
 
-/// Disabled: dimmed, no hover, no press. (`enabled` on a component already
-/// sets this; `disabled` is for plain nodes and reactive overrides.)
+/** *Disabled: dimmed, no hover, no press. (`enabled` on a component already */
+/** *sets this; `disabled` is for plain nodes and reactive overrides.) */
 fn disabled(node: Node, on: bool) -> Node {
     if on {
         arena.set_disabled(node.id, 1)
@@ -1508,7 +1508,7 @@ fn disabled(node: Node, on: bool) -> Node {
     return node
 }
 
-/// Loading: dimmed and non-interactive while work is in flight.
+/** *Loading: dimmed and non-interactive while work is in flight. */
 fn loading(node: Node, on: bool) -> Node {
     if on {
         arena.set_loading(node.id, 1)
@@ -1518,7 +1518,7 @@ fn loading(node: Node, on: bool) -> Node {
     return node
 }
 
-/// Invalid: validation failed (paint chrome reads the shared overlay).
+/** *Invalid: validation failed (paint chrome reads the shared overlay). */
 fn invalid(node: Node, on: bool) -> Node {
     if on {
         arena.set_invalid(node.id, 1)
@@ -1558,52 +1558,52 @@ fn state_selected(node: Node) -> bool {
 // omitted) or spring (`EASE.Pop`, ...; a spring keeps its velocity through a
 // retarget too, and ignores `ms`).
 
-/// Animate `node`'s scale to `to` percent (100 = identity) over `ms`.
+/** *Animate `node`'s scale to `to` percent (100 = identity) over `ms`. */
 fn animate_scale(node: Node, to: int, ms: int, ease: int = 1) -> Node {
     arena.anim_scale(node.id, to, ms, ease)
     return node
 }
 
-/// Animate a horizontal paint translation (dp).
+/** *Animate a horizontal paint translation (dp). */
 fn animate_x(node: Node, to: int, ms: int, ease: int = 1) -> Node {
     arena.anim_translate_x(node.id, to, ms, ease)
     return node
 }
 
-/// Animate a vertical paint translation (dp).
+/** *Animate a vertical paint translation (dp). */
 fn animate_y(node: Node, to: int, ms: int, ease: int = 1) -> Node {
     arena.anim_translate_y(node.id, to, ms, ease)
     return node
 }
 
-/// Animate a clockwise rotation in degrees about the node's centre.
+/** *Animate a clockwise rotation in degrees about the node's centre. */
 fn animate_rotate(node: Node, to: int, ms: int, ease: int = 1) -> Node {
     arena.anim_rotate(node.id, to, ms, ease)
     return node
 }
 
-/// Animate node opacity 0..100.
+/** *Animate node opacity 0..100. */
 fn animate_opacity(node: Node, to: int, ms: int, ease: int = 1) -> Node {
     arena.anim_opacity(node.id, to, ms, ease)
     return node
 }
 
-/// Animate the corner radius in dp.
+/** *Animate the corner radius in dp. */
 fn animate_radius(node: Node, to: int, ms: int) -> Node {
     arena.anim_radius(node.id, to, ms)
     return node
 }
 
-/// Indeterminate rotation, `period` ms per turn, for a spinner. Paint rotates
-/// it from the frame clock, so it keeps a frame live while visible and stays
-/// deterministic on the first frame. Reduced motion settles it static.
+/** *Indeterminate rotation, `period` ms per turn, for a spinner. Paint rotates */
+/** *it from the frame clock, so it keeps a frame live while visible and stays */
+/** *deterministic on the first frame. Reduced motion settles it static. */
 fn spin(node: Node, period: int) -> Node {
     arena.note_spin(node.id, period)
     return node
 }
 
-/// Current animated paint values (tests / the inspector). Layout never reads
-/// these, so reading one cannot cause a layout change.
+/** *Current animated paint values (tests / the inspector). Layout never reads */
+/** *these, so reading one cannot cause a layout change. */
 fn motion_scale(node: Node) -> int {
     return (int(nodes.anim[node.id].an_scale) + 5) / 10
 }
@@ -1616,7 +1616,7 @@ fn motion_y(node: Node) -> int {
 fn motion_rot(node: Node) -> int {
     return int(nodes.anim[node.id].an_rot)
 }
-/// The rotation a spinner paints right now (frame-clock phase).
+/** *The rotation a spinner paints right now (frame-clock phase). */
 fn motion_spin(node: Node) -> int {
     let per = int(nodes.look[node.id].spin_ms)
     if per <= 0 {
@@ -1624,7 +1624,7 @@ fn motion_spin(node: Node) -> int {
     }
     return (arena.now_ms % per) * 360 / per
 }
-/// A slider thumb's offset along its track, in dp.
+/** *A slider thumb's offset along its track, in dp. */
 fn motion_thumb(node: Node) -> int {
     let id = node.id
     return arena.slider_x(id, geometry.max2(nodes.box[id].w - arena.slider_knob(id), 0))
@@ -1711,15 +1711,15 @@ fn appearance() -> Signal<int> {
     return signal_handle(arena.appearance_sid)
 }
 
-/// Open a URL outside the app, in a new browser tab on the web. Call it from a
-/// click: a browser blocks a new tab that no user action asked for.
+/** *Open a URL outside the app, in a new browser tab on the web. Call it from a */
+/** *click: a browser blocks a new tab that no user action asked for. */
 fn open_external(url: string) {
     logs.nav("external {{url}}")
     platform.plat_open_external(url)
 }
 
-/// The user chose light (0) or dark (1): apply it and keep it for their next
-/// visit. Code that only needs to change the look, unasked, writes `appearance()`.
+/** *The user chose light (0) or dark (1): apply it and keep it for their next */
+/** *visit. Code that only needs to change the look, unasked, writes `appearance()`. */
 fn set_appearance(dark: int) {
     logs.app(if dark != 0 { "theme dark" } else { "theme light" })
     appearance().set(dark)
@@ -1738,9 +1738,9 @@ fn theme(slot: int, light: int, dark: int) {
     }
 }
 
-/// Encode a theme role slot as a sentinel color. Widgets store the *role*,
-/// not a resolved value, so flipping light/dark repaints without rebuilding
-/// the tree — the paint pass resolves the slot each frame.
+/** *Encode a theme role slot as a sentinel color. Widgets store the *role*, */
+/** *not a resolved value, so flipping light/dark repaints without rebuilding */
+/** *the tree — the paint pass resolves the slot each frame. */
 fn role_color(slot: int) -> int {
     if slot < 0 {
         return 0
@@ -1754,12 +1754,12 @@ fn role_color(slot: int) -> int {
 // effect calls the thunk and re-applies one setter, so setting a signal
 // repaints exactly the props that read it.
 
-/// Does this write carry no value? Most props use -1 for "the caller did not
-/// pass this", so one rule here replaces the same `if v >= 0` repeated in
-/// every arm below. The flag-like setters opt out: they mean something at 0
-/// and -1, so they always apply. `SET.Border` is deliberately not one of them:
-/// its width is additive in `content_x`/`content_y`, so applying the unset `-1`
-/// shifted every container's content by one pixel.
+/** *Does this write carry no value? Most props use -1 for "the caller did not */
+/** *pass this", so one rule here replaces the same `if v >= 0` repeated in */
+/** *every arm below. The flag-like setters opt out: they mean something at 0 */
+/** *and -1, so they always apply. `SET.Border` is deliberately not one of them: */
+/** *its width is additive in `content_x`/`content_y`, so applying the unset `-1` */
+/** *shifted every container's content by one pixel. */
 fn skip_unset(setter: int, v: int) -> bool {
     switch setter {
         case SET.Direction, SET.Wrap, SET.Safe, SET.ShowOn:
@@ -1775,8 +1775,8 @@ fn skip_unset(setter: int, v: int) -> bool {
     }
 }
 
-/// Geometry a layout-driving `animate` may tween. Flags (direction, wrap,
-/// show) still jump: they are not a continuous length.
+/** *Geometry a layout-driving `animate` may tween. Flags (direction, wrap, */
+/** *show) still jump: they are not a continuous length. */
 fn setter_tweens_layout(setter: int) -> bool {
     switch setter {
         case SET.Width, SET.Height, SET.MinWidth, SET.MaxWidth, SET.MinHeight, SET.MaxHeight,
@@ -1882,15 +1882,15 @@ fn apply_layout_anims() {
     arena.mark_layout()
 }
 
-/// `apply_int_value` / `apply_str` are running: they report the write
-/// themselves, once, so the chaining setters they call stay quiet.
+/** *`apply_int_value` / `apply_str` are running: they report the write */
+/** *themselves, once, so the chaining setters they call stay quiet. */
 let mut apply_depth: int = 0
 
-/// A chaining setter (`opacity`, `left`, `set_width`, ...) wrote `id`. Inside a
-/// running effect, report it like a prop write (`layout` = 1 when it can move
-/// the box model), so the signal write that ran the effect is attributed to
-/// this node instead of falling back to a frame-wide mark. At build time there
-/// is no write to attribute and nothing to do.
+/** *A chaining setter (`opacity`, `left`, `set_width`, ...) wrote `id`. Inside a */
+/** *running effect, report it like a prop write (`layout` = 1 when it can move */
+/** *the box model), so the signal write that ran the effect is attributed to */
+/** *this node instead of falling back to a frame-wide mark. At build time there */
+/** *is no write to attribute and nothing to do. */
 fn touched(id: int, layout: int) {
     if apply_depth != 0 {
         return
@@ -1908,9 +1908,9 @@ fn apply_int(node_id: int, setter: int, v: int) {
     apply_int_value(node_id, setter, v)
 }
 
-/// `apply_int` without the unset rule: `v` is always a real value. The
-/// `style` prop writes through here, since an `Option` key already says
-/// whether it was set, so `marginLeft = -16` is a bleed, not a skip.
+/** *`apply_int` without the unset rule: `v` is always a real value. The */
+/** *`style` prop writes through here, since an `Option` key already says */
+/** *whether it was set, so `marginLeft = -16` is a bleed, not a skip. */
 fn apply_int_value(node_id: int, setter: int, v: int) {
     if arena.anim_bind_on() != 0 {
         if setter_tweens_layout(setter) {
@@ -2212,9 +2212,9 @@ fn apply_int_value(node_id: int, setter: int, v: int) {
     }
 }
 
-/// Does `node_id` already hold what `apply_int_value(node_id, setter, v)` would
-/// write? Only the props that land on one field as-is are checked; anything
-/// else answers false and is written.
+/** *Does `node_id` already hold what `apply_int_value(node_id, setter, v)` would */
+/** *write? Only the props that land on one field as-is are checked; anything */
+/** *else answers false and is written. */
 fn apply_holds(node_id: int, setter: int, v: int) -> bool {
     switch setter {
         case SET.Opacity:
@@ -2242,9 +2242,9 @@ fn apply_holds(node_id: int, setter: int, v: int) -> bool {
     }
 }
 
-/// Setters that change only paint state: geometry is untouched, so a frame
-/// that writes one skips `layout.layout()`. Everything else (sizes, padding,
-/// border, text, font, position, show) can move the box model.
+/** *Setters that change only paint state: geometry is untouched, so a frame */
+/** *that writes one skips `layout.layout()`. Everything else (sizes, padding, */
+/** *border, text, font, position, show) can move the box model. */
 fn setter_is_paint_only(setter: int) -> bool {
     switch setter {
         case SET.Radius, SET.RadiusTop, SET.RadiusBottom, SET.Opacity, SET.Background, SET.Color,
@@ -2289,14 +2289,14 @@ fn apply_str(node_id: int, setter: int, v: string) {
     }
 }
 
-/// Write a plain prop value straight onto the node. Style props are data, so
-/// there is nothing to re-run: one assignment at build time.
+/** *Write a plain prop value straight onto the node. Style props are data, so */
+/** *there is nothing to re-run: one assignment at build time. */
 fn set_prop_int(node: Node, setter: int, v: int) -> Node {
     apply_int(node.id, setter, v)
     return node
 }
 
-/// `set_prop_int` for string props (colors, labels, a11y).
+/** *`set_prop_int` for string props (colors, labels, a11y). */
 fn set_prop_str(node: Node, setter: int, v: string) -> Node {
     apply_str(node.id, setter, v)
     return node
@@ -2314,11 +2314,11 @@ fn prop_str(node: Node, setter: int, thunk: fn() -> string) -> Node {
     return styled(node, || { apply_str(node_id, setter, runtime.invoke_str_fn(fn_id)) })
 }
 // --- UI scale (density + type, one knob) ---
-/// Scale in percent; 100 is the design system's 1.0. Clamped to 50..200.
-/// Applied once, in `apply_int`, as each geometry or type prop lands on a
-/// node — so no widget multiplies anything itself. Read at build time, so
-/// set it before building a retained tree; a `zeus.view` app rebuilds when it
-/// changes (zoom reacts live there).
+/** *Scale in percent; 100 is the design system's 1.0. Clamped to 50..200. */
+/** *Applied once, in `apply_int`, as each geometry or type prop lands on a */
+/** *node — so no widget multiplies anything itself. Read at build time, so */
+/** *set it before building a retained tree; a `zeus.view` app rebuilds when it */
+/** *changes (zoom reacts live there). */
 let mut roles_ready: int = 0
 let mut ui_scale: int = 100
 
@@ -2338,14 +2338,14 @@ fn set_scale(percent_value: int) {
     arena.view_stale = 1
     arena.mark_layout()
 }
-/// A design px scaled by the UI-scale knob: `scaled(16)` is 16 at 100%,
-/// 20 at 125%. Internal — `apply_int` calls it for every geometry and type
-/// prop, which is the only place scaling happens. Widgets never call it.
+/** *A design px scaled by the UI-scale knob: `scaled(16)` is 16 at 100%, */
+/** *20 at 125%. Internal — `apply_int` calls it for every geometry and type */
+/** *prop, which is the only place scaling happens. Widgets never call it. */
 fn scaled(v: int) -> int {
     return i32(i64(v) * i64(ui_scale) / i64(100))
 }
-/// `#rrggbb` / `#rgb` to packed RGB. -1 for empty or malformed, which every
-/// style setter reads as "leave unset".
+/** *`#rrggbb` / `#rgb` to packed RGB. -1 for empty or malformed, which every */
+/** *style setter reads as "leave unset". */
 fn parse_hex_color(s: string) -> int {
     let n = s.len
     if n == 0 {
@@ -2390,8 +2390,8 @@ fn parse_hex_color(s: string) -> int {
     }
     return -1
 }
-/// One hex nibble, or -1 when the byte is not a hex digit — the -1 is what
-/// lets `parse_hex_color` reject malformed colors instead of guessing.
+/** *One hex nibble, or -1 when the byte is not a hex digit — the -1 is what */
+/** *lets `parse_hex_color` reject malformed colors instead of guessing. */
 fn hex_digit_value(c: int) -> int {
     if c >= 48 {
         if c <= 57 {
@@ -2416,37 +2416,37 @@ fn hex_digit_value(c: int) -> int {
 // named arguments on a props struct, and every style prop is a thunk so a
 // signal read inside it re-applies just that prop.
 
-/// Pointer payload, staged by the engine and read inside a handler.
+/** *Pointer payload, staged by the engine and read inside a handler. */
 struct MouseEvent {
     x: int,
     y: int,
     button: int,
-    /// Inside `on_drag`: true for the press that starts the drag, false for
-    /// the moves after it.
+    /** *Inside `on_drag`: true for the press that starts the drag, false for */
+    /** *the moves after it. */
     first: bool,
 }
 
-/// `KeyEvent.key` for text typed, pasted, or committed by an IME into a box
-/// marked `capture_text` (a code editor). The text is in `KeyEvent.text`.
+/** *`KeyEvent.key` for text typed, pasted, or committed by an IME into a box */
+/** *marked `capture_text` (a code editor). The text is in `KeyEvent.text`. */
 const KEY_TEXT: int = 2000
 
-/// Keyboard payload, staged by the engine and read inside a handler.
+/** *Keyboard payload, staged by the engine and read inside a handler. */
 struct KeyEvent {
     key: int,
     ctrl: bool,
     shift: bool,
     alt: bool,
-    /// Cmd on macOS, the Windows / Super key elsewhere.
+    /** *Cmd on macOS, the Windows / Super key elsewhere. */
     meta: bool,
-    /// For `key == KEY_TEXT` (2000): the typed, pasted, or IME-committed text
-    /// a `capture_text` box receives. Empty for every other key.
+    /** *For `key == KEY_TEXT` (2000): the typed, pasted, or IME-committed text */
+    /** *a `capture_text` box receives. Empty for every other key. */
     text: string,
 }
 
-/// `v` when the caller set it (>= 0), else the recipe's `fallback`. Both
-/// sides stay thunks, so a themed default repaints on a palette switch just
-/// like a caller-supplied one. This is how a recipe widget layers its own
-/// look under whatever the caller passed.
+/** *`v` when the caller set it (>= 0), else the recipe's `fallback`. Both */
+/** *sides stay thunks, so a themed default repaints on a palette switch just */
+/** *like a caller-supplied one. This is how a recipe widget layers its own */
+/** *look under whatever the caller passed. */
 fn px_or_default(v: int, fallback: int) -> int {
     if v >= 0 {
         return v
@@ -2454,7 +2454,7 @@ fn px_or_default(v: int, fallback: int) -> int {
     return fallback
 }
 
-/// `px_or` for colors and other strings: a non-empty `v` wins.
+/** *`px_or` for colors and other strings: a non-empty `v` wins. */
 fn str_or_default(v: string, fallback: string) -> string {
     if v.len > 0 {
         return v
@@ -2462,8 +2462,8 @@ fn str_or_default(v: string, fallback: string) -> string {
     return fallback
 }
 
-/// The event payload for the handler now running. A handler is invoked with
-/// no arguments, so `fn(e: MouseEvent)` is lowered to a `let` of this.
+/** *The event payload for the handler now running. A handler is invoked with */
+/** *no arguments, so `fn(e: MouseEvent)` is lowered to a `let` of this. */
 fn current_mouse() -> MouseEvent {
     return MouseEvent {
         x: arena.ev_x,
@@ -2484,107 +2484,107 @@ fn current_key() -> KeyEvent {
     }
 }
 
-/// Default for the text/label thunks: an unset text prop reads as empty.
+/** *Default for the text/label thunks: an unset text prop reads as empty. */
 fn empty_text() -> string {
     return ""
 }
 
-/// Placeholder payload of an absent handler prop (`result.none(noop)`). Never
-/// installed: the `Option` says whether the caller passed one.
+/** *Placeholder payload of an absent handler prop (`result.none(noop)`). Never */
+/** *installed: the `Option` says whether the caller passed one. */
 fn noop() {
     return
 }
 
-/// `noop` for `fn(int)` handler props (`Menu.on_select`).
+/** *`noop` for `fn(int)` handler props (`Menu.on_select`). */
 fn noop_int(i: int) {
     return
 }
 
-/// The element props of `Box` / `Component`, the DOM-attribute half of an
-/// element: what it is, what it does, how it is reached. How it looks is one
-/// `style` (`zeuscore/style.loam`).
+/** *The element props of `Box` / `Component`, the DOM-attribute half of an */
+/** *element: what it is, what it does, how it is reached. How it looks is one */
+/** *`style` (`zeuscore/style.loam`). */
 struct BoxProps {
-    /// CSS-subset style. A thunk, so a signal read inside it re-applies just the
-    /// keys that changed.
+    /** *CSS-subset style. A thunk, so a signal read inside it re-applies just the */
+    /** *keys that changed. */
     style: Option<fn() -> Style> = none,
-    /// Filled with this element, for the controller (`ref()`, `focus(r)`).
+    /** *Filled with this element, for the controller (`ref()`, `focus(r)`). */
     ref: Option<Ref> = none,
-    /// Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`).
+    /** *Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`). */
     keys: []KeyBind = no_keys(),
-    /// Accessibility role (`"button"`, `"dialog"`, ...).
+    /** *Accessibility role (`"button"`, `"dialog"`, ...). */
     role: string = "",
-    /// Accessible name. A thunk, so `label = "{{n}} items"` follows state.
+    /** *Accessible name. A thunk, so `label = "{{n}} items"` follows state. */
     label: Option<fn() -> string> = none,
-    /// `enabled = form_valid.get()` dims to 40% and disables the element.
+    /** *`enabled = form_valid.get()` dims to 40% and disables the element. */
     enabled: bool = true,
-    /// Busy: inert (no click, hover or press) while true.
+    /** *Busy: inert (no click, hover or press) while true. */
     loading: Option<fn() -> bool> = none,
-    /// Tab stop. A thunk, so `focusable = active()` follows state.
+    /** *Tab stop. A thunk, so `focusable = active()` follows state. */
     focusable: Option<fn() -> bool> = none,
-    /// A custom text editor: focusable, and while focused it receives typed,
-    /// pasted, and IME text as `KEY_TEXT` key events (`current_key().text`).
+    /** *A custom text editor: focusable, and while focused it receives typed, */
+    /** *pasted, and IME text as `KEY_TEXT` key events (`current_key().text`). */
     captureText: bool = false,
-    /// Roving tab stop (one per tab list / radio group): focusable only while
-    /// true, and it takes focus when it becomes true while focus is already in
-    /// the group (arrow keys); a pick made from outside leaves focus alone.
+    /** *Roving tab stop (one per tab list / radio group): focusable only while */
+    /** *true, and it takes focus when it becomes true while focus is already in */
+    /** *the group (arrow keys); a pick made from outside leaves focus alone. */
     roving: Option<fn() -> bool> = none,
-    /// With `roving`: take focus whenever the pick lands here, from anywhere.
-    /// For popups whose opening moves focus in (menu items), where the pick
-    /// only changes through the user (open, hover, keys).
+    /** *With `roving`: take focus whenever the pick lands here, from anywhere. */
+    /** *For popups whose opening moves focus in (menu items), where the pick */
+    /** *only changes through the user (open, hover, keys). */
     rovingGrab: bool = false,
-    /// The on / off state assistive tech announces: checked for a checkbox,
-    /// radio or switch, selected for a tab, pressed for a toggle button. A
-    /// thunk, so `checked = on.get()` follows state. Semantics only — it
-    /// paints nothing.
+    /** *The on / off state assistive tech announces: checked for a checkbox, */
+    /** *radio or switch, selected for a tab, pressed for a toggle button. A */
+    /** *thunk, so `checked = on.get()` follows state. Semantics only — it */
+    /** *paints nothing. */
     checked: Option<fn() -> bool> = none,
-    /// Paint-only overlays merged over `style` while the element is hovered,
-    /// pressed, keyboard-focused or disabled (in that order; later wins).
-    /// Only background, color, opacity, border and elevation are honoured:
-    /// hover must not reflow. An element with any of them paints no default
-    /// hover wash or press overlay.
-    /// Thunks, like `style`: an overlay that reads a signal follows it, and a
-    /// thunk keeps `BoxProps` small (it is passed by value on every element).
+    /** *Paint-only overlays merged over `style` while the element is hovered, */
+    /** *pressed, keyboard-focused or disabled (in that order; later wins). */
+    /** *Only background, color, opacity, border and elevation are honoured: */
+    /** *hover must not reflow. An element with any of them paints no default */
+    /** *hover wash or press overlay. */
+    /** *Thunks, like `style`: an overlay that reads a signal follows it, and a */
+    /** *thunk keeps `BoxProps` small (it is passed by value on every element). */
     hoverStyle: Option<fn() -> Style> = none,
     pressStyle: Option<fn() -> Style> = none,
     focusStyle: Option<fn() -> Style> = none,
     disabledStyle: Option<fn() -> Style> = none,
-    /// Interaction chrome for elements without state styles: no hover wash
-    /// (`hoverOff`, the default), wash on hover (`hoverFade`), scale on press
-    /// (`pressScale`), rise on hover (`lift`, 0..4), press feedback (`press`).
+    /** *Interaction chrome for elements without state styles: no hover wash */
+    /** *(`hoverOff`, the default), wash on hover (`hoverFade`), scale on press */
+    /** *(`pressScale`), rise on hover (`lift`, 0..4), press feedback (`press`). */
     hoverOff: bool = true,
     hoverFade: bool = false,
     pressScale: bool = false,
     lift: int = -1,
     press: bool = false,
-    /// Entrance motion when the element appears: `Enter.Fade`,
-    /// `Enter.Fade + Enter.Reveal`, `Enter.Fade + Enter.Pop + Enter.Rise`.
+    /** *Entrance motion when the element appears: `Enter.Fade`, */
+    /** *`Enter.Fade + Enter.Reveal`, `Enter.Fade + Enter.Pop + Enter.Rise`. */
     enter: int = 0,
-    /// Shown while true; the subtree is kept, and `enter` motion plays on
-    /// each show. A thunk, so `visible = open.get()` follows `open`.
+    /** *Shown while true; the subtree is kept, and `enter` motion plays on */
+    /** *each show. A thunk, so `visible = open.get()` follows `open`. */
     visible: Option<fn() -> bool> = none,
-    /// The signal a toggle / slider / bound label shows and edits.
+    /** *The signal a toggle / slider / bound label shows and edits. */
     bind: Option<Signal<int>> = none,
-    /// Label text. A thunk so a signal read inside it repaints just this
-    /// attribute; the compiler lifts a plain expression into it.
+    /** *Label text. A thunk so a signal read inside it repaints just this */
+    /** *attribute; the compiler lifts a plain expression into it. */
     text: Option<fn() -> string> = none,
-    /// Text input: the committed buffer, and Enter-inserts-newline.
+    /** *Text input: the committed buffer, and Enter-inserts-newline. */
     edit: Option<Signal<string>> = none,
     multiline: bool = false,
-    /// Image: `Fit.*`, and decode only once on screen.
+    /** *Image: `Fit.*`, and decode only once on screen. */
     fit: int = 0,
     lazy: bool = false,
-    /// Keep the element inside the host's safe area (notch, home indicator).
+    /** *Keep the element inside the host's safe area (notch, home indicator). */
     safe: bool = false,
-    /// List hosts: fixed row height, and the hook that rebuilds the rows.
+    /** *List hosts: fixed row height, and the hook that rebuilds the rows. */
     rowHeight: int = 0,
     rebuild: Option<fn()> = none,
     on_click: Option<fn()> = none,
     on_mouse_down: Option<fn()> = none,
     on_mouse_up: Option<fn()> = none,
-    /// Runs with `true` when the pointer enters and `false` when it leaves.
+    /** *Runs with `true` when the pointer enters and `false` when it leaves. */
     on_hover: Option<fn(bool)> = none,
-    /// The URL this box links to, when it is a link. `on_click` still does the
-    /// navigating: this is what `zeli build` writes into the page's HTML.
+    /** *The URL this box links to, when it is a link. `on_click` still does the */
+    /** *navigating: this is what `zeli build` writes into the page's HTML. */
     href: string = "",
     on_key_down: Option<fn()> = none,
     on_key_up: Option<fn()> = none,
@@ -2593,32 +2593,32 @@ struct BoxProps {
     // Declarative behaviour. Each one is applied by the engine once the
     // element is mounted and follows the state it reads, so a component never
     // reaches for a ref, an `effect`, or `on_mount` to get it.
-    /// The caller's style, layered over `style` key by key: a component
-    /// passes its own recipe as `style` and its caller's as `restyle`.
+    /** *The caller's style, layered over `style` key by key: a component */
+    /** *passes its own recipe as `style` and its caller's as `restyle`. */
     restyle: Option<fn() -> Style> = none,
-    /// Float beside another element: `anchor = Anchor(to = trigger)`.
+    /** *Float beside another element: `anchor = Anchor(to = trigger)`. */
     anchor: Option<Anchor> = none,
-    /// Take focus each time this turns true.
+    /** *Take focus each time this turns true. */
     autofocus: Option<fn() -> bool> = none,
-    /// Keep Tab inside this element while true; focus goes back when it ends.
+    /** *Keep Tab inside this element while true; focus goes back when it ends. */
     trap: Option<fn() -> bool> = none,
-    /// Text input: mask what it draws (one bullet per character) while true.
+    /** *Text input: mask what it draws (one bullet per character) while true. */
     secure: Option<fn() -> bool> = none,
-    /// Take no hits and never occlude hover (a tooltip over its trigger).
+    /** *Take no hits and never occlude hover (a tooltip over its trigger). */
     passThrough: bool = false,
-    /// Runs with the new box after any layout that changed its size, the
-    /// first one included, before that frame paints.
+    /** *Runs with the new box after any layout that changed its size, the */
+    /** *first one included, before that frame paints. */
     on_resize: Option<fn(Rect)> = none,
-    /// Runs on a press inside and on every move until release;
-    /// `current_mouse()` holds the point. The press clicks nothing under it.
+    /** *Runs on a press inside and on every move until release; */
+    /** *`current_mouse()` holds the point. The press clicks nothing under it. */
     on_drag: Option<fn()> = none,
-    /// Runs on a secondary click inside; `current_mouse()` holds the point.
+    /** *Runs on a secondary click inside; `current_mouse()` holds the point. */
     on_context_menu: Option<fn()> = none,
 }
 
-/// Where an anchored element floats: beside `to`, on side `place` (`Place.*`:
-/// 0 below, 1 above, 2 end, 3 start, …), `gap` dp away. It flips to the
-/// opposite side when the preferred one would leave the window.
+/** *Where an anchored element floats: beside `to`, on side `place` (`Place.*`: */
+/** *0 below, 1 above, 2 end, 3 start, …), `gap` dp away. It flips to the */
+/** *opposite side when the preferred one would leave the window. */
 struct Anchor {
     to: Ref = Ref {},
     place: int = 0,
@@ -2644,7 +2644,7 @@ struct Anchor {
 // root it attached, moves everything onto that root, and runs `on_mount`. A
 // component's state therefore dies with its root, wherever it was created.
 
-/// Open frames, innermost last.
+/** *Open frames, innermost last. */
 let mut vf_token: []int = []int {}
 let mut vf_prev_owner: []int = []int {}
 let mut vf_parent: []int = []int {}
@@ -2652,18 +2652,18 @@ let mut vf_log: []int = []int {}
 let mut vf_mount_at: []int = []int {}
 let mut vf_root: []int = []int {}
 let mut vf_roots: []int = []int {}
-/// `on_mount` callbacks of every open frame, each frame's from `vf_mount_at`.
+/** *`on_mount` callbacks of every open frame, each frame's from `vf_mount_at`. */
 let mut mount_fns: []fn() = []fn() {}
-/// Refs filled inside open frames (cell, element), each frame's from
-/// `vf_ref_at`. They are set when that frame mounts, not when the element is
-/// allocated, so an effect that reads a ref first sees it complete.
+/** *Refs filled inside open frames (cell, element), each frame's from */
+/** *`vf_ref_at`. They are set when that frame mounts, not when the element is */
+/** *allocated, so an effect that reads a ref first sees it complete. */
 let mut ref_q_cell: []int = []int {}
 let mut ref_q_node: []int = []int {}
 let mut vf_ref_at: []int = []int {}
-/// > 0 while a frame's mount callbacks run: refs filled there set at once.
+/** *> 0 while a frame's mount callbacks run: refs filled there set at once. */
 let mut vf_mounting: int = 0
 
-/// The slot the next element attaches to (0 at the top level).
+/** *The slot the next element attaches to (0 at the top level). */
 fn current_slot() -> int {
     if ui_parents.len > 0 {
         return ui_parents[ui_parents.len - 1]
@@ -2671,7 +2671,7 @@ fn current_slot() -> int {
     return 0
 }
 
-/// Open a `View` frame. Emitted by the compiler; not called by hand.
+/** *Open a `View` frame. Emitted by the compiler; not called by hand. */
 fn __view_begin() -> int {
     arena.ensure()
     let token = arena.own_begin()
@@ -2687,7 +2687,7 @@ fn __view_begin() -> int {
     return vf_token.len - 1
 }
 
-/// Build the view under frame `frame` and close it. Emitted by the compiler.
+/** *Build the view under frame `frame` and close it. Emitted by the compiler. */
 fn __view_end(frame: int, build: fn()) -> Node {
     build()
     let top = vf_token.len - 1
@@ -2745,8 +2745,8 @@ fn __view_end(frame: int, build: fn()) -> Node {
     return node_handle(root)
 }
 
-/// `Component` reports each element it attaches; the innermost frame counts
-/// the ones placed directly in its parent slot.
+/** *`Component` reports each element it attaches; the innermost frame counts */
+/** *the ones placed directly in its parent slot. */
 fn view_note(node_id: int, slot_id: int) {
     let top = vf_token.len - 1
     if top < 0 {
@@ -2761,8 +2761,8 @@ fn view_note(node_id: int, slot_id: int) {
     vf_roots[top] = vf_roots[top] + 1
 }
 
-/// Run `body` once the component's `View` has attached its root, so refs
-/// are filled. Outside a `View` component it runs now.
+/** *Run `body` once the component's `View` has attached its root, so refs */
+/** *are filled. Outside a `View` component it runs now. */
 fn on_mount(body: fn()) {
     if vf_token.len == 0 {
         body()
@@ -2771,10 +2771,10 @@ fn on_mount(body: fn()) {
     push(mount_fns, body)
 }
 
-/// Entrance motion for the `enter` prop.
-/// Flags; add them: `enter = Enter.Fade + Enter.Reveal`. `Pop`, `Rise` and
-/// `Drop` go with `Fade`: the surface springs into place, and falls away when
-/// it hides. Scale grows from the anchored trigger, if there is one.
+/** *Entrance motion for the `enter` prop. */
+/** *Flags; add them: `enter = Enter.Fade + Enter.Reveal`. `Pop`, `Rise` and */
+/** *`Drop` go with `Fade`: the surface springs into place, and falls away when */
+/** *it hides. Scale grows from the anchored trigger, if there is one. */
 enum Enter {
     None = 0,
     Fade = 1,
@@ -2787,14 +2787,14 @@ enum Enter {
     Drop = 16,
 }
 
-/// The empty `Signal<int>`: the placeholder of optional signal props.
+/** *The empty `Signal<int>`: the placeholder of optional signal props. */
 fn no_signal() -> Signal<int> {
     return Signal { id: 0 }
 }
 
-/// The 0/1 show signal the engine reads for a `visible` thunk: layout and
-/// the enter / exit tracks read it raw. One effect, owned by `node`. The
-/// engine may also write it (Escape on an overlay with no click handler).
+/** *The 0/1 show signal the engine reads for a `visible` thunk: layout and */
+/** *the enter / exit tracks read it raw. One effect, owned by `node`. The */
+/** *engine may also write it (Escape on an overlay with no click handler). */
 fn visible_signal(node: Node, when: fn() -> bool) -> Signal<int> {
     let out = signal(0)
     let fid = intern_fn(|| {
@@ -2807,16 +2807,16 @@ fn visible_signal(node: Node, when: fn() -> bool) -> Signal<int> {
     return out
 }
 
-/// Placeholder for an absent `Option<Signal<bool>>`.
+/** *Placeholder for an absent `Option<Signal<bool>>`. */
 fn no_flag_signal() -> Signal<bool> {
     return Signal { id: 0 }
 }
 
-/// A 0/1 `Signal<int>` that follows `b`. For the engine paths that read an
-/// int signal raw — `visible`, `bind`, the enter / exit tracks — under a
-/// component whose public state is a `Signal<bool>`. One effect, owned by the
-/// component that calls it. Read-only for the engine: an overlay it shows is
-/// closed by Escape through the overlay's own `on_click`, which writes `b`.
+/** *A 0/1 `Signal<int>` that follows `b`. For the engine paths that read an */
+/** *int signal raw — `visible`, `bind`, the enter / exit tracks — under a */
+/** *component whose public state is a `Signal<bool>`. One effect, owned by the */
+/** *component that calls it. Read-only for the engine: an overlay it shows is */
+/** *closed by Escape through the overlay's own `on_click`, which writes `b`. */
 fn flag_int(b: Signal<bool>) -> Signal<int> {
     let out = signal(0)
     effect(|| {
@@ -2828,18 +2828,18 @@ fn flag_int(b: Signal<bool>) -> Signal<int> {
     return out
 }
 
-/// `no_signal` for `Signal<string>` props.
+/** *`no_signal` for `Signal<string>` props. */
 fn no_signal_str() -> Signal<string> {
     return Signal { id: 0 }
 }
 
-/// `no_signal` for `Signal<[]int>` props.
+/** *`no_signal` for `Signal<[]int>` props. */
 fn no_signal_ints() -> Signal<[]int> {
     return Signal { id: 0 }
 }
 
-/// `h` when `on`, else no handler: a prop that only some instances install
-/// (`on_click = handler_if(sortable, cycle)`).
+/** *`h` when `on`, else no handler: a prop that only some instances install */
+/** *(`on_click = handler_if(sortable, cycle)`). */
 fn handler_if(on: bool, h: fn()) -> Option<fn()> {
     if on {
         return result.some(h)
@@ -2847,7 +2847,7 @@ fn handler_if(on: bool, h: fn()) -> Option<fn()> {
     return result.none(noop)
 }
 
-/// Run an optional handler; nothing when it is absent.
+/** *Run an optional handler; nothing when it is absent. */
 fn emit(h: Option<fn()>) {
     if result.is_some(h) {
         let f = h.val
@@ -2855,7 +2855,7 @@ fn emit(h: Option<fn()>) {
     }
 }
 
-/// `emit` for a handler that takes a value (`on_select(index)`).
+/** *`emit` for a handler that takes a value (`on_select(index)`). */
 fn emit_with<T>(h: Option<fn(T)>, v: T) {
     if result.is_some(h) {
         let f = h.val
@@ -2863,18 +2863,18 @@ fn emit_with<T>(h: Option<fn(T)>, v: T) {
     }
 }
 
-/// Default of `on_hover`.
+/** *Default of `on_hover`. */
 fn no_hover(on: bool) {
     return
 }
 
-/// Default of the optional `fn() -> bool` props.
+/** *Default of the optional `fn() -> bool` props. */
 fn no_flag() -> bool {
     return false
 }
 
-/// Run `body` as an effect bound to `node`; dropped after its first run when
-/// it read no signal, so a constant costs no graph.
+/** *Run `body` as an effect bound to `node`; dropped after its first run when */
+/** *it read no signal, so a constant costs no graph. */
 fn node_effect(node: Node, body: fn()) {
     let fid = intern_fn(body)
     let eid = track.alloc(fid, node.id)
@@ -2885,8 +2885,8 @@ fn node_effect(node: Node, body: fn()) {
     }
 }
 
-/// Set `id`'s focusable flag from an effect, reporting the node when it moved
-/// (the semantic tree carries it, and follows layout).
+/** *Set `id`'s focusable flag from an effect, reporting the node when it moved */
+/** *(the semantic tree carries it, and follows layout). */
 fn set_focusable(id: int, on: int) {
     if int(nodes.ui[id].focusable) == on {
         return
@@ -2895,8 +2895,8 @@ fn set_focusable(id: int, on: int) {
     arena.note_prop_write(id, 1)
 }
 
-/// The behaviour props of `BoxProps` (focus, hover, press, entrance).
-/// `p.restyle` over `p.style`, as one thunk (`no_style` when neither is set).
+/** *The behaviour props of `BoxProps` (focus, hover, press, entrance). */
+/** *`p.restyle` over `p.style`, as one thunk (`no_style` when neither is set). */
 fn layered_style(p: BoxProps) -> fn() -> Style {
     if !result.is_some(p.restyle) {
         if result.is_some(p.style) {
@@ -2912,10 +2912,10 @@ fn layered_style(p: BoxProps) -> fn() -> Style {
     return fn() -> Style { return merge(base(), over()) }
 }
 
-/// The behaviour props that need the element in the tree with its children
-/// built (`anchor`, `autofocus`, `trap`, `secure`). Each is an effect that
-/// reads a private ref, which fills at mount, so it first acts then — and
-/// again whenever the state it reads changes.
+/** *The behaviour props that need the element in the tree with its children */
+/** *built (`anchor`, `autofocus`, `trap`, `secure`). Each is an effect that */
+/** *reads a private ref, which fills at mount, so it first acts then — and */
+/** *again whenever the state it reads changes. */
 fn install_mounted(node: Node, p: BoxProps) {
     let node_id = node.id
     if p.passThrough {
@@ -3076,19 +3076,19 @@ fn install_behaviour(node: Node, p: BoxProps) {
 // when the ref fills and whenever the state it reads changes — no `on_mount`
 // around it. `on_mount` is for one-time wiring.
 
-/// A handle to an element, filled when its component mounts.
+/** *A handle to an element, filled when its component mounts. */
 struct Ref {
     id: int = 0,
 }
 
-/// A new, empty `Ref`. Owned like any state the component creates.
+/** *A new, empty `Ref`. Owned like any state the component creates. */
 fn ref() -> Ref {
     let cell = signal(0)
     return Ref { id: cell.id }
 }
 
-/// The element `r` points at (`Node { id: 0 }` until it mounts). Inside an
-/// effect this is a dependency, so the effect re-runs when `r` fills.
+/** *The element `r` points at (`Node { id: 0 }` until it mounts). Inside an */
+/** *effect this is a dependency, so the effect re-runs when `r` fills. */
 fn ref_node(r: Ref) -> Node {
     if r.id <= 0 {
         return node_handle(0)
@@ -3113,7 +3113,7 @@ fn ref_fill(r: Ref, node_id: int) {
     signal_handle(r.id).set(node_id)
 }
 
-/// A laid-out box: position and size in dp.
+/** *A laid-out box: position and size in dp. */
 struct Rect {
     x: int = 0,
     y: int = 0,
@@ -3121,8 +3121,8 @@ struct Rect {
     h: int = 0,
 }
 
-/// `r`'s box where it is on screen: `rect` less the scroll above it. The space
-/// `current_mouse()` is in, so a pointer position can be made relative to `r`.
+/** *`r`'s box where it is on screen: `rect` less the scroll above it. The space */
+/** *`current_mouse()` is in, so a pointer position can be made relative to `r`. */
 fn screen_rect(r: Ref) -> Rect {
     let id = ref_id(r)
     if id <= 0 {
@@ -3135,8 +3135,8 @@ fn screen_rect(r: Ref) -> Rect {
     }
 }
 
-/// `r`'s box from the last layout (all zero before the first), in layout space:
-/// a scroller's offset is not in it (`screen_rect` for that).
+/** *`r`'s box from the last layout (all zero before the first), in layout space: */
+/** *a scroller's offset is not in it (`screen_rect` for that). */
 fn rect(r: Ref) -> Rect {
     let id = ref_id(r)
     if id <= 0 {
@@ -3148,7 +3148,7 @@ fn rect(r: Ref) -> Rect {
     }
 }
 
-/// Number of children of `r`.
+/** *Number of children of `r`. */
 fn child_total(r: Ref) -> int {
     let id = ref_id(r)
     if id <= 0 {
@@ -3157,8 +3157,8 @@ fn child_total(r: Ref) -> int {
     return nodes.tree[id].kids.len
 }
 
-/// The box of `r`'s child `i`, relative to `r`'s content box (inside its
-/// padding and border): where a pinned child of `r` would sit over it.
+/** *The box of `r`'s child `i`, relative to `r`'s content box (inside its */
+/** *padding and border): where a pinned child of `r` would sit over it. */
 fn child_rect(r: Ref, i: int) -> Rect {
     let id = ref_id(r)
     if id <= 0 || i < 0 || i >= nodes.tree[id].kids.len {
@@ -3172,11 +3172,11 @@ fn child_rect(r: Ref, i: int) -> Rect {
     }
 }
 
-/// Run `body` after any layout that changed `r`'s width or height, the first
-/// one included. It runs in the same frame, before paint: a signal it writes
-/// re-lays the affected nodes in that frame's second pass, so a size derived
-/// from `r` never paints a frame late (a host's full-screen zoom snapshots
-/// that first frame). Call from `on_mount`.
+/** *Run `body` after any layout that changed `r`'s width or height, the first */
+/** *one included. It runs in the same frame, before paint: a signal it writes */
+/** *re-lays the affected nodes in that frame's second pass, so a size derived */
+/** *from `r` never paints a frame late (a host's full-screen zoom snapshots */
+/** *that first frame). Call from `on_mount`. */
 fn on_resize(r: Ref, body: fn()) {
     on_resize_id(ref_id(r), body)
 }
@@ -3200,9 +3200,9 @@ fn on_resize_id(id: int, body: fn()) {
     arena.host_geo(id)
 }
 
-/// Run `body` on a secondary click (right button, ctrl-click) inside `r`;
-/// `current_mouse()` holds the point. The nearest handler up the tree wins,
-/// and the host's own menu is suppressed. Call from `on_mount`.
+/** *Run `body` on a secondary click (right button, ctrl-click) inside `r`; */
+/** *`current_mouse()` holds the point. The nearest handler up the tree wins, */
+/** *and the host's own menu is suppressed. Call from `on_mount`. */
 fn on_context_menu(r: Ref, body: fn()) {
     let id = ref_id(r)
     if id <= 0 {
@@ -3211,9 +3211,9 @@ fn on_context_menu(r: Ref, body: fn()) {
     arena.hook_set(id, arena.HOOK_CONTEXT, intern_fn(body))
 }
 
-/// Run `body` when the pointer is pressed inside `r` and again on every move
-/// until it is released; `current_mouse()` holds the point. The press does
-/// not click anything under it. Call from `on_mount`.
+/** *Run `body` when the pointer is pressed inside `r` and again on every move */
+/** *until it is released; `current_mouse()` holds the point. The press does */
+/** *not click anything under it. Call from `on_mount`. */
 fn on_drag(r: Ref, body: fn()) {
     let id = ref_id(r)
     if id <= 0 {
@@ -3222,7 +3222,7 @@ fn on_drag(r: Ref, body: fn()) {
     arena.hook_set(id, arena.HOOK_DRAG, intern_fn(body))
 }
 
-/// Mask the text input `r` (one bullet per character) while `on`.
+/** *Mask the text input `r` (one bullet per character) while `on`. */
 fn set_secure(r: Ref, on: bool) {
     let id = ref_id(r)
     if id > 0 {
@@ -3230,20 +3230,20 @@ fn set_secure(r: Ref, on: bool) {
     }
 }
 
-/// Put `text` on the system clipboard.
+/** *Put `text` on the system clipboard. */
 fn copy_text(text: string) {
     platform.plat_clipboard_write(text)
 }
 
-/// True where shortcuts read ⌘ / ⌥ / ⇧ (Apple platforms), false where they
-/// read Ctrl / Alt / Shift.
+/** *True where shortcuts read ⌘ / ⌥ / ⇧ (Apple platforms), false where they */
+/** *read Ctrl / Alt / Shift. */
 fn apple_keys() -> bool {
     return platform.plat_apple_keys() != 0
 }
 
-/// A ref to child `i` of `r` (empty when there is none): the element a
-/// caller's slot built inside a component (`Popover`'s trigger). Call from
-/// `on_mount`, once the children exist.
+/** *A ref to child `i` of `r` (empty when there is none): the element a */
+/** *caller's slot built inside a component (`Popover`'s trigger). Call from */
+/** *`on_mount`, once the children exist. */
 fn child_ref(r: Ref, i: int) -> Ref {
     let out = ref()
     let id = ref_id(r)
@@ -3253,8 +3253,8 @@ fn child_ref(r: Ref, i: int) -> Ref {
     return out
 }
 
-/// Make `h` the click handler of `r`, replacing any it had: a `Menu` owns its
-/// trigger's click.
+/** *Make `h` the click handler of `r`, replacing any it had: a `Menu` owns its */
+/** *trigger's click. */
 fn set_on_click(r: Ref, h: fn()) {
     let id = ref_id(r)
     if id > 0 {
@@ -3262,7 +3262,7 @@ fn set_on_click(r: Ref, h: fn()) {
     }
 }
 
-/// Mirror `r`'s hover state into `sig` (1 while the pointer is over it).
+/** *Mirror `r`'s hover state into `sig` (1 while the pointer is over it). */
 fn watch_hover(r: Ref, sig: Signal<int>) {
     let id = ref_id(r)
     if id > 0 {
@@ -3270,8 +3270,8 @@ fn watch_hover(r: Ref, sig: Signal<int>) {
     }
 }
 
-/// Float `r` beside `target` on `side` (`Place.*`), `gap` dp away, flipping
-/// to the other side near a window edge. Call from `on_mount`.
+/** *Float `r` beside `target` on `side` (`Place.*`), `gap` dp away, flipping */
+/** *to the other side near a window edge. Call from `on_mount`. */
 fn anchor(r: Ref, target: Ref, side: int, gap: int) {
     let id = ref_id(r)
     let t = ref_id(target)
@@ -3280,9 +3280,9 @@ fn anchor(r: Ref, target: Ref, side: int, gap: int) {
     }
 }
 
-/// Let the pointer pass through `r` to what lies beneath: it takes no hit
-/// and never occludes hover. For tooltips and
-/// decorations floated over their own trigger.
+/** *Let the pointer pass through `r` to what lies beneath: it takes no hit */
+/** *and never occludes hover. For tooltips and */
+/** *decorations floated over their own trigger. */
 fn pointer_through(r: Ref) {
     let id = ref_id(r)
     if id > 0 {
@@ -3290,8 +3290,8 @@ fn pointer_through(r: Ref) {
     }
 }
 
-/// Name the node a `Style(floating = Float(to = FloatTo.Anchor, ...))` box
-/// attaches to. Call from `on_mount`.
+/** *Name the node a `Style(floating = Float(to = FloatTo.Anchor, ...))` box */
+/** *attaches to. Call from `on_mount`. */
 fn float_on(r: Ref, target: Ref) {
     let id = ref_id(r)
     let t = ref_id(target)
@@ -3301,18 +3301,18 @@ fn float_on(r: Ref, target: Ref) {
     }
 }
 
-/// Jump `r`'s exit fade to its end, so a closing panel is gone this frame.
+/** *Jump `r`'s exit fade to its end, so a closing panel is gone this frame. */
 fn skip_exit(r: Ref) {
     arena.snap_exit(ref_id(r))
 }
 
-/// `skip_exit` for a node handle passed in from outside a component.
+/** *`skip_exit` for a node handle passed in from outside a component. */
 fn skip_exit_node(n: Node) {
     arena.snap_exit(n.id)
 }
 
-/// Children of the slot being built whose a11y role is `role`, so far: how a
-/// table row knows whether it is odd without a counter of its own.
+/** *Children of the slot being built whose a11y role is `role`, so far: how a */
+/** *table row knows whether it is odd without a counter of its own. */
 fn slot_count_role(role: string) -> int {
     let pid = current_slot()
     if pid <= 0 {
@@ -3328,7 +3328,7 @@ fn slot_count_role(role: string) -> int {
     return n
 }
 
-/// Move keyboard focus to `r`.
+/** *Move keyboard focus to `r`. */
 fn focus(r: Ref) {
     let id = ref_id(r)
     if id > 0 {
@@ -3336,7 +3336,7 @@ fn focus(r: Ref) {
     }
 }
 
-/// Keep Tab inside `r` (a modal) until `release_focus_trap(r)`.
+/** *Keep Tab inside `r` (a modal) until `release_focus_trap(r)`. */
 fn trap_focus(r: Ref) {
     let id = ref_id(r)
     if id > 0 {
@@ -3359,8 +3359,8 @@ fn release_focus_trap(r: Ref) {
 // its effect is dropped right there and nothing is kept, so a plain
 // `Style(gap = Space.Exs)` costs one write per key and no graph.
 
-/// Install `style` on `node`. Called last in `Component`, so a key in `style`
-/// wins over the matching flat prop and over kind chrome.
+/** *Install `style` on `node`. Called last in `Component`, so a key in `style` */
+/** *wins over the matching flat prop and over kind chrome. */
 fn install_style(node: Node, style: fn() -> Style) {
     let node_id = node.id
     let fid = intern_fn(|| { style_run(node_id, style) })
@@ -3394,7 +3394,7 @@ fn has_state_styles(s: StateStyles) -> bool {
         result.is_some(s.disabled)
 }
 
-/// The node's raw paint values, to restore a key an overlay set and released.
+/** *The node's raw paint values, to restore a key an overlay set and released. */
 struct PaintRest {
     bg: int,
     fg: int,
@@ -3415,7 +3415,7 @@ fn paint_rest(id: int) -> PaintRest {
     }
 }
 
-/// The overlay for interaction mask `m` (`arena.STATE_*` bits).
+/** *The overlay for interaction mask `m` (`arena.STATE_*` bits). */
 fn state_overlay(s: StateStyles, m: int) -> Style {
     let mut o = Style {}
     if (m & arena.STATE_HOVER) != 0 && result.is_some(s.hover) {
@@ -3462,7 +3462,7 @@ fn state_style_run(
     arena.style_keep(node_id, next)
 }
 
-/// A paint key that was set last run and is absent now goes back to `rest`.
+/** *A paint key that was set last run and is absent now goes back to `rest`. */
 fn state_restore(id: int, a: Style, b: Style, rest: PaintRest) {
     if result.is_some(a.background) && !result.is_some(b.background) {
         apply_int_value(id, SET.Background, rest.bg)
@@ -3484,16 +3484,16 @@ fn state_restore(id: int, a: Style, b: Style, rest: PaintRest) {
     }
 }
 
-/// One run of a style effect: diff against the last written `Style`.
+/** *One run of a style effect: diff against the last written `Style`. */
 fn style_run(node_id: int, style: fn() -> Style) {
     let next = style()
     style_apply(node_id, arena.style_last(node_id), next)
     arena.style_keep(node_id, next)
 }
 
-/// Write every key of `b` that is present and differs from `a`. An absent key
-/// writes nothing, so a key that goes from present to absent keeps its last
-/// value: give both branches a value (`if on { x } else { y }`).
+/** *Write every key of `b` that is present and differs from `a`. An absent key */
+/** *writes nothing, so a key that goes from present to absent keeps its last */
+/** *value: give both branches a value (`if on { x } else { y }`). */
 fn style_apply(id: int, a: Style, b: Style) {
     let kind = int(nodes.tree[id].kind)
     st_int(id, SET.ShowOn, a.display, b.display)
@@ -3573,15 +3573,15 @@ fn style_apply(id: int, a: Style, b: Style) {
     st_str(id, SET.Cursor, a.cursor, b.cursor)
 }
 
-/// The paint tracks a style key can ease.
+/** *The paint tracks a style key can ease. */
 const APROP_OPACITY: int = 0
 const APROP_ROTATE: int = 1
 const APROP_SHIFT_X: int = 2
 const APROP_SHIFT_Y: int = 3
 const APROP_SCALE: int = 4
 
-/// Ease a paint track to `b` over `ms`. The first value (no `a`) lands at
-/// once, so an element never animates in from the track's default.
+/** *Ease a paint track to `b` over `ms`. The first value (no `a`) lands at */
+/** *once, so an element never animates in from the track's default. */
 fn st_motion(id: int, track: int, a: Option<int>, b: Option<int>, ms: int) {
     if !result.is_some(b) {
         return
@@ -3631,7 +3631,7 @@ fn st_bool(id: int, setter: int, a: Option<bool>, b: Option<bool>) {
     }
 }
 
-/// A color or a name. `""` is a value too: a cleared background.
+/** *A color or a name. `""` is a value too: a cleared background. */
 fn st_str(id: int, setter: int, a: Option<string>, b: Option<string>) {
     if !result.is_some(b) {
         return
@@ -3649,7 +3649,7 @@ fn st_str(id: int, setter: int, a: Option<string>, b: Option<string>) {
     }
 }
 
-/// `px` pins the length and clears a percentage; `pct` does the reverse.
+/** *`px` pins the length and clears a percentage; `pct` does the reverse. */
 fn st_len(id: int, px_setter: int, pct_setter: int, a: Option<Len>, b: Option<Len>) {
     if !result.is_some(b) {
         return
@@ -3739,10 +3739,10 @@ fn st_margin(id: int, a: Style, b: Style) {
     )
 }
 
-/// Padding or margin. The keys overlap (`padding` writes the sides that
-/// `paddingTop` writes), so when any of them changed every present one is
-/// written again, shorthand first, then axis, then side: a side key keeps
-/// winning when the shorthand under it moves.
+/** *Padding or margin. The keys overlap (`padding` writes the sides that */
+/** *`paddingTop` writes), so when any of them changed every present one is */
+/** *written again, shorthand first, then axis, then side: a side key keeps */
+/** *winning when the shorthand under it moves. */
 fn st_box(
     id: int,
     s_all: int,
@@ -3792,8 +3792,8 @@ fn st_put(id: int, setter: int, v: Option<int>) {
     }
 }
 
-/// `Style.floating`: write the fields that differ. A present `Float` is the
-/// whole config, so every field is compared and written.
+/** *`Style.floating`: write the fields that differ. A present `Float` is the */
+/** *whole config, so every field is compared and written. */
 fn st_float(id: int, a: Option<Float>, b: Option<Float>) {
     if !result.is_some(b) {
         return
@@ -3830,10 +3830,10 @@ fn st_float(id: int, a: Option<Float>, b: Option<Float>) {
     }
 }
 
-/// Apply every style, event, bind, visible, and press prop, then attach
-/// `node` to the current `slot` parent. Kind-specific chrome (native
-/// thumbs, overlay float, text-input edit, list rebuild) is handled here
-/// so widgets stay data.
+/** *Apply every style, event, bind, visible, and press prop, then attach */
+/** *`node` to the current `slot` parent. Kind-specific chrome (native */
+/** *thumbs, overlay float, text-input edit, list rebuild) is handled here */
+/** *so widgets stay data. */
 fn Component(node: Node, p: BoxProps) -> Node {
     arena.ensure()
     arena.component_runs = arena.component_runs + 1
@@ -4029,10 +4029,10 @@ fn Component(node: Node, p: BoxProps) -> Node {
     return node
 }
 
-/// Paint-side progress for a bar node (`raw_progress`) bound to signal
-/// `signal_id`, given the value `v` just read. A negative value or `sweep`
-/// spins; otherwise a plain `set` eases from the last value the bar showed
-/// (a `zeus.animate` write brings its own track). Call from the bar's effect.
+/** *Paint-side progress for a bar node (`raw_progress`) bound to signal */
+/** *`signal_id`, given the value `v` just read. A negative value or `sweep` */
+/** *spins; otherwise a plain `set` eases from the last value the bar showed */
+/** *(a `zeus.animate` write brings its own track). Call from the bar's effect. */
 fn progress_tween(n: Node, signal_id: int, v: int, sweep: bool) {
     let node_id = n.id
     let last = nodes.anim[node_id].tween
@@ -4051,7 +4051,7 @@ fn progress_tween(n: Node, signal_id: int, v: int, sweep: bool) {
     }
 }
 
-/// Run `build` with `host` as the parent. Trailing blocks lower to this.
+/** *Run `build` with `host` as the parent. Trailing blocks lower to this. */
 fn slot(host: Node, build: fn()) -> Node {
     ui_push(host.id)
     build()
@@ -4059,7 +4059,7 @@ fn slot(host: Node, build: fn()) -> Node {
     return host
 }
 
-/// Compiler trailing-block sugar until `slot` is the emitted name.
+/** *Compiler trailing-block sugar until `slot` is the emitted name. */
 fn __ui_scope(node: Node, build: fn()) -> Node {
     return slot(node, build)
 }
@@ -4068,31 +4068,31 @@ fn ui_emit(node: Node) -> Node {
     return Component(node)
 }
 
-/// Named extras for `logger`.
+/** *Named extras for `logger`. */
 struct LoggerProps {
     msg: string = "",
     level: int = Log.Info,
-    /// What the line is about, shown beside the level: `"cart"`, `"auth"`.
+    /** *What the line is about, shown beside the level: `"cart"`, `"auth"`. */
     scope: string = "app",
 }
 
-/// Write one log line, in the level's color, with the app's navigation and
-/// user events, in the `zeli serve` or `zeli preview` terminal for every host.
-/// Interpolate to check a value.
-///
-/// ```
-/// zeus.logger("cart has {{n}} items")
-/// zeus.logger("order placed", Log.Success)
-/// zeus.logger("card declined", Log.Error, scope = "checkout")
-/// ```
+/** *Write one log line, in the level's color, with the app's navigation and */
+/** *user events, in the `zeli serve` or `zeli preview` terminal for every host. */
+/** *Interpolate to check a value. */
+/** */
+/** *``` */
+/** *zeus.logger("cart has {{n}} items") */
+/** *zeus.logger("order placed", Log.Success) */
+/** *zeus.logger("card declined", Log.Error, scope = "checkout") */
+/** *``` */
 fn logger(p: LoggerProps) {
     log.write(p.level, p.scope, p.msg)
 }
 
-/// What the app records: `"all"` (navigation, user events, every `logger`
-/// line), `"debug"` (those and `Log.Debug`), `"errors"` or `"off"`. The
-/// generated `app_routes.loam` calls this, from `zeus.toml`'s `logs` setting;
-/// an app built without `zeli` calls it once before `zeus.App` to be tracked.
+/** *What the app records: `"all"` (navigation, user events, every `logger` */
+/** *line), `"debug"` (those and `Log.Debug`), `"errors"` or `"off"`. The */
+/** *generated `app_routes.loam` calls this, from `zeus.toml`'s `logs` setting; */
+/** *an app built without `zeli` calls it once before `zeus.App` to be tracked. */
 fn logger_mode(mode: string) {
     let was = logs.tracking()
     logs.set_mode(mode)
@@ -4102,31 +4102,31 @@ fn logger_mode(mode: string) {
 }
 
 struct TextProps {
-    /// CSS-subset style: `color`, `font`, `wrap`, `ellipsis`, and the box keys
-    /// (`grow`, `top` / `left` for pinned chart text, ...).
+    /** *CSS-subset style: `color`, `font`, `wrap`, `ellipsis`, and the box keys */
+    /** *(`grow`, `top` / `left` for pinned chart text, ...). */
     style: Option<fn() -> Style> = none,
-    /// The caller's style over `style`; see `BoxProps.restyle`.
+    /** *The caller's style over `style`; see `BoxProps.restyle`. */
     restyle: Option<fn() -> Style> = none,
-    /// Filled with this label; see `BoxProps.ref`.
+    /** *Filled with this label; see `BoxProps.ref`. */
     ref: Option<Ref> = none,
-    /// Paint this integer signal's live value (cheaper than a text thunk: no
-    /// string is built per change).
+    /** *Paint this integer signal's live value (cheaper than a text thunk: no */
+    /** *string is built per change). */
     bind: Option<Signal<int>> = none,
-    /// Accessibility role and name; see `BoxProps`.
+    /** *Accessibility role and name; see `BoxProps`. */
     role: string = "",
     label: Option<fn() -> string> = none,
-    /// Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`).
+    /** *Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`). */
     keys: []KeyBind = no_keys(),
 }
-/// A flex container. Trailing block is the slot.
+/** *A flex container. Trailing block is the slot. */
 fn Box(p: BoxProps) -> Node {
     return Component(raw_box(), p)
 }
 
-/// Static or reactive text. The label is a thunk, so a signal read inside it
-/// is recorded against this label's own effect: setting the signal repaints
-/// this one node. The compiler lifts a plain expression —
-/// `Text("n={{count.get()}}")` — into that thunk, so callers write data.
+/** *Static or reactive text. The label is a thunk, so a signal read inside it */
+/** *is recorded against this label's own effect: setting the signal repaints */
+/** *this one node. The compiler lifts a plain expression — */
+/** *`Text("n={{count.get()}}")` — into that thunk, so callers write data. */
 fn Text(label: fn() -> string, p: TextProps) -> Node {
     return Component(
         raw_label(""),
@@ -4145,28 +4145,28 @@ fn Text(label: fn() -> string, p: TextProps) -> Node {
 // paint pass resolves a node's shadow and cannot import this module. These are
 // the public spellings; they delegate so there is one home for the numbers.
 
-/// Elevation for `level` 0..4, light appearance.
+/** *Elevation for `level` 0..4, light appearance. */
 fn elevation(level: int) -> Elev {
     return arena.elevation(level)
 }
 
-/// Elevation for `level` 0..4, dark appearance. A dark UI needs a darker,
-/// tighter shadow: the same alpha over a near-black surface is invisible, so
-/// every level roughly doubles its opacity and pulls the blur in.
+/** *Elevation for `level` 0..4, dark appearance. A dark UI needs a darker, */
+/** *tighter shadow: the same alpha over a near-black surface is invisible, so */
+/** *every level roughly doubles its opacity and pulls the blur in. */
 fn elevation_dark(level: int) -> Elev {
     return arena.elevation_dark(level)
 }
 
-/// Elevation resolved for the current appearance.
+/** *Elevation resolved for the current appearance. */
 fn elev_now(level: int) -> Elev {
     return arena.elev_now(level)
 }
 
 // --- motion ---------------------------------------------------------------
-/// What `Style.transition` can name. The times are for what only changes
-/// (colour, opacity); what moves uses a spring, which has mass instead of a
-/// duration, and what leaves uses `Fall`. A bespoke value is a bug, not a
-/// refinement.
+/** *What `Style.transition` can name. The times are for what only changes */
+/** *(colour, opacity); what moves uses a spring, which has mass instead of a */
+/** *duration, and what leaves uses `Fall`. A bespoke value is a bug, not a */
+/** *refinement. */
 enum Motion {
     // Fades and hover.
     Fast = 70,
@@ -4183,9 +4183,9 @@ enum Motion {
     Fall = 100008,
 }
 
-/// Easing curves. Integer ids — the curve itself lives in the animation
-/// subsystem (`arena.anim_ease`), which evaluates a CSS cubic-bezier per
-/// track without allocating. Control points are documented there.
+/** *Easing curves. Integer ids — the curve itself lives in the animation */
+/** *subsystem (`arena.anim_ease`), which evaluates a CSS cubic-bezier per */
+/** *track without allocating. Control points are documented there. */
 enum EASE {
     // No shaping. Progress bars and crossfades of colour only.
     Linear = 0,
@@ -4214,38 +4214,38 @@ enum EASE {
     Exit = 8,
 }
 
-/// Line box for `font` px at a `LEAD_*` percentage.
+/** *Line box for `font` px at a `LEAD_*` percentage. */
 fn line_height(font: int, lead: int) -> int {
     return font * lead / 100
 }
 
 // --- typography ---
 
-/// Set the typeface for every label the app draws. One family for the whole
-/// app, applied by the host when it measures and draws — there is no
-/// per-node family, because the design system uses one typeface and the
-/// text ABI carries a pixel size only.
-///
-/// ```
-/// zeus.set_font_family("Universal Sans")
-/// ```
-/// Pass `""` to fall back to the host's default UI font.
+/** *Set the typeface for every label the app draws. One family for the whole */
+/** *app, applied by the host when it measures and draws — there is no */
+/** *per-node family, because the design system uses one typeface and the */
+/** *text ABI carries a pixel size only. */
+/** */
+/** *``` */
+/** *zeus.set_font_family("Universal Sans") */
+/** *``` */
+/** *Pass `""` to fall back to the host's default UI font. */
 fn set_font_family(name: string) {
     arena.ensure()
     platform.plat_set_font_family(name)
     metrics.reset_cache()
 }
 
-/// Register a font the host does not ship, then make it current. `src` is a
-/// file path on desktop or a URL on the web. Returns 1 when the host
-/// accepted it, 0 when it did not — callers should keep working on the
-/// fallback rather than assume the face is present.
-///
-/// ```
-/// if zeus.load_font("Universal Sans", "./fonts/UniversalSans.woff2") == 0 {
-///     zeus.set_font_family("Inter")
-/// }
-/// ```
+/** *Register a font the host does not ship, then make it current. `src` is a */
+/** *file path on desktop or a URL on the web. Returns 1 when the host */
+/** *accepted it, 0 when it did not — callers should keep working on the */
+/** *fallback rather than assume the face is present. */
+/** */
+/** *``` */
+/** *if zeus.load_font("Universal Sans", "./fonts/UniversalSans.woff2") == 0 { */
+/** *zeus.set_font_family("Inter") */
+/** *} */
+/** *``` */
 fn load_font(family: string, src: string) -> int {
     arena.ensure()
     let ok = platform.plat_load_font(family, src)
@@ -4256,41 +4256,41 @@ fn load_font(family: string, src: string) -> int {
     return ok
 }
 
-/// Measure text in-tree from an external font, so every host computes the same
-/// line box for the same (font, size, string). `src` is a file path on desktop
-/// or a URL on the web.
-///
-/// Pair it with `load_font(family, src)` so the host *draws* with the same
-/// face; this binds the bytes that layout measures with. Returns 1 when the
-/// font was read and parsed, 0 when it could not be (the app then keeps host
-/// measurement and should not assume the face is present).
-///
-/// ```
-/// if zeus.use_font("./fonts/Inter.ttf") == 0 {
-///     // host metrics remain in effect
-/// }
-/// ```
+/** *Measure text in-tree from an external font, so every host computes the same */
+/** *line box for the same (font, size, string). `src` is a file path on desktop */
+/** *or a URL on the web. */
+/** */
+/** *Pair it with `load_font(family, src)` so the host *draws* with the same */
+/** *face; this binds the bytes that layout measures with. Returns 1 when the */
+/** *font was read and parsed, 0 when it could not be (the app then keeps host */
+/** *measurement and should not assume the face is present). */
+/** */
+/** *``` */
+/** *if zeus.use_font("./fonts/Inter.ttf") == 0 { */
+/** * // host metrics remain in effect */
+/** *} */
+/** *``` */
 fn use_font(src: string) -> int {
     arena.ensure()
     return metrics.bind(platform.plat_font_bytes(src))
 }
 
-/// Bind already-loaded font bytes for in-tree measurement. The web host has no
-/// filesystem, so a web app passes the bytes it fetched itself; desktop apps
-/// can use `use_font` instead.
+/** *Bind already-loaded font bytes for in-tree measurement. The web host has no */
+/** *filesystem, so a web app passes the bytes it fetched itself; desktop apps */
+/** *can use `use_font` instead. */
 fn use_font_bytes(bytes: string) -> int {
     return metrics.bind(bytes)
 }
 
-/// Drop the external font; measurement falls back to the host default.
+/** *Drop the external font; measurement falls back to the host default. */
 fn clear_font() {
     metrics.unbind()
 }
 
-/// Theme roles. `accent` is the live ramp's solid step — ink by
-/// default, and whatever `set_accent` picks after that. Status tints stay
-/// hue-distinct and quiet; the chart fields are the data-viz layer every chart
-/// reads (stroke + area wash).
+/** *Theme roles. `accent` is the live ramp's solid step — ink by */
+/** *default, and whatever `set_accent` picks after that. Status tints stay */
+/** *hue-distinct and quiet; the chart fields are the data-viz layer every chart */
+/** *reads (stroke + area wash). */
 // --- C boundary hooks -----------------------------------------------------
 // Bodyless: the runtime implements these (see `zeus_plat.c`), and `zeus`
 // re-exports them. Named `on_*` / `*_key` because they are the keyboard and
@@ -4299,18 +4299,18 @@ fn clear_font() {
 fn on_action(node: Node, action: string, sig: Signal<int>, mode: int, value: int) -> Node {}
 fn on_action_global(action: string, sig: Signal<int>, mode: int, value: int) {}
 
-/// Step `sig` by `delta`, clamped to lo..hi — arrow navigation over a range.
+/** *Step `sig` by `delta`, clamped to lo..hi — arrow navigation over a range. */
 fn on_range(node: Node, action: string, sig: Signal<int>, delta: int, lo: int, hi: int) -> Node {}
 fn map_key(spec: string, action: string, ctx: string) {}
 fn remap_key(spec: string, action: string, ctx: string) {}
-/// Foreground text. `ink` is the strongest ink.
+/** *Foreground text. `ink` is the strongest ink. */
 fn ink() -> string { return role_token(ROLE.Ink) }
 
-/// Primary: fills for default buttons, switches, selection. The accent ramp's
-/// solid step (`register_accent`), ink by default.
+/** *Primary: fills for default buttons, switches, selection. The accent ramp's */
+/** *solid step (`register_accent`), ink by default. */
 fn accent() -> string { return role_token(ROLE.Accent) }
 
-/// Destructive text (errors, destructive alerts).
+/** *Destructive text (errors, destructive alerts). */
 fn danger() -> string { return role_token(ROLE.Danger) }
 
 fn ok_bg() -> string { return role_token(ROLE.OkS3) }
@@ -4345,18 +4345,18 @@ fn info_fill_solid() -> string { return role_token(ROLE.InfoS9) }
 
 fn info_ink() -> string { return role_token(ROLE.InfoS11) }
 
-/// A color that names a theme slot instead of carrying a value. Resolved by
-/// the paint pass, so it follows `appearance()` with no effect attached.
+/** *A color that names a theme slot instead of carrying a value. Resolved by */
+/** *the paint pass, so it follows `appearance()` with no effect attached. */
 fn role_token(slot: int) -> string {
     return "@{{slot}}"
 }
 
 // --- app-drawn title bar (`zeus.window_chrome`) ---
 
-/// The host title bar's box under `CHROME_CUSTOM`, in points: `height` of the
-/// strip (0 in full screen and on hosts without one), and `lead` / `trail`,
-/// the room the window buttons take on each side. Reading it in a build
-/// tracks it, so the bar follows full screen and resizes.
+/** *The host title bar's box under `CHROME_CUSTOM`, in points: `height` of the */
+/** *strip (0 in full screen and on hosts without one), and `lead` / `trail`, */
+/** *the room the window buttons take on each side. Reading it in a build */
+/** *tracks it, so the bar follows full screen and resizes. */
 struct Titlebar {
     height: int,
     lead: int,
@@ -4365,14 +4365,14 @@ struct Titlebar {
 
 let mut titlebar_sig: Signal<int> = Signal { id: 0 }
 
-/// The box as one int (height, lead, trail: 10 bits each).
+/** *The box as one int (height, lead, trail: 10 bits each). */
 fn titlebar_packed() -> int {
     let mut b = []int { 0, 0, 0 }
     platform.plat_titlebar_get(b)
     return b[0] % 1024 * 1048576 + b[1] % 1024 * 1024 + b[2] % 1024
 }
 
-/// Engine, once per frame before layout: publish a moved box.
+/** *Engine, once per frame before layout: publish a moved box. */
 fn titlebar_refresh() {
     if titlebar_sig.id != 0 {
         let tb = titlebar_packed()

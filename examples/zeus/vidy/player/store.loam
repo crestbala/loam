@@ -1,14 +1,14 @@
-//! The player's state and every action on it. Views read these signals and
-//! call these fns; nothing else talks to the host player.
-//!
-//! The host owns time, so `poll` copies position / duration / state into
-//! signals every frame while something plays (`async.add_step`) and a few
-//! times a second otherwise (`async.interval`). Commands go straight to the
-//! host and the next poll shows their effect.
-//!
-//! Signals live at module scope (created once at init), so a route rebuild
-//! never drops them. The pure pieces (time labels, aspect boxes, names, the
-//! ffmpeg job) live in `lib/`; the key bindings in `keys.loam`.
+// The player's state and every action on it. Views read these signals and
+// call these fns; nothing else talks to the host player.
+//
+// The host owns time, so `poll` copies position / duration / state into
+// signals every frame while something plays (`async.add_step`) and a few
+// times a second otherwise (`async.interval`). Commands go straight to the
+// host and the next poll shows their effect.
+//
+// Signals live at module scope (created once at init), so a route rebuild
+// never drops them. The pure pieces (time labels, aspect boxes, names, the
+// ffmpeg job) live in `lib/`; the key bindings in `keys.loam`.
 
 import "zeus"
 import "std:async"
@@ -19,24 +19,24 @@ import "../lib/media_name.loam" as names
 import "../lib/timecode.loam" as timecode
 import "../lib/transcode.loam" as transcode
 
-/// Which popover is open over the control bar.
+/** *Which popover is open over the control bar. */
 const MENU_NONE: int = 0
 const MENU_SPEED: int = 1
 const MENU_ASPECT: int = 2
 
-/// Controls hide after this much stillness while playing.
+/** *Controls hide after this much stillness while playing. */
 const IDLE_MS: int = 2600
-/// A second press within this reads as a double click / double tap.
+/** *A second press within this reads as a double click / double tap. */
 const DOUBLE_MS: int = 320
 const SKIP_MS: int = 10000
 const NUDGE_MS: int = 5000
-/// One frame at 30 fps: `,` / `.` step while paused.
+/** *One frame at 30 fps: `,` / `.` step while paused. */
 const FRAME_MS: int = 33
 
-/// The host player this app drives (slot 1).
+/** *The host player this app drives (slot 1). */
 let host = zeus.media_player(1)
 
-/// What is loaded: the src handed to the host, and the name shown for it.
+/** *What is loaded: the src handed to the host, and the name shown for it. */
 let src = zeus.signal("")
 let title = zeus.signal("")
 let state = zeus.signal(0)
@@ -46,49 +46,49 @@ let buffered = zeus.signal(0)
 let vid_w = zeus.signal(0)
 let vid_h = zeus.signal(0)
 let error = zeus.signal("")
-/// A long-running step the user should know about ("Converting …").
+/** *A long-running step the user should know about ("Converting …"). */
 let status = zeus.signal("")
 
 let volume = zeus.signal(80)
 let muted = zeus.signal(false)
-/// Playback rate in percent.
+/** *Playback rate in percent. */
 let rate = zeus.signal(100)
 let looping = zeus.signal(false)
 let aspect = zeus.signal(ar.FIT)
 let full = zeus.signal(false)
 
-/// Chrome: control bar shown, which popover, help sheet, URL dialog, playlist.
+/** *Chrome: control bar shown, which popover, help sheet, URL dialog, playlist. */
 let controls = zeus.signal(true)
 let menu = zeus.signal(MENU_NONE)
 let help = zeus.signal(false)
 let url_open = zeus.signal(false)
 let url_text = zeus.signal("")
 let list_open = zeus.signal(false)
-/// The pointer is over the control panel: never hide under it.
+/** *The pointer is over the control panel: never hide under it. */
 let over_panel = zeus.signal(0)
 
-/// Seek bar: dragging, and the time under the finger / pointer.
+/** *Seek bar: dragging, and the time under the finger / pointer. */
 let scrubbing = zeus.signal(false)
 let scrub_ms = zeus.signal(0)
 let bar_hover = zeus.signal(0)
 let hover_ms = zeus.signal(0)
 let hover_x = zeus.signal(0)
 
-/// On-screen feedback: a short text, and a side bubble for double taps
-/// (-1 left, 1 right, 0 none).
+/** *On-screen feedback: a short text, and a side bubble for double taps */
+/** *(-1 left, 1 right, 0 none). */
 let osd = zeus.signal("")
 let osd_icon = zeus.signal("")
 let tap_side = zeus.signal(0)
 
-/// Stage size in dp, from the last layout.
+/** *Stage size in dp, from the last layout. */
 let stage_w = zeus.signal(0)
 let stage_h = zeus.signal(0)
 let stage_ref = zeus.ref()
 let bar_ref = zeus.ref()
 let vol_ref = zeus.ref()
 
-/// Playlist: names and srcs, parallel (a struct-with-list signal loses its
-/// list when set from a callback). `cur` is the playing index, -1 for none.
+/** *Playlist: names and srcs, parallel (a struct-with-list signal loses its */
+/** *list when set from a callback). `cur` is the playing index, -1 for none. */
 let pl_names = zeus.signal([]string {})
 let pl_srcs = zeus.signal([]string {})
 let cur = zeus.signal(-1)
@@ -103,7 +103,7 @@ let mut osd_timer: int = 0
 let mut tap_timer: int = 0
 let mut last_click: int = -100000
 let mut last_drag: int = 0
-/// ffmpeg fallback: the file being written, and the source it replaces.
+/** *ffmpeg fallback: the file being written, and the source it replaces. */
 let mut conv_out: string = ""
 let mut conv_tried: string = ""
 
@@ -163,7 +163,7 @@ fn poll() {
     poll_idle(st)
 }
 
-/// The picker and drag-and-drop both land here.
+/** *The picker and drag-and-drop both land here. */
 fn poll_pick() {
     let n = zeus.media_picks()
     if n == last_pick {
@@ -185,17 +185,17 @@ fn poll_stage() {
     }
 }
 
-/// Copy the stage's laid-out size into `stage_w` / `stage_h`. The stage's
-/// `on_resize` calls this in the frame the size changes; the poll is the
-/// fallback.
+/** *Copy the stage's laid-out size into `stage_w` / `stage_h`. The stage's */
+/** *`on_resize` calls this in the frame the size changes; the poll is the */
+/** *fallback. */
 fn measure_stage() {
     let r = zeus.rect(stage_ref)
     put_int(stage_w, r.w)
     put_int(stage_h, r.h)
 }
 
-/// Pointer movement wakes the controls. Leaving the window (the host reports
-/// -1, -1) is not movement, and neither is a dp or two of trackpad jitter.
+/** *Pointer movement wakes the controls. Leaving the window (the host reports */
+/** *-1, -1) is not movement, and neither is a dp or two of trackpad jitter. */
 fn poll_pointer() {
     let x = zeus.pointer_x()
     let y = zeus.pointer_y()
@@ -231,7 +231,7 @@ fn poll_idle(st: int) {
     }
 }
 
-/// User activity: show the controls and restart the idle clock.
+/** *User activity: show the controls and restart the idle clock. */
 fn wake() {
     last_act = now()
     if !controls.peek() {
@@ -241,7 +241,7 @@ fn wake() {
 
 // --- loading ----------------------------------------------------------------
 
-/// Add a file to the playlist; `play_now` opens it at once.
+/** *Add a file to the playlist; `play_now` opens it at once. */
 fn enqueue(name: string, s: string, play_now: bool) {
     let mut names = pl_names.peek()
     let mut srcs = pl_srcs.peek()
@@ -274,7 +274,7 @@ fn play_index(i: int) {
     play()
 }
 
-/// Open `s` (path, URL or picked file) and show `name` for it.
+/** *Open `s` (path, URL or picked file) and show `name` for it. */
 fn load(name: string, s: string) {
     error.set("")
     status.set("")
@@ -292,8 +292,8 @@ fn load(name: string, s: string) {
     wake()
 }
 
-/// A freshly opened source starts with the host's defaults; carry the user's
-/// volume, mute, speed and loop over.
+/** *A freshly opened source starts with the host's defaults; carry the user's */
+/** *volume, mute, speed and loop over. */
 fn apply_settings() {
     zeus.media_volume(host, volume.peek())
     zeus.media_mute(host, muted.peek())
@@ -301,7 +301,7 @@ fn apply_settings() {
     zeus.media_loop(host, looping.peek())
 }
 
-/// The URL dialog's Open.
+/** *The URL dialog's Open. */
 fn open_url() {
     let u = url_text.peek().trim()
     if u == "" {
@@ -350,7 +350,7 @@ fn prev() {
     play_index(cur.peek() - 1)
 }
 
-/// Remove playlist row `i`; removing the playing row stops it.
+/** *Remove playlist row `i`; removing the playing row stops it. */
 fn remove_at(i: int) {
     let names = pl_names.peek()
     let srcs = pl_srcs.peek()
@@ -507,7 +507,7 @@ fn skip(delta: int) {
     wake()
 }
 
-/// `,` / `.`: one frame, paused.
+/** *`,` / `.`: one frame, paused. */
 fn step_frame(dir: int) {
     if !has_media() {
         return
@@ -516,7 +516,7 @@ fn step_frame(dir: int) {
     seek_to(pos.peek() + dir * FRAME_MS)
 }
 
-/// 0..9 jump to 0%..90%.
+/** *0..9 jump to 0%..90%. */
 fn jump_tenth(n: int) {
     let d = dur.peek()
     if d > 0 {
@@ -561,7 +561,7 @@ fn toggle_mute() {
     wake()
 }
 
-/// The speeds the menu offers, in percent.
+/** *The speeds the menu offers, in percent. */
 fn speeds() -> []int {
     return []int { 25, 50, 75, 100, 125, 150, 175, 200, 300 }
 }
@@ -572,7 +572,7 @@ fn set_rate(pct: int) {
     flash("", timecode.rate_label(pct))
 }
 
-/// One step faster (`dir` 1) or slower (-1) through `speeds()`.
+/** *One step faster (`dir` 1) or slower (-1) through `speeds()`. */
 fn step_rate(dir: int) {
     let ss = speeds()
     let r = rate.peek()
@@ -631,7 +631,7 @@ fn toggle_menu(m: int) {
     wake()
 }
 
-/// Escape closes the innermost thing that is open.
+/** *Escape closes the innermost thing that is open. */
 fn escape() {
     if menu.peek() != MENU_NONE {
         menu.set(MENU_NONE)
@@ -646,7 +646,7 @@ fn escape() {
 
 // --- the picture's box --------------------------------------------------------
 
-/// `Fit` value for the video `Image` under the current aspect mode.
+/** *`Fit` value for the video `Image` under the current aspect mode. */
 fn fit_mode() -> int {
     let a = aspect.get()
     if a == ar.FILL {
@@ -658,7 +658,7 @@ fn fit_mode() -> int {
     return Fit.Stretch
 }
 
-/// The picture's box in dp for the current mode, stage and video size.
+/** *The picture's box in dp for the current mode, stage and video size. */
 fn picture_box() -> BoxSize {
     return ar.fit_box(aspect.get(), stage_w.get(), stage_h.get(), vid_w.get(), vid_h.get())
 }
@@ -673,7 +673,7 @@ fn box_h() -> int {
 
 // --- seek bar -------------------------------------------------------------------
 
-/// Map a pointer x (window dp) on the seek bar to a time.
+/** *Map a pointer x (window dp) on the seek bar to a time. */
 fn bar_time(x: int) -> int {
     let r = zeus.rect(bar_ref)
     let d = dur.peek()
@@ -712,7 +712,7 @@ fn hover_bar(x: int) {
     put_int(hover_ms, bar_time(x))
 }
 
-/// Fraction of the bar (0..w) for `ms`.
+/** *Fraction of the bar (0..w) for `ms`. */
 fn bar_px(ms: int, w: int) -> int {
     let d = dur.get()
     if d <= 0 || w <= 0 {
@@ -772,7 +772,7 @@ fn stage_click() {
     toggle()
 }
 
-/// Undo the first press of a double without a flash.
+/** *Undo the first press of a double without a flash. */
 fn toggle_quiet() {
     let st = state.peek()
     if st == zeus.MEDIA_PLAYING || st == zeus.MEDIA_WAITING {
@@ -798,7 +798,7 @@ fn tap(side: int) {
     })
 }
 
-/// Show `text` (and a glyph: "play" / "pause" / "vol" / "") for a moment.
+/** *Show `text` (and a glyph: "play" / "pause" / "vol" / "") for a moment. */
 fn flash(icon: string, text: string) {
     osd.set(text)
     osd_icon.set(icon)

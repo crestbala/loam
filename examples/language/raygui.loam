@@ -1,19 +1,19 @@
-//! raygui example — immediate-mode controls with a live RAM readout.
-//!
-//!     ./run.sh raygui                  # window (needs raylib; brew install raylib)
-//!     RAYGUI_HEADLESS=1 ./run.sh raygui # 3 frames, prints the RAM summary
-//!
-//! `raygui` is the raygui immediate-mode GUI (raysan5/raygui) on raylib.
-//! Immediate mode means nothing is retained: every frame re-issues every
-//! control, and the only state is the handful of `let mut` values below. That
-//! is what makes it a fair RAM test — if the footprint climbs while this panel
-//! sits open (or while you press the stress button), the growth is the UI
-//! layer allocating per frame, not the tree growing.
-//!
-//! The right panel samples the host process footprint every frame —
-//! Apple `phys_footprint` (the number Xcode's memory gauge shows) or the
-//! Linux/Android resident set — and the program prints first/min/max/growth on
-//! exit so a run can be compared or scripted.
+// raygui example — immediate-mode controls with a live RAM readout.
+//
+//     ./run.sh raygui                  # window (needs raylib; brew install raylib)
+//     RAYGUI_HEADLESS=1 ./run.sh raygui # 3 frames, prints the RAM summary
+//
+// `raygui` is the raygui immediate-mode GUI (raysan5/raygui) on raylib.
+// Immediate mode means nothing is retained: every frame re-issues every
+// control, and the only state is the handful of `let mut` values below. That
+// is what makes it a fair RAM test — if the footprint climbs while this panel
+// sits open (or while you press the stress button), the growth is the UI
+// layer allocating per frame, not the tree growing.
+//
+// The right panel samples the host process footprint every frame —
+// Apple `phys_footprint` (the number Xcode's memory gauge shows) or the
+// Linux/Android resident set — and the program prints first/min/max/growth on
+// exit so a run can be compared or scripted.
 
 import "raygui"
 import "std:fmt"
@@ -29,7 +29,7 @@ let mut value_v: int = 42
 let mut combo_i: int = 1
 let mut list_scroll: int = 0
 let mut list_active: int = 0
-/// Extra controls the stress button keeps alive, to watch per-frame cost.
+/** *Extra controls the stress button keeps alive, to watch per-frame cost. */
 let mut stress: int = 0
 
 let mut frames: int = 0
@@ -57,7 +57,7 @@ fn sample_ram() {
     }
 }
 
-/// Left panel: the controls. Every call is re-issued each frame.
+/** *Left panel: the controls. Every call is re-issued each frame. */
 fn controls() {
     raygui.panel(16, 16, 376, win_h - 32, "raygui — controls")
     raygui.label(32, 46, 344, 22, "Immediate mode: no widget tree is retained.")
@@ -90,7 +90,7 @@ fn controls() {
                  "combo {{combo_i}} · list {{list_active}} · stress {{stress}}")
 }
 
-/// Right panel: what a RAM test watches. All values are host-reported.
+/** *Right panel: what a RAM test watches. All values are host-reported. */
 fn ram_panel() {
     // Read the host values into locals first: a `raygui.*` call inside `{{ }}`
     // interpolation tripped sema, so keep interpolation to plain values.

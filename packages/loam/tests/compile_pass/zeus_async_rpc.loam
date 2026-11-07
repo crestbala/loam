@@ -19,7 +19,7 @@ fn fail(what: string) {
     sys.exit(1)
 }
 
-/// Child process: one blocking Echo.Ping server, then exit.
+/** *Child process: one blocking Echo.Ping server, then exit. */
 fn srv_main() {
     let app = http.app()
     app.rpc("Echo.Ping", |body| { body })

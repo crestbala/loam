@@ -82,8 +82,8 @@ fn must(cond: bool, msg: string) {
     }
 }
 
-/// A list built and returned from a callee, so its buffer's original owner is
-/// gone by the time the cell holds it — the case a signal must survive.
+/** *A list built and returned from a callee, so its buffer's original owner is */
+/** *gone by the time the cell holds it — the case a signal must survive. */
 fn make_list() -> []int {
     let mut v = []int { 0 }
     push(v, 42)

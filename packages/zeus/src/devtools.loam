@@ -1,28 +1,28 @@
-//! devtools — the Zeus inspector, itself a Zeus app (§2.4).
-//!
-//! The whole UI state is one arena, so the inspector just reads it:
-//! `zeus.engine_tree_dump()` gives the node tree with each node's layout box,
-//! `zeus.engine_signals_dump()` gives live signal values. `Panel()` renders
-//! both as a scrollable list you can drop into any app in dev builds.
-//!
-//! ```
-//! import "zeus:devtools"
-//!
-//! zeus.Box(align_direction = Direction.Column) {
-//!     App()
-//!     devtools.Panel()
-//! }
-//! ```
-//!
-//! `LogPanel()` is the live `std:log` viewer: every API call `http`
-//! makes or serves, plus the app's own records, newest last, successes,
-//! warnings and errors tinted.
+// devtools — the Zeus inspector, itself a Zeus app (§2.4).
+//
+// The whole UI state is one arena, so the inspector just reads it:
+// `zeus.engine_tree_dump()` gives the node tree with each node's layout box,
+// `zeus.engine_signals_dump()` gives live signal values. `Panel()` renders
+// both as a scrollable list you can drop into any app in dev builds.
+//
+// ```
+// import "zeus:devtools"
+//
+// zeus.Box(align_direction = Direction.Column) {
+//     App()
+//     devtools.Panel()
+// }
+// ```
+//
+// `LogPanel()` is the live `std:log` viewer: every API call `http`
+// makes or serves, plus the app's own records, newest last, successes,
+// warnings and errors tinted.
 
 import "std:async"
 import "std:log"
 import "zeus"
 
-/// Bytes `s[a..b)` as a string.
+/** *Bytes `s[a..b)` as a string. */
 fn dv_slice(s: string, a: int, b: int) -> string {
     let mut out = []int {}
     let mut i = a
@@ -40,7 +40,7 @@ fn dv_slice(s: string, a: int, b: int) -> string {
     return string_from_bytes(out)
 }
 
-/// Split on `\n`, dropping empty lines.
+/** *Split on `\n`, dropping empty lines. */
 fn dv_lines(s: string) -> []string {
     let mut out = []string {}
     let mut start = 0
@@ -60,7 +60,7 @@ fn dv_lines(s: string) -> []string {
     return out
 }
 
-/// Split one dump line on `\t`.
+/** *Split one dump line on `\t`. */
 fn dv_fields(line: string) -> []string {
     let mut out = []string {}
     let mut start = 0
@@ -76,7 +76,7 @@ fn dv_fields(line: string) -> []string {
     return out
 }
 
-/// The node tree as display lines: `id role label (x,y wxh)`.
+/** *The node tree as display lines: `id role label (x,y wxh)`. */
 fn tree_lines() -> []string {
     let rows = dv_lines(zeus.engine_tree_dump())
     let mut out = []string {}
@@ -91,7 +91,7 @@ fn tree_lines() -> []string {
     return out
 }
 
-/// Live signal values as display lines: `sig id = value`.
+/** *Live signal values as display lines: `sig id = value`. */
 fn signal_lines() -> []string {
     let rows = dv_lines(zeus.engine_signals_dump())
     let mut out = []string {}
@@ -106,8 +106,8 @@ fn signal_lines() -> []string {
     return out
 }
 
-/// The inspector panel: the node tree with layout boxes, then signal values.
-/// Drop it into a dev build; it repaints with the rest of the tree.
+/** *The inspector panel: the node tree with layout boxes, then signal values. */
+/** *Drop it into a dev build; it repaints with the rest of the tree. */
 fn Panel() -> Node {
     let root = zeus.raw_scroll()
     zeus.slot(root, fn() {
@@ -125,14 +125,14 @@ fn Panel() -> Node {
     return root
 }
 
-/// Bumped (a tick later, coalesced) after each `std:log` record.
+/** *Bumped (a tick later, coalesced) after each `std:log` record. */
 let mut log_rev: Signal<int> = Signal { id: 0 }
 let mut log_bump_pending: bool = false
 
-/// Records shown by `LogPanel`, newest last.
+/** *Records shown by `LogPanel`, newest last. */
 const LOG_ROWS: int = 200
 
-/// The log records, oldest first, as display rows.
+/** *The log records, oldest first, as display rows. */
 fn log_rows() -> []Record {
     let rs = log.records()
     if rs.len <= LOG_ROWS {
@@ -158,15 +158,15 @@ fn log_color(level: int) -> string {
     return zeus.ink()
 }
 
-/// Named extras for `LogPanel`.
+/** *Named extras for `LogPanel`. */
 struct LogPanelProps {
-    /// Height of the scrolling list, in points.
+    /** *Height of the scrolling list, in points. */
     height: int = 240,
 }
 
-/// Live log viewer: `devtools.LogPanel(height = 320)`. The listener only
-/// schedules a refresh, so a record written while the tree is building does
-/// not touch a signal then.
+/** *Live log viewer: `devtools.LogPanel(height = 320)`. The listener only */
+/** *schedules a refresh, so a record written while the tree is building does */
+/** *not touch a signal then. */
 fn LogPanel(p: LogPanelProps) -> Node {
     if log_rev.id == 0 {
         log_rev = zeus.signal(0)

@@ -1,40 +1,40 @@
-//! agent.loam — Frontier-model pipeline over the local memory (phase 3).
-//!
-//! Local-first by design: `query_agent` retrieves the top chunks for the
-//! prompt with the engine's NEON sweep (< 1 ms), assembles a minimal context
-//! payload, and then either answers offline from that context (no endpoint
-//! configured) or posts the payload — retrieved chunks + question — to the
-//! chosen model and extracts the reply. Every failure degrades to the
-//! offline answer with the reason attached.
-//!
-//! Endpoint shapes (`kind`):
-//!   kind 1 — Anthropic Messages      POST /v1/messages, x-api-key,
-//!                                     system prompt in the `system` field,
-//!                                     reply text under `"text":`
-//!   kind 2 — xAI Grok Responses API  POST /v1/responses, Bearer key,
-//!                                     system prompt in `instructions`,
-//!                                     user text in `input`, replies under
-//!                                     `"output_text"` -> `"text":`
-//!                                     (the endpoint the xAI CLI documents)
-//!   kind 3 — OpenAI-style chat       POST /v1/chat/completions, optional
-//!                                     Bearer key (Ollama on 127.0.0.1 has
-//!                                     none), system-role message, replies
-//!                                     under `"content":`
-//!
-//! To use Grok: paste an xAI API key into the app (or the CLI key file) and
-//! pick a model id — only the question and the retrieved chunk lines leave
-//! the machine, over TLS. To use a local model: run `ollama serve`, pull a
-//! model, and choose the local endpoint (nothing leaves the machine).
+// agent.loam — Frontier-model pipeline over the local memory (phase 3).
+//
+// Local-first by design: `query_agent` retrieves the top chunks for the
+// prompt with the engine's NEON sweep (< 1 ms), assembles a minimal context
+// payload, and then either answers offline from that context (no endpoint
+// configured) or posts the payload — retrieved chunks + question — to the
+// chosen model and extracts the reply. Every failure degrades to the
+// offline answer with the reason attached.
+//
+// Endpoint shapes (`kind`):
+//   kind 1 — Anthropic Messages      POST /v1/messages, x-api-key,
+//                                     system prompt in the `system` field,
+//                                     reply text under `"text":`
+//   kind 2 — xAI Grok Responses API  POST /v1/responses, Bearer key,
+//                                     system prompt in `instructions`,
+//                                     user text in `input`, replies under
+//                                     `"output_text"` -> `"text":`
+//                                     (the endpoint the xAI CLI documents)
+//   kind 3 — OpenAI-style chat       POST /v1/chat/completions, optional
+//                                     Bearer key (Ollama on 127.0.0.1 has
+//                                     none), system-role message, replies
+//                                     under `"content":`
+//
+// To use Grok: paste an xAI API key into the app (or the CLI key file) and
+// pick a model id — only the question and the retrieved chunk lines leave
+// the machine, over TLS. To use a local model: run `ollama serve`, pull a
+// model, and choose the local endpoint (nothing leaves the machine).
 
 import "std:net"
 import "engine.loam"
 import "watcher.loam"
 
-/// Rough cap on retrieved context characters per query.
+/** *Rough cap on retrieved context characters per query. */
 const AGENT_MAX_CONTEXT: int = 12000
 
-/// One model endpoint plus how to reach it. `local` marks no-auth local
-/// servers (Ollama), which answer even with an empty key.
+/** *One model endpoint plus how to reach it. `local` marks no-auth local */
+/** *servers (Ollama), which answer even with an empty key. */
 struct FrontierPipeline {
     model: string,
     host: string,
@@ -48,14 +48,14 @@ struct FrontierPipeline {
     local: int,
 }
 
-/// A prompt's retrieved memory: ordered chunk lines.
+/** *A prompt's retrieved memory: ordered chunk lines. */
 struct AgentContext {
     chunks: []string,
     chars: int,
 }
 
-/// The agent's answer. `remote` is 1 when the model API replied; the text
-/// is then its response, otherwise the offline context summary.
+/** *The agent's answer. `remote` is 1 when the model API replied; the text */
+/** *is then its response, otherwise the offline context summary. */
 struct AgentAnswer {
     text: string,
     remote: int,
@@ -80,8 +80,8 @@ fn anthropic_pipeline(key: string) -> FrontierPipeline {
     }
 }
 
-/// xAI Grok via the Responses API (`/v1/responses`). Model ids: grok-4.6,
-/// grok-4, grok-4-fast, ... — override `pipeline.model` for others.
+/** *xAI Grok via the Responses API (`/v1/responses`). Model ids: grok-4.6, */
+/** *grok-4, grok-4-fast, ... — override `pipeline.model` for others. */
 fn grok_pipeline(key: string) -> FrontierPipeline {
     return FrontierPipeline {
         model: "grok-4.6",
@@ -97,9 +97,9 @@ fn grok_pipeline(key: string) -> FrontierPipeline {
     }
 }
 
-/// Local model over Ollama (OpenAI-compatible chat, no auth, plain HTTP on
-/// 127.0.0.1:11434). Model ids are whatever you pulled, e.g. llama3.2,
-/// qwen2.5-coder, mistral. Start it with:  ollama serve
+/** *Local model over Ollama (OpenAI-compatible chat, no auth, plain HTTP on */
+/** *127.0.0.1:11434). Model ids are whatever you pulled, e.g. llama3.2, */
+/** *qwen2.5-coder, mistral. Start it with:  ollama serve */
 fn ollama_pipeline(model: string) -> FrontierPipeline {
     return FrontierPipeline {
         model: model,
@@ -115,7 +115,7 @@ fn ollama_pipeline(model: string) -> FrontierPipeline {
     }
 }
 
-/// Any OpenAI-style chat endpoint (Bearer key when non-empty).
+/** *Any OpenAI-style chat endpoint (Bearer key when non-empty). */
 fn openai_chat_pipeline(
     model: string,
     host: string,
@@ -142,8 +142,8 @@ fn openai_chat_pipeline(
 // Retrieval
 // ---------------------------------------------------------------------------
 
-/// Retrieve the `topk` chunks nearest to `prompt` (engine sweep), labeled
-/// through watcher.loam's metadata. Works for any engine content.
+/** *Retrieve the `topk` chunks nearest to `prompt` (engine sweep), labeled */
+/** *through watcher.loam's metadata. Works for any engine content. */
 fn build_context(prompt: string, topk: int) -> AgentContext {
     let mut ctx = AgentContext { chunks: []string {}, chars: 0 }
     let qv = engine.embed_text(prompt)
@@ -164,7 +164,7 @@ fn build_context(prompt: string, topk: int) -> AgentContext {
     return ctx
 }
 
-/// The retrieved chunks as one newline-joined block (what the model reads).
+/** *The retrieved chunks as one newline-joined block (what the model reads). */
 fn context_text(ctx: AgentContext) -> string {
     let mut b = []int {}
     let mut j = 0
@@ -181,7 +181,7 @@ fn context_text(ctx: AgentContext) -> string {
     return string_from_bytes(b)
 }
 
-/// Answer text built purely from retrieved local memory (offline).
+/** *Answer text built purely from retrieved local memory (offline). */
 fn offline_reply(us: int, ctx: AgentContext) -> string {
     let mut b = []int {}
     let head = "offline memory answer ({{us}} us, {{ctx.chunks.len}} chunks)\n"
@@ -226,8 +226,8 @@ fn find_from(s: string, pat: string, from: int) -> int {
     return -1
 }
 
-/// Escape a string into a JSON string literal body (quotes, backslashes,
-/// newlines escaped; tabs/CR collapsed to spaces).
+/** *Escape a string into a JSON string literal body (quotes, backslashes, */
+/** *newlines escaped; tabs/CR collapsed to spaces). */
 fn json_escape(s: string) -> string {
     let mut b = []int {}
     for i in 0..s.len {
@@ -250,8 +250,8 @@ fn json_escape(s: string) -> string {
     return string_from_bytes(b)
 }
 
-/// Extract the JSON string that follows the first `"key":` occurrence at or
-/// after `from`.
+/** *Extract the JSON string that follows the first `"key":` occurrence at or */
+/** *after `from`. */
 fn extract_after_from(body: string, key: string, from: int) -> string {
     let idx = find_from(body, key, from)
     if idx < 0 {
@@ -282,8 +282,8 @@ fn extract_after_from(body: string, key: string, from: int) -> string {
     return string_from_bytes(b)
 }
 
-/// Pull the answer text out of a reply, per API shape, with fallbacks so a
-/// shape drift degrades to a visible error instead of a silent miss.
+/** *Pull the answer text out of a reply, per API shape, with fallbacks so a */
+/** *shape drift degrades to a visible error instead of a silent miss. */
 fn extract_reply(body: string, kind: int) -> string {
     if kind == 1 {
         // Anthropic Messages: content:[{type:"text", text:"..."}]
@@ -315,7 +315,7 @@ fn extract_reply(body: string, kind: int) -> string {
     return extract_after_from(body, "\"text\":", 0)
 }
 
-/// Clip `s` to `n` bytes (for status lines).
+/** *Clip `s` to `n` bytes (for status lines). */
 fn clip(s: string, n: int) -> string {
     if s.len <= n {
         return s
@@ -329,9 +329,9 @@ fn clip(s: string, n: int) -> string {
     return string_from_bytes(b)
 }
 
-/// A JSON error message from an API error body, when the reply has none.
-/// OpenAI-style errors carry "message"; Ollama's simple errors carry
-/// "error": "..." directly.
+/** *A JSON error message from an API error body, when the reply has none. */
+/** *OpenAI-style errors carry "message"; Ollama's simple errors carry */
+/** *"error": "..." directly. */
 fn extract_error(body: string) -> string {
     let msg = extract_after_from(body, "\"message\":", 0)
     if msg.len > 0 {
@@ -351,8 +351,8 @@ fn extract_error(body: string) -> string {
     return ""
 }
 
-/// The request body per kind: retrieved context always rides in the system
-/// slot (instructions / system field / system-role message).
+/** *The request body per kind: retrieved context always rides in the system */
+/** *slot (instructions / system field / system-role message). */
 fn body_of(p: FrontierPipeline, system_esc: string, user_esc: string) -> string {
     if p.kind == 1 {
         return "{\"model\":\"{{p.model}}\",\"max_tokens\":{{p.max_tokens}},\"system\":\"{{system_esc}}\",\"messages\":[{\"role\":\"user\",\"content\":\"{{user_esc}}\"}]}"
@@ -363,8 +363,8 @@ fn body_of(p: FrontierPipeline, system_esc: string, user_esc: string) -> string 
     return "{\"model\":\"{{p.model}}\",\"max_tokens\":{{p.max_tokens}},\"messages\":[{\"role\":\"system\",\"content\":\"{{system_esc}}\"},{\"role\":\"user\",\"content\":\"{{user_esc}}\"}]}"
 }
 
-/// One HTTP/1.1 POST over TLS (cloud) or plain TCP (local Ollama). Returns
-/// the response body, or "" on any failure (agent_err carries the reason).
+/** *One HTTP/1.1 POST over TLS (cloud) or plain TCP (local Ollama). Returns */
+/** *the response body, or "" on any failure (agent_err carries the reason). */
 fn http_post(p: FrontierPipeline, body: string) -> string {
     let mut auth_line = ""
     if p.kind == 1 {
@@ -420,10 +420,10 @@ fn http_post(p: FrontierPipeline, body: string) -> string {
 // The pipeline
 // ---------------------------------------------------------------------------
 
-/// Answer `prompt`: retrieve context locally (< 1 ms sweep), then either
-/// summarize it offline or ask the configured model with the chunks in the
-/// system slot. The engine must be open and indexed (watcher.watch_scan or
-/// engine.engine_open).
+/** *Answer `prompt`: retrieve context locally (< 1 ms sweep), then either */
+/** *summarize it offline or ask the configured model with the chunks in the */
+/** *system slot. The engine must be open and indexed (watcher.watch_scan or */
+/** *engine.engine_open). */
 fn query_agent(p: FrontierPipeline, prompt: string, topk: int) -> AgentAnswer {
     agent_err = ""
     let t0 = engine.engine_now_us()

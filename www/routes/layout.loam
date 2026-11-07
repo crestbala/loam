@@ -1,8 +1,8 @@
-//! Root shell. Retained across navigation, so the bar and the theme survive.
-//!
-//! One centered column: the top bar, then the sidebar beside the page, then
-//! the footer. Under `shell.WIDE` the sidebar folds away; the top bar's links
-//! still reach every section.
+// Root shell. Retained across navigation, so the bar and the theme survive.
+//
+// One centered column: the top bar, then the sidebar beside the page, then
+// the footer. Under `shell.WIDE` the sidebar folds away; the top bar's links
+// still reach every section.
 
 import "zeus"
 import "zui"

@@ -1,5 +1,5 @@
-//! The three dealing costs, in paise, and the tax function the backtest
-//! is not allowed to call.
+// The three dealing costs, in paise, and the tax function the backtest
+// is not allowed to call.
 
 import "std:test"
 import "../core/costs.loam"

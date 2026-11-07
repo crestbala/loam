@@ -3,9 +3,9 @@ import "std:sys"
 import "zeus"
 import "zui"
 
-/// A capturing `on_press` lives in a struct field, is interned by
-/// `Button(on_click = ...)`, then the struct is dropped. The click must still
-/// see the captured signal.
+/** *A capturing `on_press` lives in a struct field, is interned by */
+/** *`Button(on_click = ...)`, then the struct is dropped. The click must still */
+/** *see the captured signal. */
 struct ClickProps {
     on_press: fn(),
 }

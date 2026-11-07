@@ -1,5 +1,5 @@
-//! The series is two columns of the same length, and a gap is a step of
-//! more than five calendar days. A weekend is not one.
+// The series is two columns of the same length, and a gap is a step of
+// more than five calendar days. A weekend is not one.
 
 import "std:test"
 import "std:date"

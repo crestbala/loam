@@ -25,7 +25,7 @@ fn must(ok: bool, what: string) {
     sys.exit(1)
 }
 
-/// Ink = a pixel darker than `t` in the blue channel.
+/** *Ink = a pixel darker than `t` in the blue channel. */
 fn ink_in(x0: int, y0: int, x1: int, y1: int, t: int) -> int {
     let mut n = 0
     let mut y = y0
@@ -42,8 +42,8 @@ fn ink_in(x0: int, y0: int, x1: int, y1: int, t: int) -> int {
     return n
 }
 
-/// The width of the ink on device row `y` between x0 and x1: for 'A' this is
-/// narrow near the apex and wide at the base.
+/** *The width of the ink on device row `y` between x0 and x1: for 'A' this is */
+/** *narrow near the apex and wide at the base. */
 fn ink_row_width(y: int, x0: int, x1: int, t: int) -> int {
     let mut n = 0
     let mut x = x0

@@ -1,27 +1,27 @@
-//! Stable ordering for parallel `[]i64` columns.
-//!
-//! Loam has no `sort`. A NAV file arrives in whatever order AMFI printed, and
-//! every later step — duplicate dates, a gap check, a merge of two schemes —
-//! assumes date order. This is that primitive, and nothing else: it does not
-//! know what a date is.
-//!
-//! Two functions:
-//!
-//! - `sort` orders one `[]i64` in place.
-//! - `sort_by` orders `keys` the same way and applies that permutation to a
-//!   parallel `labels` array, so a column of scheme codes, or of original
-//!   indexes, follows its key.
-//!
-//! The algorithm is a bottom-up merge sort. It is stable: when two keys
-//! compare equal, the one that arrived first stays first. That is what keeps
-//! an already-ranked tie from flipping between runs. "In place" means the
-//! caller's buffer is the one that ends up sorted; a scratch buffer of the
-//! same length is allocated for the merge and dropped.
-//!
-//! `keys` and `labels` must be the same length. A mismatch is a caller bug and
-//! traps, rather than sorting one and silently leaving the other behind.
+// Stable ordering for parallel `[]i64` columns.
+//
+// Loam has no `sort`. A NAV file arrives in whatever order AMFI printed, and
+// every later step — duplicate dates, a gap check, a merge of two schemes —
+// assumes date order. This is that primitive, and nothing else: it does not
+// know what a date is.
+//
+// Two functions:
+//
+// - `sort` orders one `[]i64` in place.
+// - `sort_by` orders `keys` the same way and applies that permutation to a
+//   parallel `labels` array, so a column of scheme codes, or of original
+//   indexes, follows its key.
+//
+// The algorithm is a bottom-up merge sort. It is stable: when two keys
+// compare equal, the one that arrived first stays first. That is what keeps
+// an already-ranked tie from flipping between runs. "In place" means the
+// caller's buffer is the one that ends up sorted; a scratch buffer of the
+// same length is allocated for the merge and dropped.
+//
+// `keys` and `labels` must be the same length. A mismatch is a caller bug and
+// traps, rather than sorting one and silently leaving the other behind.
 
-/// Order `keys` ascending, stably, in place.
+/** *Order `keys` ascending, stably, in place. */
 fn sort(keys: &mut []i64) {
     let mut labels = []i64 {}
     let n = keys.len
@@ -33,14 +33,14 @@ fn sort(keys: &mut []i64) {
     sort_by(keys, labels)
 }
 
-/// Order `keys` ascending and move `labels` with them.
-///
-/// `labels[i]` is whatever rode along with `keys[i]` — an original index, a
-/// scheme code, a second numeric column. Equal keys keep their input order,
-/// and the labels of those keys keep that order too.
-///
-/// Both are `&mut`: an index write through a plain parameter is rejected, and
-/// a sort that returned a fresh array would drop the caller's buffer.
+/** *Order `keys` ascending and move `labels` with them. */
+/** */
+/** *`labels[i]` is whatever rode along with `keys[i]` — an original index, a */
+/** *scheme code, a second numeric column. Equal keys keep their input order, */
+/** *and the labels of those keys keep that order too. */
+/** */
+/** *Both are `&mut`: an index write through a plain parameter is rejected, and */
+/** *a sort that returned a fresh array would drop the caller's buffer. */
 fn sort_by(keys: &mut []i64, labels: &mut []i64) {
     if keys.len != labels.len {
         panic("sortx.sort_by: keys and labels have different lengths")

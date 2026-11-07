@@ -1,22 +1,22 @@
-//! The piece's motif, and the line each phrase makes of it.
-//!
-//! A motif is a few scale degrees with onsets and lengths in sixteenths,
-//! drawn once from the seed: at most a sixth across, at most one leap,
-//! starting on a chord tone, and fitting in a bar or two. Transforms are
-//! pure. A phrase's line is the motif (or the label's transform of it), a
-//! response, and a cadence tail — open phrases end on 2, 5, or 7, closed
-//! phrases on 1 or 3. Strong beats snap to the bar's chord; weak beats
-//! keep the degree.
-//!
-//! The line that plays is not the first draw. `choose` scores 128 seeded
-//! candidates and keeps the best. The same seed picks the same line.
+// The piece's motif, and the line each phrase makes of it.
+//
+// A motif is a few scale degrees with onsets and lengths in sixteenths,
+// drawn once from the seed: at most a sixth across, at most one leap,
+// starting on a chord tone, and fitting in a bar or two. Transforms are
+// pure. A phrase's line is the motif (or the label's transform of it), a
+// response, and a cadence tail — open phrases end on 2, 5, or 7, closed
+// phrases on 1 or 3. Strong beats snap to the bar's chord; weak beats
+// keep the degree.
+//
+// The line that plays is not the first draw. `choose` scores 128 seeded
+// candidates and keeps the best. The same seed picks the same line.
 
 import "key.loam" as key
 import "num.loam" as num
 import "plan.loam" as plan
 import "theory.loam" as theory
 
-/// How many lines a phrase draws before it keeps one.
+/** *How many lines a phrase draws before it keeps one. */
 const CANDIDATES: int = 128
 
 struct Motif {
@@ -25,9 +25,9 @@ struct Motif {
     len: []int,
 }
 
-/// A scored line. `term` is steps, leaps, range, chord, record, contour,
-/// rhythm, motif, fresh, each 0..1000. `total` is their weighted sum, or
-/// -1 when the cadence fails.
+/** *A scored line. `term` is steps, leaps, range, chord, record, contour, */
+/** *rhythm, motif, fresh, each 0..1000. `total` is their weighted sum, or */
+/** *-1 when the cadence fails. */
 struct Line {
     deg: []int,
     at: []int,
@@ -87,7 +87,7 @@ fn transpose(m: Motif, d: int) -> Motif {
     return o
 }
 
-/// Intervals mirrored around the first note.
+/** *Intervals mirrored around the first note. */
 fn invert(m: Motif) -> Motif {
     let mut o = clone(m)
     if o.deg.len == 0 {
@@ -100,8 +100,8 @@ fn invert(m: Motif) -> Motif {
     return o
 }
 
-/// Notes reversed. `flip` mirrors the rhythm in time as well; otherwise
-/// the onsets and lengths stay where they are.
+/** *Notes reversed. `flip` mirrors the rhythm in time as well; otherwise */
+/** *the onsets and lengths stay where they are. */
 fn retrograde(m: Motif, flip: bool) -> Motif {
     let n = m.deg.len
     let mut o = no_motif()
@@ -163,7 +163,7 @@ fn fragment(m: Motif, n: int) -> Motif {
     return o
 }
 
-/// One passing or neighbour tone, seeded, in the second half of a note.
+/** *One passing or neighbour tone, seeded, in the second half of a note. */
 fn ornament(m: Motif, seed: int) -> Motif {
     if m.deg.len < 2 {
         return clone(m)
@@ -248,7 +248,7 @@ fn squeeze(m: Motif) -> Motif {
     return o
 }
 
-/// Pitch class of scale degree `deg` in the piece key.
+/** *Pitch class of scale degree `deg` in the piece key. */
 fn pc_of(deg: int, tonic: int, minor: bool) -> int {
     let s = theory.degree_semis(minor, deg)
     let mut p = (tonic + s) % 12
@@ -258,16 +258,16 @@ fn pc_of(deg: int, tonic: int, minor: bool) -> int {
     return p
 }
 
-/// MIDI note of `deg` nearest `centre`. Only the pitch class is kept; a
-/// line is placed with `anchor` and `note`, so its contour survives.
+/** *MIDI note of `deg` nearest `centre`. Only the pitch class is kept; a */
+/** *line is placed with `anchor` and `note`, so its contour survives. */
 fn midi(deg: int, tonic: int, minor: bool, centre: int) -> int {
     return theory.nearest(pc_of(deg, tonic, minor), centre)
 }
 
-/// The tonic, as a MIDI note, a line of degrees is built on: the octave
-/// that puts the middle of the line nearest `centre`, lowered while its
-/// highest note would pass `top`. Every note keeps its octave from there,
-/// so a step stays a step.
+/** *The tonic, as a MIDI note, a line of degrees is built on: the octave */
+/** *that puts the middle of the line nearest `centre`, lowered while its */
+/** *highest note would pass `top`. Every note keeps its octave from there, */
+/** *so a step stays a step. */
 fn anchor(deg: []int, tonic: int, minor: bool, centre: int, top: int) -> int {
     if deg.len == 0 {
         return theory.nearest(tonic, centre)
@@ -290,7 +290,7 @@ fn anchor(deg: []int, tonic: int, minor: bool, centre: int, top: int) -> int {
     return a
 }
 
-/// MIDI note of degree `deg` over the tonic note `anchor`.
+/** *MIDI note of degree `deg` over the tonic note `anchor`. */
 fn note(deg: int, minor: bool, anchor: int) -> int {
     return anchor + theory.degree_semis(minor, deg)
 }
@@ -326,8 +326,8 @@ fn is_chord_degree(deg: int, chord: int, tonic: int, minor: bool) -> bool {
     return false
 }
 
-/// Scale degrees near `deg` that belong to `chord`; `deg` itself when none
-/// is close. The melody stays diatonic.
+/** *Scale degrees near `deg` that belong to `chord`; `deg` itself when none */
+/** *is close. The melody stays diatonic. */
 fn snap_one(deg: int, chord: int, tonic: int, minor: bool) -> int {
     if chord < 0 {
         return deg
@@ -351,8 +351,8 @@ fn snap_one(deg: int, chord: int, tonic: int, minor: bool) -> int {
     return best
 }
 
-/// Strong beats (every quarter) move to a chord tone. The last note is the
-/// cadence and stays put.
+/** *Strong beats (every quarter) move to a chord tone. The last note is the */
+/** *cadence and stays put. */
 fn snap(m: Motif, start_bar: int, prog: []int, tonic: int, minor: bool) -> Motif {
     let mut o = clone(m)
     if o.deg.len == 0 || prog.len == 0 {
@@ -369,7 +369,7 @@ fn snap(m: Motif, start_bar: int, prog: []int, tonic: int, minor: bool) -> Motif
     return o
 }
 
-/// One motif for the take. `chord` is bar 0, as a chord code.
+/** *One motif for the take. `chord` is bar 0, as a chord code. */
 fn draw(seed: int, minor: bool, chord: int, tonic: int) -> Motif {
     let tones = chord_degrees(chord, tonic, minor)
     let start = if tones.len > 0 { tones[num.hash(seed, 2) % tones.len] } else { 0 }
@@ -448,9 +448,9 @@ fn tail_degree(ending: int, seed: int) -> int {
     return opts[num.hash(seed, 11) % 3]
 }
 
-/// Onset and length of the cadence, in sixteenths. Closed sits on beat 1
-/// of the last bar and holds; open sits off the beat and rings across the
-/// barline.
+/** *Onset and length of the cadence, in sixteenths. Closed sits on beat 1 */
+/** *of the last bar and holds; open sits off the beat and rings across the */
+/** *barline. */
 fn tail_place(ending: int, span: int) -> []int {
     if ending == plan.CLOSED {
         let mut at = if span >= 16 { span - 16 } else { 0 }
@@ -500,7 +500,7 @@ fn build_seq(m: Motif, varn: int, seed: int, tail_at: int) -> Motif {
     return line
 }
 
-/// The idea a phrase starts from, before its response and its tail.
+/** *The idea a phrase starts from, before its response and its tail. */
 fn statement(m: Motif, label: int, varn: int, kind: int, seed: int) -> Motif {
     if kind == plan.BUILD {
         let nfrag = 2 + num.hash(seed, 5) % 2
@@ -526,9 +526,9 @@ fn statement(m: Motif, label: int, varn: int, kind: int, seed: int) -> Motif {
     return st
 }
 
-/// Statement, response, and cadence, before chord snapping. At density 700
-/// or more the body is diminished, except a build (it already sequences
-/// the fragment) and an intro (it stays stated). The cadence stays put.
+/** *Statement, response, and cadence, before chord snapping. At density 700 */
+/** *or more the body is diminished, except a build (it already sequences */
+/** *the fragment) and an intro (it stays stated). The cadence stays put. */
 fn plan_line(
     m: Motif,
     label: int,
@@ -594,7 +594,7 @@ fn vary(m: Motif, seed: int) -> Motif {
     return squeeze(o)
 }
 
-/// Levenshtein distance on the degree rows.
+/** *Levenshtein distance on the degree rows. */
 fn edit_dist(a: []int, b: []int) -> int {
     let n = a.len
     let m = b.len
@@ -902,9 +902,9 @@ fn judge(
     return as_line(m, total, []int { steps, leaps, range, chord, rec, contour, rhythm, mot, fresh })
 }
 
-/// The best line for one phrase. Candidate 0 is the plan; the rest ornament
-/// it, nudge a rhythm, or step the answer up. A line that misses its
-/// cadence is dropped. Ties keep the earlier candidate.
+/** *The best line for one phrase. Candidate 0 is the plan; the rest ornament */
+/** *it, nudge a rhythm, or step the answer up. A line that misses its */
+/** *cadence is dropped. Ties keep the earlier candidate. */
 fn choose(
     m: Motif,
     label: int,
@@ -965,8 +965,8 @@ fn choose(
 
 // ---- Counter-melody --------------------------------------------------------
 
-/// Index of the lead note sounding at sixteenth `step`, or −1 when it rests.
-/// The latest onset wins where two overlap.
+/** *Index of the lead note sounding at sixteenth `step`, or −1 when it rests. */
+/** *The latest onset wins where two overlap. */
 fn sounding(m: Motif, step: int) -> int {
     let mut at = -1
     for i in 0..m.deg.len {
@@ -986,7 +986,7 @@ fn attacks(m: Motif, step: int) -> bool {
     return false
 }
 
-/// Octaves, thirds, and sixths, as semitones between two notes, either way up.
+/** *Octaves, thirds, and sixths, as semitones between two notes, either way up. */
 fn consonant(a: int, b: int) -> bool {
     let d = ((a - b) % 12 + 12) % 12
     return d == 0 || d == 3 || d == 4 || d == 8 || d == 9
@@ -1000,8 +1000,8 @@ fn chord_of(prog: []int, start_bar: int, step: int) -> int {
     return prog[((bar % prog.len) + prog.len) % prog.len]
 }
 
-/// Of `opts`, the one whose note lies nearest `prev` (MIDI), seeded among
-/// the two nearest so candidates differ. `prev` below 0 picks by seed alone.
+/** *Of `opts`, the one whose note lies nearest `prev` (MIDI), seeded among */
+/** *the two nearest so candidates differ. `prev` below 0 picks by seed alone. */
 fn closest(opts: []int, prev: int, minor: bool, base: int, seed: int) -> int {
     if opts.len == 0 {
         return 0
@@ -1026,8 +1026,8 @@ fn closest(opts: []int, prev: int, minor: bool, base: int, seed: int) -> int {
     return opts[best]
 }
 
-/// Degrees a third, a sixth, and an octave under lead degree `lead`; those
-/// in `chord` first. Every one is consonant with the lead and under it.
+/** *Degrees a third, a sixth, and an octave under lead degree `lead`; those */
+/** *in `chord` first. Every one is consonant with the lead and under it. */
 fn under(lead: int, chord: int, tonic: int, minor: bool) -> []int {
     let all = []int { lead - 2, lead - 5, lead - 7 }
     let mut out = []int {}
@@ -1042,8 +1042,8 @@ fn under(lead: int, chord: int, tonic: int, minor: bool) -> []int {
     return out
 }
 
-/// The lead note nearest in time to `step`: the one sounding, else the last
-/// one struck before it, else the first.
+/** *The lead note nearest in time to `step`: the one sounding, else the last */
+/** *one struck before it, else the first. */
 fn lead_near(m: Motif, step: int) -> int {
     let at = sounding(m, step)
     if at >= 0 {
@@ -1058,7 +1058,7 @@ fn lead_near(m: Motif, step: int) -> int {
     return if last >= 0 { last } else { 0 }
 }
 
-/// Chord degrees within a fifth of `prev_deg`, at or under `ceiling`.
+/** *Chord degrees within a fifth of `prev_deg`, at or under `ceiling`. */
 fn chord_near(prev_deg: int, ceiling: int, chord: int, tonic: int, minor: bool) -> []int {
     let mut out = []int {}
     let mut d = prev_deg - 4
@@ -1071,13 +1071,13 @@ fn chord_near(prev_deg: int, ceiling: int, chord: int, tonic: int, minor: bool) 
     return out
 }
 
-/// One seeded counter-line, in the lead's degrees over the same tonic note.
-/// Beats 1 and 3 always sound; beats 2 and 4 sound mostly where the lead
-/// does not strike; an off-beat eighth only where the lead rests, a step
-/// from the last note. Where the lead sounds on a beat, the counter sits a
-/// third, a sixth, or an octave under it; where it rests, on a chord tone
-/// at least a third under the lead's last note. The last note is the
-/// downbeat of the last bar, held.
+/** *One seeded counter-line, in the lead's degrees over the same tonic note. */
+/** *Beats 1 and 3 always sound; beats 2 and 4 sound mostly where the lead */
+/** *does not strike; an off-beat eighth only where the lead rests, a step */
+/** *from the last note. Where the lead sounds on a beat, the counter sits a */
+/** *third, a sixth, or an octave under it; where it rests, on a chord tone */
+/** *at least a third under the lead's last note. The last note is the */
+/** *downbeat of the last bar, held. */
 fn counter_draw(
     lead: Motif,
     span: int,
@@ -1136,8 +1136,8 @@ fn counter_draw(
     return o
 }
 
-/// Contrary or oblique motion against the lead, as a share of the moves
-/// where the lead sounds at both ends. Parallel octaves count against.
+/** *Contrary or oblique motion against the lead, as a share of the moves */
+/** *where the lead sounds at both ends. Parallel octaves count against. */
 fn term_motion(c: Motif, lead: Motif, minor: bool, base: int) -> int {
     let mut n = 0
     let mut good = 0
@@ -1166,7 +1166,7 @@ fn term_motion(c: Motif, lead: Motif, minor: bool, base: int) -> int {
     return num.clampi(good * 1000 / n, 0, 1000)
 }
 
-/// Beats (every quarter) where both sound and the two are consonant.
+/** *Beats (every quarter) where both sound and the two are consonant. */
 fn term_consonance(c: Motif, lead: Motif, minor: bool, base: int) -> int {
     let mut n = 0
     let mut ok = 0
@@ -1189,8 +1189,8 @@ fn term_consonance(c: Motif, lead: Motif, minor: bool, base: int) -> int {
     return ok * 1000 / n
 }
 
-/// Onsets that fall where the lead does not strike: the counter moves
-/// while the lead holds or rests.
+/** *Onsets that fall where the lead does not strike: the counter moves */
+/** *while the lead holds or rests. */
 fn term_fill(c: Motif, lead: Motif) -> int {
     if c.at.len == 0 {
         return 0
@@ -1217,10 +1217,10 @@ fn term_counter_steps(c: Motif, minor: bool, base: int) -> int {
     return band(steps * 100 / (c.deg.len - 1), 60, 100)
 }
 
-/// The counter-line under `lead` for one phrase, the best of `CANDIDATES`.
-/// `term` is motion, consonance, fill, and steps, each 0..1000. Ties keep
-/// the earlier candidate. Both lines are read over the tonic note `base`
-/// (`anchor`), so the counter's beats sit under the lead and never cross.
+/** *The counter-line under `lead` for one phrase, the best of `CANDIDATES`. */
+/** *`term` is motion, consonance, fill, and steps, each 0..1000. Ties keep */
+/** *the earlier candidate. Both lines are read over the tonic note `base` */
+/** *(`anchor`), so the counter's beats sit under the lead and never cross. */
 fn counter(
     lead: Motif,
     span: int,

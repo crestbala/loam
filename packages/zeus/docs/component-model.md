@@ -251,7 +251,7 @@ is the reuse mechanism, as in React Native.
 ## 3. Anatomy of a component
 
 ```loam
-/// One-line purpose. What the trailing block is, if there is one.
+/** *One-line purpose. What the trailing block is, if there is one. */
 fn Name(p: NameProps) -> Node {
     // ── state ──────────────────────────────────────────────
     //   props unpacked, signal(...), computed(...), ref(), constants
@@ -833,7 +833,7 @@ struct TabProps {
     on_click: Option<fn()> = none,
 }
 
-/// One tab trigger. Only the active tab is a tab stop (roving focus).
+/** *One tab trigger. Only the active tab is a tab stop (roving focus). */
 fn Tab(p: TabProps) -> Node {
     return Row(role = "tab", label = p.label, focusable = p.active,
         on_click = p.on_click,
@@ -852,7 +852,7 @@ struct TabsProps {
     keys: []KeyBind = no_keys(),
 }
 
-/// Tabs: a raised tray. The selected trigger fills with the plate.
+/** *Tabs: a raised tray. The selected trigger fills with the plate. */
 fn Tabs(p: TabsProps) -> Node {
     // state
     let n = p.labels.len

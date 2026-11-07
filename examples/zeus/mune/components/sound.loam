@@ -1,7 +1,7 @@
-//! The sound, in one panel: a style to start from, the instruments, and the
-//! effects. Every control binds straight to its signal in
-//! `studio/controls.loam`; the next Generate hears them. Each choice is a
-//! dropdown and each instrument or effect one line, so the panel stays short.
+// The sound, in one panel: a style to start from, the instruments, and the
+// effects. Every control binds straight to its signal in
+// `studio/controls.loam`; the next Generate hears them. Each choice is a
+// dropdown and each instrument or effect one line, so the panel stays short.
 
 import "zeus"
 import "zui"
@@ -128,8 +128,8 @@ fn Sound() -> Node {
     )
 }
 
-/// The style dropdown, and three marks for the layers it leans on. A pick
-/// loads the style's preset (`pick_style`), not just its number.
+/** *The style dropdown, and three marks for the layers it leans on. A pick */
+/** *loads the style's preset (`pick_style`), not just its number. */
 fn StyleLine() -> Node {
     let pick = zeus.signal(controls.style.peek())
     zeus.effect(fn() {
@@ -155,7 +155,7 @@ fn StyleLine() -> Node {
     }
 }
 
-/// Three colour marks per style: the layers it leans on.
+/** *Three colour marks per style: the layers it leans on. */
 fn style_mark(s: int, k: int) -> string {
     if s == styles.DREAM {
         return if k == 0 { theme.C_PAD } else if k == 1 { theme.C_BELLS } else { theme.C_REC }
@@ -181,8 +181,8 @@ fn style_mark(s: int, k: int) -> string {
     return if k == 0 { theme.C_ARP } else if k == 1 { theme.C_BASS } else { theme.C_PAD }
 }
 
-/// One instrument line: its colour, name, on/off, level, and its tone
-/// dropdown when `toned`. A muted line dims but keeps its place.
+/** *One instrument line: its colour, name, on/off, level, and its tone */
+/** *dropdown when `toned`. A muted line dims but keeps its place. */
 fn Instrument(
     name: string,
     color: string,
@@ -231,7 +231,7 @@ fn Instrument(
     }
 }
 
-/// One effect line: name, amount, and its dropdown when `choice`.
+/** *One effect line: name, amount, and its dropdown when `choice`. */
 fn Effect(
     name: string,
     amount: Signal<int>,
@@ -267,7 +267,7 @@ fn Effect(
     }
 }
 
-/// The value at the end of a slider, right-aligned in a fixed column.
+/** *The value at the end of a slider, right-aligned in a fixed column. */
 fn Readout(text: Signal<string>) -> Node {
     return zeus.Box(style = Style(direction = Direction.Row, justify = Align.End, width = px(26))) {
         zeus.Text(text.get(), style = Style(font = 11, color = theme.FAINT))

@@ -23,7 +23,7 @@ fn slug_live() -> string {
     return router.param_live("slug")
 }
 
-/// Reads the slug live; never touches `p`.
+/** *Reads the slug live; never touches `p`. */
 fn PostLive(p: Params) -> Node {
     live_builds = live_builds + 1
     let t = zeus.Text("post {{slug_live()}}")
@@ -31,7 +31,7 @@ fn PostLive(p: Params) -> Node {
     return t
 }
 
-/// Takes the name as a snapshot.
+/** *Takes the name as a snapshot. */
 fn UserSnap(p: Params) -> Node {
     snap_builds = snap_builds + 1
     let name = router.param(p, "name")

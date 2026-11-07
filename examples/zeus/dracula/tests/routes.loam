@@ -1,8 +1,8 @@
-//! Drives dracula's generated route table headlessly and asserts every
-//! route paints. The data server is not running: each page's marker is
-//! the heading, and the loading or empty line under it.
-//!
-//!     ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/dracula/tests/routes.loam -o /tmp/r && /tmp/r
+// Drives dracula's generated route table headlessly and asserts every
+// route paints. The data server is not running: each page's marker is
+// the heading, and the loading or empty line under it.
+//
+//     ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/dracula/tests/routes.loam -o /tmp/r && /tmp/r
 
 import "std:fmt"
 import "std:sys"

@@ -1,4 +1,4 @@
-//! The speed and aspect popovers above the control panel.
+// The speed and aspect popovers above the control panel.
 
 import "zeus"
 import "zui"
@@ -8,7 +8,7 @@ import "../lib/aspect.loam" as ar
 import "icons.loam"
 import { WHITE, SOFT, FAINT, GLASS, ACCENT } "../theme.loam"
 
-/// A glass list panel pinned above the control panel's right side.
+/** *A glass list panel pinned above the control panel's right side. */
 fn Popover(which: int, title: string, right: int, build: fn()) -> Node {
     return zeus.Box(
         style = Style(
@@ -34,7 +34,7 @@ fn Popover(which: int, title: string, right: int, build: fn()) -> Node {
     }
 }
 
-/// One row of a popover list, with a check when it is the current pick.
+/** *One row of a popover list, with a check when it is the current pick. */
 fn Choice(text: string, picked: Signal<bool>, run: fn()) -> Node {
     return zeus.Box(
         style = Style(

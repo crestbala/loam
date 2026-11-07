@@ -22,7 +22,7 @@ fn frame() {
     zeus.engine_paint()
 }
 
-/// The visible 6x6 dots, left to right.
+/** *The visible 6x6 dots, left to right. */
 fn dots() -> []int {
     let mut out = []int {}
     for id in 1..zeus.arena_nodes() {

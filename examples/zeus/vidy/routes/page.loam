@@ -1,4 +1,4 @@
-//! The one screen: the player.
+// The one screen: the player.
 
 import "zeus"
 import "zeus:router"

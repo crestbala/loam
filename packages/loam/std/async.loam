@@ -1,40 +1,40 @@
-//! `async` — timers, spawn, and the one-thread async pump (std:async).
-//!
-//! The UI thread is the only thread (§5.1). Everything here runs **on** it:
-//! queues and dispatch are plain Loam state; the C seam is only a monotonic
-//! clock (`now_ms`) and a blocking `sleep` (console/headless loops).
-//!
-//! ```
-//! import "std:async"
-//!
-//! let id = async.after(30, || { tick.set(tick.get() + 1) })
-//! let iv = async.interval(1000, || { pings.set(pings.get() + 1) })
-//! // later:
-//! async.cancel(iv)
-//! ```
-//!
-//! A UI app never calls `tick` by hand: the zeus engine runs it at the top of
-//! every frame (`engine_layout`), and `engine_step` keeps frames flowing while
-//! async work is in flight. Console programs pump explicitly:
-//!
-//! ```
-//! while !done {
-//!     async.tick()
-//!     async.sleep(1)
-//! }
-//! ```
-//!
-//! `after(ms, cb)` / `interval(ms, cb)` schedule `cb` on the UI thread; the
-//! callback may read or set signals, so a label fed by a signal updates on
-//! the next paint. `spawn(cb)` runs `cb` at the start of the next tick — the
-//! "fake async op" of headless tests. `add_step(f)` registers a per-frame
-//! stepper (the http async client registers its socket state machines here);
-//! `io_open` / `io_close` keep `busy()` true while an op is in flight so the
-//! hosts keep drawing frames until it completes.
-//!
-//! CPU-bound work that must not block this pump runs on `std:thread` workers;
-//! `busy()` includes their liveness, so the hosts keep drawing frames until
-//! every worker is done and its result channel is drained.
+// `async` — timers, spawn, and the one-thread async pump (std:async).
+//
+// The UI thread is the only thread (§5.1). Everything here runs **on** it:
+// queues and dispatch are plain Loam state; the C seam is only a monotonic
+// clock (`now_ms`) and a blocking `sleep` (console/headless loops).
+//
+// ```
+// import "std:async"
+//
+// let id = async.after(30, || { tick.set(tick.get() + 1) })
+// let iv = async.interval(1000, || { pings.set(pings.get() + 1) })
+// // later:
+// async.cancel(iv)
+// ```
+//
+// A UI app never calls `tick` by hand: the zeus engine runs it at the top of
+// every frame (`engine_layout`), and `engine_step` keeps frames flowing while
+// async work is in flight. Console programs pump explicitly:
+//
+// ```
+// while !done {
+//     async.tick()
+//     async.sleep(1)
+// }
+// ```
+//
+// `after(ms, cb)` / `interval(ms, cb)` schedule `cb` on the UI thread; the
+// callback may read or set signals, so a label fed by a signal updates on
+// the next paint. `spawn(cb)` runs `cb` at the start of the next tick — the
+// "fake async op" of headless tests. `add_step(f)` registers a per-frame
+// stepper (the http async client registers its socket state machines here);
+// `io_open` / `io_close` keep `busy()` true while an op is in flight so the
+// hosts keep drawing frames until it completes.
+//
+// CPU-bound work that must not block this pump runs on `std:thread` workers;
+// `busy()` includes their liveness, so the hosts keep drawing frames until
+// every worker is done and its result channel is drained.
 
 import "std:thread"
 
@@ -45,26 +45,26 @@ struct Timer {
     cb: fn(),
 }
 
-/// A single-use mailbox: created by `future` / `future_str`, filled by
-/// `resolve`, drained by `await_value` (the `await` sugar). `T` must be Copy
-/// (`int`, `string`, `float`, `bool`, `[]U` when `U` is Copy, or a Copy struct).
-///
-/// `#[no_send]`: the cell lives in the UI-thread async store, like a
-/// `Signal<T>` lives in the signal arena. It is plain bytes (`{ id: int }`), so
-/// the structural Send rule would otherwise let a worker capture it; the marker
-/// makes that a compile error. Workers return results through a `Chan<T>`
-/// instead (see `std:thread`).
+/** *A single-use mailbox: created by `future` / `future_str`, filled by */
+/** *`resolve`, drained by `await_value` (the `await` sugar). `T` must be Copy */
+/** *(`int`, `string`, `float`, `bool`, `[]U` when `U` is Copy, or a Copy struct). */
+/** */
+/** *`#[no_send]`: the cell lives in the UI-thread async store, like a */
+/** *`Signal<T>` lives in the signal arena. It is plain bytes (`{ id: int }`), so */
+/** *the structural Send rule would otherwise let a worker capture it; the marker */
+/** *makes that a compile error. Workers return results through a `Chan<T>` */
+/** *instead (see `std:thread`). */
 #[no_send]
 struct Future<T> {
     id: int,
 }
 
-/// Monotonic milliseconds (host clock). i64: epoch millis overflow i32 in ~24
-/// days (§3.6). Bodyless: `loam_async_now_ms`.
+/** *Monotonic milliseconds (host clock). i64: epoch millis overflow i32 in ~24 */
+/** *days (§3.6). Bodyless: `loam_async_now_ms`. */
 fn now_ms() -> i64 {}
 
-/// Block the calling thread for `ms`. Console/headless only — never in UI
-/// code; use `after` there. Bodyless: `loam_async_sleep_ms`.
+/** *Block the calling thread for `ms`. Console/headless only — never in UI */
+/** *code; use `after` there. Bodyless: `loam_async_sleep_ms`. */
 fn sleep(ms: int) {}
 
 let mut timers: []Timer = []Timer {}
@@ -73,8 +73,8 @@ let mut spawns: []fn() = []fn() {}
 let mut steps: []fn() = []fn() {}
 let mut io_ops: int = 0
 
-/// Run `cb` once, `ms` from now, on the UI thread. Returns a handle for
-/// `cancel`. A UI app: the host wakes to run it even while idle.
+/** *Run `cb` once, `ms` from now, on the UI thread. Returns a handle for */
+/** *`cancel`. A UI app: the host wakes to run it even while idle. */
 fn after(ms: int, cb: fn()) -> int {
     let id = next_tid
     next_tid = next_tid + 1
@@ -89,7 +89,7 @@ fn after(ms: int, cb: fn()) -> int {
     return id
 }
 
-/// Run `cb` every `ms`, on the UI thread, until `cancel`ed.
+/** *Run `cb` every `ms`, on the UI thread, until `cancel`ed. */
 fn interval(ms: int, cb: fn()) -> int {
     let id = next_tid
     next_tid = next_tid + 1
@@ -104,7 +104,7 @@ fn interval(ms: int, cb: fn()) -> int {
     return id
 }
 
-/// Drop a timer or interval. No-op for unknown ids.
+/** *Drop a timer or interval. No-op for unknown ids. */
 fn cancel(id: int) {
     if timers.len == 0 {
         return
@@ -119,32 +119,32 @@ fn cancel(id: int) {
     timers = keep
 }
 
-/// Run `cb` on the UI thread at the start of the next `tick` (next frame).
+/** *Run `cb` on the UI thread at the start of the next `tick` (next frame). */
 fn spawn(cb: fn()) {
     push(spawns, cb)
 }
 
-/// Register a per-frame stepper. Steps run at the top of every tick, in
-/// registration order, before spawns and timers.
+/** *Register a per-frame stepper. Steps run at the top of every tick, in */
+/** *registration order, before spawns and timers. */
 fn add_step(f: fn()) {
     push(steps, f)
 }
 
-/// Mark one async op in flight (the http client does this per call).
+/** *Mark one async op in flight (the http client does this per call). */
 fn io_open() {
     io_ops = io_ops + 1
 }
 
-/// Mark one async op finished. Paired with `io_open`.
+/** *Mark one async op finished. Paired with `io_open`. */
 fn io_close() {
     if io_ops > 0 {
         io_ops = io_ops - 1
     }
 }
 
-/// Whether the engine should keep drawing frames: an op is in flight (its
-/// completion is not time-scheduled), a spawn waits for the next tick, or a
-/// `thread.spawn`ed worker is still running.
+/** *Whether the engine should keep drawing frames: an op is in flight (its */
+/** *completion is not time-scheduled), a spawn waits for the next tick, or a */
+/** *`thread.spawn`ed worker is still running. */
 fn busy() -> int {
     if io_ops > 0 {
         return 1
@@ -158,8 +158,8 @@ fn busy() -> int {
     return 0
 }
 
-/// Milliseconds until the next timer is due, for hosts that sleep while idle:
-/// 0 = no timer pending. `-1` = a spawn is waiting, draw a frame now.
+/** *Milliseconds until the next timer is due, for hosts that sleep while idle: */
+/** *0 = no timer pending. `-1` = a spawn is waiting, draw a frame now. */
 fn next_due() -> int {
     if spawns.len > 0 {
         return -1
@@ -182,10 +182,10 @@ fn next_due() -> int {
     return soon
 }
 
-/// Advance the async world one frame: run steppers (in-flight socket state
-/// machines), then spawns, then timers that are due. Callbacks run on this
-/// (the UI) thread. The zeus engine calls this at the top of every
-/// `engine_layout`; console programs call it from their own loop.
+/** *Advance the async world one frame: run steppers (in-flight socket state */
+/** *machines), then spawns, then timers that are due. Callbacks run on this */
+/** *(the UI) thread. The zeus engine calls this at the top of every */
+/** *`engine_layout`; console programs call it from their own loop. */
 fn tick() {
     let mut n = steps.len
     for i in 0..n {
@@ -265,24 +265,24 @@ fn tick() {
 // should keep using callbacks; `await` fits startup sequences and headless
 // flows (the counter app fetches before its App starts).
 
-/// Allocate a fresh future. `init` is the value until `resolve` fills it
-/// (and the timeout fallback if the mailbox never resolves).
+/** *Allocate a fresh future. `init` is the value until `resolve` fills it */
+/** *(and the timeout fallback if the mailbox never resolves). */
 fn future<T>(init: T) -> Future<T> {
     return Future { id: __fut_push(init) }
 }
 
-/// Allocate a fresh string future (RPC bodies, `http.async_call`).
+/** *Allocate a fresh string future (RPC bodies, `http.async_call`). */
 fn future_str() -> Future<string> {
     return future("")
 }
 
-/// Resolve `f` with `v`; an `await_value` pumping on it returns next tick.
+/** *Resolve `f` with `v`; an `await_value` pumping on it returns next tick. */
 fn resolve<T>(f: Future<T>, v: T) {
     __fut_store(f.id, v)
 }
 
-/// Wait for `f` while pumping the async world. Bounded (~20s at 1ms ticks)
-/// so a never-resolved future fails instead of hanging the process.
+/** *Wait for `f` while pumping the async world. Bounded (~20s at 1ms ticks) */
+/** *so a never-resolved future fails instead of hanging the process. */
 fn await_value<T>(f: Future<T>) -> T {
     let mut guard = 0
     while guard < 20000 {

@@ -1,12 +1,12 @@
-//! atoms — the smallest Zeus pieces plus the declarative primitives every other
-//! recipe builds on: labels and hairlines, badges / chips / avatars, meters and
-//! stats, spinners and skeletons, the layout primitives (Grid / Overlay /
-//! Scroll / Svg / Image), and the shared helpers they need. The control-flow
-//! primitives (`Each`, `Match`, `Show`, `Boundary`, `Scope`, ...) live in
-//! `zeus:flow`; importing it here is what makes `zui.Each` resolve.
-//!
-//! Lowest component tier: imports `zeusbase`, `flow`, and the leaves below
-//! them, never `zeuscore/*`.
+// atoms — the smallest Zeus pieces plus the declarative primitives every other
+// recipe builds on: labels and hairlines, badges / chips / avatars, meters and
+// stats, spinners and skeletons, the layout primitives (Grid / Overlay /
+// Scroll / Svg / Image), and the shared helpers they need. The control-flow
+// primitives (`Each`, `Match`, `Show`, `Boundary`, `Scope`, ...) live in
+// `zeus:flow`; importing it here is what makes `zui.Each` resolve.
+//
+// Lowest component tier: imports `zeusbase`, `flow`, and the leaves below
+// them, never `zeuscore/*`.
 
 import "zeus:structs"
 import "zeus:enums"
@@ -20,68 +20,68 @@ import "std:fmt"
 import "zeus:flow"
 
 struct GridProps {
-    /// CSS-subset style; see `BoxProps.style`.
+    /** *CSS-subset style; see `BoxProps.style`. */
     style: Option<fn() -> Style> = none,
     config: GridConfig = GridConfig {},
-    /// Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`).
+    /** *Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`). */
     keys: []KeyBind = no_keys(),
 }
 
 struct OverlayProps {
     style: Option<fn() -> Style> = none,
     ref: Option<Ref> = none,
-    /// Shown while true: `visible = open.get()`.
+    /** *Shown while true: `visible = open.get()`. */
     visible: Option<Signal<bool>> = none,
     on_click: Option<fn()> = none,
-    /// Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`).
+    /** *Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`). */
     keys: []KeyBind = no_keys(),
 }
 
-/// Options for `Scroll`. `bind` is a two-way `scroll_y` signal: writing it
-/// calls `scroll_to`, and wheel / pan / physics write the live offset back.
+/** *Options for `Scroll`. `bind` is a two-way `scroll_y` signal: writing it */
+/** *calls `scroll_to`, and wheel / pan / physics write the live offset back. */
 struct ScrollProps {
-    /// CSS-subset style; see `BoxProps.style`.
+    /** *CSS-subset style; see `BoxProps.style`. */
     style: Option<fn() -> Style> = none,
     bind: Option<Signal<int>> = none,
-    /// Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`).
+    /** *Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`). */
     keys: []KeyBind = no_keys(),
 }
 
-/// Geometry for `Svg` layers: explicit size plus absolute placement
-/// (`position` / `left` / `top` / `right` / `bottom` / `z_index`, as
-/// `BoxProps`). Without `width`/`height` an svg is measured like a label.
+/** *Geometry for `Svg` layers: explicit size plus absolute placement */
+/** *(`position` / `left` / `top` / `right` / `bottom` / `z_index`, as */
+/** *`BoxProps`). Without `width`/`height` an svg is measured like a label. */
 struct SvgProps {
-    /// CSS-subset style; see `BoxProps.style`.
+    /** *CSS-subset style; see `BoxProps.style`. */
     style: Option<fn() -> Style> = none,
-    /// Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`).
+    /** *Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`). */
     keys: []KeyBind = no_keys(),
 }
 
-/// Options for `Image`. Hosts decode PNG / JPEG / WebP / GIF from a path,
-/// data URI, or URL and cache by `src`. With no `width`/`height` the box
-/// takes the decoded source size: it keeps the source aspect ratio and fills
-/// the container (device) width without growing past the source — web
-/// `max-width: 100%`. Give `width` and the height follows the aspect ratio;
-/// give `height` and the width is the container width. Set both to pin a box
-/// that `fit` then maps the bitmap into. `fit` is `Fit` (stretch /
-/// contain / cover / none).
+/** *Options for `Image`. Hosts decode PNG / JPEG / WebP / GIF from a path, */
+/** *data URI, or URL and cache by `src`. With no `width`/`height` the box */
+/** *takes the decoded source size: it keeps the source aspect ratio and fills */
+/** *the container (device) width without growing past the source — web */
+/** *`max-width: 100%`. Give `width` and the height follows the aspect ratio; */
+/** *give `height` and the width is the container width. Set both to pin a box */
+/** *that `fit` then maps the bitmap into. `fit` is `Fit` (stretch / */
+/** *contain / cover / none). */
 struct ImageProps {
-    /// CSS-subset style; see `BoxProps.style`.
+    /** *CSS-subset style; see `BoxProps.style`. */
     style: Option<fn() -> Style> = none,
-    /// `Fit.Stretch` (default), `.Contain`, `.Cover`, or `.None`.
+    /** *`Fit.Stretch` (default), `.Contain`, `.Cover`, or `.None`. */
     fit: int = 0,
-    /// Decode only once the node intersects the view (skip off-screen).
+    /** *Decode only once the node intersects the view (skip off-screen). */
     lazy: bool = false,
     label: Option<Signal<string>> = none,
-    /// Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`).
+    /** *Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`). */
     keys: []KeyBind = no_keys(),
 }
 
-/// 2D grid. Fixed: `config = GridConfig(columns = 3, gap = Space.Xs, padding = Space.Sm)`.
-/// Responsive: `autoColumns` is the narrowest a cell may be, in points like
-/// `gap`. `GridConfig(columns = 3, autoColumns = 220, gap = Space.Xs)` fits as many
-/// 220 point cells as the width allows — three at most, the `columns` cap —
-/// and `autoColumns = 0` instead sizes a cell to the widest child.
+/** *2D grid. Fixed: `config = GridConfig(columns = 3, gap = Space.Xs, padding = Space.Sm)`. */
+/** *Responsive: `autoColumns` is the narrowest a cell may be, in points like */
+/** *`gap`. `GridConfig(columns = 3, autoColumns = 220, gap = Space.Xs)` fits as many */
+/** *220 point cells as the width allows — three at most, the `columns` cap — */
+/** *and `autoColumns = 0` instead sizes a cell to the widest child. */
 fn Grid(p: GridProps) -> Node {
     return Component(
         set_auto_columns(raw_grid(p.config.columns, p.config.gap), p.config.autoColumns),
@@ -91,7 +91,7 @@ fn Grid(p: GridProps) -> Node {
     )
 }
 
-/// Full-window floater. Kind 9 is out of flow. Children are centred.
+/** *Full-window floater. Kind 9 is out of flow. Children are centred. */
 fn Overlay(p: OverlayProps) -> Node {
     return Component(
         raw_overlay(),
@@ -103,33 +103,33 @@ fn Overlay(p: OverlayProps) -> Node {
     )
 }
 
-/// Vertical scroller. Children keep intrinsic height; a bar appears on overflow.
-/// `bind` is an optional two-way `scroll_y` signal (`scroll_to` writes it).
+/** *Vertical scroller. Children keep intrinsic height; a bar appears on overflow. */
+/** *`bind` is an optional two-way `scroll_y` signal (`scroll_to` writes it). */
 fn Scroll(p: ScrollProps) -> Node {
     return Component(raw_scroll(), style = p.style, bind = p.bind, keys = p.keys)
 }
 
-/// Optional extras for `TitleBar`.
+/** *Optional extras for `TitleBar`. */
 struct TitleBarProps {
-    /// CSS-subset style over the bar's own (a row, centred vertically):
-    /// `background`, `opacity`, a bottom `border`, `gap`…
+    /** *CSS-subset style over the bar's own (a row, centred vertically): */
+    /** *`background`, `opacity`, a bottom `border`, `gap`… */
     style: Option<fn() -> Style> = none,
 }
 
-/// The window's title bar, drawn by the app: after
-/// `zeus.window_chrome(zeus.CHROME_CUSTOM)`, a row exactly as tall as the
-/// host's bar, padded clear of the window buttons, that moves the window when
-/// dragged anywhere off its controls (and zooms on a double-click). The
-/// trailing block is its content. Where the host has no bar — full screen,
-/// the web, mobile — it takes no space.
-///
-/// ```
-/// zui.TitleBar(style = Style(background = "#FF3D5A", opacity = 35)) {
-///     zui.Grow()
-///     zeus.Text("Vidy")
-///     zui.Grow()
-/// }
-/// ```
+/** *The window's title bar, drawn by the app: after */
+/** *`zeus.window_chrome(zeus.CHROME_CUSTOM)`, a row exactly as tall as the */
+/** *host's bar, padded clear of the window buttons, that moves the window when */
+/** *dragged anywhere off its controls (and zooms on a double-click). The */
+/** *trailing block is its content. Where the host has no bar — full screen, */
+/** *the web, mobile — it takes no space. */
+/** */
+/** *``` */
+/** *zui.TitleBar(style = Style(background = "#FF3D5A", opacity = 35)) { */
+/** *zui.Grow() */
+/** *zeus.Text("Vidy") */
+/** *zui.Grow() */
+/** *} */
+/** *``` */
 fn TitleBar(p: TitleBarProps) -> Node {
     return Box(
         style = Style(
@@ -146,20 +146,20 @@ fn TitleBar(p: TitleBarProps) -> Node {
     )
 }
 
-/// Inline SVG. `currentColor` follows the node's foreground. Geometry props:
-/// `width`, `height` (an svg is otherwise measured like a label), plus the
-/// usual `position` / pins / `z_index` for layered plots.
+/** *Inline SVG. `currentColor` follows the node's foreground. Geometry props: */
+/** *`width`, `height` (an svg is otherwise measured like a label), plus the */
+/** *usual `position` / pins / `z_index` for layered plots. */
 fn Svg(markup: string, p: SvgProps) -> Node {
     return Component(raw_svg(markup), style = p.style, keys = p.keys)
 }
 
-/// Raster image. `src` is a file path, `data:` URI, or `http(s):` URL — a
-/// thunk, so a signal read inside it repaints this node. Hosts decode PNG /
-/// JPEG / WebP / GIF and cache by that string; a missing or still-loading
-/// src paints nothing. With no `width`/`height` the node auto-sizes to the
-/// container (device) width at the source aspect ratio — see `ImageProps`.
-/// `fit` is `Fit` (stretch / contain / cover / none). `lazy = true` skips
-/// decode while off-screen.
+/** *Raster image. `src` is a file path, `data:` URI, or `http(s):` URL — a */
+/** *thunk, so a signal read inside it repaints this node. Hosts decode PNG / */
+/** *JPEG / WebP / GIF and cache by that string; a missing or still-loading */
+/** *src paints nothing. With no `width`/`height` the node auto-sizes to the */
+/** *container (device) width at the source aspect ratio — see `ImageProps`. */
+/** *`fit` is `Fit` (stretch / contain / cover / none). `lazy = true` skips */
+/** *decode while off-screen. */
 fn Image(src: Signal<string>, p: ImageProps) -> Node {
     return Component(
         raw_image(""),
@@ -173,14 +173,14 @@ fn Image(src: Signal<string>, p: ImageProps) -> Node {
     )
 }
 
-/// `markup` painted at `px` square and tinted by `tint`. Returns the node so
-/// callers can bind visibility.
-///
-/// An svg node has no intrinsic size, so the box is set explicitly. The tint
-/// goes through `prop_str` rather than `fg` so it re-applies on an
-/// appearance change: `apply_str` hands an unknown setter to `apply_int`, and
-/// 16 is the fg slot.
-/// Optional extras for `Icon`.
+/** *`markup` painted at `px` square and tinted by `tint`. Returns the node so */
+/** *callers can bind visibility. */
+/** */
+/** *An svg node has no intrinsic size, so the box is set explicitly. The tint */
+/** *goes through `prop_str` rather than `fg` so it re-applies on an */
+/** *appearance change: `apply_str` hands an unknown setter to `apply_int`, and */
+/** *16 is the fg slot. */
+/** *Optional extras for `Icon`. */
 struct IconProps {
     style: Option<fn() -> Style> = none,
     ref: Option<Ref> = none,
@@ -188,8 +188,8 @@ struct IconProps {
     label: Option<Signal<string>> = none,
 }
 
-/// `px` is the glyph box: pass an `IconSize` (`IconSize.Md` is 16) or, for
-/// SVG art, any raw px.
+/** *`px` is the glyph box: pass an `IconSize` (`IconSize.Md` is 16) or, for */
+/** *SVG art, any raw px. */
 fn Icon(markup: string, px: int, tint: string, p: IconProps) -> Node {
     return Component(
         raw_svg(markup),
@@ -218,8 +218,8 @@ fn Row(spacing: int) -> Node {
     ))
 }
 
-/// Row that wraps onto the next line when it overflows (`flex-wrap: wrap`).
-/// Use for responsive clusters of chips, buttons, and badges.
+/** *Row that wraps onto the next line when it overflows (`flex-wrap: wrap`). */
+/** *Use for responsive clusters of chips, buttons, and badges. */
 fn RowWrap(spacing: int) -> Node {
     return Box(style = Style(
         direction = Direction.Row,
@@ -237,12 +237,12 @@ fn Grow() -> Node {
     return Box(style = Style(grow = 1))
 }
 
-/// Horizontal hairline. Kept as `Divider` for older callers.
+/** *Horizontal hairline. Kept as `Divider` for older callers. */
 fn Separator() -> Node {
     return Box(style = Style(height = px(1), background = rule()))
 }
 
-/// Legacy name for `Separator`.
+/** *Legacy name for `Separator`. */
 fn Divider() -> Node {
     return Separator()
 }
@@ -271,7 +271,7 @@ fn Note(text: Signal<string>) -> Node {
     return Text(text, style = Style(font = FONT_CAPTION, color = dim()))
 }
 
-/// Overline + heading + supporting copy as one block.
+/** *Overline + heading + supporting copy as one block. */
 fn SectionHeader(overline: Signal<string>, title: Signal<string>, body: Signal<string>) -> Node {
     return Column(Space.Exxxs) {
         Text(overline, style = Style(font = FONT_OVERLINE, color = dim()))
@@ -280,7 +280,7 @@ fn SectionHeader(overline: Signal<string>, title: Signal<string>, body: Signal<s
     }
 }
 
-/// `SectionHeader` without the supporting copy.
+/** *`SectionHeader` without the supporting copy. */
 fn SectionTitle(overline: Signal<string>, title: Signal<string>) -> Node {
     return Column(Space.Exxxs) {
         Text(overline, style = Style(font = FONT_OVERLINE, color = dim()))
@@ -288,23 +288,23 @@ fn SectionTitle(overline: Signal<string>, title: Signal<string>) -> Node {
     }
 }
 
-/// Status label: tinted dot and caption on a muted border. Pass any style
-/// prop to restyle it (`Chip("label", Tint.Ok, radius = 2)`).
+/** *Status label: tinted dot and caption on a muted border. Pass any style */
+/** *prop to restyle it (`Chip("label", Tint.Ok, radius = 2)`). */
 struct ChipProps {
-    /// Style, merged over the recipe's own: `style = Style(radius = 4)`.
+    /** *Style, merged over the recipe's own: `style = Style(radius = 4)`. */
     style: Option<fn() -> Style> = none,
-    /// false hides the leading tint dot.
+    /** *false hides the leading tint dot. */
     dot: bool = true,
-    /// Removable chip: a trailing X runs this (role `button`, label
-    /// `Remove <label>`). Hiding the chip is the caller's job — usually
-    /// `show` on a signal the handler clears.
+    /** *Removable chip: a trailing X runs this (role `button`, label */
+    /** *`Remove <label>`). Hiding the chip is the caller's job — usually */
+    /** *`show` on a signal the handler clears. */
     on_remove: Option<fn()> = none,
-    /// Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`).
+    /** *Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`). */
     keys: []KeyBind = no_keys(),
 }
 
-/// Chip: a small rounded label with a tint dot and caption text. `dot = false`
-/// drops the pip; `on_remove` adds a trailing X.
+/** *Chip: a small rounded label with a tint dot and caption text. `dot = false` */
+/** *drops the pip; `on_remove` adds a trailing X. */
 fn Chip(label: Signal<string>, kind: int, p: ChipProps) -> Node {
     // state. The X carries its own hit box, so the trailing gutter shrinks.
     let removable = result.is_some(p.on_remove)
@@ -358,19 +358,19 @@ fn Chip(label: Signal<string>, kind: int, p: ChipProps) -> Node {
     }
 }
 
-/// Chip height: a step under the smallest control, so a chip never out-sizes
-/// the field or button beside it.
+/** *Chip height: a step under the smallest control, so a chip never out-sizes */
+/** *the field or button beside it. */
 fn chip_h() -> int {
     return control_h(Size.Sm) - 6
 }
 
-/// Badge height per `Size`: 18 / 20 / 22.
+/** *Badge height per `Size`: 18 / 20 / 22. */
 fn badge_h(size: int) -> int {
     if size == Size.Sm { 18 } else if size == Size.Lg { 22 } else { 20 }
 }
 
-/// Fill for a badge `Tint`. Split from the button pickers because badges
-/// use filled status colors where buttons use accent chrome.
+/** *Fill for a badge `Tint`. Split from the button pickers because badges */
+/** *use filled status colors where buttons use accent chrome. */
 fn badge_background(kind: int) -> string {
     switch kind {
         case Tint.Mute:
@@ -389,7 +389,7 @@ fn badge_background(kind: int) -> string {
     }
 }
 
-/// Label color for a badge `Tint`; see `badge_background`.
+/** *Label color for a badge `Tint`; see `badge_background`. */
 fn badge_color(kind: int) -> string {
     switch kind {
         case Tint.Mute, Tint.Dim:
@@ -403,7 +403,7 @@ fn badge_color(kind: int) -> string {
     }
 }
 
-/// Border width for a badge `Tint` — only the outline tint carries one.
+/** *Border width for a badge `Tint` — only the outline tint carries one. */
 fn badge_border_width(kind: int) -> int {
     switch kind {
         case Tint.Dim:
@@ -413,7 +413,7 @@ fn badge_border_width(kind: int) -> int {
     }
 }
 
-/// Border color for a badge `Tint`; see `badge_border_width`.
+/** *Border color for a badge `Tint`; see `badge_border_width`. */
 fn badge_border_color(kind: int) -> string {
     switch kind {
         case Tint.Dim:
@@ -423,18 +423,18 @@ fn badge_border_color(kind: int) -> string {
     }
 }
 
-/// Badge: small label, 10px side padding, caption type.
-/// Kinds: Ink default, Mute secondary, Dim outline, Danger destructive;
-/// Ok is a filled success badge. `dot = true` adds a leading status pip
-/// in the label colour; `BadgeCount` is the numeric variant.
+/** *Badge: small label, 10px side padding, caption type. */
+/** *Kinds: Ink default, Mute secondary, Dim outline, Danger destructive; */
+/** *Ok is a filled success badge. `dot = true` adds a leading status pip */
+/** *in the label colour; `BadgeCount` is the numeric variant. */
 struct BadgeProps {
-    /// `Size` token: the badge is `badge_h(size)` tall.
+    /** *`Size` token: the badge is `badge_h(size)` tall. */
     size: int = Size.Md,
-    /// Style, merged over the recipe's own: `style = Style(radius = 4)`.
+    /** *Style, merged over the recipe's own: `style = Style(radius = 4)`. */
     style: Option<fn() -> Style> = none,
-    /// Leading status pip in the label colour.
+    /** *Leading status pip in the label colour. */
     dot: bool = false,
-    /// Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`).
+    /** *Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`). */
     keys: []KeyBind = no_keys(),
 }
 
@@ -466,8 +466,8 @@ fn Badge(label: Signal<string>, kind: int, p: BadgeProps) -> Node {
     }
 }
 
-/// Count badge: a small rounded label bound to a number, hidden while it is
-/// 0 and capped at `max` ("99+"). Sits over an icon or after a nav label.
+/** *Count badge: a small rounded label bound to a number, hidden while it is */
+/** *0 and capped at `max` ("99+"). Sits over an icon or after a nav label. */
 fn BadgeCount(count: Signal<int>, kind: int, max: int = 99) -> Node {
     return Box(
         style = Style(
@@ -496,7 +496,7 @@ fn BadgeCount(count: Signal<int>, kind: int, max: int = 99) -> Node {
     }
 }
 
-/// Key cap: 1px border on muted, mono-ish small text, 20px tall.
+/** *Key cap: 1px border on muted, mono-ish small text, 20px tall. */
 fn Kbd(key: Signal<string>) {
     Box(style = Style(
         height = px(20),
@@ -513,28 +513,28 @@ fn Kbd(key: Signal<string>) {
     }
 }
 
-/// Options for `Progress`.
+/** *Options for `Progress`. */
 struct ProgressProps {
-    /// `Size` token: a 4 / 8 / 12px track.
+    /** *`Size` token: a 4 / 8 / 12px track. */
     size: int = Size.Md,
-    /// Sweep a segment instead of showing `value` (a negative value does too).
+    /** *Sweep a segment instead of showing `value` (a negative value does too). */
     indeterminate: bool = false,
-    /// Caption above the track, with the percentage at its right end.
+    /** *Caption above the track, with the percentage at its right end. */
     label: string = "",
-    /// Style, merged over the track's own.
+    /** *Style, merged over the track's own. */
     style: Option<fn() -> Style> = none,
 }
 
-/// Track height per `Size`.
+/** *Track height per `Size`. */
 fn progress_h(size: int) -> int {
     if size == Size.Sm { 3 } else if size == Size.Lg { 6 } else { 4 }
 }
 
-/// Progress: a thin bar filled with the accent; fills its parent's width.
-/// Value 0..100; a
-/// plain `set` eases the fill over `Motion.Base` on the paint overlay (no
-/// effect re-runs per frame). A negative value (or `indeterminate`) sweeps a
-/// segment along the track on the frame clock instead.
+/** *Progress: a thin bar filled with the accent; fills its parent's width. */
+/** *Value 0..100; a */
+/** *plain `set` eases the fill over `Motion.Base` on the paint overlay (no */
+/** *effect re-runs per frame). A negative value (or `indeterminate`) sweeps a */
+/** *segment along the track on the frame clock instead. */
 fn Progress(value: Signal<int>, p: ProgressProps) -> Node {
     if p.label.len == 0 {
         return ProgressTrack(value, p)
@@ -542,9 +542,9 @@ fn Progress(value: Signal<int>, p: ProgressProps) -> Node {
     return ProgressLabeled(value, p)
 }
 
-/// `Progress` with its caption row. Split out because a component that builds
-/// a tree must return it once, at the end: the compiler wraps that return in
-/// a view frame, and an early return would leave the frame open.
+/** *`Progress` with its caption row. Split out because a component that builds */
+/** *a tree must return it once, at the end: the compiler wraps that return in */
+/** *a view frame, and an early return would leave the frame open. */
 fn ProgressLabeled(value: Signal<int>, p: ProgressProps) -> Node {
     let sweep = p.indeterminate
     return Box(style = Style(direction = Direction.Column, gap = 6)) {
@@ -559,8 +559,8 @@ fn ProgressLabeled(value: Signal<int>, p: ProgressProps) -> Node {
     }
 }
 
-/// The native track `Progress` draws. It eases each new value itself; an
-/// indeterminate bar is bound to -1, which sweeps.
+/** *The native track `Progress` draws. It eases each new value itself; an */
+/** *indeterminate bar is bound to -1, which sweeps. */
 fn ProgressTrack(value: Signal<int>, p: ProgressProps) -> Node {
     // Fills a column; `grow` takes the free width in a row, where a bare
     // 100% would be the (empty) content width.
@@ -574,13 +574,13 @@ fn ProgressTrack(value: Signal<int>, p: ProgressProps) -> Node {
     )
 }
 
-/// Legacy name for `Progress`.
+/** *Legacy name for `Progress`. */
 fn Meter(value: Signal<int>) -> Node {
     return Progress(value)
 }
 
-/// Deprecated: `Alert` takes a `Tint` (`tint = Tint.Warn`), the one status
-/// enum. `tone = Tone.*` still works and maps through `tone_tint`.
+/** *Deprecated: `Alert` takes a `Tint` (`tint = Tint.Warn`), the one status */
+/** *enum. `tone = Tone.*` still works and maps through `tone_tint`. */
 enum Tone {
     Info = 0,
     Danger = 1,
@@ -588,7 +588,7 @@ enum Tone {
     Ok = 3,
 }
 
-/// The `Tint` an old `Tone` code stands for.
+/** *The `Tint` an old `Tone` code stands for. */
 fn tone_tint(tone: int) -> int {
     switch tone {
         case Tone.Danger:
@@ -602,7 +602,7 @@ fn tone_tint(tone: int) -> int {
     }
 }
 
-/// Raised panel (no border). Prefer `Card` for the bordered look.
+/** *Raised panel (no border). Prefer `Card` for the bordered look. */
 fn Surface() -> Node {
     return Box(style = Style(
         direction = Direction.Column,
@@ -613,7 +613,7 @@ fn Surface() -> Node {
     ))
 }
 
-/// Form label: body-size, medium weight.
+/** *Form label: body-size, medium weight. */
 fn Label(text: Signal<string>) -> Node {
     return Text(text, style = Style(font = FONT_BODY, color = ink()))
 }
@@ -631,15 +631,15 @@ fn avatar_dot(size: int) -> int {
 
 struct AvatarProps {
     src: string = ""
-    /// `Tint` for the corner presence pip. `-1` = none.
+    /** *`Tint` for the corner presence pip. `-1` = none. */
     status: int = -1
     style: Option<fn() -> Style> = none
 }
 
-/// Avatar: full-round with initials on muted. `size` is the diameter: an
-/// `AvatarSize` (`AvatarSize.Lg` is the common 40), or any raw px. Pass `src` for a photo; initials remain the fallback
-/// while the host loads. `status` is a `Tint` for the corner presence pip
-/// (`-1` = none). `User` composes it; `AvatarGroup` stacks several.
+/** *Avatar: full-round with initials on muted. `size` is the diameter: an */
+/** *`AvatarSize` (`AvatarSize.Lg` is the common 40), or any raw px. Pass `src` for a photo; initials remain the fallback */
+/** *while the host loads. `status` is a `Tint` for the corner presence pip */
+/** *(`-1` = none). `User` composes it; `AvatarGroup` stacks several. */
 fn Avatar(initials: string, size: int, p: AvatarProps) -> Node {
     return Box(
         style = Style(
@@ -686,9 +686,9 @@ fn Avatar(initials: string, size: int, p: AvatarProps) -> Node {
     }
 }
 
-/// Overlapping row of avatars. Later faces sit on top; each one after the
-/// first pulls left by a quarter of `size`, and a ring in the surface colour
-/// keeps neighbours apart.
+/** *Overlapping row of avatars. Later faces sit on top; each one after the */
+/** *first pulls left by a quarter of `size`, and a ring in the surface colour */
+/** *keeps neighbours apart. */
 fn AvatarGroup(labels: []string, size: int = AvatarSize.Md) -> Node {
     return Row(0) {
         Each(labels, fn(i, label) {
@@ -697,9 +697,9 @@ fn AvatarGroup(labels: []string, size: int = AvatarSize.Md) -> Node {
     }
 }
 
-/// Each avatar after the first tucks a quarter of its width over the one
-/// before it, which leaves the initials clear, and sits above it. Every face
-/// wears the ring, since faces share one fill and would otherwise merge.
+/** *Each avatar after the first tucks a quarter of its width over the one */
+/** *before it, which leaves the initials clear, and sits above it. Every face */
+/** *wears the ring, since faces share one fill and would otherwise merge. */
 fn avatar_overlap(i: int, size: int) -> Style {
     if i == 0 {
         return Style(zIndex = 1, borderWidth = 2, borderColor = plate())
@@ -712,7 +712,7 @@ fn avatar_overlap(i: int, size: int) -> Style {
     )
 }
 
-/// Trend direction for `Stat`'s delta row.
+/** *Trend direction for `Stat`'s delta row. */
 enum Trend {
     Flat = 0,
     Up = 1,
@@ -720,13 +720,13 @@ enum Trend {
 }
 
 struct StatProps {
-    /// Change caption under the value ("+12%"). Empty = no delta row.
+    /** *Change caption under the value ("+12%"). Empty = no delta row. */
     delta: Signal<string> = "",
-    /// `Trend` for the arrow and tint: Up is ok, Down is danger, Flat is
-    /// muted with no arrow.
+    /** *`Trend` for the arrow and tint: Up is ok, Down is danger, Flat is */
+    /** *muted with no arrow. */
     trend: int = 0,
-    /// Series for a trailing sparkline. A signal, so a dashboard can push
-    /// points and the line redraws without a rebuild.
+    /** *Series for a trailing sparkline. A signal, so a dashboard can push */
+    /** *points and the line redraws without a rebuild. */
     spark: Option<Signal<[]int>> = none,
 }
 
@@ -741,8 +741,8 @@ fn trend_tint(trend: int) -> string {
     }
 }
 
-/// Sparkline path: `vals` fit to a `w`×`h` box, stroked in `currentColor`
-/// so `Icon`-style tinting applies. Flat series draw a midline.
+/** *Sparkline path: `vals` fit to a `w`×`h` box, stroked in `currentColor` */
+/** *so `Icon`-style tinting applies. Flat series draw a midline. */
 fn spark_markup(vals: []int, w: int, h: int) -> string {
     let n = vals.len
     if n < 2 {
@@ -776,8 +776,8 @@ fn spark_markup(vals: []int, w: int, h: int) -> string {
     return "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 {{w}} {{h}}'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='{{d}}'/></svg>"
 }
 
-/// Inline trend line, `w`×`h` dp, stroked in `tint`. The markup is a text
-/// thunk over `vals`, so pushing a point repaints only this node.
+/** *Inline trend line, `w`×`h` dp, stroked in `tint`. The markup is a text */
+/** *thunk over `vals`, so pushing a point repaints only this node. */
 fn Sparkline(vals: Signal<[]int>, w: int, h: int, tint: string) -> Node {
     return Component(
         raw_svg(""),
@@ -788,8 +788,8 @@ fn Sparkline(vals: Signal<[]int>, w: int, h: int, tint: string) -> Node {
     )
 }
 
-/// Stat card: small muted label over a big tinted value. `delta` + `trend`
-/// add an arrow-and-caption row; `spark` a sparkline beside the value.
+/** *Stat card: small muted label over a big tinted value. `delta` + `trend` */
+/** *add an arrow-and-caption row; `spark` a sparkline beside the value. */
 fn Stat(label: Signal<string>, value: Signal<string>, kind: int, p: StatProps) -> Node {
     return Card(style = Style(grow = 1)) {
         Text(label, style = Style(font = FONT_CONTROL, color = mute()))
@@ -825,8 +825,8 @@ fn StatCount(label: string, sig: Signal<int>, kind: int) -> Node {
     return grow(c, 1)
 }
 
-/// Step an exclusive-pick signal by `delta` if this row is the one that
-/// currently holds it. Clamps at both ends (same as Menu / Select).
+/** *Step an exclusive-pick signal by `delta` if this row is the one that */
+/** *currently holds it. Clamps at both ends (same as Menu / Select). */
 fn roving_step(value: Signal<int>, index: int, count: int, delta: int) {
     if value.get() != index {
         return
@@ -841,9 +841,9 @@ fn roving_step(value: Signal<int>, index: int, count: int, delta: int) {
     value.set(n)
 }
 
-/// Jump an exclusive pick to `target` (Home → 0, End → `count - 1`) if this
-/// row is the one that currently holds it — the same guard as `roving_step`,
-/// so only the focused row of a group answers the key.
+/** *Jump an exclusive pick to `target` (Home → 0, End → `count - 1`) if this */
+/** *row is the one that currently holds it — the same guard as `roving_step`, */
+/** *so only the focused row of a group answers the key. */
 fn roving_jump(value: Signal<int>, index: int, target: int) {
     if value.get() != index {
         return
@@ -854,9 +854,9 @@ fn roving_jump(value: Signal<int>, index: int, target: int) {
     value.set(target)
 }
 
-/// The four bindings every roving group shares: the arrow pair along its
-/// axis, plus Home / End. `prefix` names the actions (`"tab"` → `tab.next`).
-/// `vertical` adds up / down beside left / right, for groups that stack.
+/** *The four bindings every roving group shares: the arrow pair along its */
+/** *axis, plus Home / End. `prefix` names the actions (`"tab"` → `tab.next`). */
+/** *`vertical` adds up / down beside left / right, for groups that stack. */
 fn roving_keys(
     prefix: string,
     value: Signal<int>,
@@ -880,7 +880,7 @@ fn roving_keys(
     return keys
 }
 
-/// Case-insensitive ASCII substring test, used to filter combobox options.
+/** *Case-insensitive ASCII substring test, used to filter combobox options. */
 fn ci_has(hay: string, needle: string) -> bool {
     let hn = hay.len
     let nn = needle.len
@@ -928,8 +928,8 @@ fn combo_filter(options: []string, q: string) -> []string {
     return out
 }
 
-/// Read the pending key and move the combobox highlight. Returns the index to
-/// pick, or -1.
+/** *Read the pending key and move the combobox highlight. Returns the index to */
+/** *pick, or -1. */
 fn combo_key(active: Signal<int>, matches: Signal<[]string>) -> int {
     let k = current_key().key
     let n = matches.get().len
@@ -974,9 +974,9 @@ fn combo_key(active: Signal<int>, matches: Signal<[]string>) -> int {
     return -1
 }
 
-/// Placeholder surface: rounded, faint accent fill with a left-to-right
-/// shimmer band on the frame clock (static under reduced motion). Width /
-/// height explicit; wrap in a card to demo.
+/** *Placeholder surface: rounded, faint accent fill with a left-to-right */
+/** *shimmer band on the frame clock (static under reduced motion). Width / */
+/** *height explicit; wrap in a card to demo. */
 fn Skeleton(w: int, h: int, radius: int) -> Node {
     let n = Box(
         style = Style(width = px(w), height = px(h), radius = radius, background = bone()),
@@ -987,20 +987,20 @@ fn Skeleton(w: int, h: int, radius: int) -> Node {
 }
 
 struct SpinnerProps {
-    /// Ring diameter in dp.
+    /** *Ring diameter in dp. */
     size: int = 16,
-    /// Ring color; defaults to `dim()`.
+    /** *Ring color; defaults to `dim()`. */
     color: string = "",
-    /// Milliseconds per full turn.
+    /** *Milliseconds per full turn. */
     period: int = 900,
-    /// Accessible label (role `progressbar`).
+    /** *Accessible label (role `progressbar`). */
     label: string = "Loading",
     style: Option<fn() -> Style> = none,
 }
 
-/// Indeterminate loader. The rotation is a paint-only loop track: it never
-/// re-runs a component or effect and skips layout, and it keeps a frame live
-/// while it is visible. Under reduced motion it settles static.
+/** *Indeterminate loader. The rotation is a paint-only loop track: it never */
+/** *re-runs a component or effect and skips layout, and it keeps a frame live */
+/** *while it is visible. Under reduced motion it settles static. */
 fn Spinner(p: SpinnerProps) -> Node {
     let n = Icon(
         IC_LOADER,
@@ -1014,18 +1014,18 @@ fn Spinner(p: SpinnerProps) -> Node {
 }
 
 struct EmptyProps {
-    /// Icon markup, e.g. `IC_INFO`. Empty for none.
+    /** *Icon markup, e.g. `IC_INFO`. Empty for none. */
     icon: string = "",
     title: Signal<string> = "",
     body: Signal<string> = "",
-    /// The trailing block: an action, under the copy.
+    /** *The trailing block: an action, under the copy. */
     children: fn() = noop,
-    /// Style, merged over the recipe's own: `style = Style(radius = 4)`.
+    /** *Style, merged over the recipe's own: `style = Style(radius = 4)`. */
     style: Option<fn() -> Style> = none,
 }
 
-/// Centred empty state: optional icon, title, supporting copy, then an action
-/// supplied as the trailing block.
+/** *Centred empty state: optional icon, title, supporting copy, then an action */
+/** *supplied as the trailing block. */
 fn Empty(p: EmptyProps) -> Node {
     return Box(
         style = Style(
@@ -1051,8 +1051,8 @@ struct AccordionRow {
     body: string,
 }
 
-/// Preferred side for an anchored floater. `flip` (default on) switches to the
-/// opposite side when the preferred one overflows.
+/** *Preferred side for an anchored floater. `flip` (default on) switches to the */
+/** *opposite side when the preferred one overflows. */
 enum Place {
     // Below the trigger (menus, select).
     PlaceBelow = 0,
@@ -1076,18 +1076,18 @@ enum Place {
 
 struct MenuRow {
     label: string = "",
-    /// Paint a separator above this row.
+    /** *Paint a separator above this row. */
     isSeparated: bool = false,
-    /// Destructive command: painted in the danger ink.
+    /** *Destructive command: painted in the danger ink. */
     danger: bool = false,
 }
 
-/// The empty list a `[]MenuRow` prop defaults to.
+/** *The empty list a `[]MenuRow` prop defaults to. */
 fn no_menu_rows() -> []MenuRow {
     return []MenuRow {}
 }
 
-/// Which window edge a `Drawer` slides from.
+/** *Which window edge a `Drawer` slides from. */
 enum Side {
     // Slide in from the start (left) edge.
     SideStart = 0,
@@ -1099,7 +1099,7 @@ enum Side {
     SideBottom = 3,
 }
 
-/// Column a `TableColsProps.sort` value points at (-1 = unsorted).
+/** *Column a `TableColsProps.sort` value points at (-1 = unsorted). */
 fn sort_col(sort: int) -> int {
     if sort > 0 {
         return sort - 1
@@ -1110,12 +1110,12 @@ fn sort_col(sort: int) -> int {
     return -1
 }
 
-/// true when a `sort` value is descending.
+/** *true when a `sort` value is descending. */
 fn sort_desc(sort: int) -> bool {
     return sort < 0
 }
 
-/// A copy of `s` with ASCII letters lowercased ("Hello" → "hello").
+/** *A copy of `s` with ASCII letters lowercased ("Hello" → "hello"). */
 fn lowercase(s: string) -> string {
     let mut b = []int {}
     for i in 0..s.len {
@@ -1124,7 +1124,7 @@ fn lowercase(s: string) -> string {
     return string_from_bytes(b)
 }
 
-/// A copy of `s` with ASCII letters uppercased ("hello" → "HELLO").
+/** *A copy of `s` with ASCII letters uppercased ("hello" → "HELLO"). */
 fn uppercase(s: string) -> string {
     let mut b = []int {}
     for i in 0..s.len {
@@ -1140,8 +1140,8 @@ fn upper_byte(c: int) -> int {
     return c
 }
 
-/// Case-insensitive string order: negative, 0, positive. "apple" < "Banana";
-/// "Hello" and "hello" compare equal.
+/** *Case-insensitive string order: negative, 0, positive. "apple" < "Banana"; */
+/** *"Hello" and "hello" compare equal. */
 fn str_cmp(a: string, b: string) -> int {
     let n = if a.len < b.len { a.len } else { b.len }
     for i in 0..n {
@@ -1184,9 +1184,9 @@ fn is_alnum(c: int) -> bool {
     return is_digit(c) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122)
 }
 
-/// Index just past a digit run starting at `i`, skipping thousands commas
-/// ("1,200": a comma with exactly three digits after it and no digit after
-/// those).
+/** *Index just past a digit run starting at `i`, skipping thousands commas */
+/** *("1,200": a comma with exactly three digits after it and no digit after */
+/** *those). */
 fn num_run_end(s: string, i: int) -> int {
     let mut k = i
     while k < s.len {
@@ -1201,8 +1201,8 @@ fn num_run_end(s: string, i: int) -> int {
     return k
 }
 
-/// true when `s[k]` is a comma between digit groups: a digit before it,
-/// exactly three digits after it, then no fourth.
+/** *true when `s[k]` is a comma between digit groups: a digit before it, */
+/** *exactly three digits after it, then no fourth. */
 fn thousands_comma(s: string, k: int) -> bool {
     if s[k] != 44 || k == 0 || k + 3 >= s.len {
         return false
@@ -1216,7 +1216,7 @@ fn thousands_comma(s: string, k: int) -> bool {
     return k + 4 >= s.len || !is_digit(s[k + 4])
 }
 
-/// The natural sort key of one cell (see the encoding above).
+/** *The natural sort key of one cell (see the encoding above). */
 fn sort_key(s: string) -> []int {
     let mut key = []int {}
     let mut i = 0
@@ -1321,9 +1321,9 @@ fn key_cmp(a: []int, b: []int) -> int {
     return a.len - b.len
 }
 
-/// Byte-wise order: only the final tie-break, so cells that read the same
-/// ("apple" / "Apple") still land in one fixed order whatever order they
-/// arrived in.
+/** *Byte-wise order: only the final tie-break, so cells that read the same */
+/** *("apple" / "Apple") still land in one fixed order whatever order they */
+/** *arrived in. */
 fn byte_cmp(a: string, b: string) -> int {
     let n = if a.len < b.len { a.len } else { b.len }
     for i in 0..n {
@@ -1334,9 +1334,9 @@ fn byte_cmp(a: string, b: string) -> int {
     return a.len - b.len
 }
 
-/// Order two cells naturally (see `sort_key`): by value where they hold
-/// numbers, case-insensitively where they hold text, bytes only to break a
-/// tie.
+/** *Order two cells naturally (see `sort_key`): by value where they hold */
+/** *numbers, case-insensitively where they hold text, bytes only to break a */
+/** *tie. */
 fn cell_cmp(a: string, b: string) -> int {
     let c = key_cmp(sort_key(a), sort_key(b))
     if c != 0 {
@@ -1345,12 +1345,12 @@ fn cell_cmp(a: string, b: string) -> int {
     return byte_cmp(a, b)
 }
 
-/// Sort of any items by a string key in natural order (see `sort_key`), for
-/// a `VirtualTable`'s `Signal<[]T>`:
-/// `rows.set(zeus.sort_by(base, fn(j) => j.name, zeus.sort_desc(sort.get())))`.
-/// The result depends only on the keys, never on the order the items came
-/// in; empty keys go last in both directions. `sort_cells` does the same from
-/// a `cells` mapper and a `sort` value.
+/** *Sort of any items by a string key in natural order (see `sort_key`), for */
+/** *a `VirtualTable`'s `Signal<[]T>`: */
+/** *`rows.set(zeus.sort_by(base, fn(j) => j.name, zeus.sort_desc(sort.get())))`. */
+/** *The result depends only on the keys, never on the order the items came */
+/** *in; empty keys go last in both directions. `sort_cells` does the same from */
+/** *a `cells` mapper and a `sort` value. */
 fn sort_by<T>(items: []T, key: fn(T) -> string, desc: bool) -> []T {
     let n = items.len
     let mut raw = []string {}
@@ -1406,9 +1406,9 @@ fn sort_by<T>(items: []T, key: fn(T) -> string, desc: bool) -> []T {
     return out
 }
 
-/// true when row `x` sorts strictly before row `y`: empty keys last in both
-/// directions, then the natural key, then raw bytes — every step reversed
-/// for `desc` except the empty-last rule.
+/** *true when row `x` sorts strictly before row `y`: empty keys last in both */
+/** *directions, then the natural key, then raw bytes — every step reversed */
+/** *for `desc` except the empty-last rule. */
 fn sort_before(raw: []string, keys: [][]int, x: int, y: int, desc: bool) -> bool {
     let ex = raw[x].len == 0
     let ey = raw[y].len == 0
@@ -1425,11 +1425,11 @@ fn sort_before(raw: []string, keys: [][]int, x: int, y: int, desc: bool) -> bool
     return c < 0
 }
 
-/// Items ordered by a `sort` value (`TableColsProps`) over their `cells`:
-/// 0 returns them as given; otherwise that column, ascending or descending,
-/// in natural order (`sort_by`). `Table` writes this order back onto its
-/// rows signal. A `VirtualTable` app does the same:
-/// `rows.set(sort_cells(rows.get(), cells, sort.get()))`.
+/** *Items ordered by a `sort` value (`TableColsProps`) over their `cells`: */
+/** *0 returns them as given; otherwise that column, ascending or descending, */
+/** *in natural order (`sort_by`). `Table` writes this order back onto its */
+/** *rows signal. A `VirtualTable` app does the same: */
+/** *`rows.set(sort_cells(rows.get(), cells, sort.get()))`. */
 fn sort_cells<T>(items: []T, cells: fn(T) -> []string, sort: int) -> []T {
     let col = sort_col(sort)
     if col < 0 {
@@ -1452,7 +1452,7 @@ fn sort_cells<T>(items: []T, cells: fn(T) -> []string, sort: int) -> []T {
     )
 }
 
-/// Cells joined by tabs: `Table`'s row key.
+/** *Cells joined by tabs: `Table`'s row key. */
 fn cells_key(cells: []string) -> string {
     let mut k = ""
     for i in 0..cells.len {
@@ -1465,7 +1465,7 @@ fn cells_key(cells: []string) -> string {
     return k
 }
 
-/// Next sort state after clicking column `i`: none → asc → desc → none.
+/** *Next sort state after clicking column `i`: none → asc → desc → none. */
 fn sort_cycle(current_value: int, i: int) -> int {
     if current_value == i + 1 {
         return -(i + 1)
@@ -1476,7 +1476,7 @@ fn sort_cycle(current_value: int, i: int) -> int {
     return i + 1
 }
 
-/// Light-mode stroke for series `i`.
+/** *Light-mode stroke for series `i`. */
 fn chart_stroke_light(i: int) -> string {
     switch i % 5 {
         case 0:
@@ -1492,7 +1492,7 @@ fn chart_stroke_light(i: int) -> string {
     }
 }
 
-/// Dark-mode stroke for series `i`.
+/** *Dark-mode stroke for series `i`. */
 fn chart_stroke_dark(i: int) -> string {
     switch i % 5 {
         case 0:
@@ -1508,7 +1508,7 @@ fn chart_stroke_dark(i: int) -> string {
     }
 }
 
-/// Light-mode area wash for series `i`.
+/** *Light-mode area wash for series `i`. */
 fn chart_fl(i: int) -> string {
     switch i % 5 {
         case 0:
@@ -1524,7 +1524,7 @@ fn chart_fl(i: int) -> string {
     }
 }
 
-/// Dark-mode area wash for series `i`.
+/** *Dark-mode area wash for series `i`. */
 fn chart_fd(i: int) -> string {
     switch i % 5 {
         case 0:
@@ -1540,10 +1540,10 @@ fn chart_fd(i: int) -> string {
     }
 }
 
-/// Series stroke for series `i`. Series 0 is the first brand color — the
-/// old `k == 1` ladder sent series 0 to the `else` arm, so the first series
-/// was painted in the *last* color. Returns a role token, so a theme switch
-/// repaints the series without rebuilding the chart.
+/** *Series stroke for series `i`. Series 0 is the first brand color — the */
+/** *old `k == 1` ladder sent series 0 to the `else` arm, so the first series */
+/** *was painted in the *last* color. Returns a role token, so a theme switch */
+/** *repaints the series without rebuilding the chart. */
 fn chart_color(i: int) -> string {
     switch i % 5 {
         case 0:
@@ -1559,10 +1559,10 @@ fn chart_color(i: int) -> string {
     }
 }
 
-/// Area wash per series in the current appearance (`primary/20`-style
-/// blends of the series strokes).
-/// Area wash under series `i`, matched to `chart_color` and indexed the
-/// same way.
+/** *Area wash per series in the current appearance (`primary/20`-style */
+/** *blends of the series strokes). */
+/** *Area wash under series `i`, matched to `chart_color` and indexed the */
+/** *same way. */
 fn chart_fill(i: int) -> string {
     switch i % 5 {
         case 0:
@@ -1578,7 +1578,7 @@ fn chart_fill(i: int) -> string {
     }
 }
 
-/// Tooltip border: `border/50` in light, near-`border` in dark.
+/** *Tooltip border: `border/50` in light, near-`border` in dark. */
 fn chart_edge() -> string { return role_token(ROLE.ChartEdge) }
 
 fn bytes_s(b: []int, s: string) -> []int {
@@ -1613,18 +1613,18 @@ fn bytes_i(b: []int, v: int) -> []int {
     return out
 }
 
-/// What a chart plots: category labels, series names, and the values
-/// row-major (`vals[i * names.len + j]` is category `i`, series `j`). Hand a
-/// chart a `Signal<ChartData>` (`BarChartOf`, `LineChartOf`, `AreaChartOf`)
-/// and new data moves its marks, ticks, labels and paths through effects; only
-/// a change in the number of categories or series rebuilds it.
+/** *What a chart plots: category labels, series names, and the values */
+/** *row-major (`vals[i * names.len + j]` is category `i`, series `j`). Hand a */
+/** *chart a `Signal<ChartData>` (`BarChartOf`, `LineChartOf`, `AreaChartOf`) */
+/** *and new data moves its marks, ticks, labels and paths through effects; only */
+/** *a change in the number of categories or series rebuilds it. */
 struct ChartData {
     labels: []string,
     names: []string,
     vals: []int,
 }
 
-/// The chart arm a value selects: its shape, and whether it is drawable.
+/** *The chart arm a value selects: its shape, and whether it is drawable. */
 fn chart_shape(x: ChartData) -> string {
     let ok = x.labels.len > 0 && x.names.len > 0 && x.vals.len == x.labels.len * x.names.len
     return "{{x.labels.len}}x{{x.names.len}}:{{ok}}"
@@ -1634,12 +1634,12 @@ fn chart_drawable(x: ChartData) -> bool {
     return x.labels.len > 0 && x.names.len > 0 && x.vals.len == x.labels.len * x.names.len
 }
 
-/// Value at category `i`, series `j` in the row-major flat array.
+/** *Value at category `i`, series `j` in the row-major flat array. */
 fn chart_val(vals: []int, s: int, i: int, j: int) -> int {
     return vals[i * s + j]
 }
 
-/// Shared y domain over series `0..s`: one axis scales every series.
+/** *Shared y domain over series `0..s`: one axis scales every series. */
 fn chart_domain(vals: []int, s: int, n: int) -> int {
     let mut hi = 1
     for i in 0..n {
@@ -1657,10 +1657,10 @@ fn chart_col_x(gutter: int, col_w: int, i: int) -> int {
     return gutter + i * col_w
 }
 
-/// Plot x of category `i` when the series spans the full plot width: the
-/// first point sits on the left grid edge and the last on the right edge,
-/// so a line/area chart has no half-column dead space at its ends.
-/// `col_w * n` is the plot width; the n marks divide it into n-1 spans.
+/** *Plot x of category `i` when the series spans the full plot width: the */
+/** *first point sits on the left grid edge and the last on the right edge, */
+/** *so a line/area chart has no half-column dead space at its ends. */
+/** *`col_w * n` is the plot width; the n marks divide it into n-1 spans. */
 fn chart_pt_x(gutter: int, col_w: int, n: int, i: int) -> int {
     if n <= 1 {
         return gutter + col_w * n / 2
@@ -1668,8 +1668,8 @@ fn chart_pt_x(gutter: int, col_w: int, n: int, i: int) -> int {
     return gutter + i * (col_w * n) / (n - 1)
 }
 
-/// Mark x for category `i`: span mode (pt = 1, line/area charts) uses
-/// `chart_pt_x`; column mode (pt = 0, bar charts) keeps the band centers.
+/** *Mark x for category `i`: span mode (pt = 1, line/area charts) uses */
+/** *`chart_pt_x`; column mode (pt = 0, bar charts) keeps the band centers. */
 fn chart_mx(pt: int, gutter: int, col_w: int, n: int, i: int) -> int {
     if pt != 0 {
         return chart_pt_x(gutter, col_w, n, i)
@@ -1682,24 +1682,24 @@ fn chart_y(maxv: int, plot_h: int, top: int, v: int) -> int {
     return top + plot_h - int(i64(v) * i64(plot_h) / i64(maxv))
 }
 
-/// A `LineChart` value that is not drawn: no dot, the line breaks around
-/// it, the y domain ignores it, and the tooltip shows a dash. For a series
-/// that has no value yet at that label (an indicator still warming up).
+/** *A `LineChart` value that is not drawn: no dot, the line breaks around */
+/** *it, the y domain ignores it, and the tooltip shows a dash. For a series */
+/** *that has no value yet at that label (an indicator still warming up). */
 const CHART_GAP: int = -2147483647
 
-/// Extras for `LineChart`. The defaults draw what the chart always drew.
+/** *Extras for `LineChart`. The defaults draw what the chart always drew. */
 struct LineChartProps {
-    /// true = the y axis spans the values instead of starting at 0.
+    /** *true = the y axis spans the values instead of starting at 0. */
     fit: bool = false,
-    /// Implied decimals when a value prints: 12037 with 2 reads `120.37`.
+    /** *Implied decimals when a value prints: 12037 with 2 reads `120.37`. */
     decimals: int = 0,
-    /// Draw every k-th x label. 0 picks about eight across the plot.
+    /** *Draw every k-th x label. 0 picks about eight across the plot. */
     labelEvery: int = 1,
-    /// false = the line alone, no dot per point.
+    /** *false = the line alone, no dot per point. */
     dots: bool = true,
 }
 
-/// `v` with `dec` implied decimals. `CHART_GAP` prints as a dash.
+/** *`v` with `dec` implied decimals. `CHART_GAP` prints as a dash. */
 fn chart_fmt(v: int, dec: int) -> string {
     if v == CHART_GAP {
         return "-"
@@ -1725,8 +1725,8 @@ fn chart_fmt(v: int, dec: int) -> string {
     return "{{sign}}{{whole}}.{{frac}}"
 }
 
-/// Smallest and largest drawn value over series `0..s`; gaps are skipped.
-/// `hi` stays at least `lo + 1`, so a flat series still has a span.
+/** *Smallest and largest drawn value over series `0..s`; gaps are skipped. */
+/** *`hi` stays at least `lo + 1`, so a flat series still has a span. */
 fn chart_span(vals: []int, s: int, n: int, fit: bool) -> []int {
     let mut lo = 0
     let mut hi = 1
@@ -1773,7 +1773,7 @@ fn chart_fy(lo: int, hi: int, plot_h: int, top: int, v: int) -> int {
     return top + plot_h - int(i64(v - lo) * i64(plot_h) / i64(hi - lo))
 }
 
-/// Polyline for series `j` over `lo..hi`. A gap lifts the pen.
+/** *Polyline for series `j` over `lo..hi`. A gap lifts the pen. */
 fn chart_fline_d(
     vals: []int,
     s: int,
@@ -1807,7 +1807,7 @@ fn chart_fline_d(
     return string_from_bytes(b)
 }
 
-/// Gridlines, y ticks from `hi` down to `lo`, and the baseline.
+/** *Gridlines, y ticks from `hi` down to `lo`, and the baseline. */
 fn chart_faxes(gw: Signal<int>, h: int, sp: Signal<[]int>, dec: int) {
     let plot_h = h - CHART_TOP - CHART_XLAB
     let base_y = CHART_TOP + plot_h
@@ -1856,8 +1856,8 @@ fn chart_faxes(gw: Signal<int>, h: int, sp: Signal<[]int>, dec: int) {
     })
 }
 
-/// A y tick. Once a quarter of the span is a whole unit or more, the
-/// decimals are dropped (rounded), so the label fits the gutter.
+/** *A y tick. Once a quarter of the span is a whole unit or more, the */
+/** *decimals are dropped (rounded), so the label fits the gutter. */
 fn chart_tick(v: int, dec: int, span: int) -> string {
     if dec <= 0 {
         return "{{v}}"
@@ -1873,7 +1873,7 @@ fn chart_tick(v: int, dec: int, span: int) -> string {
     return "{{whole}}"
 }
 
-/// Room below the plot for rotated x labels past about six characters.
+/** *Room below the plot for rotated x labels past about six characters. */
 fn chart_xlab_extra(labels: []string) -> int {
     let mut m = 0
     for i in 0..labels.len {
@@ -1887,7 +1887,7 @@ fn chart_xlab_extra(labels: []string) -> int {
     return (m - 6) * 5
 }
 
-/// Label stride for `LineChartProps.labelEvery`: 0 is about eight labels.
+/** *Label stride for `LineChartProps.labelEvery`: 0 is about eight labels. */
 fn chart_every(every: int, n: int) -> int {
     if every > 0 {
         return every
@@ -1899,8 +1899,8 @@ fn chart_every(every: int, n: int) -> int {
     return k
 }
 
-/// Compose svg markup; `d` is in plot coordinates and the viewBox matches
-/// the node size, so coordinates map 1:1.
+/** *Compose svg markup; `d` is in plot coordinates and the viewBox matches */
+/** *the node size, so coordinates map 1:1. */
 fn chart_svg(d: string, w: int, h: int, fill: string, stroke: string, sw: int) -> string {
     let mut b = []int {}
     b = bytes_s(b, "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ")
@@ -1919,7 +1919,7 @@ fn chart_svg(d: string, w: int, h: int, fill: string, stroke: string, sw: int) -
     return string_from_bytes(b)
 }
 
-/// Full-size svg node for the plot, layered at 0,0.
+/** *Full-size svg node for the plot, layered at 0,0. */
 fn ChartLayer(markup: string, w: int, h: int) -> Node {
     return Svg(
         markup,
@@ -1927,8 +1927,8 @@ fn ChartLayer(markup: string, w: int, h: int) -> Node {
     )
 }
 
-/// `ChartLayer` that follows the plot width: the markup and the box are
-/// thunks over `gw`, so a resize rewrites the path in place.
+/** *`ChartLayer` that follows the plot width: the markup and the box are */
+/** *thunks over `gw`, so a resize rewrites the path in place. */
 fn chart_layer_live(markup: Signal<string>, gw: Signal<int>, h: int) -> Node {
     return Component(raw_svg(""), text = markup, style = || {
         return Style(
@@ -1941,7 +1941,7 @@ fn chart_layer_live(markup: Signal<string>, gw: Signal<int>, h: int) -> Node {
     })
 }
 
-/// Polyline for series `j` (straight segments — recharts default linear).
+/** *Polyline for series `j` (straight segments — recharts default linear). */
 fn chart_line_d(
     vals: []int,
     s: int,
@@ -1968,7 +1968,7 @@ fn chart_line_d(
     return string_from_bytes(b)
 }
 
-/// Closed polygon under series `j`: the line plus the baseline (area fill).
+/** *Closed polygon under series `j`: the line plus the baseline (area fill). */
 fn chart_area_d(
     vals: []int,
     s: int,
@@ -2004,7 +2004,7 @@ fn chart_area_d(
     return string_from_bytes(b)
 }
 
-/// Gridlines + y tick labels + baseline. Call with the plot pushed.
+/** *Gridlines + y tick labels + baseline. Call with the plot pushed. */
 fn chart_axes(gw: Signal<int>, h: int, maxv: Signal<int>) {
     let plot_h = h - CHART_TOP - CHART_XLAB
     let base_y = CHART_TOP + plot_h
@@ -2056,19 +2056,19 @@ fn chart_axes(gw: Signal<int>, h: int, maxv: Signal<int>) {
     })
 }
 
-/// Tooltip width (dp) and the air between it and the mark it describes.
+/** *Tooltip width (dp) and the air between it and the mark it describes. */
 const CHART_TIP_W: int = 128
 const CHART_TIP_GAP: int = 10
-/// `reach` for a bar chart's tooltip: half the bar group, which depends on the
-/// live column width, so the tooltip derives it as it places itself.
+/** *`reach` for a bar chart's tooltip: half the bar group, which depends on the */
+/** *live column width, so the tooltip derives it as it places itself. */
 const CHART_REACH_BARS: int = -1
 
-/// Where the tooltip goes for a mark at (`mx`, `my`) whose body reaches
-/// `reach` dp either side of `mx`: beside the mark, top-aligned just above
-/// it, on the right unless that overflows the plot, then on the left — so the
-/// panel never covers the mark it describes. A plot too narrow for either side
-/// centres the panel over the mark instead, above it (below when there is no
-/// room above). Returns [left, top].
+/** *Where the tooltip goes for a mark at (`mx`, `my`) whose body reaches */
+/** *`reach` dp either side of `mx`: beside the mark, top-aligned just above */
+/** *it, on the right unless that overflows the plot, then on the left — so the */
+/** *panel never covers the mark it describes. A plot too narrow for either side */
+/** *centres the panel over the mark instead, above it (below when there is no */
+/** *room above). Returns [left, top]. */
 fn chart_tip_place(mx: int, my: int, reach: int, tip_h: int, w: int, h: int) -> []int {
     let side = reach + CHART_TIP_GAP
     let mut top = my - tip_h / 3
@@ -2101,12 +2101,12 @@ fn chart_tip_place(mx: int, my: int, reach: int, tip_h: int, w: int, h: int) -> 
     return []int { x, y }
 }
 
-/// One floating tooltip panel shared by every category: its content and
-/// position track the hovered column (`act` = category + 1, 0 = none)
-/// through an effect, instead of one pre-built panel per category. Style
-/// props are plain data, so a prop that must follow a signal gets `styled`.
-/// `ys` is each column's topmost mark (the anchor) and `reach` the mark's
-/// half-width, so the panel sits beside the mark rather than on it.
+/** *One floating tooltip panel shared by every category: its content and */
+/** *position track the hovered column (`act` = category + 1, 0 = none) */
+/** *through an effect, instead of one pre-built panel per category. Style */
+/** *props are plain data, so a prop that must follow a signal gets `styled`. */
+/** *`ys` is each column's topmost mark (the anchor) and `reach` the mark's */
+/** *half-width, so the panel sits beside the mark rather than on it. */
 fn chart_tooltip(
     d: Signal<ChartData>,
     s: int,
@@ -2216,12 +2216,12 @@ fn chart_tooltip(
     })
 }
 
-/// Transparent hover zone for a category. Hovering it flips its own
-/// signal; a watch effect folds that into the shared `act`. Span mode
-/// gives each mark a contiguous catch strip from the midpoint of the
-/// previous mark to the midpoint of the next (the ends reach the plot
-/// edges), so the pointer always lands on the nearest mark; column mode
-/// keeps the full-band coverage of the bar columns.
+/** *Transparent hover zone for a category. Hovering it flips its own */
+/** *signal; a watch effect folds that into the shared `act`. Span mode */
+/** *gives each mark a contiguous catch strip from the midpoint of the */
+/** *previous mark to the midpoint of the next (the ends reach the plot */
+/** *edges), so the pointer always lands on the nearest mark; column mode */
+/** *keeps the full-band coverage of the bar columns. */
 fn chart_zone(
     i: int,
     hov: Signal<int>,
@@ -2253,7 +2253,7 @@ fn chart_zone(
     })
 }
 
-/// [left, width] of category `i`'s hover zone at column width `col_w`.
+/** *[left, width] of category `i`'s hover zone at column width `col_w`. */
 fn chart_zone_lw(i: int, col_w: int, pt: int, n: int) -> []int {
     let mut zl = 0
     let mut zw = col_w
@@ -2283,9 +2283,9 @@ fn chart_zone_lw(i: int, col_w: int, pt: int, n: int) -> []int {
     return []int { zl, zw }
 }
 
-/// X category label under the plot, rotated 45° clockwise around its top-left.
-/// Rotated labels are parallel diagonal strips, so they never collide with
-/// each other however narrow the plot gets; CHART_XLAB reserves their room.
+/** *X category label under the plot, rotated 45° clockwise around its top-left. */
+/** *Rotated labels are parallel diagonal strips, so they never collide with */
+/** *each other however narrow the plot gets; CHART_XLAB reserves their room. */
 fn chart_xlab(d: Signal<ChartData>, i: int, gw: Signal<int>, plot_h: int, pt: int, n: int) {
     // 8px of air below the baseline axis: the rotated strip starts below the
     // line, not on it (the pivot corner is the strip's top edge). Span mode
@@ -2308,7 +2308,7 @@ fn chart_xlab(d: Signal<ChartData>, i: int, gw: Signal<int>, plot_h: int, pt: in
     text_rot(lab, 45)
 }
 
-/// Bottom-centered legend, 16px between entries.
+/** *Bottom-centered legend, 16px between entries. */
 fn chart_legend(d: Signal<ChartData>) {
     Box(style = Style(
         direction = Direction.Row,
@@ -2330,9 +2330,9 @@ fn chart_legend(d: Signal<ChartData>) {
     }
 }
 
-/// Hover cursor: a single hairline through the hovered mark (no wash band).
-/// `act` = category + 1; the line shows and slides with it. Build it before
-/// the marks, so the line runs behind the dots and bars rather than over them.
+/** *Hover cursor: a single hairline through the hovered mark (no wash band). */
+/** *`act` = category + 1; the line shows and slides with it. Build it before */
+/** *the marks, so the line runs behind the dots and bars rather than over them. */
 fn chart_cursor(act: Signal<int>, n: int, gw: Signal<int>, plot_h: int, pt: int) {
     let line = Box(
         style = Style(
@@ -2360,12 +2360,12 @@ fn chart_cursor(act: Signal<int>, n: int, gw: Signal<int>, plot_h: int, pt: int)
     show(line, act)
 }
 
-/// Hover zones + the single following tooltip; call with the plot pushed,
-/// after the marks (the cursor goes in first, before them: `chart_cursor`).
-/// `act` is created by the chart builder so the marks can dim for the hovered
-/// column. `pt` = 1 for plot-spanning line/area charts (zone strips snap to
-/// the nearest mark), 0 for column-mode bar charts. `ys` / `reach`: see
-/// `chart_tooltip`.
+/** *Hover zones + the single following tooltip; call with the plot pushed, */
+/** *after the marks (the cursor goes in first, before them: `chart_cursor`). */
+/** *`act` is created by the chart builder so the marks can dim for the hovered */
+/** *column. `pt` = 1 for plot-spanning line/area charts (zone strips snap to */
+/** *the nearest mark), 0 for column-mode bar charts. `ys` / `reach`: see */
+/** *`chart_tooltip`. */
 fn chart_tooltips(
     d: Signal<ChartData>,
     s: int,
@@ -2385,8 +2385,8 @@ fn chart_tooltips(
     chart_tooltip(d, s, n, gw, h, act, pt, dec, ys, reach)
 }
 
-/// Dim/restore a mark for the hovered column: full at rest or on its own
-/// column, faded while another column is hovered.
+/** *Dim/restore a mark for the hovered column: full at rest or on its own */
+/** *column, faded while another column is hovered. */
 fn chart_dim(act: Signal<int>, i: int) -> int {
     let a = act.get()
     if a == 0 {
@@ -2398,29 +2398,29 @@ fn chart_dim(act: Signal<int>, i: int) -> int {
     return 40
 }
 
-/// The plot width as a signal: the caller's estimate before the first layout,
-/// then the host's measured width (the host stretches with its parent). The
-/// marks read it in their `style` / markup thunks, so a resize moves them in
-/// place — the chart is built once, never refit. A measured width is used
-/// however small — falling back to the estimate there is what made a
-/// squeezed chart spill out of its card — floored (`chart_gw`) only so the
-/// plot keeps a few pixels.
+/** *The plot width as a signal: the caller's estimate before the first layout, */
+/** *then the host's measured width (the host stretches with its parent). The */
+/** *marks read it in their `style` / markup thunks, so a resize moves them in */
+/** *place — the chart is built once, never refit. A measured width is used */
+/** *however small — falling back to the estimate there is what made a */
+/** *squeezed chart spill out of its card — floored (`chart_gw`) only so the */
+/** *plot keeps a few pixels. */
 fn chart_w(w: int, host: Node) -> Signal<int> {
     return width_signal(host, w)
 }
 
-/// The plot width `gw` holds, floored so a squeezed plot keeps a few pixels.
+/** *The plot width `gw` holds, floored so a squeezed plot keeps a few pixels. */
 fn chart_gw(gw: Signal<int>) -> int {
     return max2(gw.get(), CHART_GUTTER + 8)
 }
 
-/// Column width for `n` categories across the plot `gw` holds.
+/** *Column width for `n` categories across the plot `gw` holds. */
 fn chart_colw(gw: Signal<int>, n: int) -> int {
     return max2((chart_gw(gw) - CHART_GUTTER) / n, 1)
 }
 
-/// Side inset of a bar group inside its column: 5 dp, less in a column too
-/// narrow to spare it.
+/** *Side inset of a bar group inside its column: 5 dp, less in a column too */
+/** *narrow to spare it. */
 fn chart_bar_inset(col_w: int) -> int {
     let i = col_w / 4
     if i > 5 {
@@ -2801,10 +2801,10 @@ fn cal_month_name(m: int) -> string {
     }
 }
 
-/// Day number for grid cell `idx` (0-based) in the month `m` of `year`,
-/// or 0 for a leading/trailing blank. Cells stay fixed; the value is
-/// recomputed from the live y/m signals, so flipping month or year only
-/// re-runs the cell prop thunks — no rebuild, no 12 pre-built grids.
+/** *Day number for grid cell `idx` (0-based) in the month `m` of `year`, */
+/** *or 0 for a leading/trailing blank. Cells stay fixed; the value is */
+/** *recomputed from the live y/m signals, so flipping month or year only */
+/** *re-runs the cell prop thunks — no rebuild, no 12 pre-built grids. */
 fn cal_day_at(year: int, m: int, idx: int) -> int {
     let day = idx - cal_first_monday(year, m) + 1
     if day < 1 {
@@ -2816,43 +2816,43 @@ fn cal_day_at(year: int, m: int, idx: int) -> int {
     return day
 }
 
-/// Card chrome. `Card()` keeps the recipe; pass any style prop to restyle
-/// it without copying the widget (`Card(radius = 6, padding = Space.Xs)`).
-/// `visible` and `bind` go through `Component`.
+/** *Card chrome. `Card()` keeps the recipe; pass any style prop to restyle */
+/** *it without copying the widget (`Card(radius = 6, padding = Space.Xs)`). */
+/** *`visible` and `bind` go through `Component`. */
 struct CardProps {
     visible: Option<Signal<bool>> = none,
     bind: Option<Signal<int>> = none,
-    /// Interactive card: a pointer target with a hover wash and `on_click`
-    /// (role `button`). `on_click` alone implies it.
+    /** *Interactive card: a pointer target with a hover wash and `on_click` */
+    /** *(role `button`). `on_click` alone implies it. */
     interactive: bool = false,
     on_click: Option<fn()> = none,
-    /// Resting shadow (`Elevation.*`). Flat: the hairline is the edge.
+    /** *Resting shadow (`Elevation.*`). Flat: the hairline is the edge. */
     elevation: int = Elevation.Flat,
-    /// Elevation the card lifts to on hover. `-1` (the default) stays flat.
-    /// Paint-only: the shadow blends on the hover track.
+    /** *Elevation the card lifts to on hover. `-1` (the default) stays flat. */
+    /** *Paint-only: the shadow blends on the hover track. */
     lift: int = -1,
-    /// Header row above the body: `title` (heading type) and `subtitle`
-    /// (muted caption). Either empty (when the card builds) = no header.
-    /// Thunks, so a signal read inside updates the header in place.
+    /** *Header row above the body: `title` (heading type) and `subtitle` */
+    /** *(muted caption). Either empty (when the card builds) = no header. */
+    /** *Thunks, so a signal read inside updates the header in place. */
     title: Signal<string> = "",
     subtitle: Signal<string> = "",
-    /// Media strip above everything: an image `src` at `mediaHeight` dp,
-    /// bleeding to the card edge under the top corners.
+    /** *Media strip above everything: an image `src` at `mediaHeight` dp, */
+    /** *bleeding to the card edge under the top corners. */
     media: string = "",
     mediaHeight: int = 160,
-    /// Footer row under the body, separated by a hairline; built by this
-    /// thunk (actions, a caption). Omit for none.
+    /** *Footer row under the body, separated by a hairline; built by this */
+    /** *thunk (actions, a caption). Omit for none. */
     footer: Option<fn()> = none,
-    /// Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`).
+    /** *Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`). */
     keys: []KeyBind = no_keys(),
-    /// CSS-subset style; a present key wins over the recipe's.
+    /** *CSS-subset style; a present key wins over the recipe's. */
     style: Option<fn() -> Style> = none,
-    /// The trailing block: the body, placed by the component.
+    /** *The trailing block: the body, placed by the component. */
     children: fn() = noop,
 }
 
-/// Card body slot. The trailing block lands here — after the media and
-/// header, before the footer — so `Card(title = "…") { … }` reads top-down.
+/** *Card body slot. The trailing block lands here — after the media and */
+/** *header, before the footer — so `Card(title = "…") { … }` reads top-down. */
 fn Card(p: CardProps) -> Node {
     // state. The media strip bleeds through the side padding, so it reads the
     // padding the caller's style gives the card.
@@ -2923,15 +2923,15 @@ fn Card(p: CardProps) -> Node {
     }
 }
 
-/// Options for `CardHeader`.
+/** *Options for `CardHeader`. */
 struct CardHeaderProps {
-    /// Trailing slot, right-aligned on the title row (a menu, a badge).
+    /** *Trailing slot, right-aligned on the title row (a menu, a badge). */
     action: Option<fn()> = none,
 }
 
-/// A card's header: `title` in title type, `description` muted under it, and
-/// an optional trailing `action`. `Card(title = …)` builds one; compose it
-/// yourself for a header with an action.
+/** *A card's header: `title` in title type, `description` muted under it, and */
+/** *an optional trailing `action`. `Card(title = …)` builds one; compose it */
+/** *yourself for a header with an action. */
 fn CardHeader(title: Signal<string>, description: Signal<string>, p: CardHeaderProps) -> Node {
     return Box(style = Style(direction = Direction.Row, gap = Space.Exs, align = Align.Start)) {
         Box(style = Style(direction = Direction.Column, gap = 2, grow = 1), role = "heading") {
@@ -2946,8 +2946,8 @@ fn CardHeader(title: Signal<string>, description: Signal<string>, p: CardHeaderP
     }
 }
 
-/// A card's footer row: a hairline, then the trailing block laid out in a row
-/// (actions, a caption).
+/** *A card's footer row: a hairline, then the trailing block laid out in a row */
+/** *(actions, a caption). */
 struct CardFooterProps {
     children: fn() = noop,
 }
@@ -2961,9 +2961,9 @@ fn CardFooter(p: CardFooterProps) -> Node {
     }
 }
 
-/// Parse a cell as an integer (optional sign, digits, then anything —
-/// "12", "-3", "30 kg" all count; "" and "abc" do not). Returns the value
-/// and whether it parsed, so numeric columns sort by value.
+/** *Parse a cell as an integer (optional sign, digits, then anything — */
+/** *"12", "-3", "30 kg" all count; "" and "abc" do not). Returns the value */
+/** *and whether it parsed, so numeric columns sort by value. */
 fn cell_num(s: string) -> CellNum {
     let mut i = 0
     let mut neg = false
@@ -2995,9 +2995,9 @@ fn cell_num(s: string) -> CellNum {
     return CellNum(ok = true, v = v)
 }
 
-/// Parse a cell as an integer (optional sign, digits, then anything —
-/// "12", "-3", "30 kg" all count; "" and "abc" do not). Returns the value
-/// and whether it parsed, so numeric columns sort by value.
+/** *Parse a cell as an integer (optional sign, digits, then anything — */
+/** *"12", "-3", "30 kg" all count; "" and "abc" do not). Returns the value */
+/** *and whether it parsed, so numeric columns sort by value. */
 struct CellNum {
     ok: bool,
     v: int,
@@ -3007,7 +3007,7 @@ struct CellNum {
 // Tier A atoms: tags, inline type, key combos, ring, skeleton presets
 // ═══════════════════════════════════════════════════════════════════
 
-/// Soft wash behind a `Tint` (tags, callouts, banners).
+/** *Soft wash behind a `Tint` (tags, callouts, banners). */
 fn tint_bg(kind: int) -> string {
     switch kind {
         case Tint.Ok:
@@ -3023,7 +3023,7 @@ fn tint_bg(kind: int) -> string {
     }
 }
 
-/// Edge for a `Tint`; see `tint_bg`.
+/** *Edge for a `Tint`; see `tint_bg`. */
 fn tint_line(kind: int) -> string {
     switch kind {
         case Tint.Ok:
@@ -3039,7 +3039,7 @@ fn tint_line(kind: int) -> string {
     }
 }
 
-/// Text ink for a `Tint` that clears AA on its `tint_bg`.
+/** *Text ink for a `Tint` that clears AA on its `tint_bg`. */
 fn tint_ink(kind: int) -> string {
     switch kind {
         case Tint.Ok:
@@ -3057,20 +3057,20 @@ fn tint_ink(kind: int) -> string {
     }
 }
 
-/// Options for `Tag`.
+/** *Options for `Tag`. */
 struct TagProps {
-    /// `Tint` for the wash, edge, and ink.
+    /** *`Tint` for the wash, edge, and ink. */
     tint: int = Tint.Mute,
-    /// `Size` token: the tag is `badge_h(size)` tall.
+    /** *`Size` token: the tag is `badge_h(size)` tall. */
     size: int = Size.Md,
-    /// Removable tag: a trailing X runs this (role `button`, label
-    /// `Remove <label>`). Hiding the tag is the caller's job.
+    /** *Removable tag: a trailing X runs this (role `button`, label */
+    /** *`Remove <label>`). Hiding the tag is the caller's job. */
     on_remove: Option<fn()> = none,
     style: Option<fn() -> Style> = none,
 }
 
-/// Tag: a soft-tinted label with a small radius — a category or filter value,
-/// told apart from the pill `Badge` (a status) and the dotted `Chip`.
+/** *Tag: a soft-tinted label with a small radius — a category or filter value, */
+/** *told apart from the pill `Badge` (a status) and the dotted `Chip`. */
 fn Tag(label: Signal<string>, p: TagProps) -> Node {
     let removable = result.is_some(p.on_remove)
     return Box(
@@ -3115,7 +3115,7 @@ fn Tag(label: Signal<string>, p: TagProps) -> Node {
     }
 }
 
-/// Status dot + label, no chrome: "● Online" in a table cell or a header.
+/** *Status dot + label, no chrome: "● Online" in a table cell or a header. */
 fn DotBadge(label: Signal<string>, kind: int) -> Node {
     return Box(
         style = Style(direction = Direction.Row, gap = 6, align = Align.Center),
@@ -3127,17 +3127,17 @@ fn DotBadge(label: Signal<string>, kind: int) -> Node {
     }
 }
 
-/// Options for `Link`.
+/** *Options for `Link`. */
 struct LinkProps {
-    /// A trailing arrow-out-of-box, for a link that leaves the app.
+    /** *A trailing arrow-out-of-box, for a link that leaves the app. */
     external: bool = false,
-    /// Type size; the surrounding text's, usually.
+    /** *Type size; the surrounding text's, usually. */
     font: int = FONT_BODY,
     style: Option<fn() -> Style> = none,
 }
 
-/// Inline link: accent ink, underlined while hovered, role `link`. Navigation
-/// is the caller's `on_click` (a router `go`, `open_url`, ...).
+/** *Inline link: accent ink, underlined while hovered, role `link`. Navigation */
+/** *is the caller's `on_click` (a router `go`, `open_url`, ...). */
 fn Link(label: Signal<string>, on_click: fn(), p: LinkProps) -> Node {
     let hot = signal(false)
     return Row(0) {
@@ -3171,7 +3171,7 @@ fn Link(label: Signal<string>, on_click: fn(), p: LinkProps) -> Node {
     }
 }
 
-/// Inline code: mono-ish caption type on a raised wash.
+/** *Inline code: mono-ish caption type on a raised wash. */
 fn Code(text: Signal<string>) -> Node {
     return Row(0) {
         Box(style = Style(
@@ -3186,8 +3186,8 @@ fn Code(text: Signal<string>) -> Node {
     }
 }
 
-/// Quoted passage: a 3px rule down the start edge, muted body type.
-/// Trailing block is the quote (one or more `Text`s); `cite` adds a caption.
+/** *Quoted passage: a 3px rule down the start edge, muted body type. */
+/** *Trailing block is the quote (one or more `Text`s); `cite` adds a caption. */
 struct BlockquoteProps {
     cite: string = "",
     children: fn() = noop,
@@ -3205,16 +3205,16 @@ fn Blockquote(p: BlockquoteProps) -> Node {
     }
 }
 
-/// Options for `KbdCombo`.
+/** *Options for `KbdCombo`. */
 struct KbdComboProps {
-    /// Force a convention: 1 = Apple (⌘⇧P), 0 = everyone else
-    /// (Ctrl+Shift+P), -1 (default) = the host's (`apple_keys()`).
+    /** *Force a convention: 1 = Apple (⌘⇧P), 0 = everyone else */
+    /** *(Ctrl+Shift+P), -1 (default) = the host's (`apple_keys()`). */
     apple: int = -1,
 }
 
-/// A shortcut in the platform's own spelling: `KbdCombo("cmd+shift+p")` is
-/// ⌘⇧P on a Mac and Ctrl+Shift+P elsewhere. `spec` uses the keymap syntax
-/// (`cmd` / `ctrl` / `alt` / `shift`, `+` or `-` between, then the key).
+/** *A shortcut in the platform's own spelling: `KbdCombo("cmd+shift+p")` is */
+/** *⌘⇧P on a Mac and Ctrl+Shift+P elsewhere. `spec` uses the keymap syntax */
+/** *(`cmd` / `ctrl` / `alt` / `shift`, `+` or `-` between, then the key). */
 fn KbdCombo(spec: string, p: KbdComboProps) -> Node {
     let apple = if p.apple >= 0 { p.apple == 1 } else { apple_keys() }
     let parts = combo_parts(spec)
@@ -3242,7 +3242,7 @@ fn KbdCombo(spec: string, p: KbdComboProps) -> Node {
     }
 }
 
-/// `spec` split on `+` / `-` (a lone `-` or `+` key stays a key).
+/** *`spec` split on `+` / `-` (a lone `-` or `+` key stays a key). */
 fn combo_parts(spec: string) -> []string {
     let mut out = []string {}
     let mut b = []int {}
@@ -3272,7 +3272,7 @@ fn combo_text(parts: []string, apple: bool, sep: string) -> string {
     return s
 }
 
-/// One key of a combo, spelled for the platform.
+/** *One key of a combo, spelled for the platform. */
 fn key_name(part: string, apple: bool) -> string {
     let k = lowercase(part)
     if fmt.eq(k, "cmd") || fmt.eq(k, "super") || fmt.eq(k, "mod") {
@@ -3320,18 +3320,18 @@ fn key_name(part: string, apple: bool) -> string {
     return part
 }
 
-/// Options for `ProgressRing`.
+/** *Options for `ProgressRing`. */
 struct ProgressRingProps {
-    /// Diameter in px (`RING`, 48).
+    /** *Diameter in px (`RING`, 48). */
     size: int = RING,
-    /// The percentage in the middle of the ring.
+    /** *The percentage in the middle of the ring. */
     label: bool = true,
-    /// Arc ink (a role accessor); the accent by default.
+    /** *Arc ink (a role accessor); the accent by default. */
     color: string = "",
 }
 
-/// Circular progress over 0..100: a hairline track with the accent arc
-/// sweeping clockwise from the top, and the percentage in the middle.
+/** *Circular progress over 0..100: a hairline track with the accent arc */
+/** *sweeping clockwise from the top, and the percentage in the middle. */
 fn ProgressRing(value: Signal<int>, p: ProgressRingProps) -> Node {
     let d = p.size
     return Box(
@@ -3372,8 +3372,8 @@ fn ProgressRing(value: Signal<int>, p: ProgressRingProps) -> Node {
     }
 }
 
-/// The ring's arc: an svg whose markup follows `value` (the node keeps its
-/// markup in its text, so a reactive text redraws it).
+/** *The ring's arc: an svg whose markup follows `value` (the node keeps its */
+/** *markup in its text, so a reactive text redraws it). */
 fn RingArc(value: Signal<int>, d: int, tint: string) -> Node {
     return Component(
         raw_svg(ring_markup(peek(value))),
@@ -3391,14 +3391,14 @@ fn RingArc(value: Signal<int>, d: int, tint: string) -> Node {
 
 const RING_TRACK: string = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><circle cx='12' cy='12' r='10' fill='none' stroke='currentColor' stroke-width='2.5'/></svg>"
 
-/// sin(10° × i) × 1000 for i = 0..36. cos(a) is sin(a + 90°).
+/** *sin(10° × i) × 1000 for i = 0..36. cos(a) is sin(a + 90°). */
 const SIN10: []int = []int {
     0, 174, 342, 500, 643, 766, 866, 940, 985, 1000, 985, 940, 866, 766, 643, 500, 342, 174,
     0, -174, -342, -500, -643, -766, -866, -940, -985, -1000, -985, -940, -866, -766, -643,
     -500, -342, -174, 0,
 }
 
-/// sin of `deg` (0..360) × 1000, linear between the 10° table steps.
+/** *sin of `deg` (0..360) × 1000, linear between the 10° table steps. */
 fn sin1000(deg: int) -> int {
     let a = ((deg % 360) + 360) % 360
     let i = a / 10
@@ -3406,7 +3406,7 @@ fn sin1000(deg: int) -> int {
     return SIN10[i] + (SIN10[i + 1] - SIN10[i]) * f / 10
 }
 
-/// Thousandths as a decimal: 12345 → "12.345".
+/** *Thousandths as a decimal: 12345 → "12.345". */
 fn milli(v: int) -> string {
     let neg = v < 0
     let a = if neg { -v } else { v }
@@ -3416,8 +3416,8 @@ fn milli(v: int) -> string {
     return "{{sign}}{{a / 1000}}.{{pad}}{{frac}}"
 }
 
-/// A clockwise arc of `pct` percent on the r = 10 circle, starting at the top,
-/// as a polyline (the host SVG readers skip arc commands).
+/** *A clockwise arc of `pct` percent on the r = 10 circle, starting at the top, */
+/** *as a polyline (the host SVG readers skip arc commands). */
 fn ring_markup(pct: int) -> string {
     let v = clamp_pct(pct)
     let end = v * 360 / 100
@@ -3444,8 +3444,8 @@ fn clamp_pct(v: int) -> int {
     return v
 }
 
-/// Lines of placeholder text: `lines` bars at body height, the last one
-/// shorter, like a paragraph's ragged end. Fills its parent's width.
+/** *Lines of placeholder text: `lines` bars at body height, the last one */
+/** *shorter, like a paragraph's ragged end. Fills its parent's width. */
 fn SkeletonText(lines: int = 3) -> Node {
     return Box(
         style = Style(direction = Direction.Column, gap = Space.Exs),
@@ -3463,12 +3463,12 @@ fn SkeletonText(lines: int = 3) -> Node {
     }
 }
 
-/// A round placeholder the size of an `Avatar`.
+/** *A round placeholder the size of an `Avatar`. */
 fn SkeletonAvatar(size: int = AvatarSize.Lg) -> Node {
     return Skeleton(size, size, size / 2)
 }
 
-/// A card-shaped placeholder: avatar and two lines over a short paragraph.
+/** *A card-shaped placeholder: avatar and two lines over a short paragraph. */
 fn SkeletonCard() -> Node {
     return Box(
         style = Style(
@@ -3506,7 +3506,7 @@ fn SkeletonCard() -> Node {
 
 // --- tier B atoms: layout frames, scroll fades, gauges -------------------
 
-/// Bytes of `s` in `[from, to)`.
+/** *Bytes of `s` in `[from, to)`. */
 fn str_slice(s: string, from: int, to: int) -> string {
     let mut b = []int {}
     let mut i = from
@@ -3517,13 +3517,13 @@ fn str_slice(s: string, from: int, to: int) -> string {
     return string_from_bytes(b)
 }
 
-/// One band of an edge fade, strongest where `opacity` is highest.
+/** *One band of an edge fade, strongest where `opacity` is highest. */
 fn fade_strip(opacity: int) -> Node {
     return Box(style = Style(height = px(8), background = plate(), opacity = opacity))
 }
 
-/// Edge fade over a scroller. `top` hugs the top edge; otherwise the bottom.
-/// `on` is read from layout (`shown`), so it follows the scroll offset.
+/** *Edge fade over a scroller. `top` hugs the top edge; otherwise the bottom. */
+/** *`on` is read from layout (`shown`), so it follows the scroll offset. */
 fn ScrollShadow(top: bool, on: Signal<bool>) -> Node {
     return Box(
         style = Style(
@@ -3546,16 +3546,16 @@ fn ScrollShadow(top: bool, on: Signal<bool>) -> Node {
     }
 }
 
-/// Options for `ScrollArea`.
+/** *Options for `ScrollArea`. */
 struct ScrollAreaProps {
-    /// Viewport height.
+    /** *Viewport height. */
     height: int = 240,
     style: Option<fn() -> Style> = none,
     children: fn() = noop,
 }
 
-/// Vertical scroller with edge fades. The thumb is the engine's overlay bar;
-/// a fade shows on each edge that still has content past it.
+/** *Vertical scroller with edge fades. The thumb is the engine's overlay bar; */
+/** *a fade shows on each edge that still has content past it. */
 fn ScrollArea(p: ScrollAreaProps) -> Node {
     let y = signal(0)
     let vh = signal(0)
@@ -3578,16 +3578,16 @@ fn ScrollArea(p: ScrollAreaProps) -> Node {
     }
 }
 
-/// Options for `Container`.
+/** *Options for `Container`. */
 struct ContainerProps {
-    /// Max width. 0 is `CONTAINER_MD` (960). `CONTAINER_SM` / `CONTAINER_LG`
-    /// are 640 / 1200.
+    /** *Max width. 0 is `CONTAINER_MD` (960). `CONTAINER_SM` / `CONTAINER_LG` */
+    /** *are 640 / 1200. */
     width: int = 0,
     style: Option<fn() -> Style> = none,
     children: fn() = noop,
 }
 
-/// Centres a column and caps its width. A page measure, not a card.
+/** *Centres a column and caps its width. A page measure, not a card. */
 fn Container(p: ContainerProps) -> Node {
     let w = if p.width > 0 { p.width } else { CONTAINER_MD }
     return Box(
@@ -3603,13 +3603,13 @@ fn Container(p: ContainerProps) -> Node {
     }
 }
 
-/// Options for `AspectRatio`.
+/** *Options for `AspectRatio`. */
 struct AspectRatioProps {
     style: Option<fn() -> Style> = none,
     children: fn() = noop,
 }
 
-/// A frame whose height follows its width at `w`:`h` (pass 16 and 9, or 1 and 1).
+/** *A frame whose height follows its width at `w`:`h` (pass 16 and 9, or 1 and 1). */
 fn AspectRatio(w: int, h: int, p: AspectRatioProps) -> Node {
     return Box(
         style = Style(
@@ -3624,15 +3624,15 @@ fn AspectRatio(w: int, h: int, p: AspectRatioProps) -> Node {
     }
 }
 
-/// Options for `SimpleGrid`.
+/** *Options for `SimpleGrid`. */
 struct SimpleGridProps {
     gap: int = 12,
     style: Option<fn() -> Style> = none,
     children: fn() = noop,
 }
 
-/// A wrapping row. Each child is a `GridCell` with the same column count,
-/// so the cells share the row and wrap onto the next.
+/** *A wrapping row. Each child is a `GridCell` with the same column count, */
+/** *so the cells share the row and wrap onto the next. */
 fn SimpleGrid(p: SimpleGridProps) -> Node {
     return Box(
         style = Style(direction = Direction.Row, wrap = true, gap = p.gap, align = Align.Stretch),
@@ -3642,13 +3642,13 @@ fn SimpleGrid(p: SimpleGridProps) -> Node {
     }
 }
 
-/// Options for `GridCell`.
+/** *Options for `GridCell`. */
 struct GridCellProps {
     style: Option<fn() -> Style> = none,
     children: fn() = noop,
 }
 
-/// One cell of a `SimpleGrid`: `100 / columns` percent of the row.
+/** *One cell of a `SimpleGrid`: `100 / columns` percent of the row. */
 fn GridCell(columns: int, p: GridCellProps) -> Node {
     let cols = if columns > 0 { columns } else { 1 }
     return Box(
@@ -3659,16 +3659,16 @@ fn GridCell(columns: int, p: GridCellProps) -> Node {
     }
 }
 
-/// Options for `Gauge`.
+/** *Options for `Gauge`. */
 struct GaugeProps {
-    /// Ring diameter (`RING` is 48).
+    /** *Ring diameter (`RING` is 48). */
     size: int = RING,
-    /// Caption under the ring. Empty hides it.
+    /** *Caption under the ring. Empty hides it. */
     caption: Signal<string> = "",
     style: Option<fn() -> Style> = none,
 }
 
-/// A `ProgressRing` with a caption: one reading (a score, a capacity).
+/** *A `ProgressRing` with a caption: one reading (a score, a capacity). */
 fn Gauge(value: Signal<int>, p: GaugeProps) -> Node {
     return Box(
         style = Style(direction = Direction.Column, gap = 6, align = Align.Center),
@@ -3687,15 +3687,15 @@ fn Gauge(value: Signal<int>, p: GaugeProps) -> Node {
     }
 }
 
-/// Options for `UsageBar`.
+/** *Options for `UsageBar`. */
 struct UsageBarProps {
     label: Signal<string> = "",
-    /// At or above this percent the fill turns danger.
+    /** *At or above this percent the fill turns danger. */
     threshold: int = 90,
     style: Option<fn() -> Style> = none,
 }
 
-/// Labelled meter on the 6px `METER_TRACK`. Accent until `threshold`, then danger.
+/** *Labelled meter on the 6px `METER_TRACK`. Accent until `threshold`, then danger. */
 fn UsageBar(value: Signal<int>, p: UsageBarProps) -> Node {
     return Box(
         style = Style(direction = Direction.Column, gap = 6, width = pct(100)),

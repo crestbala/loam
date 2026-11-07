@@ -1,6 +1,6 @@
-//! curl's failure modes, against local files so the test does not need a
-//! network. A failed fetch must not touch a file standing in for the cache,
-//! and it must not leave the temporary download behind either.
+// curl's failure modes, against local files so the test does not need a
+// network. A failed fetch must not touch a file standing in for the cache,
+// and it must not leave the temporary download behind either.
 
 import "std:test"
 import "std:sys"
@@ -25,8 +25,8 @@ fn a_file_url_comes_back_whole() {
     sys.remove_path(src)
 }
 
-/// `$` in the path is legal for curl and special to the shell. Single quotes
-/// are what keep it from being expanded away before curl sees it.
+/** *`$` in the path is legal for curl and special to the shell. Single quotes */
+/** *are what keep it from being expanded away before curl sees it. */
 #[test]
 fn a_dollar_in_the_path_stays_quoted() {
     let src = "/tmp/dracula-fetch-$NOT_A_VAR.txt"

@@ -1,5 +1,5 @@
-//! The recordings: a drop zone, one row per file (what was heard in it and
-//! its role), and a path field for a file that cannot be dropped.
+// The recordings: a drop zone, one row per file (what was heard in it and
+// its role), and a path field for a file that cannot be dropped.
 
 import "zeus"
 import "zui"
@@ -41,7 +41,7 @@ fn Recordings() -> Node {
     )
 }
 
-/// The whole zone opens Finder; a drop anywhere on the window lands here too.
+/** *The whole zone opens Finder; a drop anywhere on the window lands here too. */
 fn DropZone() -> Node {
     return zeus.Box(
         style = Style(

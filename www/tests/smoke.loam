@@ -1,6 +1,6 @@
-//! Runner tests. The browser runner never touches the host.
-//!
-//!     ./bin/loamc test www/tests/smoke.loam
+// Runner tests. The browser runner never touches the host.
+//
+//     ./bin/loamc test www/tests/smoke.loam
 
 import "std:test"
 import "std:str"

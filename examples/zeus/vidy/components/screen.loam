@@ -1,6 +1,6 @@
-//! The player screen: a black stage holding the picture, with the chrome
-//! floating over it. Each layer lives in its own file; every one reads
-//! `player/store.loam` and none talks to the host player directly.
+// The player screen: a black stage holding the picture, with the chrome
+// floating over it. Each layer lives in its own file; every one reads
+// `player/store.loam` and none talks to the host player directly.
 
 import "zeus"
 import "../player/store.loam" as player
@@ -13,7 +13,7 @@ import { Playlist } "playlist.loam"
 import { Help } "help.loam"
 import { UrlDialog } "url_dialog.loam"
 
-/// The whole window.
+/** *The whole window. */
 fn Player() -> Node {
     // The router hosts the page in two plain column boxes (its `Match` and
     // `Boundary`) that size to their content; a player has none, so it asks

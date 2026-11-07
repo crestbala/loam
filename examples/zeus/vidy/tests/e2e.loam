@@ -1,11 +1,11 @@
-//! Headless end-to-end: the real screen, driven the way a person drives it —
-//! keys and clicks in, painted text and store state out. No window and no
-//! media: the runtime's null player stands in for AVFoundation / <video>, so
-//! open, play, pause and seek all move its state like a real host would.
-//!
-//!   ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/vidy/tests/e2e.loam -o /tmp/vidy-e2e && /tmp/vidy-e2e
-//!
-//! (or `sh examples/zeus/vidy/tests/run.sh` for everything)
+// Headless end-to-end: the real screen, driven the way a person drives it —
+// keys and clicks in, painted text and store state out. No window and no
+// media: the runtime's null player stands in for AVFoundation / <video>, so
+// open, play, pause and seek all move its state like a real host would.
+//
+//   ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/vidy/tests/e2e.loam -o /tmp/vidy-e2e && /tmp/vidy-e2e
+//
+// (or `sh examples/zeus/vidy/tests/run.sh` for everything)
 
 import "std:fmt"
 import "std:sys"
@@ -24,7 +24,7 @@ fn fail(what: string) {
     sys.exit(1)
 }
 
-/// A few frames: one for the poller, one for effects, one to paint.
+/** *A few frames: one for the poller, one for effects, one to paint. */
 fn frames() {
     for i in 0..3 {
         zeus.pump_frame()
@@ -55,13 +55,13 @@ fn hides(label: string) {
     }
 }
 
-/// Exactly one host frame at `w`×`h`, the way a full-screen toggle arrives.
+/** *Exactly one host frame at `w`×`h`, the way a full-screen toggle arrives. */
 fn one_frame(w: int, h: int) {
     zeus.engine_layout(w, h)
     zeus.engine_paint()
 }
 
-/// The video image's laid-out rect, as painted this frame.
+/** *The video image's laid-out rect, as painted this frame. */
 fn picture_is(what: string, x: int, y: int, w: int, h: int) {
     let id = zeus.engine_find_text("Video")
     if id <= 0 {
@@ -76,7 +76,7 @@ fn picture_is(what: string, x: int, y: int, w: int, h: int) {
     }
 }
 
-/// The "Vidy" label inside the title bar (the welcome screen has one too).
+/** *The "Vidy" label inside the title bar (the welcome screen has one too). */
 fn bar_title(bar: int) -> int {
     let mut id = bar + 1
     while id < bar + 8 {

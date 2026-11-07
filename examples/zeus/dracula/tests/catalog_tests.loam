@@ -1,4 +1,4 @@
-//! `catalog.search` and `catalog.window` over a hand-built catalog.
+// `catalog.search` and `catalog.window` over a hand-built catalog.
 
 import "std:test"
 import "../server/store.loam"

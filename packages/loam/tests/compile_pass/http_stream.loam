@@ -46,7 +46,7 @@ let mut msgs: []string = []string {}
 let mut ended: int = 0
 let mut pong: string = ""
 
-/// Pump the async steps until `done()` or `ms` pass.
+/** *Pump the async steps until `done()` or `ms` pass. */
 fn pump(ms: int, done: fn() -> bool) -> bool {
     let mut left = ms
     while left > 0 {

@@ -1,20 +1,20 @@
-//! Phase 5 PIXEL golden: the reference screen rasterized by Zeus itself.
-//!
-//! `ref_scene.loam` is the STRUCTURAL half (the draw list at 1x). This is the
-//! pixel half: the same elements, rasterized by the Loam rasterizer at the
-//! physical backing scale (2x) into the buffer Zeus owns, then dumped as a PPM.
-//! No graphics API is involved anywhere — the bytes in the golden are bytes this
-//! project produced.
-//!
-//! Keep this in step with `ref_scene.loam` for the elements both cover. The one
-//! the raster pass still cannot do is the image op (it blits images the app has
-//! decoded and registered, and this program has no decode in it); text IS here,
-//! drawn through std:font + the glyph atlas with no font API — at the three body
-//! sizes the baseline calls out, using the test fixture font, because the tree
-//! ships no usable UI font. A real app points `scene_load_font` at a real font
-//! file and the same code path draws it.
-//!
-//! Usage: `raster_scene <out.ppm>` (capture.sh passes the path).
+// Phase 5 PIXEL golden: the reference screen rasterized by Zeus itself.
+//
+// `ref_scene.loam` is the STRUCTURAL half (the draw list at 1x). This is the
+// pixel half: the same elements, rasterized by the Loam rasterizer at the
+// physical backing scale (2x) into the buffer Zeus owns, then dumped as a PPM.
+// No graphics API is involved anywhere — the bytes in the golden are bytes this
+// project produced.
+//
+// Keep this in step with `ref_scene.loam` for the elements both cover. The one
+// the raster pass still cannot do is the image op (it blits images the app has
+// decoded and registered, and this program has no decode in it); text IS here,
+// drawn through std:font + the glyph atlas with no font API — at the three body
+// sizes the baseline calls out, using the test fixture font, because the tree
+// ships no usable UI font. A real app points `scene_load_font` at a real font
+// file and the same code path draws it.
+//
+// Usage: `raster_scene <out.ppm>` (capture.sh passes the path).
 
 import "std:sys"
 import "zeus"

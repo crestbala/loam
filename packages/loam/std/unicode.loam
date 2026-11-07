@@ -1,18 +1,18 @@
-//! unicode — UTF-8 decoding and extended grapheme clusters.
-//!
-//! A `string` is bytes and `s[i]` is one byte. These helpers decode code points
-//! and step by *extended grapheme cluster* (UAX #29), so a caret or backspace
-//! moves once per visible character for combining marks, Indic scripts, Hangul,
-//! and emoji ZWJ sequences.
-//!
-//! The property tables are a curated subset of the Unicode database covering
-//! the scripts this tree targets (Latin+diacritics, Indic, Hangul, emoji,
-//! variation selectors). `SpacingMark` and `ZWNJ` are folded into the "joins"
-//! set because both simply forbid a break before the next code point.
+// unicode — UTF-8 decoding and extended grapheme clusters.
+//
+// A `string` is bytes and `s[i]` is one byte. These helpers decode code points
+// and step by *extended grapheme cluster* (UAX #29), so a caret or backspace
+// moves once per visible character for combining marks, Indic scripts, Hangul,
+// and emoji ZWJ sequences.
+//
+// The property tables are a curated subset of the Unicode database covering
+// the scripts this tree targets (Latin+diacritics, Indic, Hangul, emoji,
+// variation selectors). `SpacingMark` and `ZWNJ` are folded into the "joins"
+// set because both simply forbid a break before the next code point.
 
 // --- code points -----------------------------------------------------------
 
-/// UTF-8 sequence length from lead byte `b0` (1..4; malformed leads count 1).
+/** *UTF-8 sequence length from lead byte `b0` (1..4; malformed leads count 1). */
 fn cp_len(b0: int) -> int {
     if b0 < 0x80 {
         return 1
@@ -32,7 +32,7 @@ fn cp_len(b0: int) -> int {
     return 1
 }
 
-/// The code point beginning at byte `i`, or `-1` past the end.
+/** *The code point beginning at byte `i`, or `-1` past the end. */
 fn codepoint(s: string, i: int) -> int {
     if i < 0 || i >= s.len {
         return -1
@@ -62,7 +62,7 @@ fn codepoint(s: string, i: int) -> int {
     return a | b
 }
 
-/// Byte offset one code point after `i`.
+/** *Byte offset one code point after `i`. */
 fn next_cp(s: string, i: int) -> int {
     if i >= s.len {
         return s.len
@@ -74,7 +74,7 @@ fn next_cp(s: string, i: int) -> int {
     return j
 }
 
-/// Byte offset of the code point before `i`.
+/** *Byte offset of the code point before `i`. */
 fn prev_cp(s: string, i: int) -> int {
     if i <= 0 {
         return 0
@@ -102,7 +102,7 @@ const GCB_LV: int = 10
 const GCB_LVT: int = 11
 const GCB_REGIONAL: int = 12
 
-/// Sorted [lo, hi, lo, hi, …] ranges: combining marks / spacing marks / ZWNJ.
+/** *Sorted [lo, hi, lo, hi, …] ranges: combining marks / spacing marks / ZWNJ. */
 let join_ranges: []int = []int {
     0x0300, 0x036F, 0x0483, 0x0489, 0x0591, 0x05BD, 0x05BF, 0x05BF,
     0x05C1, 0x05C2, 0x05C4, 0x05C5, 0x05C7, 0x05C7, 0x0610, 0x061A,
@@ -154,7 +154,7 @@ let join_ranges: []int = []int {
     0xE0020, 0xE007F, 0xE0100, 0xE01EF,
 }
 
-/// Sorted ranges of `Prepend` code points.
+/** *Sorted ranges of `Prepend` code points. */
 let prepend_ranges: []int = []int {
     0x0600, 0x0605, 0x06DD, 0x06DD, 0x070F, 0x070F, 0x0890, 0x0891,
     0x08E2, 0x08E2, 0x0D4E, 0x0D4E, 0x110BD, 0x110BD, 0x110CD, 0x110CD,
@@ -162,7 +162,7 @@ let prepend_ranges: []int = []int {
     0x11A84, 0x11A89, 0x11D46, 0x11D46, 0x11F02, 0x11F02,
 }
 
-/// Sorted ranges of `Control` (excluding CR/LF, handled separately).
+/** *Sorted ranges of `Control` (excluding CR/LF, handled separately). */
 let control_ranges: []int = []int {
     0x0000, 0x0009, 0x000B, 0x000C, 0x000E, 0x001F, 0x007F, 0x009F,
     0x00AD, 0x00AD, 0x061C, 0x061C, 0x180E, 0x180E, 0x200B, 0x200B,
@@ -170,7 +170,7 @@ let control_ranges: []int = []int {
     0xFFF9, 0xFFFB, 0x1BCA0, 0x1BCA3, 0x1D173, 0x1D17A, 0xE0001, 0xE0001,
 }
 
-/// Sorted ranges of `Extended_Pictographic` (approximate, for emoji ZWJ).
+/** *Sorted ranges of `Extended_Pictographic` (approximate, for emoji ZWJ). */
 let ext_pict_ranges: []int = []int {
     0x00A9, 0x00A9, 0x00AE, 0x00AE, 0x203C, 0x203C, 0x2049, 0x2049,
     0x2122, 0x2122, 0x2139, 0x2139, 0x2194, 0x2199, 0x21A9, 0x21AA,
@@ -193,7 +193,7 @@ let ext_pict_ranges: []int = []int {
     0x1F888, 0x1F88F, 0x1F8AE, 0x1F8FF, 0x1F90C, 0x1FAFF, 0x1FC00, 0x1FFFD,
 }
 
-/// Is `cp` inside the sorted `[lo, hi, …]` range table `r`?
+/** *Is `cp` inside the sorted `[lo, hi, …]` range table `r`? */
 fn in_ranges(r: []int, cp: int) -> bool {
     let mut lo = 0
     let mut hi = r.len / 2 - 1
@@ -212,7 +212,7 @@ fn in_ranges(r: []int, cp: int) -> bool {
     return false
 }
 
-/// Grapheme cluster break class of `cp`.
+/** *Grapheme cluster break class of `cp`. */
 fn gcb(cp: int) -> int {
     if cp == 0x0D {
         return GCB_CR
@@ -254,15 +254,15 @@ fn gcb(cp: int) -> int {
     return GCB_OTHER
 }
 
-/// `Extended_Pictographic` (approximate) — used only by GB11.
+/** *`Extended_Pictographic` (approximate) — used only by GB11. */
 fn is_ext_pict(cp: int) -> bool {
     return in_ranges(ext_pict_ranges, cp)
 }
 
 // --- boundaries ------------------------------------------------------------
 
-/// GB11: `ExtPict Extend* ZWJ × ExtPict`. `zwj` is the ZWJ byte offset; scan
-/// back over `Extend` code points to an `Extended_Pictographic`.
+/** *GB11: `ExtPict Extend* ZWJ × ExtPict`. `zwj` is the ZWJ byte offset; scan */
+/** *back over `Extend` code points to an `Extended_Pictographic`. */
 fn gb11_before(s: string, zwj: int) -> bool {
     let mut p = prev_cp(s, zwj)
     while p < zwj && gcb(codepoint(s, p)) == GCB_EXTEND {
@@ -277,9 +277,9 @@ fn gb11_before(s: string, zwj: int) -> bool {
     return is_ext_pict(codepoint(s, p))
 }
 
-/// Should a break be placed between the code point before `j` and the one at
-/// `j`? `ri_run` is the number of Regional_Indicator code points immediately
-/// before `j` in the current cluster (GB12/GB13).
+/** *Should a break be placed between the code point before `j` and the one at */
+/** *`j`? `ri_run` is the number of Regional_Indicator code points immediately */
+/** *before `j` in the current cluster (GB12/GB13). */
 fn breaks_at(s: string, j: int, ri_run: int) -> bool {
     let ia = prev_cp(s, j)
     let a = codepoint(s, ia)
@@ -324,7 +324,7 @@ fn breaks_at(s: string, j: int, ri_run: int) -> bool {
     return true
 }
 
-/// Byte offset of the next extended grapheme cluster boundary after `i`.
+/** *Byte offset of the next extended grapheme cluster boundary after `i`. */
 fn next_grapheme(s: string, i: int) -> int {
     if i >= s.len {
         return s.len
@@ -348,7 +348,7 @@ fn next_grapheme(s: string, i: int) -> int {
     return j
 }
 
-/// Byte offset of the greatest cluster boundary strictly before `i`.
+/** *Byte offset of the greatest cluster boundary strictly before `i`. */
 fn prev_grapheme(s: string, i: int) -> int {
     if i <= 0 {
         return 0
@@ -362,7 +362,7 @@ fn prev_grapheme(s: string, i: int) -> int {
     return prev
 }
 
-/// Number of extended grapheme clusters in `s`.
+/** *Number of extended grapheme clusters in `s`. */
 fn grapheme_count(s: string) -> int {
     let mut n = 0
     let mut i = 0
@@ -373,7 +373,7 @@ fn grapheme_count(s: string) -> int {
     return n
 }
 
-/// Byte offset of cluster `k` (0 = start). Clamps at `s.len`.
+/** *Byte offset of cluster `k` (0 = start). Clamps at `s.len`. */
 fn grapheme_start(s: string, k: int) -> int {
     let mut i = 0
     let mut n = 0

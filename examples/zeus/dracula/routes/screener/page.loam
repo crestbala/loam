@@ -15,8 +15,8 @@ fn spec() -> []TableCol {
     return h
 }
 
-/// The ranks: one arm while the list is empty or not; the rows are an `Each`,
-/// so a re-rank moves the rows instead of rebuilding them.
+/** *The ranks: one arm while the list is empty or not; the rows are an `Each`, */
+/** *so a re-rank moves the rows instead of rebuilding them. */
 fn arm(v: Signal<RowList>) -> Node {
     if v.peek().rows.len == 0 {
         return zui.Empty(

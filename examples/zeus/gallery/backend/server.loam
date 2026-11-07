@@ -1,7 +1,7 @@
-//! Native HTTP listener for the gallery example (`:8081`).
-//!
-//! The gallery catalog is a client-only UI (no RPCs yet). This process exists so
-//! the example matches the counter layout: `backend/` + `frontend/`.
+// Native HTTP listener for the gallery example (`:8081`).
+//
+// The gallery catalog is a client-only UI (no RPCs yet). This process exists so
+// the example matches the counter layout: `backend/` + `frontend/`.
 
 import "http"
 import "std:fmt"

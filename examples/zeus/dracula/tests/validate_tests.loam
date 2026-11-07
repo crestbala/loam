@@ -1,8 +1,8 @@
-//! `paise_of` and `review`, with no files in the way.
-//!
-//! The amounts are small enough to check by hand. 100.005 rupees is 10000.5
-//! paise and rounds away from zero to 10001. A move of exactly 20% is not a
-//! jump; one paisa more is.
+// `paise_of` and `review`, with no files in the way.
+//
+// The amounts are small enough to check by hand. 100.005 rupees is 10000.5
+// paise and rounds away from zero to 10001. A move of exactly 20% is not a
+// jump; one paisa more is.
 
 import "std:test"
 import "../server/validate.loam"

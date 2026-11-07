@@ -1,7 +1,7 @@
-//! dracula — application entry. One entry, every host.
-//!
-//! `zeli routes` generates app_routes.loam from routes/; this file
-//! mounts it. `zeli build` emits all five targets from here.
+// dracula — application entry. One entry, every host.
+//
+// `zeli routes` generates app_routes.loam from routes/; this file
+// mounts it. `zeli build` emits all five targets from here.
 
 import "zeus"
 import "app_routes.loam" as approutes

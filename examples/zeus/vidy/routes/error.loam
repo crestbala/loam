@@ -1,4 +1,4 @@
-//! Route error page. A trap in a page's build lands here (see zui.Boundary).
+// Route error page. A trap in a page's build lands here (see zui.Boundary).
 
 import "zeus"
 

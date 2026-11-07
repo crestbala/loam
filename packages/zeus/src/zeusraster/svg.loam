@@ -1,17 +1,17 @@
-//! svg — the small inline-SVG subset Zeus draws, parsed and rasterized
-//! directly into the Loam software rasterizer's framebuffer.
-//!
-//! Semantics follow `zeuscore/svgpath.loam`, which turns the same markup into
-//! the path ops every host draws, so the markup paints the same shape on both
-//! paths. Geometry is flattened in DEVICE pixels and handed
-//! to `raster.loam`'s multi-contour fill, which accumulates coverage and
-//! composites a group exactly once — that is what lets a stroke's segment
-//! quads, joins, and caps union cleanly instead of double-blending.
-//!
-//! The lexer, colour and style rules are `zeuscore/svgpath.loam`'s, shared with
-//! the host path; this module turns them into coverage.
-//!
-//! The public entry point is `svg_add(markup, x, y, w, h, rgb)`.
+// svg — the small inline-SVG subset Zeus draws, parsed and rasterized
+// directly into the Loam software rasterizer's framebuffer.
+//
+// Semantics follow `zeuscore/svgpath.loam`, which turns the same markup into
+// the path ops every host draws, so the markup paints the same shape on both
+// paths. Geometry is flattened in DEVICE pixels and handed
+// to `raster.loam`'s multi-contour fill, which accumulates coverage and
+// composites a group exactly once — that is what lets a stroke's segment
+// quads, joins, and caps union cleanly instead of double-blending.
+//
+// The lexer, colour and style rules are `zeuscore/svgpath.loam`'s, shared with
+// the host path; this module turns them into coverage.
+//
+// The public entry point is `svg_add(markup, x, y, w, h, rgb)`.
 
 import "raster.loam"
 import "../zeuscore/svgpath.loam"
@@ -71,7 +71,7 @@ fn svg_geom_begin() {
     sg_cy = 0.0
 }
 
-/// Record the open subpath (0 open / 1 closed) and stop building it.
+/** *Record the open subpath (0 open / 1 closed) and stop building it. */
 fn svg_sub_flush(closed_flag: int) {
     if sg_cur == 1 {
         push(sg_off, sg_sp)
@@ -81,7 +81,7 @@ fn svg_sub_flush(closed_flag: int) {
     }
 }
 
-/// Flush any open subpath and begin a new one at a user-space point.
+/** *Flush any open subpath and begin a new one at a user-space point. */
 fn svg_sub_start(ux: float, uy: float) {
     svg_sub_flush(0)
     sg_cur = 1
@@ -107,8 +107,8 @@ fn svg_sub_close() {
     sg_cy = sg_sy
 }
 
-/// Adaptive cubic flattening; appends device points t = 1/n..1 (the start point
-/// is already in the subpath). `n = clamp(ceil(sqrt(len/(8*tol))), 1, 64)`.
+/** *Adaptive cubic flattening; appends device points t = 1/n..1 (the start point */
+/** *is already in the subpath). `n = clamp(ceil(sqrt(len/(8*tol))), 1, 64)`. */
 fn svg_flat_cubic(
     ux0: float,
     uy0: float,
@@ -150,7 +150,7 @@ fn svg_flat_cubic(
     }
 }
 
-/// Emit `t = t0..t1` of a circular arc, endpoint included.
+/** *Emit `t = t0..t1` of a circular arc, endpoint included. */
 fn svg_arc_pts(cx: float, cy: float, r: float, a0: float, a1: float) {
     let tol = raster.raster_flat_tol()
     let rdev = r * svg_scale
@@ -218,7 +218,7 @@ fn svg_rect_sub(x: float, y: float, w: float, h: float, rx: float) {
     svg_sub_close()
 }
 
-/// Parse an SVG `d` string (user space) into flattened device subpaths.
+/** *Parse an SVG `d` string (user space) into flattened device subpaths. */
 fn svg_parse_d(d: string) {
     let mut cx = 0.0
     let mut cy = 0.0
@@ -548,9 +548,9 @@ fn svg_add_tri(ax: float, ay: float, bx: float, by: float, cx: float, cy: float)
     raster.raster_multi_add_poly(xs, ys, 1)
 }
 
-/// Join at vertex `v`, between the incoming (p→v) and outgoing (v→n) segments.
-/// Round and miter use a disc; bevel fills the outer wedge with two triangles
-/// (each stays inside the disc, so the union is well formed).
+/** *Join at vertex `v`, between the incoming (p→v) and outgoing (v→n) segments. */
+/** *Round and miter use a disc; bevel fills the outer wedge with two triangles */
+/** *(each stays inside the disc, so the union is well formed). */
 fn svg_join(
     join: int,
     px: float,
@@ -597,7 +597,7 @@ fn svg_join(
     raster.raster_multi_add_circle(vx, vy, half, 1)
 }
 
-/// Cap at an open end. `dx,dy` points outward; 0,0 means no direction.
+/** *Cap at an open end. `dx,dy` points outward; 0,0 means no direction. */
 fn svg_cap(cap: int, px: float, py: float, dx: float, dy: float, half: float) {
     if cap == 1 {
         raster.raster_multi_add_circle(px, py, half, 1)
@@ -726,7 +726,7 @@ fn svg_emit_stroke(sw_dev: float, cap: int, join: int) {
     }
 }
 
-/// Fill then stroke as two separate groups, each composited once.
+/** *Fill then stroke as two separate groups, each composited once. */
 fn svg_emit(style: SvgStyle) -> int {
     let mut painted = 0
     if style.has_fill == 1 {
@@ -810,10 +810,10 @@ fn svg_paint_rect(tag: string, style: SvgStyle) {
 
 // --- tree walk ------------------------------------------------------------
 
-/// Walk tags from `pos`. Mirrors the host's `svg_draw_tree`: comments and
-/// self-close are handled, any closing tag returns to the caller (or a
-/// matching `stop` recurses out of `g`/`svg`), everything but path/circle/rect
-/// is skipped.
+/** *Walk tags from `pos`. Mirrors the host's `svg_draw_tree`: comments and */
+/** *self-close are handled, any closing tag returns to the caller (or a */
+/** *matching `stop` recurses out of `g`/`svg`), everything but path/circle/rect */
+/** *is skipped. */
 fn svg_walk(s: string, pos: int, style: SvgStyle, stop: string, depth: int) -> int {
     if depth > 24 {
         return pos
@@ -894,11 +894,11 @@ fn svg_walk(s: string, pos: int, style: SvgStyle, stop: string, depth: int) -> i
 
 // --- entry point ----------------------------------------------------------
 
-/// Rasterize every fill and stroke of the inline SVG `markup` into the
-/// framebuffer, inside the DEVICE-pixel box `(x, y, w, h)`. `rgb` is
-/// `currentColor`. `alpha` is the op's composite alpha (0..255). Returns the
-/// number of `<path>` / `<circle>` / `<rect>` elements painted, or -1 when the
-/// string holds no `<svg`.
+/** *Rasterize every fill and stroke of the inline SVG `markup` into the */
+/** *framebuffer, inside the DEVICE-pixel box `(x, y, w, h)`. `rgb` is */
+/** *`currentColor`. `alpha` is the op's composite alpha (0..255). Returns the */
+/** *number of `<path>` / `<circle>` / `<rect>` elements painted, or -1 when the */
+/** *string holds no `<svg`. */
 fn svg_add(markup: string, x: int, y: int, w: int, h: int, rgb: int, alpha: int) -> int {
     let at = svg_find(markup, "<svg", 0)
     if at < 0 {

@@ -1,5 +1,5 @@
-//! The keyboard and gestures sheet: sections of shortcuts, each key drawn as
-//! a keycap. Two columns when the window has room, one (scrolling) when not.
+// The keyboard and gestures sheet: sections of shortcuts, each key drawn as
+// a keycap. Two columns when the window has room, one (scrolling) when not.
 
 import "zeus"
 import "zui"
@@ -10,7 +10,7 @@ import "icons.loam"
 import { WHITE, SOFT, FAINT, GLASS, ACCENT } "../theme.loam"
 import { Round } "kit.loam"
 
-/// Two columns from this stage width up.
+/** *Two columns from this stage width up. */
 const TWO_COLUMNS: int = 780
 const KEYS_W: int = 132
 
@@ -88,7 +88,7 @@ fn Help() -> Node {
     }
 }
 
-/// Column `col` (0 or 1) of the sheet: the sections before or after `##`.
+/** *Column `col` (0 or 1) of the sheet: the sections before or after `##`. */
 fn SheetColumn(col: int) -> Node {
     let rs = shortcuts.rows()
     // The sheet's inner width is its width less 48 padding and 2 border; two
@@ -116,7 +116,7 @@ fn SheetColumn(col: int) -> Node {
     }
 }
 
-/// A section title: small caps in the accent, with air above all but the first.
+/** *A section title: small caps in the accent, with air above all but the first. */
 fn Section(title: string, first: bool) -> Node {
     return zeus.Text(
         title.to_upper(),
@@ -129,7 +129,7 @@ fn Section(title: string, first: bool) -> Node {
     )
 }
 
-/// One shortcut: its keycaps in a fixed-width lane, then what it does.
+/** *One shortcut: its keycaps in a fixed-width lane, then what it does. */
 fn Shortcut(keys: string, what: string) -> Node {
     let range = keys.contains("~")
     let caps = if range { str.split(keys, "~") } else { str.split(keys, "|") }
@@ -156,7 +156,7 @@ fn Shortcut(keys: string, what: string) -> Node {
     }
 }
 
-/// A key as a raised cap, sized to its label.
+/** *A key as a raised cap, sized to its label. */
 fn Keycap(label: string) -> Node {
     return zeus.Box(style = Style(
         direction = Direction.Row,

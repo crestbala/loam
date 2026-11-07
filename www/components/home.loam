@@ -1,4 +1,4 @@
-//! Opening page: what Loam is, a sample, the compile pipeline, and where to go next.
+// Opening page: what Loam is, a sample, the compile pipeline, and where to go next.
 
 import "zeus"
 import "zui:spacing"
@@ -8,9 +8,9 @@ import "zeus:router"
 import "prose.loam" as prose
 import "shell.loam" as shell
 
-/// Percent width of a tile: three to a row on a wide page, two on a
-/// tablet, one on a phone. A wrapping row shares its gaps between percent
-/// children, so the tiles fill each line exactly.
+/** *Percent width of a tile: three to a row on a wide page, two on a */
+/** *tablet, one on a phone. A wrapping row shares its gaps between percent */
+/** *children, so the tiles fill each line exactly. */
 fn tile_pct() -> int {
     let w = shell.content_w()
     if w >= 640 {
@@ -22,7 +22,7 @@ fn tile_pct() -> int {
     return 100
 }
 
-/// A wrapping row of tiles.
+/** *A wrapping row of tiles. */
 fn TileGrid(build: fn()) -> Node {
     return zeus.Box(style = Style(
         direction = Direction.Row,
@@ -34,7 +34,7 @@ fn TileGrid(build: fn()) -> Node {
     }
 }
 
-/// A bordered card. `href` makes the whole card a link.
+/** *A bordered card. `href` makes the whole card a link. */
 fn Tile(title: string, body: string, href: string) -> Node {
     return zeus.Box(
         style = Style(

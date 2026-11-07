@@ -1,5 +1,5 @@
-//! NSE bhavcopy parsing and the stock close cache, on a fixture under /tmp.
-//! No network.
+// NSE bhavcopy parsing and the stock close cache, on a fixture under /tmp.
+// No network.
 
 import "std:sys"
 import "std:test"

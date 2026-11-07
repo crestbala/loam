@@ -1,5 +1,5 @@
-//! The studio: a header, the recordings and the piece on the left, the
-//! sound on the right, and the player bar pinned under both.
+// The studio: a header, the recordings and the piece on the left, the
+// sound on the right, and the player bar pinned under both.
 
 import "zeus"
 import "zui"

@@ -1,5 +1,5 @@
-//! Fixture for selective imports (`import { A as B } "..."`): an enum, a
-//! const, a fn, and a struct to pull in by name.
+// Fixture for selective imports (`import { A as B } "..."`): an enum, a
+// const, a fn, and a struct to pull in by name.
 
 enum Shade {
     Red = 1,

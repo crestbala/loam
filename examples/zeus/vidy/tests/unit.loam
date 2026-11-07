@@ -1,6 +1,6 @@
-//! Unit tests for vidy's pure helpers (`lib/`). No window, no host player.
-//!
-//!   ./bin/loamc test examples/zeus/vidy/tests/unit.loam
+// Unit tests for vidy's pure helpers (`lib/`). No window, no host player.
+//
+//   ./bin/loamc test examples/zeus/vidy/tests/unit.loam
 
 import "std:test"
 import "std:str"

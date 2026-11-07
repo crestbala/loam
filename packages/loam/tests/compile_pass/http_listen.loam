@@ -33,7 +33,7 @@ fn get(path: string) -> string {
     return "GET {{path}} HTTP/1.1\r\nHost: t\r\n\r\n"
 }
 
-/// Step the server until `fd` has its whole reply and is closed.
+/** *Step the server until `fd` has its whole reply and is closed. */
 fn reply(s: &mut Server, fd: int) -> string {
     let mut out = ""
     let start = async.now_ms()
@@ -253,7 +253,7 @@ fn connection_cap() {
     server_stop(&mut s)
 }
 
-/// A request with `count` headers, the first `size` bytes long.
+/** *A request with `count` headers, the first `size` bytes long. */
 fn with_headers(count: int, size: int) -> string {
     let framed = http.frame_str("hi")
     let long = str.repeat("x", size)
@@ -264,7 +264,7 @@ fn with_headers(count: int, size: int) -> string {
     return "POST /Echo/Ping HTTP/1.1\r\nHost: t\r\n{{head}}Content-Type: application/grpc-web+proto\r\nContent-Length: {{framed.len}}\r\n\r\n{{framed}}"
 }
 
-/// A browser sends about 20 headers, and Vercel adds as many, some of them long.
+/** *A browser sends about 20 headers, and Vercel adds as many, some of them long. */
 fn proxied_requests() {
     let mut s = server_start(test_app(), 0, ListenProps {})
     let busy = dial(&s)

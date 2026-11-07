@@ -1,39 +1,39 @@
-//! Parse an AMFI NAV file into flat columns.
-//!
-//! Two layouts share this walker:
-//!
-//! - The daily file (`NAVAll.txt`) repeats a header under category lines such
-//!   as `Open Ended Schemes(Equity Scheme - Large Cap Fund)`. Current files
-//!   put the plan and the option in their own columns (`Direct Plan`,
-//!   `Growth Option`) beside the scheme name; older files fold both into the
-//!   name. Either way the stored name is `scheme - plan - option`, which is
-//!   what the plan-change check reads. An AMC name sits between category
-//!   lines and has no semicolon. Only a line that contains `Scheme` updates
-//!   the category. An AMC line must not wipe it, or the equity filter would
-//!   drop the rows that follow.
-//! - The historical report names the scheme column `Scheme Name` or `NAV Name`.
-//!   Current files also carry plan, option, and ISINs, and a category line
-//!   above each block. Older files are scheme code, name, NAV, repurchase
-//!   price, sale price, date. Columns come from the header text, so an empty
-//!   repurchase price does not shift the date. A `NAV Name` header is history
-//!   even when ISINs are present: a date range is not the daily census.
-//!
-//! A header row (`Scheme Code` in the first field) is not data. A delimited
-//! line that cannot fill the columns the header named is a short row. Both
-//! are reported by line number. Section titles and blanks are neither rows
-//! nor errors.
-//!
-//! `kind` is `daily` when the header has an ISIN column, and `history`
-//! otherwise. The ingest layer marks dormant schemes only from a daily file:
-//! a history report is one date range, not the whole universe.
+// Parse an AMFI NAV file into flat columns.
+//
+// Two layouts share this walker:
+//
+// - The daily file (`NAVAll.txt`) repeats a header under category lines such
+//   as `Open Ended Schemes(Equity Scheme - Large Cap Fund)`. Current files
+//   put the plan and the option in their own columns (`Direct Plan`,
+//   `Growth Option`) beside the scheme name; older files fold both into the
+//   name. Either way the stored name is `scheme - plan - option`, which is
+//   what the plan-change check reads. An AMC name sits between category
+//   lines and has no semicolon. Only a line that contains `Scheme` updates
+//   the category. An AMC line must not wipe it, or the equity filter would
+//   drop the rows that follow.
+// - The historical report names the scheme column `Scheme Name` or `NAV Name`.
+//   Current files also carry plan, option, and ISINs, and a category line
+//   above each block. Older files are scheme code, name, NAV, repurchase
+//   price, sale price, date. Columns come from the header text, so an empty
+//   repurchase price does not shift the date. A `NAV Name` header is history
+//   even when ISINs are present: a date range is not the daily census.
+//
+// A header row (`Scheme Code` in the first field) is not data. A delimited
+// line that cannot fill the columns the header named is a short row. Both
+// are reported by line number. Section titles and blanks are neither rows
+// nor errors.
+//
+// `kind` is `daily` when the header has an ISIN column, and `history`
+// otherwise. The ingest layer marks dormant schemes only from a daily file:
+// a history report is one date range, not the whole universe.
 
 import "std:date"
 import "../core/csvx.loam"
 import "validate.loam"
 
-/// One file, flattened. Row `i` is `codes[i]` / `names[i]` / `dates[i]` /
-/// `navs[i]`. `navs[i]` is `-1` and `dates[i]` is `0` when that cell did not
-/// parse; `review` turns those into reject reasons.
+/** *One file, flattened. Row `i` is `codes[i]` / `names[i]` / `dates[i]` / */
+/** *`navs[i]`. `navs[i]` is `-1` and `dates[i]` is `0` when that cell did not */
+/** *parse; `review` turns those into reject reasons. */
 struct Sheet {
     codes: []string,
     names: []string,
@@ -45,7 +45,7 @@ struct Sheet {
     sections: []string,
     bad_lines: []int,
     bad_reasons: []string,
-    /// `daily` or `history`. Empty when the file had no header.
+    /** *`daily` or `history`. Empty when the file had no header. */
     kind: string,
 }
 
@@ -142,7 +142,7 @@ fn digits_only(s: string) -> bool {
     return true
 }
 
-/// `"-"` is how AMFI writes a missing ISIN. Store that as empty.
+/** *`"-"` is how AMFI writes a missing ISIN. Store that as empty. */
 fn clean_isin(s: string) -> string {
     if s == "-" {
         return ""
@@ -150,10 +150,10 @@ fn clean_isin(s: string) -> string {
     return s
 }
 
-/// Equity-oriented category. `Equity Schemes` contains `Equity Scheme`, so
-/// the plural header AMFI also writes is covered. Index equity funds and
-/// equity ETFs use a different heading and are included on purpose. Hybrid
-/// "Equity Savings" does not match either phrase.
+/** *Equity-oriented category. `Equity Schemes` contains `Equity Scheme`, so */
+/** *the plural header AMFI also writes is covered. Index equity funds and */
+/** *equity ETFs use a different heading and are included on purpose. Hybrid */
+/** *"Equity Savings" does not match either phrase. */
 fn equity_section(section: string) -> bool {
     if contains(section, "Equity Scheme") {
         return true
@@ -167,9 +167,9 @@ fn equity_section(section: string) -> bool {
     return false
 }
 
-/// `scheme`, plus plan and option when the file split them into columns.
-/// Empty pieces are left out, so an older file whose name already contains
-/// the plan is stored unchanged.
+/** *`scheme`, plus plan and option when the file split them into columns. */
+/** *Empty pieces are left out, so an older file whose name already contains */
+/** *the plan is stored unchanged. */
 fn join_name(scheme: string, plan: string, option: string) -> string {
     if plan.len == 0 && option.len == 0 {
         return scheme
@@ -183,14 +183,14 @@ fn join_name(scheme: string, plan: string, option: string) -> string {
     return "{{scheme}} - {{plan}} - {{option}}"
 }
 
-/// Whether this row belongs in the tracked universe.
-///
-/// A scheme we already cache is always tracked: a direct plan that AMFI
-/// relabels as regular has to stay, so the jump can be flagged instead of
-/// the scheme silently vanishing. A new scheme from the daily file must sit
-/// under an equity category and be a Direct plan. A history file with a
-/// category line uses that same equity test. One with no category line, the
-/// older report, keeps every new Direct plan.
+/** *Whether this row belongs in the tracked universe. */
+/** */
+/** *A scheme we already cache is always tracked: a direct plan that AMFI */
+/** *relabels as regular has to stay, so the jump can be flagged instead of */
+/** *the scheme silently vanishing. A new scheme from the daily file must sit */
+/** *under an equity category and be a Direct plan. A history file with a */
+/** *category line uses that same equity test. One with no category line, the */
+/** *older report, keeps every new Direct plan. */
 fn track(kind: string, section: string, name: string, known: bool) -> bool {
     if known {
         return true
@@ -207,7 +207,7 @@ fn track(kind: string, section: string, name: string, known: bool) -> bool {
     return true
 }
 
-/// Walk `text`. Category lines that contain `Scheme` stick until the next one.
+/** *Walk `text`. Category lines that contain `Scheme` stick until the next one. */
 fn parse(text: string) -> Sheet {
     let mut sh = empty_sheet()
     let mut section = ""

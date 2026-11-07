@@ -1,38 +1,38 @@
-//! engine.loam — GreenInfer core (Loam). All policy and algorithms live
-//! here, where the language's checks apply (bounds traps, ownership,
-//! overflow): capacity decisions, the count mirror, the per-row search
-//! sweep, top-k selection, embeddings, timing.
-//!
-//! The C seam (`runtime/greeninfer_runtime.c`) is only the hardware/OS
-//! primitives Loam cannot express: POSIX zero-copy mmap (no read() copy into
-//! Loam buffers) and the Apple Silicon NEON dot kernel. Mapped bytes never
-//! cross into Loam as pointers — a `VectorIndex` is a plain data struct and
-//! each row is scored in place by `gi_row_dot`, so search_knn below iterates
-//! vectors exactly as the design intends, one NEON dot per row.
-//!
-//! File layout (owned by the C seam, mirrored here as constants):
-//!   64 B header {magic, dim, cap, count} · cap rows of u32 id + 384 f32 ·
-//!   one scratch row (index cap) where queries are staged for the sweep.
+// engine.loam — GreenInfer core (Loam). All policy and algorithms live
+// here, where the language's checks apply (bounds traps, ownership,
+// overflow): capacity decisions, the count mirror, the per-row search
+// sweep, top-k selection, embeddings, timing.
+//
+// The C seam (`runtime/greeninfer_runtime.c`) is only the hardware/OS
+// primitives Loam cannot express: POSIX zero-copy mmap (no read() copy into
+// Loam buffers) and the Apple Silicon NEON dot kernel. Mapped bytes never
+// cross into Loam as pointers — a `VectorIndex` is a plain data struct and
+// each row is scored in place by `gi_row_dot`, so search_knn below iterates
+// vectors exactly as the design intends, one NEON dot per row.
+//
+// File layout (owned by the C seam, mirrored here as constants):
+//   64 B header {magic, dim, cap, count} · cap rows of u32 id + 384 f32 ·
+//   one scratch row (index cap) where queries are staged for the sweep.
 
-/// Embedding width. Must match GI_DIM in greeninfer_runtime.c.
+/** *Embedding width. Must match GI_DIM in greeninfer_runtime.c. */
 const GI_DIM: int = 384
 
-/// The largest top-k the engine keeps (search_knn clamps k to this).
+/** *The largest top-k the engine keeps (search_knn clamps k to this). */
 const GI_MAX_K: int = 16
-/// Rows scoring below this are the runtime's GI_DOT_ERR sentinel, not data.
-/// Finite so it survives f32; real cosine scores sit near [-1, 1].
+/** *Rows scoring below this are the runtime's GI_DOT_ERR sentinel, not data. */
+/** *Finite so it survives f32; real cosine scores sit near [-1, 1]. */
 const GI_DOT_FLOOR: float = -2.0e38
 
-/// One search result: the stored vector id and its raw dot score.
+/** *One search result: the stored vector id and its raw dot score. */
 struct Record {
     id: int,
     score: float,
 }
 
-/// An open memory-mapped index. `count` / `cap` are Loam mirrors of the file
-/// header (re-read on open; count advances on every successful insert), so
-/// all capacity decisions are made here under Loam checks. The struct is
-/// Copy and cheap to carry.
+/** *An open memory-mapped index. `count` / `cap` are Loam mirrors of the file */
+/** *header (re-read on open; count advances on every successful insert), so */
+/** *all capacity decisions are made here under Loam checks. The struct is */
+/** *Copy and cheap to carry. */
 struct VectorIndex {
     map: int,
     dim: int,
@@ -46,49 +46,49 @@ struct VectorIndex {
 // (codegen_c.c / driver.c). Nothing below returns or accepts a pointer.
 // ---------------------------------------------------------------------------
 
-/// Create the file with `cap` vector rows (plus a scratch row) and map it.
-/// Returns the map handle or 0 on failure.
+/** *Create the file with `cap` vector rows (plus a scratch row) and map it. */
+/** *Returns the map handle or 0 on failure. */
 fn gi_map_create(path: string, cap: int) -> int {}
 
-/// Reopen an existing map file. Returns handle or 0.
+/** *Reopen an existing map file. Returns handle or 0. */
 fn gi_map_open(path: string) -> int {}
 
-/// msync + munmap + close. 0 ok, -1 unknown handle.
+/** *msync + munmap + close. 0 ok, -1 unknown handle. */
 fn gi_map_close(map: int) -> int {}
 
-/// Delete the file from disk. 0 ok, -1 error.
+/** *Delete the file from disk. 0 ok, -1 error. */
 fn gi_map_unlink(path: string) -> int {}
 
-/// Rows written so far (live header count; -1 unknown handle).
+/** *Rows written so far (live header count; -1 unknown handle). */
 fn gi_map_count(map: int) -> int {}
 
-/// Vector rows the file was sized for (-1 unknown handle).
+/** *Vector rows the file was sized for (-1 unknown handle). */
 fn gi_map_cap(map: int) -> int {}
 
-/// Mapped file bytes (-1 unknown handle).
+/** *Mapped file bytes (-1 unknown handle). */
 fn gi_map_bytes(map: int) -> int {}
 
-/// Store `vec` (exactly dim doubles, converted to f32 once) into mapped
-/// `row` under `rid`. Row == cap is the scratch row. 0 ok, < 0 error.
+/** *Store `vec` (exactly dim doubles, converted to f32 once) into mapped */
+/** *`row` under `rid`. Row == cap is the scratch row. 0 ok, < 0 error. */
 fn gi_row_write(map: int, row: int, rid: int, vec: []float) -> int {}
 
-/// The u32 id stored in row `row` (-1 on error).
+/** *The u32 id stored in row `row` (-1 on error). */
 fn gi_row_id(map: int, row: int) -> int {}
 
-/// NEON dot product of two mapped rows (in place, no copy). GI_DOT_ERR
-/// (-3e38, see greeninfer_runtime.c) on a bad map/row, otherwise the raw f32
-/// dot. The old -1e300 sentinel is not representable in f32.
+/** *NEON dot product of two mapped rows (in place, no copy). GI_DOT_ERR */
+/** *(-3e38, see greeninfer_runtime.c) on a bad map/row, otherwise the raw f32 */
+/** *dot. The old -1e300 sentinel is not representable in f32. */
 fn gi_row_dot(map: int, row_a: int, row_b: int) -> float {}
 
-/// Monotonic microseconds.
+/** *Monotonic microseconds. */
 fn gi_now_us() -> int {}
 
 // ---------------------------------------------------------------------------
 // Public API — every function below is plain Loam with safe data.
 // ---------------------------------------------------------------------------
 
-/// Open the index at `file_path` if present, otherwise create it with room
-/// for `max_vectors` vectors. `count` / `cap` are read back from the file.
+/** *Open the index at `file_path` if present, otherwise create it with room */
+/** *for `max_vectors` vectors. `count` / `cap` are read back from the file. */
 fn create_vector_index(file_path: string, max_vectors: int) -> VectorIndex {
     let mut map = gi_map_open(file_path)
     if map == 0 {
@@ -108,21 +108,21 @@ fn create_vector_index(file_path: string, max_vectors: int) -> VectorIndex {
     return VectorIndex { map: map, dim: GI_DIM, count: count, cap: cap }
 }
 
-/// Drop the index: flush, unmap, close.
+/** *Drop the index: flush, unmap, close. */
 fn close_vector_index(index: VectorIndex) {
     if index.map != 0 {
         gi_map_close(index.map)
     }
 }
 
-/// Delete the backing file (call after close). 0 ok, -1 error.
+/** *Delete the backing file (call after close). 0 ok, -1 error. */
 fn delete_index_file(file_path: string) -> int {
     return gi_map_unlink(file_path)
 }
 
-/// Append `vector_data` (GI_DIM doubles) under `vector_id`. The capacity
-/// decision and the count mirror live here; the seam only stores bytes.
-/// Vectors are L2-normalized on the way in, so row dots are cosines.
+/** *Append `vector_data` (GI_DIM doubles) under `vector_id`. The capacity */
+/** *decision and the count mirror live here; the seam only stores bytes. */
+/** *Vectors are L2-normalized on the way in, so row dots are cosines. */
 fn insert_vector(index: &mut VectorIndex, vector_id: int, vector_data: []float) -> bool {
     if index.map == 0 {
         return false
@@ -142,9 +142,9 @@ fn insert_vector(index: &mut VectorIndex, vector_id: int, vector_data: []float) 
     return false
 }
 
-/// Insert an already-stored vector row for `query` in the scratch row and
-/// sweep every stored row with one NEON dot each; keep the best `k` in
-/// descending order. All of the selection logic below is Loam-checked.
+/** *Insert an already-stored vector row for `query` in the scratch row and */
+/** *sweep every stored row with one NEON dot each; keep the best `k` in */
+/** *descending order. All of the selection logic below is Loam-checked. */
 fn search_knn(index: VectorIndex, query: []float, k: int) -> []Record {
     let mut out = []Record {}
     if index.map == 0 {
@@ -193,9 +193,9 @@ fn search_knn(index: VectorIndex, query: []float, k: int) -> []Record {
 // top-k machinery (pure Loam, index-checked on every access)
 // ---------------------------------------------------------------------------
 
-/// Insert (rid, s) into the descending `scores`/`ids` arrays (length `cap`,
-/// `n` valid entries) and return the new count. Shifts right-to-left so
-/// overlapping moves stay safe.
+/** *Insert (rid, s) into the descending `scores`/`ids` arrays (length `cap`, */
+/** *`n` valid entries) and return the new count. Shifts right-to-left so */
+/** *overlapping moves stay safe. */
 fn keep_rank(ids: &mut []int, scores: &mut []float, n: int, cap: int, rid: int, s: float) -> int {
     if n <= 0 {
         ids[0] = rid
@@ -239,9 +239,9 @@ fn keep_rank(ids: &mut []int, scores: &mut []float, n: int, cap: int, rid: int, 
 // Vector math (pure Loam; floats are unchecked, so no traps here)
 // ---------------------------------------------------------------------------
 
-/// Newton–Raphson square root. Loam has no float sqrt primitive, so this is
-/// Loam arithmetic: each pass doubles the correct digits. Norms here are
-/// small (< 1e12), so 20 passes is ~6 ulp from perfect.
+/** *Newton–Raphson square root. Loam has no float sqrt primitive, so this is */
+/** *Loam arithmetic: each pass doubles the correct digits. Norms here are */
+/** *small (< 1e12), so 20 passes is ~6 ulp from perfect. */
 fn sqrt_newton(a: float) -> float {
     if a <= 0.0 {
         return 0.0
@@ -255,7 +255,7 @@ fn sqrt_newton(a: float) -> float {
     return x
 }
 
-/// L2 norm of a vector.
+/** *L2 norm of a vector. */
 fn vec_norm(v: []float) -> float {
     let mut s = 0.0
     for i in 0..v.len {
@@ -264,7 +264,7 @@ fn vec_norm(v: []float) -> float {
     return sqrt_newton(s)
 }
 
-/// A unit-length copy of `v` (zeros stay zeros).
+/** *A unit-length copy of `v` (zeros stay zeros). */
 fn vec_normalize(v: []float) -> []float {
     let mut out = []float {}
     let n = vec_norm(v)
@@ -294,9 +294,9 @@ fn vec_normalize(v: []float) -> []float {
 // both live in one weighted space.
 // ---------------------------------------------------------------------------
 
-/// Corpus document-frequency state: dim -> number of chunks containing it.
-/// Inactive (all zeros) until a watcher scan calls embed_df_* — embeddings
-/// then fall back to unweighted hashing (engine-only use).
+/** *Corpus document-frequency state: dim -> number of chunks containing it. */
+/** *Inactive (all zeros) until a watcher scan calls embed_df_* — embeddings */
+/** *then fall back to unweighted hashing (engine-only use). */
 let mut gi_df: []int = []int {}
 let mut gi_df_n: int = 0
 
@@ -307,7 +307,7 @@ fn embed_df_active() -> int {
     return 0
 }
 
-/// Start a scan: zero the per-dimension chunk counters.
+/** *Start a scan: zero the per-dimension chunk counters. */
 fn embed_df_reset() {
     gi_df = []int {}
     for i in 0..GI_DIM {
@@ -316,20 +316,20 @@ fn embed_df_reset() {
     gi_df_n = 0
 }
 
-/// One more chunk contains `dim` (call once per chunk per present dim).
+/** *One more chunk contains `dim` (call once per chunk per present dim). */
 fn embed_df_note(dim: int) {
     if dim >= 0 && dim < gi_df.len {
         gi_df[dim] = gi_df[dim] + 1
     }
 }
 
-/// Activate weighting with `ndocs` indexed chunks.
+/** *Activate weighting with `ndocs` indexed chunks. */
 fn embed_df_done(ndocs: int) {
     gi_df_n = ndocs
 }
 
-/// IDF-style weight for a token landing on `dim`: N/(df+1), clamped to
-/// [0.5, 12] so single rare tokens cannot drown a chunk.
+/** *IDF-style weight for a token landing on `dim`: N/(df+1), clamped to */
+/** *[0.5, 12] so single rare tokens cannot drown a chunk. */
 fn embed_weight(dim: int) -> float {
     if embed_df_active() == 0 {
         return 1.0
@@ -369,8 +369,8 @@ fn is_word_char_raw(raw: int) -> bool {
         raw == 95
 }
 
-/// Stopwords (and any single-letter token) are dropped: they appear in
-/// nearly every chunk and only add noise to the weighted space.
+/** *Stopwords (and any single-letter token) are dropped: they appear in */
+/** *nearly every chunk and only add noise to the weighted space. */
 fn is_stop_word(w: string) -> bool {
     if w.len < 2 {
         return true
@@ -425,8 +425,8 @@ fn is_stop_word(w: string) -> bool {
         w == "up"
 }
 
-/// Hash one lowercase segment (letters or digits, never mixed) into `out`.
-/// Contribution is +/-1 times the current corpus weight of its dimension.
+/** *Hash one lowercase segment (letters or digits, never mixed) into `out`. */
+/** *Contribution is +/-1 times the current corpus weight of its dimension. */
 fn hash_segment(seg: []int, out: &mut []float) {
     let n = seg.len
     if n == 0 {
@@ -489,9 +489,9 @@ fn hash_segment(seg: []int, out: &mut []float) {
     out[d] = out[d] + sgn * w
 }
 
-/// Split one raw word run into segments at '_' and at case/digit-class
-/// boundaries, then hash each segment. Keeps raw case for boundary logic;
-/// hash_segment folds.
+/** *Split one raw word run into segments at '_' and at case/digit-class */
+/** *boundaries, then hash each segment. Keeps raw case for boundary logic; */
+/** *hash_segment folds. */
 fn hash_word_run(word: []int, out: &mut []float) {
     let mut seg = []int {}
     let mut k = 0
@@ -535,9 +535,9 @@ fn hash_word_run(word: []int, out: &mut []float) {
     }
 }
 
-/// Embed `text` as GI_DIM doubles: identifiers split at word boundaries,
-/// stopwords dropped, tokens weighted by corpus frequency when a scan
-/// provided one. Used for chunks and queries alike.
+/** *Embed `text` as GI_DIM doubles: identifiers split at word boundaries, */
+/** *stopwords dropped, tokens weighted by corpus frequency when a scan */
+/** *provided one. Used for chunks and queries alike. */
 fn embed_text(text: string) -> []float {
     let mut out = []float {}
     for i in 0..GI_DIM {
@@ -561,9 +561,9 @@ fn embed_text(text: string) -> []float {
     return out
 }
 
-/// Deterministic pseudo-random vector for synthetic load (seed -> vector).
-/// Mirrors the wasm LCG recipe: products stay below 2^63 so the checked
-/// arithmetic never traps; 24 low bits -> one float in [-1, 1).
+/** *Deterministic pseudo-random vector for synthetic load (seed -> vector). */
+/** *Mirrors the wasm LCG recipe: products stay below 2^63 so the checked */
+/** *arithmetic never traps; 24 low bits -> one float in [-1, 1). */
 fn rand_vec(seed: int) -> []float {
     let mut out = []float {}
     let mut x = u64(seed) * 2654435761 + 40503
@@ -595,20 +595,20 @@ fn now_us() -> int {
 
 let mut gi: VectorIndex = VectorIndex { map: 0, dim: GI_DIM, count: 0, cap: 0 }
 
-/// Open (or create) the engine on `file_path` with `cap` vector slots.
+/** *Open (or create) the engine on `file_path` with `cap` vector slots. */
 fn engine_open(file_path: string, cap: int) -> bool {
     gi = create_vector_index(file_path, cap)
     return gi.map != 0
 }
 
-/// Close the engine (flush + unmap).
+/** *Close the engine (flush + unmap). */
 fn engine_close() {
     close_vector_index(gi)
     gi = VectorIndex { map: 0, dim: GI_DIM, count: 0, cap: 0 }
 }
 
-/// Wipe and recreate the engine file. 0 ok, -1 error (also returned when
-/// the old file did not exist).
+/** *Wipe and recreate the engine file. 0 ok, -1 error (also returned when */
+/** *the old file did not exist). */
 fn engine_wipe(file_path: string, cap: int) -> int {
     engine_close()
     delete_index_file(file_path)
@@ -618,47 +618,47 @@ fn engine_wipe(file_path: string, cap: int) -> int {
     return -1
 }
 
-/// Insert one vector into the engine (capacity check in Loam).
+/** *Insert one vector into the engine (capacity check in Loam). */
 fn engine_insert(vector_id: int, data: []float) -> bool {
     return insert_vector(&mut gi, vector_id, data)
 }
 
-/// Sweep the engine for the top-`k` rows close to `query`.
+/** *Sweep the engine for the top-`k` rows close to `query`. */
 fn engine_search(query: []float, k: int) -> []Record {
     return search_knn(gi, query, k)
 }
 
-/// Stored rows in the engine right now.
+/** *Stored rows in the engine right now. */
 fn engine_rows() -> int {
     return gi.count
 }
 
-/// Vector slots the file was sized for.
+/** *Vector slots the file was sized for. */
 fn engine_cap() -> int {
     return gi.cap
 }
 
-/// Mapped file bytes.
+/** *Mapped file bytes. */
 fn engine_bytes() -> int {
     return gi_map_bytes(gi.map)
 }
 
-/// Is the engine open?
+/** *Is the engine open? */
 fn engine_open_map() -> int {
     return gi.map
 }
 
-/// Word-overlap embedding stub (GI_DIM doubles).
+/** *Word-overlap embedding stub (GI_DIM doubles). */
 fn engine_embed(text: string) -> []float {
     return embed_text(text)
 }
 
-/// Deterministic synthetic vector for load tests.
+/** *Deterministic synthetic vector for load tests. */
 fn engine_rand_vec(seed: int) -> []float {
     return rand_vec(seed)
 }
 
-/// Monotonic microseconds.
+/** *Monotonic microseconds. */
 fn engine_now_us() -> int {
     return now_us()
 }

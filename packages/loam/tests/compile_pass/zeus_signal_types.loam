@@ -2,9 +2,9 @@ import "std:fmt"
 import "std:sys"
 import "zeus"
 
-/// A user's own Copy struct. `Signal<T>` claims `T` may be "a Copy struct"
-/// (structs.loam), so this is the case the API promises and the one worth
-/// pinning: reactivity over a type the *engine* has never heard of.
+/** *A user's own Copy struct. `Signal<T>` claims `T` may be "a Copy struct" */
+/** *(structs.loam), so this is the case the API promises and the one worth */
+/** *pinning: reactivity over a type the *engine* has never heard of. */
 struct Point {
     x: int,
     y: int,

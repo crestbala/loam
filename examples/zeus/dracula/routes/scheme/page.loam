@@ -14,8 +14,8 @@ fn spec() -> []TableCol {
     return h
 }
 
-/// The results for one search state; the rows are an `Each` over the hits (see
-/// the stock search).
+/** *The results for one search state; the rows are an `Each` over the hits (see */
+/** *the stock search). */
 fn arm(v: Signal<FundSearch>) -> Node {
     let x = v.peek()
     if x.state == 0 {

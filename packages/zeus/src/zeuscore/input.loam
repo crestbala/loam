@@ -1,9 +1,9 @@
-//! input — hit-test, click, scroll, drag, hover (GPUI input.rs / window events).
-//!
-//! Scroll: wheel `dx`/`dy` go to the innermost scroller that overflows on that
-//! axis (table H vs page V). Leftover delta at a bound chains to the parent
-//! scroller (nested feed vs page). Thumb drag: `drag_bar` 1 = vertical,
-//! 2 = horizontal. Hit tests add `scroll_x`/`scroll_y` when walking into a pane.
+// input — hit-test, click, scroll, drag, hover (GPUI input.rs / window events).
+//
+// Scroll: wheel `dx`/`dy` go to the innermost scroller that overflows on that
+// axis (table H vs page V). Leftover delta at a bound chains to the parent
+// scroller (nested feed vs page). Thumb drag: `drag_bar` 1 = vertical,
+// 2 = horizontal. Hit tests add `scroll_x`/`scroll_y` when walking into a pane.
 
 import "arena.loam"
 import "nodes.loam"
@@ -19,20 +19,20 @@ struct Click {
     setv: int,
 }
 
-/// 1 while a hit walk runs inside a floater (`hit_one_floater`): nested
-/// floaters are then part of the walk. Outside it, the tree walk skips every
-/// floater — `hit_floaters` already tested them, above the page, in z order,
-/// exactly as paint stacks them.
+/** *1 while a hit walk runs inside a floater (`hit_one_floater`): nested */
+/** *floaters are then part of the walk. Outside it, the tree walk skips every */
+/** *floater — `hit_floaters` already tested them, above the page, in z order, */
+/** *exactly as paint stacks them. */
 let mut hit_in_floater: int = 0
 
-/// Which thumb the last hit walk landed on: 1 vertical, 2 horizontal, 0 none.
-/// Recorded where the test ran, in the scroller's own parent coordinates — a
-/// nested scroller under a scrolled page cannot be re-tested with the window
-/// point, which is what `click` used to do (and missed by the page's offset).
+/** *Which thumb the last hit walk landed on: 1 vertical, 2 horizontal, 0 none. */
+/** *Recorded where the test ran, in the scroller's own parent coordinates — a */
+/** *nested scroller under a scrolled page cannot be re-tested with the window */
+/** *point, which is what `click` used to do (and missed by the page's offset). */
 let mut hit_bar: int = 0
-/// The floater the last `scroll_target` stopped in, 0 for none.
+/** *The floater the last `scroll_target` stopped in, 0 for none. */
 let mut scroll_stop: int = 0
-/// Key codes `key_scroll` answers (`KeyEvent.key`), and an arrow's distance.
+/** *Key codes `key_scroll` answers (`KeyEvent.key`), and an arrow's distance. */
 const KEY_SPACE: int = 32
 const KEY_UP: int = 1002
 const KEY_DOWN: int = 1003
@@ -61,8 +61,8 @@ fn hit_one_floater(id: int, sx: int, sy: int) -> int {
     return h
 }
 
-/// The point a child walk should test `c` with: window coordinates for an
-/// overlay or anchored popup, the parent's content coordinates otherwise.
+/** *The point a child walk should test `c` with: window coordinates for an */
+/** *overlay or anchored popup, the parent's content coordinates otherwise. */
 fn kid_px(c: int, cx: int) -> int {
     if nodes.is_window_floater(c) != 0 {
         return arena.ptr_x
@@ -250,10 +250,10 @@ fn hit_node(id: int, px: int, py: int) -> int {
     return 0
 }
 
-/// Secondary click at (`px`, `py`): the nearest ancestor of the hit node with
-/// an `on_context_menu` handler runs, with the point in `current_mouse()`
-/// (`button` 2). Returns 1 when a handler ran, so the host suppresses its own
-/// menu.
+/** *Secondary click at (`px`, `py`): the nearest ancestor of the hit node with */
+/** *an `on_context_menu` handler runs, with the point in `current_mouse()` */
+/** *(`button` 2). Returns 1 when a handler ran, so the host suppresses its own */
+/** *menu. */
 fn context_click(px: int, py: int) -> int {
     arena.ensure()
     arena.ptr_x = px
@@ -293,10 +293,10 @@ fn context_click(px: int, py: int) -> int {
     return 1
 }
 
-/// What a finger at (`px`, `py`) grabs, without pressing it.
-/// 1 = a slider or a scrollbar thumb: the gesture must not scroll the page.
-/// 2 = an `on_drag` region (a text selection): a vertical pan may still scroll.
-/// 0 = an ordinary control, or empty space.
+/** *What a finger at (`px`, `py`) grabs, without pressing it. */
+/** *1 = a slider or a scrollbar thumb: the gesture must not scroll the page. */
+/** *2 = an `on_drag` region (a text selection): a vertical pan may still scroll. */
+/** *0 = an ordinary control, or empty space. */
 fn grab(px: int, py: int) -> int {
     arena.ensure()
     arena.ptr_x = px
@@ -330,11 +330,11 @@ fn grab(px: int, py: int) -> int {
 
 // --- user events, for `zeuscore/logs.loam` ---
 
-/// The input whose first edit has been recorded. One line per visit to a field:
-/// a keystroke is not an event worth a line, and its text is never written.
+/** *The input whose first edit has been recorded. One line per visit to a field: */
+/** *a keystroke is not an event worth a line, and its text is never written. */
 let mut edited_id: int = 0
 
-/// The first text at or under `id`, depth first, or "".
+/** *The first text at or under `id`, depth first, or "". */
 fn text_under(id: int) -> string {
     if nodes.ui[id].a11y_label.len > 0 {
         return nodes.ui[id].a11y_label
@@ -352,8 +352,8 @@ fn text_under(id: int) -> string {
     return ""
 }
 
-/// What a log line calls node `id`: its label or text in quotes, else its role.
-/// An input is named by its label alone, so what was typed stays out of the log.
+/** *What a log line calls node `id`: its label or text in quotes, else its role. */
+/** *An input is named by its label alone, so what was typed stays out of the log. */
 fn node_name(id: int) -> string {
     let mut t = ""
     if int(nodes.tree[id].kind) == 10 {
@@ -377,7 +377,7 @@ fn note_event(verb: string, id: int) {
     }
 }
 
-/// An overlay's click handler is its dismissal.
+/** *An overlay's click handler is its dismissal. */
 fn log_click(id: int) {
     note_event(if int(nodes.tree[id].kind) == 9 { "dismiss" } else { "click" }, id)
 }
@@ -582,10 +582,10 @@ fn find_scroll_axis(id: int, px: int, py: int, horiz: int) -> int {
     return 0
 }
 
-/// The scroller a wheel at the pointer drives: one inside the topmost floater
-/// under the pointer first (a long Select list over a scrolled page), else one
-/// in the page. A capturing floater with no scroller of its own takes the
-/// wheel and drives nothing, so the page under a popup does not slide.
+/** *The scroller a wheel at the pointer drives: one inside the topmost floater */
+/** *under the pointer first (a long Select list over a scrolled page), else one */
+/** *in the page. A capturing floater with no scroller of its own takes the */
+/** *wheel and drives nothing, so the page under a popup does not slide. */
 fn scroll_target(px: int, py: int, horiz: int) -> int {
     arena.ptr_x = px
     arena.ptr_y = py
@@ -622,9 +622,9 @@ fn scroll_in_floater(f: int, sx: int, sy: int, px: int, py: int, horiz: int) -> 
     return s
 }
 
-/// Next overflowing scroller above `id` on the same axis (nested chaining).
-/// The chain ends at the floater `scroll_target` resolved in (`scroll_stop`): a
-/// list at its bound inside a Drawer or Dialog must not slide the page behind.
+/** *Next overflowing scroller above `id` on the same axis (nested chaining). */
+/** *The chain ends at the floater `scroll_target` resolved in (`scroll_stop`): a */
+/** *list at its bound inside a Drawer or Dialog must not slide the page behind. */
 fn parent_scroll(id: int, horiz: int) -> int {
     if id <= 0 {
         return 0
@@ -661,14 +661,14 @@ fn parent_scroll(id: int, horiz: int) -> int {
     return 0
 }
 
-/// The scrollers a touch gesture holds, one per axis, 0 for none. Content slides
-/// under a resting finger, so asking again each frame would hand the gesture to
-/// whatever scroller passed beneath it.
+/** *The scrollers a touch gesture holds, one per axis, 0 for none. Content slides */
+/** *under a resting finger, so asking again each frame would hand the gesture to */
+/** *whatever scroller passed beneath it. */
 let mut latch_y: int = 0
 let mut latch_x: int = 0
 
-/// Hold the scrollers under (`px`, `py`) for the gesture starting there. A
-/// negative point lets go.
+/** *Hold the scrollers under (`px`, `py`) for the gesture starting there. A */
+/** *negative point lets go. */
 fn scroll_latch(px: int, py: int) {
     latch_y = 0
     latch_x = 0
@@ -680,8 +680,8 @@ fn scroll_latch(px: int, py: int) {
     latch_x = scroll_target(px, py, 1)
 }
 
-/// The held scroller on an axis, or 0. A page swapped mid-gesture can leave the
-/// id naming another kind of node, or none.
+/** *The held scroller on an axis, or 0. A page swapped mid-gesture can leave the */
+/** *id naming another kind of node, or none. */
 fn latched(horiz: int) -> int {
     let mut s = latch_y
     if horiz != 0 {
@@ -696,10 +696,10 @@ fn latched(horiz: int) -> int {
     return s
 }
 
-/// Apply `delta` to the held scroller, or else the innermost overflowing one
-/// under the pointer, then any leftover at a bound to each ancestor. Returns 1
-/// if anything moved. `scroll_target` runs either way, because it settles the
-/// floater that ends the chain.
+/** *Apply `delta` to the held scroller, or else the innermost overflowing one */
+/** *under the pointer, then any leftover at a bound to each ancestor. Returns 1 */
+/** *if anything moved. `scroll_target` runs either way, because it settles the */
+/** *floater that ends the chain. */
 fn chain_axis(px: int, py: int, delta: int, horiz: int, momentum: int) -> int {
     if delta == 0 {
         return 0
@@ -743,8 +743,8 @@ fn chain_axis(px: int, py: int, delta: int, horiz: int, momentum: int) -> int {
     return changed
 }
 
-/// Pan / precise-wheel scroll with momentum: the delta is applied now and
-/// becomes the velocity the physics coast decays from (touch, trackpads).
+/** *Pan / precise-wheel scroll with momentum: the delta is applied now and */
+/** *becomes the velocity the physics coast decays from (touch, trackpads). */
 fn scroll(px: int, py: int, dx: int, dy: int) -> int {
     arena.ensure()
     if arena.root_id <= 0 {
@@ -765,10 +765,10 @@ fn scroll(px: int, py: int, dx: int, dy: int) -> int {
     return changed
 }
 
-/// Mouse-wheel notch with the browser feel: the delta moves a target and the
-/// position eases to it (`physics_step`), retargeting on the next notch, which
-/// reaches further for coming while the last is landing. Chains to the parent scroller when this one is at its edge.
-/// Under reduced motion it is a plain step.
+/** *Mouse-wheel notch with the browser feel: the delta moves a target and the */
+/** *position eases to it (`physics_step`), retargeting on the next notch, which */
+/** *reaches further for coming while the last is landing. Chains to the parent scroller when this one is at its edge. */
+/** *Under reduced motion it is a plain step. */
 fn scroll_smooth(px: int, py: int, dx: int, dy: int) -> int {
     arena.ensure()
     if arena.root_id <= 0 {
@@ -821,9 +821,9 @@ fn scroll_smooth(px: int, py: int, dx: int, dy: int) -> int {
     return changed
 }
 
-/// Discrete wheel click (mouse notches, web line/page wheels): the delta is
-/// applied exactly and no velocity is stored, so the scroller never coasts
-/// past where the user clicked.
+/** *Discrete wheel click (mouse notches, web line/page wheels): the delta is */
+/** *applied exactly and no velocity is stored, so the scroller never coasts */
+/** *past where the user clicked. */
 fn scroll_step(px: int, py: int, dx: int, dy: int) -> int {
     arena.ensure()
     if arena.root_id <= 0 {
@@ -936,15 +936,15 @@ fn mouseup() {
     }
 }
 
-/// Report a press to the click hook when `id` has a click action to run.
+/** *Report a press to the click hook when `id` has a click action to run. */
 fn note_click(id: int) {
     if nodes.ui[id].click_sig > 0 || nodes.ui[id].click2_sig > 0 || nodes.ui[id].click_fn > 0 {
         arena.note_click(id)
     }
 }
 
-/// Deliver a key to the focused node's `on_key_down` / `on_key_press`
-/// handlers. Returns 1 if a handler ran, so the host repaints.
+/** *Deliver a key to the focused node's `on_key_down` / `on_key_press` */
+/** *handlers. Returns 1 if a handler ran, so the host repaints. */
 /** Keyboard activation of the focused control (Enter / Space): the same
  *  click dispatch a pointer press runs, minus hit-testing and pointer-only
  *  handlers. Returns 1 when the control consumed the key. Text fields never
@@ -1025,8 +1025,8 @@ fn key_handlers(k: int, mods: int, up: int) -> int {
     return ran
 }
 
-/// The scroller keys drive: the one under the pointer, or the first in the
-/// tree that has anywhere to go (a phone or a keyboard user has no pointer).
+/** *The scroller keys drive: the one under the pointer, or the first in the */
+/** *tree that has anywhere to go (a phone or a keyboard user has no pointer). */
 fn key_scroller() -> int {
     let s = scroll_target(arena.ptr_x, arena.ptr_y, 0)
     if s > 0 {
@@ -1043,9 +1043,9 @@ fn key_scroller() -> int {
     return 0
 }
 
-/// The keys that move a page: PageUp / PageDown and Space (Shift+Space back) by
-/// most of a screen, Home / End to the ends, the arrows by a few lines. Unclaimed
-/// keys only: a focused control keeps what it uses, and the arrows need no focus.
+/** *The keys that move a page: PageUp / PageDown and Space (Shift+Space back) by */
+/** *most of a screen, Home / End to the ends, the arrows by a few lines. Unclaimed */
+/** *keys only: a focused control keeps what it uses, and the arrows need no focus. */
 fn key_scroll(k: int) -> int {
     let page = k == KEY_PAGE_UP || k == KEY_PAGE_DOWN || k == KEY_SPACE
     let end = k == KEY_HOME || k == KEY_END
@@ -1075,9 +1075,9 @@ fn key_scroll(k: int) -> int {
     return if arena.apply_smooth_y(s, d) != 0 { 1 } else { 0 }
 }
 
-/// The innermost scroller from `s` up whose live bar strip is under the
-/// pointer, on either axis (0 = none). Walking up is what lets the page's bar
-/// answer while the pointer sits over a nested table that is not scrolling.
+/** *The innermost scroller from `s` up whose live bar strip is under the */
+/** *pointer, on either axis (0 = none). Walking up is what lets the page's bar */
+/** *answer while the pointer sits over a nested table that is not scrolling. */
 fn bar_strip_chain(s: int, px: int, py: int) -> int {
     let mut c = s
     let mut guard = 0
@@ -1093,9 +1093,9 @@ fn bar_strip_chain(s: int, px: int, py: int) -> int {
     return 0
 }
 
-/// The pointer is on a shown scrollbar's edge strip: make that bar hot (wider
-/// thumb, visible track, no fade while it stays there). Desktop only. A bar
-/// that is yielding to its chain's lead is never made hot.
+/** *The pointer is on a shown scrollbar's edge strip: make that bar hot (wider */
+/** *thumb, visible track, no fade while it stays there). Desktop only. A bar */
+/** *that is yielding to its chain's lead is never made hot. */
 fn bar_hover(px: int, py: int) {
     if platform.plat_overlay_scroll() != 0 {
         return
@@ -1111,12 +1111,12 @@ fn bar_hover(px: int, py: int) {
     arena.bar_set_hot(hot)
 }
 
-/// Installed by the router. Empty until a `Router` is mounted, so a hover in
-/// an app with no routes does nothing.
+/** *Installed by the router. Empty until a `Router` is mounted, so a hover in */
+/** *an app with no routes does nothing. */
 let mut href_preload: fn(string) = fn(path: string) {}
 let mut href_preload_on: int = 0
-/// The `href` the pointer is resting on. A move inside that same link does not
-/// ask again, so it cannot keep resetting the web host's wait.
+/** *The `href` the pointer is resting on. A move inside that same link does not */
+/** *ask again, so it cannot keep resetting the web host's wait. */
 let mut href_hot: string = ""
 
 fn set_href_preload(f: fn(string)) {
@@ -1124,9 +1124,9 @@ fn set_href_preload(f: fn(string)) {
     href_preload_on = 1
 }
 
-/// The topmost shown node under the pointer that carries an `href`, or "".
-/// Later nodes win, the same order `cursor_at` uses, so a link inside a link
-/// is the one asked for.
+/** *The topmost shown node under the pointer that carries an `href`, or "". */
+/** *Later nodes win, the same order `cursor_at` uses, so a link inside a link */
+/** *is the one asked for. */
 fn href_under_pointer() -> string {
     let n = nodes.tree.len
     for i in 1..n {
@@ -1142,9 +1142,9 @@ fn href_under_pointer() -> string {
     return ""
 }
 
-/// Ask for the route under the pointer once, as the pointer enters its link.
-/// The fetch itself is web-only: `plat_chunks_preload` does nothing on desktop
-/// and mobile. A node with no `href` is not a route link.
+/** *Ask for the route under the pointer once, as the pointer enters its link. */
+/** *The fetch itself is web-only: `plat_chunks_preload` does nothing on desktop */
+/** *and mobile. A node with no `href` is not a route link. */
 fn note_href_hover() {
     if href_preload_on == 0 {
         return
@@ -1223,11 +1223,11 @@ fn hover(px: int, py: int) -> int {
     return dirty
 }
 
-/// Pointer affordance: the host shows a hand cursor while the pointer is
-/// inside an interactive node. This is decoupled from the hover wash
-/// (`is_hot`, which `Box.hover_off` now silences by default): clickable
-/// boxes and native thumbs claim the hand, while full-surface click
-/// swallows (dialogs, picker panels) keep the arrow.
+/** *Pointer affordance: the host shows a hand cursor while the pointer is */
+/** *inside an interactive node. This is decoupled from the hover wash */
+/** *(`is_hot`, which `Box.hover_off` now silences by default): clickable */
+/** *boxes and native thumbs claim the hand, while full-surface click */
+/** *swallows (dialogs, picker panels) keep the arrow. */
 fn over_button() -> int {
     let n = nodes.tree.len
     for i in 1..n {
@@ -1264,9 +1264,9 @@ fn over_button() -> int {
     return 0
 }
 
-/// CSS cursor name for the node under the pointer. Nodes with an explicit
-/// cursor ("" = default) win; later-created nodes outrank earlier ones, so
-/// children override parents. Returns "" when nothing claims a cursor.
+/** *CSS cursor name for the node under the pointer. Nodes with an explicit */
+/** *cursor ("" = default) win; later-created nodes outrank earlier ones, so */
+/** *children override parents. Returns "" when nothing claims a cursor. */
 fn cursor_at() -> string {
     if platform.plat_overlay_scroll() != 0 {
         return ""
@@ -1294,10 +1294,10 @@ fn cursor_at() -> string {
     return ""
 }
 
-/// Move the caret one extended grapheme cluster. `dir` < 0 = left, > 0 =
-/// right. Boundaries come from `std:unicode`, so a Tamil akshara or an emoji
-/// ZWJ sequence moves as one unit instead of one code point (`docs/loam_zeus_v2.md`
-/// §1.4, Phase 13).
+/** *Move the caret one extended grapheme cluster. `dir` < 0 = left, > 0 = */
+/** *right. Boundaries come from `std:unicode`, so a Tamil akshara or an emoji */
+/** *ZWJ sequence moves as one unit instead of one code point (`docs/loam_zeus_v2.md` */
+/** *§1.4, Phase 13). */
 fn edit_move_grapheme(slot: int, dir: int, extend: int) -> int {
     let text = runtime.edit_text(slot)
     let caret = runtime.edit_caret(slot)
@@ -1314,7 +1314,7 @@ fn edit_move_grapheme(slot: int, dir: int, extend: int) -> int {
     return 1
 }
 
-/// Backspace one grapheme cluster, or the current selection.
+/** *Backspace one grapheme cluster, or the current selection. */
 fn edit_back_grapheme(slot: int) -> int {
     let caret = runtime.edit_caret(slot)
     if runtime.edit_anchor(slot) != caret {
@@ -1328,7 +1328,7 @@ fn edit_back_grapheme(slot: int) -> int {
     return runtime.edit_back(slot)
 }
 
-/// Delete forward one grapheme cluster, or the current selection.
+/** *Delete forward one grapheme cluster, or the current selection. */
 fn edit_del_grapheme(slot: int) -> int {
     let caret = runtime.edit_caret(slot)
     if runtime.edit_anchor(slot) != caret {

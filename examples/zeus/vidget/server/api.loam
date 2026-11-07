@@ -1,9 +1,9 @@
-//! RPC surface shared by the backend (`server/main.loam`) and every client
-//! (`components/store.loam`): `#[proto]` payloads plus the method names.
-//!
-//! `#[proto]` fields are `int`, `string`, or a list of those, so a list of
-//! jobs or formats travels as parallel lists indexed together. Byte counts are
-//! KiB: `int` is i32 and a video outgrows 2 GB.
+// RPC surface shared by the backend (`server/main.loam`) and every client
+// (`components/store.loam`): `#[proto]` payloads plus the method names.
+//
+// `#[proto]` fields are `int`, `string`, or a list of those, so a list of
+// jobs or formats travels as parallel lists indexed together. Byte counts are
+// KiB: `int` is i32 and a video outgrows 2 GB.
 
 import "http"
 
@@ -12,8 +12,8 @@ struct ProbeReq {
     url: string,
 }
 
-/// What a URL holds. `kind` is a `KIND_*` code; `formats` and `labels` pair up
-/// (the id is what `StartReq.format` takes back).
+/** *What a URL holds. `kind` is a `KIND_*` code; `formats` and `labels` pair up */
+/** *(the id is what `StartReq.format` takes back). */
 #[proto]
 struct ProbeResp {
     ok: int,
@@ -28,7 +28,7 @@ struct ProbeResp {
     labels: []string,
 }
 
-/// The preview frame for a probed URL; `ready = 0` means "ask again".
+/** *The preview frame for a probed URL; `ready = 0` means "ask again". */
 #[proto]
 struct ThumbReq {
     url: string,
@@ -44,13 +44,13 @@ struct ThumbResp {
 #[proto]
 struct StartReq {
     url: string,
-    /// A `ProbeResp.formats` id, or "" for best video + audio.
+    /** *A `ProbeResp.formats` id, or "" for best video + audio. */
     format: string,
-    /// `CONTAINERS` index: original, mp4, mkv, webm, mp3, m4a.
+    /** *`CONTAINERS` index: original, mp4, mkv, webm, mp3, m4a. */
     container: int,
-    /// Parallel connections / fragments, 1..32.
+    /** *Parallel connections / fragments, 1..32. */
     connections: int,
-    /// Title hint for the row while the engine has none yet.
+    /** *Title hint for the row while the engine has none yet. */
     title: string,
 }
 
@@ -63,7 +63,7 @@ struct StartResp {
 #[proto]
 struct JobsReq {}
 
-/// Every job, newest first, as parallel lists.
+/** *Every job, newest first, as parallel lists. */
 #[proto]
 struct JobsResp {
     ids: []int,
@@ -90,7 +90,7 @@ struct JobResp {
     ok: int,
 }
 
-/// `ProbeResp.kind`.
+/** *`ProbeResp.kind`. */
 fn kind_page() -> int {
     return 0
 }
@@ -103,7 +103,7 @@ fn kind_stream() -> int {
     return 2
 }
 
-/// Job states, in `JobsResp.states`.
+/** *Job states, in `JobsResp.states`. */
 fn st_queued() -> int {
     return 0
 }
@@ -124,7 +124,7 @@ fn st_cancelled() -> int {
     return 4
 }
 
-/// Output containers, indexed by `StartReq.container`.
+/** *Output containers, indexed by `StartReq.container`. */
 fn containers() -> []string {
     return []string { "Original", "MP4", "MKV", "WebM", "MP3", "M4A" }
 }
@@ -145,7 +145,7 @@ fn jobs_rpc() -> string {
     return "Vidget.Jobs"
 }
 
-/// The job list as a stream: one request, a new `JobsResp` whenever it changes.
+/** *The job list as a stream: one request, a new `JobsResp` whenever it changes. */
 fn jobs_watch_rpc() -> string {
     return "Vidget.JobsWatch"
 }
@@ -162,7 +162,7 @@ fn remove_rpc() -> string {
     return "Vidget.Remove"
 }
 
-/// Keeps `http` imported here so the codecs it injects resolve.
+/** *Keeps `http` imported here so the codecs it injects resolve. */
 fn ping() -> string {
     return http.concat_str("vid", "get")
 }

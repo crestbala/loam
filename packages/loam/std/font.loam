@@ -1,19 +1,19 @@
-//! font — TrueType/OpenType table parsing and metrics.
-//!
-//! `measure` / `measure_wrap` are pure functions of (font bytes, pixel size,
-//! string). Every host that calls them gets identical widths and heights, which
-//! is what makes text layout host-independent (`docs/loam_zeus_v2.md` §1.4).
-//!
-//! Parsed tables: `head`, `maxp`, `hhea`, `hmtx`, and `cmap` formats 4 and 12.
-//! Metrics are unshaped — one glyph per grapheme cluster — so complex-script
-//! widths are approximate until the shaping decision in §1.4 lands.
+// font — TrueType/OpenType table parsing and metrics.
+//
+// `measure` / `measure_wrap` are pure functions of (font bytes, pixel size,
+// string). Every host that calls them gets identical widths and heights, which
+// is what makes text layout host-independent (`docs/loam_zeus_v2.md` §1.4).
+//
+// Parsed tables: `head`, `maxp`, `hhea`, `hmtx`, and `cmap` formats 4 and 12.
+// Metrics are unshaped — one glyph per grapheme cluster — so complex-script
+// widths are approximate until the shaping decision in §1.4 lands.
 
 import "std:unicode"
 
 // --- big-endian readers ----------------------------------------------------
 
-/// Byte at `o`, or 0 when `o` is out of range (font tables are walked by
-/// computed offsets, so a malformed file must not trap).
+/** *Byte at `o`, or 0 when `o` is out of range (font tables are walked by */
+/** *computed offsets, so a malformed file must not trap). */
 fn read_u8(s: string, o: int) -> int {
     if o < 0 || o >= s.len {
         return 0
@@ -21,12 +21,12 @@ fn read_u8(s: string, o: int) -> int {
     return s[o]
 }
 
-/// 16-bit big-endian unsigned.
+/** *16-bit big-endian unsigned. */
 fn read_u16_be(s: string, o: int) -> int {
     return (read_u8(s, o) << 8) | read_u8(s, o + 1)
 }
 
-/// 16-bit big-endian signed.
+/** *16-bit big-endian signed. */
 fn read_i16_be(s: string, o: int) -> int {
     let v = read_u16_be(s, o)
     if v >= 0x8000 {
@@ -35,12 +35,12 @@ fn read_i16_be(s: string, o: int) -> int {
     return v
 }
 
-/// 32-bit big-endian, widened through `i64` so a high half cannot trap `i32`.
+/** *32-bit big-endian, widened through `i64` so a high half cannot trap `i32`. */
 fn read_u32_be(s: string, o: int) -> int {
     return i32(i64(read_u16_be(s, o)) * 65536 + i64(read_u16_be(s, o + 2)))
 }
 
-/// Absolute offset of the table tagged `tag` (a 4-character string), or -1.
+/** *Absolute offset of the table tagged `tag` (a 4-character string), or -1. */
 fn table_offset(s: string, tag: string) -> int {
     if tag.len != 4 {
         return -1
@@ -61,7 +61,7 @@ fn table_offset(s: string, tag: string) -> int {
 
 // --- horizontal metrics ----------------------------------------------------
 
-/// Design units per em (`head.unitsPerEm`), or 0 when absent.
+/** *Design units per em (`head.unitsPerEm`), or 0 when absent. */
 fn units_per_em(s: string) -> int {
     let h = table_offset(s, "head")
     if h < 0 {
@@ -70,7 +70,7 @@ fn units_per_em(s: string) -> int {
     return read_u16_be(s, h + 18)
 }
 
-/// Number of glyphs (`maxp.numGlyphs`).
+/** *Number of glyphs (`maxp.numGlyphs`). */
 fn num_glyphs(s: string) -> int {
     let m = table_offset(s, "maxp")
     if m < 0 {
@@ -111,7 +111,7 @@ fn num_hmetrics(s: string) -> int {
     return read_u16_be(s, h + 34)
 }
 
-/// Advance width of glyph `gid` in font design units.
+/** *Advance width of glyph `gid` in font design units. */
 fn advance_units(s: string, gid: int) -> int {
     let nh = num_hmetrics(s)
     if nh <= 0 {
@@ -133,9 +133,9 @@ fn advance_units(s: string, gid: int) -> int {
 
 // --- character map ---------------------------------------------------------
 
-/// Choose the best Unicode `cmap` subtable offset: prefer a Windows full
-/// Unicode subtable (3,10), then Windows BMP (3,1), then a Unicode platform.
-/// Format 12 beats format 4 within a platform.
+/** *Choose the best Unicode `cmap` subtable offset: prefer a Windows full */
+/** *Unicode subtable (3,10), then Windows BMP (3,1), then a Unicode platform. */
+/** *Format 12 beats format 4 within a platform. */
 fn cmap_best(s: string) -> int {
     let c = table_offset(s, "cmap")
     if c < 0 {
@@ -230,7 +230,7 @@ fn cmap12(s: string, sub: int, cp: int) -> int {
     return 0
 }
 
-/// Glyph id for code point `cp`, or 0 (`.notdef`) when unmapped.
+/** *Glyph id for code point `cp`, or 0 (`.notdef`) when unmapped. */
 fn glyph_index(s: string, cp: int) -> int {
     let sub = cmap_best(s)
     if sub < 0 {
@@ -248,17 +248,17 @@ fn glyph_index(s: string, cp: int) -> int {
 
 // --- glyph runs ------------------------------------------------------------
 
-/// One positioned glyph: the font's glyph id and its pen x in pixels from the
-/// run's left edge.
+/** *One positioned glyph: the font's glyph id and its pen x in pixels from the */
+/** *run's left edge. */
 struct Glyph {
     id: int,
     x: int,
 }
 
-/// Positioned glyphs for `text` at `px`, one per grapheme cluster. This is the
-/// run a `plat_glyphs` draw consumes. It is **unshaped** — no GSUB/GPOS, so no
-/// ligatures or mark repositioning — and shaping will replace the
-/// cluster-to-glyph mapping and the advances without changing this shape.
+/** *Positioned glyphs for `text` at `px`, one per grapheme cluster. This is the */
+/** *run a `plat_glyphs` draw consumes. It is **unshaped** — no GSUB/GPOS, so no */
+/** *ligatures or mark repositioning — and shaping will replace the */
+/** *cluster-to-glyph mapping and the advances without changing this shape. */
 fn glyph_run(s: string, px: int, text: string) -> []Glyph {
     let mut run = []Glyph {}
     let mut pen = 0
@@ -274,7 +274,7 @@ fn glyph_run(s: string, px: int, text: string) -> []Glyph {
 
 // --- measurement -----------------------------------------------------------
 
-/// Pixel advance of glyph `gid` at size `px`.
+/** *Pixel advance of glyph `gid` at size `px`. */
 fn advance_px(s: string, gid: int, px: int) -> int {
     let upm = units_per_em(s)
     if upm <= 0 {
@@ -283,8 +283,8 @@ fn advance_px(s: string, gid: int, px: int) -> int {
     return i32(i64(advance_units(s, gid)) * i64(px) / i64(upm))
 }
 
-/// `units` font units at size `px`, rounded up to a whole pixel: a box sized
-/// with it never clips the fractional extent the host draws.
+/** *`units` font units at size `px`, rounded up to a whole pixel: a box sized */
+/** *with it never clips the fractional extent the host draws. */
 fn units_to_px_ceil(units: i64, px: int, upm: int) -> int {
     let n = units * i64(px)
     let q = n / i64(upm)
@@ -294,11 +294,11 @@ fn units_to_px_ceil(units: i64, px: int, upm: int) -> int {
     return i32(q)
 }
 
-/// Pixel width of `text` at size `px` (unshaped: one glyph per grapheme
-/// cluster, approximated by the cluster's first code point). Advances sum in
-/// font units and scale once, so the width is the run's true extent rounded
-/// up; truncating each glyph lost up to a pixel per character and sized
-/// boxes narrower than the text the host draws.
+/** *Pixel width of `text` at size `px` (unshaped: one glyph per grapheme */
+/** *cluster, approximated by the cluster's first code point). Advances sum in */
+/** *font units and scale once, so the width is the run's true extent rounded */
+/** *up; truncating each glyph lost up to a pixel per character and sized */
+/** *boxes narrower than the text the host draws. */
 fn text_width(s: string, px: int, text: string) -> int {
     let upm = units_per_em(s)
     if upm <= 0 {
@@ -314,8 +314,8 @@ fn text_width(s: string, px: int, text: string) -> int {
     return units_to_px_ceil(units, px, upm)
 }
 
-/// Line height at size `px` from the font's ascent/descent/line gap, rounded
-/// up as the hosts round their own line box.
+/** *Line height at size `px` from the font's ascent/descent/line gap, rounded */
+/** *up as the hosts round their own line box. */
 fn line_height(s: string, px: int) -> int {
     let upm = units_per_em(s)
     if upm <= 0 {
@@ -328,15 +328,15 @@ fn line_height(s: string, px: int) -> int {
     return h
 }
 
-/// Measure one unwrapped line. `w`/`h` are out-params (the call shape Zeus's
-/// layout already uses).
+/** *Measure one unwrapped line. `w`/`h` are out-params (the call shape Zeus's */
+/** *layout already uses). */
 fn measure(s: string, px: int, text: string, w: &mut int, h: &mut int) {
     *w = text_width(s, px, text)
     *h = line_height(s, px)
 }
 
-/// Greedy wrap at grapheme-cluster boundaries, with `\n` as a hard break.
-/// `w` is the widest line, `h` the total height.
+/** *Greedy wrap at grapheme-cluster boundaries, with `\n` as a hard break. */
+/** *`w` is the widest line, `h` the total height. */
 fn measure_wrap(s: string, px: int, text: string, max_w: int, w: &mut int, h: &mut int) {
     let lh = line_height(s, px)
     if max_w <= 0 || text.len == 0 {
@@ -405,15 +405,15 @@ fn measure_wrap(s: string, px: int, text: string, max_w: int, w: &mut int, h: &m
 struct GlyphOutline {
     xs: []int,
     ys: []int,
-    /// 1 = on-curve, 0 = quadratic control point.
+    /** *1 = on-curve, 0 = quadratic control point. */
     on: []int,
-    /// Last point index of each contour (TrueType `endPtsOfContours`).
+    /** *Last point index of each contour (TrueType `endPtsOfContours`). */
     ends: []int,
-    /// 1 when the outline was parsed; 0 for an empty or composite glyph.
+    /** *1 when the outline was parsed; 0 for an empty or composite glyph. */
     ok: int,
 }
 
-/// `head.indexToLocFormat`: 0 = short offsets, 1 = long.
+/** *`head.indexToLocFormat`: 0 = short offsets, 1 = long. */
 fn loca_format(s: string) -> int {
     let h = table_offset(s, "head")
     if h < 0 {
@@ -422,7 +422,7 @@ fn loca_format(s: string) -> int {
     return read_i16_be(s, h + 50)
 }
 
-/// File offset of glyph `gid`'s outline start, or -1 when absent.
+/** *File offset of glyph `gid`'s outline start, or -1 when absent. */
 fn glyph_start(s: string, gid: int) -> int {
     if gid < 0 || gid >= num_glyphs(s) {
         return -1
@@ -438,7 +438,7 @@ fn glyph_start(s: string, gid: int) -> int {
     return g + read_u32_be(s, l + 4 * gid)
 }
 
-/// File offset just past glyph `gid`'s outline (== start for an empty glyph).
+/** *File offset just past glyph `gid`'s outline (== start for an empty glyph). */
 fn glyph_end(s: string, gid: int) -> int {
     let l = table_offset(s, "loca")
     let g = table_offset(s, "glyf")
@@ -459,7 +459,7 @@ fn outline_contours(o: GlyphOutline) -> int {
     return o.ends.len
 }
 
-/// Parse a simple glyph's outline in font units.
+/** *Parse a simple glyph's outline in font units. */
 fn glyph_outline(s: string, gid: int) -> GlyphOutline {
     let mut o = GlyphOutline { xs: []int {}, ys: []int {}, on: []int {}, ends: []int {}, ok: 0 }
     let p = glyph_start(s, gid)

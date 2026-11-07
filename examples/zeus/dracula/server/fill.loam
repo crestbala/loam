@@ -1,12 +1,12 @@
-//! Load AMFI history into the cache, oldest day first.
-//!
-//! A week of the history report is about 6MB. `sys.read_file` stops at 16MB,
-//! so the range is fetched in 7-day windows. The cache is append-only: a
-//! window that starts before the latest cached day is refused. Set
-//! `DRACULA_ROLLBACK=1` to drop the last sync before the first window.
-//!
-//!     DRACULA_FROM=2023-01-01 DRACULA_TO=2026-09-28 DRACULA_ROLLBACK=1 \
-//!       ./bin/loamc examples/zeus/dracula/server/fill.loam -o /tmp/dracula-fill && /tmp/dracula-fill
+// Load AMFI history into the cache, oldest day first.
+//
+// A week of the history report is about 6MB. `sys.read_file` stops at 16MB,
+// so the range is fetched in 7-day windows. The cache is append-only: a
+// window that starts before the latest cached day is refused. Set
+// `DRACULA_ROLLBACK=1` to drop the last sync before the first window.
+//
+//     DRACULA_FROM=2023-01-01 DRACULA_TO=2026-09-28 DRACULA_ROLLBACK=1 \
+//       ./bin/loamc examples/zeus/dracula/server/fill.loam -o /tmp/dracula-fill && /tmp/dracula-fill
 
 import "std:date"
 import "std:fmt"
@@ -29,8 +29,8 @@ fn fetch_problem(err: string) -> bool {
     return true
 }
 
-/// One slow week is not a reason to stop a multi-year load. A refused row
-/// or a file the reader cannot take is returned on the first try.
+/** *One slow week is not a reason to stop a multi-year load. A refused row */
+/** *or a file the reader cannot take is returned on the first try. */
 fn fetch_window(a: string, b: string) -> Report {
     let mut last = ingest.backfill_live(a, b)
     let mut n = 1

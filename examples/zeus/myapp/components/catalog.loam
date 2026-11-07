@@ -1,5 +1,5 @@
-//! Components page: the standard widget catalogue — actions, display, forms,
-//! choice, controls, people, media, and data. One section per widget family.
+// Components page: the standard widget catalogue — actions, display, forms,
+// choice, controls, people, media, and data. One section per widget family.
 
 import "zeus"
 import "zui:colors"

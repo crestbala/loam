@@ -1,9 +1,9 @@
-//! The stock page binds to `stocks.view()` with `MatchBy` on the load state:
-//! new closes or a range change land in the mounted arm (chart, header,
-//! stats) without rebuilding it. The data server is not running, so the test
-//! publishes the views itself once the dead-server reply has settled.
-//!
-//!     ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/dracula/tests/live_views.loam -o /tmp/l && /tmp/l
+// The stock page binds to `stocks.view()` with `MatchBy` on the load state:
+// new closes or a range change land in the mounted arm (chart, header,
+// stats) without rebuilding it. The data server is not running, so the test
+// publishes the views itself once the dead-server reply has settled.
+//
+//     ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/dracula/tests/live_views.loam -o /tmp/l && /tmp/l
 
 import "std:fmt"
 import "std:sys"

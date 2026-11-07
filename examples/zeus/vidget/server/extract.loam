@@ -1,11 +1,11 @@
-//! Page extractor. Reads a page's `og:` / `<title>` metadata and every
-//! media URL it mentions — in markup, in inline JSON (`https:\/\/…`), or in a
-//! bundled script (a webpack chunk that carries an `.m3u8` string is the
-//! common case).
+// Page extractor. Reads a page's `og:` / `<title>` metadata and every
+// media URL it mentions — in markup, in inline JSON (`https:\/\/…`), or in a
+// bundled script (a webpack chunk that carries an `.m3u8` string is the
+// common case).
 
 import "text.loam"
 
-/// Page metadata plus the media URLs found in it, best first.
+/** *Page metadata plus the media URLs found in it, best first. */
 struct Extracted {
     title: string,
     description: string,
@@ -13,8 +13,8 @@ struct Extracted {
     media: []string,
 }
 
-/// The extensions a media URL may end in. `ts` is last: it only counts when
-/// the URL plainly ends there, so `.tsx` and `.tsv` never match.
+/** *The extensions a media URL may end in. `ts` is last: it only counts when */
+/** *the URL plainly ends there, so `.tsx` and `.tsv` never match. */
 fn media_exts() -> []string {
     return []string {
         "m3u8",
@@ -32,8 +32,8 @@ fn media_exts() -> []string {
     }
 }
 
-/// `&amp;`, `&quot;`, `&#39;`, `&lt;`, `&gt;` and the JSON escapes a URL
-/// picks up inside a script (`\/`, `/`, `&`).
+/** *`&amp;`, `&quot;`, `&#39;`, `&lt;`, `&gt;` and the JSON escapes a URL */
+/** *picks up inside a script (`\/`, `/`, `&`). */
 fn unescape(s: string) -> string {
     let mut t = text.replace(s, "\\/", "/")
     t = text.replace(t, "\\u002F", "/")
@@ -48,7 +48,7 @@ fn unescape(s: string) -> string {
     return t
 }
 
-/// `scheme://host` of `url`, or "".
+/** *`scheme://host` of `url`, or "". */
 fn origin(url: string) -> string {
     let sep = text.index_of(url, "://")
     if sep < 0 {
@@ -61,7 +61,7 @@ fn origin(url: string) -> string {
     return text.slice(url, 0, slash)
 }
 
-/// `url`'s directory, with its trailing `/`.
+/** *`url`'s directory, with its trailing `/`. */
 fn dir_url(url: string) -> string {
     let mut end = url.len
     let q = text.index_of(url, "?")
@@ -80,7 +80,7 @@ fn dir_url(url: string) -> string {
     return text.slice(url, 0, cut + 1)
 }
 
-/// `ref` made absolute against `base` (a page or playlist URL).
+/** *`ref` made absolute against `base` (a page or playlist URL). */
 fn resolve(base: string, ref: string) -> string {
     if text.is_http_url(ref) {
         return ref
@@ -98,7 +98,7 @@ fn resolve(base: string, ref: string) -> string {
     return "{{dir_url(base)}}{{ref}}"
 }
 
-/// A byte that ends a URL in markup, JSON or JS.
+/** *A byte that ends a URL in markup, JSON or JS. */
 fn url_stop(c: int) -> bool {
     return c == 34 ||
         c == 39 ||
@@ -118,7 +118,7 @@ fn url_stop(c: int) -> bool {
         c == 93
 }
 
-/// The quoted `content` value of the `<meta>` tag that names `key`.
+/** *The quoted `content` value of the `<meta>` tag that names `key`. */
 fn meta(html: string, key: string) -> string {
     let mut from = 0
     while true {
@@ -171,8 +171,8 @@ fn title_tag(html: string) -> string {
     return text.trim(unescape(text.slice(html, gt + 1, b)))
 }
 
-/// Does `lo` (a lower-cased URL) point at media? The extension must end the
-/// path: next comes the end, `?`, `#`, or `&` (a URL nested in a query).
+/** *Does `lo` (a lower-cased URL) point at media? The extension must end the */
+/** *path: next comes the end, `?`, `#`, or `&` (a URL nested in a query). */
 fn media_ext_at(lo: string) -> int {
     let exts = media_exts()
     for e in 0..exts.len {
@@ -193,7 +193,7 @@ fn media_ext_at(lo: string) -> int {
     return -1
 }
 
-/// Rank: streams first (they carry every quality), then by container.
+/** *Rank: streams first (they carry every quality), then by container. */
 fn rank(url: string) -> int {
     let e = media_ext_at(text.lower(url))
     if e < 0 {
@@ -211,8 +211,8 @@ fn has(list: []string, s: string) -> bool {
     return false
 }
 
-/// Is the token at `a` a quoted attribute value (`src="clip.mp4"`)? Only
-/// there is a bare relative path a URL; elsewhere it is just text.
+/** *Is the token at `a` a quoted attribute value (`src="clip.mp4"`)? Only */
+/** *there is a bare relative path a URL; elsewhere it is just text. */
 fn attr_value(src: string, a: int) -> bool {
     if a < 2 {
         return false
@@ -221,7 +221,7 @@ fn attr_value(src: string, a: int) -> bool {
     return (qc == 34 || qc == 39) && src[a - 2] == 61
 }
 
-/// Every media URL in `body`, absolute against `base`, best first.
+/** *Every media URL in `body`, absolute against `base`, best first. */
 fn media_urls(body: string, base: string) -> []string {
     let src = unescape(body)
     let lo = text.lower(src)
@@ -285,10 +285,10 @@ fn space_char(c: int) -> bool {
     return c == 32 || c == 9 || c == 10 || c == 13
 }
 
-/// kt_player / KVS `flashvars`: `video_url` is the lowest rendition and
-/// `video_alt_url`, `video_alt_url2`, … climb. The file is `name.mp4/?token`,
-/// which a plain extension scan misses, and the page is full of unrelated
-/// `.mp4/` search links. Best quality first.
+/** *kt_player / KVS `flashvars`: `video_url` is the lowest rendition and */
+/** *`video_alt_url`, `video_alt_url2`, … climb. The file is `name.mp4/?token`, */
+/** *which a plain extension scan misses, and the page is full of unrelated */
+/** *`.mp4/` search links. Best quality first. */
 fn player_media(html: string, base: string) -> []string {
     let src = unescape(html)
     let mut ranks = []int {}
@@ -389,7 +389,7 @@ fn player_media(html: string, base: string) -> []string {
     return urls
 }
 
-/// Metadata and media from one HTML page fetched from `base`.
+/** *Metadata and media from one HTML page fetched from `base`. */
 fn page(html: string, base: string) -> Extracted {
     let mut title = meta(html, "og:title")
     if title == "" {
@@ -433,8 +433,8 @@ fn page(html: string, base: string) -> Extracted {
     return Extracted { title: title, description: desc, thumbnail: thumb, media: media }
 }
 
-/// `src` URLs of the `<script>` tags in `html`, absolute — where a webpack
-/// app keeps the stream URL its player loads.
+/** *`src` URLs of the `<script>` tags in `html`, absolute — where a webpack */
+/** *app keeps the stream URL its player loads. */
 fn scripts(html: string, base: string) -> []string {
     let lo = text.lower(html)
     let mut out = []string {}

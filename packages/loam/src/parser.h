@@ -2,8 +2,8 @@
  * parser.h — recursive-descent parse of a Loam module into an AST.
  *
  * One token of lookahead. `allow_struct_lit` is cleared in condition
- * position so `if x {` is not parsed as a struct literal. `///` / `//!`
- * tokens are attached to items / the module.
+ * position so `if x {` is not parsed as a struct literal. An item doc
+ * attaches to the next item.
  */
 #ifndef LOAM_PARSER_H
 #define LOAM_PARSER_H

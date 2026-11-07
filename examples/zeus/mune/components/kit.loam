@@ -1,6 +1,6 @@
-//! The pieces every Mune panel uses: icons, the panel shell, a labelled
-//! control row, and a value readout. Theme colours only; nothing here reads
-//! the store.
+// The pieces every Mune panel uses: icons, the panel shell, a labelled
+// control row, and a value readout. Theme colours only; nothing here reads
+// the store.
 
 import "zeus"
 import "zui"
@@ -21,7 +21,7 @@ const IC_MOON: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"curre
 const IC_CLIMB: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M3 19c4 0 5-3 8-7s5-7 10-7\"/><path d=\"M17 5h4v4\"/></svg>"
 const IC_VOICE_OFF: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M9 11V5C9 3.3 10.3 2 12 2C13.7 2 15 3.3 15 5V11\"/><path d=\"M5 10C5 13.9 8.1 17 12 17C13.7 17 15.3 16.4 16.5 15.4\"/><path d=\"M12 19v2\"/><path d=\"M3 3l18 18\"/></svg>"
 
-/// A panel: a raised card with a heading, an optional caption, the body.
+/** *A panel: a raised card with a heading, an optional caption, the body. */
 fn Panel(title: string, caption: Signal<string>, body: fn()) -> Node {
     return zeus.Box(style = Style(
         direction = Direction.Column,
@@ -40,13 +40,13 @@ fn Panel(title: string, caption: Signal<string>, body: fn()) -> Node {
     }
 }
 
-/// A small heading inside a panel: "INSTRUMENTS".
+/** *A small heading inside a panel: "INSTRUMENTS". */
 fn Heading(text: string) -> Node {
     return zeus.Text(text, style = Style(font = 11, color = theme.FAINT, paddingTop = 4))
 }
 
-/// Label at the left, the control in the middle, a readout at the right.
-/// Every row in a panel shares the two edge columns, so controls line up.
+/** *Label at the left, the control in the middle, a readout at the right. */
+/** *Every row in a panel shares the two edge columns, so controls line up. */
 fn Row(label: string, value: Signal<string>, control: fn()) -> Node {
     return zeus.Box(style = Style(
         direction = Direction.Row,
@@ -70,11 +70,11 @@ fn Row(label: string, value: Signal<string>, control: fn()) -> Node {
     }
 }
 
-/// Width of a dropdown at the end of a control line (a tone, an echo time).
+/** *Width of a dropdown at the end of a control line (a tone, an echo time). */
 const TAIL_W: int = 104
 
-/// A dropdown of `labels`, `width` px wide, bound to `value`. The menu opens
-/// under it at the same width.
+/** *A dropdown of `labels`, `width` px wide, bound to `value`. The menu opens */
+/** *under it at the same width. */
 fn Choice(value: Signal<int>, labels: []string, label: string, width: int) -> Node {
     return zui.Select(
         value,
@@ -85,19 +85,19 @@ fn Choice(value: Signal<int>, labels: []string, label: string, width: int) -> No
     )
 }
 
-/// A slider in the room's colours: accent fill and knob on a quiet track.
-///
-/// The track always runs 0..100 and follows the pointer continuously; the
-/// value is that position mapped onto `lo..hi`. `zui.Slider` with its own
-/// range snaps the knob to whole steps and nudges a step on every move,
-/// which on a short range (pitch is 25 steps) makes the knob lag behind
-/// the pointer and jump.
-///
-/// Keys move the value, not the track: the native arrows step the track by
-/// 1%, which is a quarter of a semitone on pitch and a crawl on a level.
-/// Arrows step a twentieth of the range (at least one), Shift+arrows one,
-/// Page Up / Page Down a tenth, Home / End the ends. They go in through
-/// `zui.Slider`'s `keys`, named after its own actions so they replace them.
+/** *A slider in the room's colours: accent fill and knob on a quiet track. */
+/** */
+/** *The track always runs 0..100 and follows the pointer continuously; the */
+/** *value is that position mapped onto `lo..hi`. `zui.Slider` with its own */
+/** *range snaps the knob to whole steps and nudges a step on every move, */
+/** *which on a short range (pitch is 25 steps) makes the knob lag behind */
+/** *the pointer and jump. */
+/** */
+/** *Keys move the value, not the track: the native arrows step the track by */
+/** *1%, which is a quarter of a semitone on pitch and a crawl on a level. */
+/** *Arrows step a twentieth of the range (at least one), Shift+arrows one, */
+/** *Page Up / Page Down a tenth, Home / End the ends. They go in through */
+/** *`zui.Slider`'s `keys`, named after its own actions so they replace them. */
 fn Slider(value: Signal<int>, lo: int, hi: int, label: string, off: bool) -> Node {
     let span = if hi > lo { hi - lo } else { 1 }
     let pos = zeus.signal(track_pos(value.peek(), lo, span))
@@ -144,8 +144,8 @@ fn Slider(value: Signal<int>, lo: int, hi: int, label: string, off: bool) -> Nod
     )
 }
 
-/// Arrow step for a range: one unit on a short one (pitch), a twentieth on
-/// a long one (levels, tempo).
+/** *Arrow step for a range: one unit on a short one (pitch), a twentieth on */
+/** *a long one (levels, tempo). */
 fn key_step(span: int) -> int {
     if span <= 30 {
         return 1
@@ -167,7 +167,7 @@ fn track_value(p: int, lo: int, span: int) -> int {
     return lo + (p * span + 50) / 100
 }
 
-/// Light or dark. The whole window repaints: every colour is a role.
+/** *Light or dark. The whole window repaints: every colour is a role. */
 fn ThemeToggle() -> Node {
     return zeus.Box(
         style = Style(
@@ -200,7 +200,7 @@ fn ThemeToggle() -> Node {
     }
 }
 
-/// A small round colour mark.
+/** *A small round colour mark. */
 fn Pip(color: string, size: int) -> Node {
     return zeus.Box(style = Style(
         width = px(size),
@@ -210,7 +210,7 @@ fn Pip(color: string, size: int) -> Node {
     ))
 }
 
-/// Text and a value, both small: "Echo · 35".
+/** *Text and a value, both small: "Echo · 35". */
 fn percent(v: int) -> string {
     return "{{v}}"
 }

@@ -1,16 +1,16 @@
-//! zeli — the Loam/Zeus CLI, written in Loam.
-//!
-//! Built as `bin/zeli` by `make`, and the only implementation of these commands
-//! there is: it was ported from a TypeScript one that has since been removed, so
-//! running a CLI command no longer needs a second language or a second runtime.
-//!
-//!     zeli fmt [dir]        format every .loam under a tree (default: .)
-//!     zeli routes <appdir>  write <appdir>/app_routes.loam from routes/
-//!     zeli new <name> [dir] write a new app and generate its route table
-//!
-//! A command here owns its own walking, quoting and reporting rather than
-//! borrowing the shell: `sys.exec` is the one seam that goes through `sh`, so
-//! every path is quoted on the way in.
+// zeli — the Loam/Zeus CLI, written in Loam.
+//
+// Built as `bin/zeli` by `make`, and the only implementation of these commands
+// there is: it was ported from a TypeScript one that has since been removed, so
+// running a CLI command no longer needs a second language or a second runtime.
+//
+//     zeli fmt [dir]        format every .loam under a tree (default: .)
+//     zeli routes <appdir>  write <appdir>/app_routes.loam from routes/
+//     zeli new <name> [dir] write a new app and generate its route table
+//
+// A command here owns its own walking, quoting and reporting rather than
+// borrowing the shell: `sys.exec` is the one seam that goes through `sh`, so
+// every path is quoted on the way in.
 
 import "std:async"
 import "std:fmt"
@@ -22,7 +22,7 @@ import "std:str"
 import "std:sys"
 import "chunks.loam" as chunks
 
-/// `p` without its last path segment ("" when it has none).
+/** *`p` without its last path segment ("" when it has none). */
 fn dir_of(p: string) -> string {
     let mut cut = -1
     for i in 0..p.len {
@@ -40,8 +40,8 @@ fn dir_of(p: string) -> string {
     return string_from_bytes(b)
 }
 
-/// `dir` with `name` under it. Interpolation rather than `+`: Loam has no string
-/// concatenation operator, and this is the idiom for building a path.
+/** *`dir` with `name` under it. Interpolation rather than `+`: Loam has no string */
+/** *concatenation operator, and this is the idiom for building a path. */
 fn join(dir: string, name: string) -> string {
     if dir == "" {
         return name
@@ -52,10 +52,10 @@ fn join(dir: string, name: string) -> string {
     return "{{dir}}/{{name}}"
 }
 
-/// `s` as one word for the shell: single-quoted, with an embedded quote closed,
-/// backslash-escaped and reopened (`'` -> `'\''`), which is the only character a
-/// single-quoted word cannot carry. This tree really does contain paths like
-/// `routes/(marketing)/about/page.loam`, so nothing here may reach `sh` bare.
+/** *`s` as one word for the shell: single-quoted, with an embedded quote closed, */
+/** *backslash-escaped and reopened (`'` -> `'\''`), which is the only character a */
+/** *single-quoted word cannot carry. This tree really does contain paths like */
+/** *`routes/(marketing)/about/page.loam`, so nothing here may reach `sh` bare. */
 fn shell_quote(s: string) -> string {
     let mut b = []int {}
     push(b, 39) /* ' */
@@ -86,8 +86,8 @@ fn starts_with(s: string, prefix: string) -> bool {
     return true
 }
 
-/// `a` with `b` after it. Strings are values here and a helper cannot append to
-/// one, so building text is a pure function returning a new string.
+/** *`a` with `b` after it. Strings are values here and a helper cannot append to */
+/** *one, so building text is a pure function returning a new string. */
 fn cat(a: string, b: string) -> string {
     let mut x = []int {}
     for i in 0..a.len {
@@ -99,7 +99,7 @@ fn cat(a: string, b: string) -> string {
     return string_from_bytes(x)
 }
 
-/// `s[a..b]` as a new string (empty when the range is empty or backwards).
+/** *`s[a..b]` as a new string (empty when the range is empty or backwards). */
 fn slice(s: string, a: int, b: int) -> string {
     let mut x = []int {}
     if a < b {
@@ -123,7 +123,7 @@ fn ends_with(s: string, suffix: string) -> bool {
     return true
 }
 
-/// Is this a hidden entry (`.git`, `.zeus`, …)? A walk never enters one.
+/** *Is this a hidden entry (`.git`, `.zeus`, …)? A walk never enters one. */
 fn is_dot(name: string) -> bool {
     if name.len == 0 {
         return false
@@ -131,9 +131,9 @@ fn is_dot(name: string) -> bool {
     return name[0] == 46 /* . */
 }
 
-/// A directory a walk never descends into: build output and vendored packages.
-/// Keeping this list identical to the TypeScript CLI's is what makes the two
-/// implementations see the same set of files.
+/** *A directory a walk never descends into: build output and vendored packages. */
+/** *Keeping this list identical to the TypeScript CLI's is what makes the two */
+/** *implementations see the same set of files. */
 fn skip_dir(name: string) -> bool {
     if name == "build" {
         return true
@@ -147,7 +147,7 @@ fn skip_dir(name: string) -> bool {
     return false
 }
 
-/// Every `.loam` under `dir`, directories-first order of sorted listings.
+/** *Every `.loam` under `dir`, directories-first order of sorted listings. */
 fn loam_sources(dir: string) -> []string {
     let mut out = []string {}
     let entries = sys.list_dir(dir)
@@ -174,9 +174,9 @@ fn loam_sources(dir: string) -> []string {
     return out
 }
 
-/// `bin/loam-fmt`, next to this binary: the CLI is run as `./bin/zeli`
-/// from the repo, or as a bare name from `PATH`. Both have to work, so this
-/// prefers the sibling of `argv[0]` and falls back to the name.
+/** *`bin/loam-fmt`, next to this binary: the CLI is run as `./bin/zeli` */
+/** *from the repo, or as a bare name from `PATH`. Both have to work, so this */
+/** *prefers the sibling of `argv[0]` and falls back to the name. */
 fn formatter_path() -> string {
     let d = dir_of(sys.arg(0))
     if d != "" {
@@ -188,12 +188,12 @@ fn formatter_path() -> string {
     return "loam-fmt"
 }
 
-/// `zeli fmt [dir]` — run `loam-fmt` over every `.loam` under `dir` and write
-/// the canonical form back in place.
-///
-/// Files the build generates are left alone: formatting one would only be undone
-/// by the next build. The output matches the TypeScript CLI line for line on the
-/// success path, which is what the suite checks.
+/** *`zeli fmt [dir]` — run `loam-fmt` over every `.loam` under `dir` and write */
+/** *the canonical form back in place. */
+/** */
+/** *Files the build generates are left alone: formatting one would only be undone */
+/** *by the next build. The output matches the TypeScript CLI line for line on the */
+/** *success path, which is what the suite checks. */
 fn fmt(dir: string) -> int {
     let tool = formatter_path()
     if sys.exists(tool) == 0 {
@@ -244,12 +244,12 @@ fn fmt(dir: string) -> int {
 // agree with its Node counterpart exactly: the commands that use them are the
 // ones whose output the suite diffs against the TypeScript CLI.
 
-/// `p` with `.` segments dropped, `..` resolved against what precedes them, and
-/// no trailing `/`. An empty result means "here". `path.resolve` normalises this
-/// way, and it is what makes the printed paths equal to the TypeScript CLI's.
-///
-/// Written as its own scan rather than on `segments`, which is declared further
-/// down with the route helpers.
+/** *`p` with `.` segments dropped, `..` resolved against what precedes them, and */
+/** *no trailing `/`. An empty result means "here". `path.resolve` normalises this */
+/** *way, and it is what makes the printed paths equal to the TypeScript CLI's. */
+/** */
+/** *Written as its own scan rather than on `segments`, which is declared further */
+/** *down with the route helpers. */
 fn normalize(p: string) -> string {
     let abs = starts_with(p, "/")
     let mut parts = []string {}
@@ -301,8 +301,8 @@ fn normalize(p: string) -> string {
     return r
 }
 
-/// `p` as an absolute path: itself when it already is one, else under the
-/// working directory. The `path.resolve` of the TypeScript CLI.
+/** *`p` as an absolute path: itself when it already is one, else under the */
+/** *working directory. The `path.resolve` of the TypeScript CLI. */
 fn abs_path(p: string) -> string {
     if starts_with(p, "/") {
         return normalize(p)
@@ -314,9 +314,9 @@ fn abs_path(p: string) -> string {
     return normalize(cat(cat(cwd, "/"), p))
 }
 
-/// `p` relative to `base` when `base` is a prefix of it, else `p`. Both are
-/// expected to be normalised already. `path.relative`, used to print paths the
-/// way the TypeScript CLI does.
+/** *`p` relative to `base` when `base` is a prefix of it, else `p`. Both are */
+/** *expected to be normalised already. `path.relative`, used to print paths the */
+/** *way the TypeScript CLI does. */
 fn rel_to(base: string, p: string) -> string {
     if base == "" {
         return p
@@ -334,7 +334,7 @@ fn rel_to(base: string, p: string) -> string {
     return rest
 }
 
-/// The last segment of `p` (`path.basename`).
+/** *The last segment of `p` (`path.basename`). */
 fn base_name(p: string) -> string {
     let mut cut = -1
     for i in 0..p.len {
@@ -345,7 +345,7 @@ fn base_name(p: string) -> string {
     return slice(p, cut + 1, p.len)
 }
 
-/// `s` without `suf` when it ends with it (`path.basename(p, suf)`).
+/** *`s` without `suf` when it ends with it (`path.basename(p, suf)`). */
 fn drop_suffix(s: string, suf: string) -> string {
     if !ends_with(s, suf) {
         return s
@@ -353,8 +353,8 @@ fn drop_suffix(s: string, suf: string) -> string {
     return slice(s, 0, s.len - suf.len)
 }
 
-/// `s` without one trailing `/` (`s.replace(/\/$/, "")`). Only one: the pattern
-/// has no `g`, and `base` in `--base` can end with a single slash.
+/** *`s` without one trailing `/` (`s.replace(/\/$/, "")`). Only one: the pattern */
+/** *has no `g`, and `base` in `--base` can end with a single slash. */
 fn strip_slash(s: string) -> string {
     if ends_with(s, "/") {
         return slice(s, 0, s.len - 1)
@@ -362,7 +362,7 @@ fn strip_slash(s: string) -> string {
     return s
 }
 
-/// `s` without one leading `/` (`s.replace(/^\//, "")`).
+/** *`s` without one leading `/` (`s.replace(/^\//, "")`). */
 fn strip_lead_slash(s: string) -> string {
     if starts_with(s, "/") {
         return slice(s, 1, s.len)
@@ -370,8 +370,8 @@ fn strip_lead_slash(s: string) -> string {
     return s
 }
 
-/// `s` split on `\n`. A trailing newline yields no final empty line, which is
-/// what the callers here want: the metadata dump ends with one.
+/** *`s` split on `\n`. A trailing newline yields no final empty line, which is */
+/** *what the callers here want: the metadata dump ends with one. */
 fn split_lines(s: string) -> []string {
     let mut out = []string {}
     let mut start = 0
@@ -387,7 +387,7 @@ fn split_lines(s: string) -> []string {
     return out
 }
 
-/// `s` split on the byte `ch`, keeping empty pieces (`String.split`).
+/** *`s` split on the byte `ch`, keeping empty pieces (`String.split`). */
 fn split_on(s: string, ch: int) -> []string {
     let mut out = []string {}
     let mut start = 0
@@ -401,8 +401,8 @@ fn split_on(s: string, ch: int) -> []string {
     return out
 }
 
-/// `s` without leading or trailing whitespace (`String.trim`). Carriage returns
-/// count, so a line that came through a CRLF file or a pipe is still clean.
+/** *`s` without leading or trailing whitespace (`String.trim`). Carriage returns */
+/** *count, so a line that came through a CRLF file or a pipe is still clean. */
 fn trim(s: string) -> string {
     let mut a = 0
     while a < s.len {
@@ -425,8 +425,8 @@ fn trim(s: string) -> string {
     return slice(s, a, b)
 }
 
-/// `1` when `word` sits in `s` at `at` — a local scan, so this needs nothing
-/// from the route helpers further down.
+/** *`1` when `word` sits in `s` at `at` — a local scan, so this needs nothing */
+/** *from the route helpers further down. */
 fn at_word(s: string, at: int, word: string) -> int {
     if at + word.len > s.len {
         return 0
@@ -439,8 +439,8 @@ fn at_word(s: string, at: int, word: string) -> int {
     return 1
 }
 
-/// `s` with every occurrence of `from` replaced by `to`. `from` must not be
-/// empty; the scan does not rescan what it inserted.
+/** *`s` with every occurrence of `from` replaced by `to`. `from` must not be */
+/** *empty; the scan does not rescan what it inserted. */
 fn replace_all(s: string, from: string, to: string) -> string {
     if from.len == 0 {
         return s
@@ -459,8 +459,8 @@ fn replace_all(s: string, from: string, to: string) -> string {
     return r
 }
 
-/// `s` safe in an HTML attribute or text node. The order is the TypeScript
-/// CLI's: the ampersand first, so the entities it writes are not escaped again.
+/** *`s` safe in an HTML attribute or text node. The order is the TypeScript */
+/** *CLI's: the ampersand first, so the entities it writes are not escaped again. */
 fn esc(s: string) -> string {
     let mut r = replace_all(s, "&", "&amp;")
     r = replace_all(r, "<", "&lt;")
@@ -469,8 +469,8 @@ fn esc(s: string) -> string {
     return r
 }
 
-/// `needle` in `hay`. The server asks it of a request's content type, and
-/// the tests ask it of the injected snippet.
+/** *`needle` in `hay`. The server asks it of a request's content type, and */
+/** *the tests ask it of the injected snippet. */
 fn contains_str(hay: string, needle: string) -> bool {
     if needle.len > hay.len {
         return false
@@ -489,9 +489,9 @@ fn contains_str(hay: string, needle: string) -> bool {
     return false
 }
 
-/// Where `needle` first sits in `hay`, or `-1`. `contains_str` answers the
-/// yes/no question; this is the one that has to say where, for the ids the CLI
-/// reads back out of an artifact the compiler wrote.
+/** *Where `needle` first sits in `hay`, or `-1`. `contains_str` answers the */
+/** *yes/no question; this is the one that has to say where, for the ids the CLI */
+/** *reads back out of an artifact the compiler wrote. */
 fn idx_of(hay: string, needle: string) -> int {
     if needle.len == 0 || needle.len > hay.len {
         return -1
@@ -510,9 +510,9 @@ fn idx_of(hay: string, needle: string) -> int {
     return -1
 }
 
-/// The text between `open` and the next `stop` byte, or `""` when `open` is not
-/// there. `Info.plist` and `build.gradle` are both read this way: one tagged
-/// value out of a file whose shape belongs to the compiler.
+/** *The text between `open` and the next `stop` byte, or `""` when `open` is not */
+/** *there. `Info.plist` and `build.gradle` are both read this way: one tagged */
+/** *value out of a file whose shape belongs to the compiler. */
 fn between(text: string, open: string, stop: int) -> string {
     let at = idx_of(text, open)
     if at < 0 {
@@ -527,8 +527,8 @@ fn between(text: string, open: string, stop: int) -> string {
     return string_from_bytes(bs)
 }
 
-/// Every line of `s` prefixed with `pad`. The two-space indent the CLI puts
-/// under a `failed` line, so compiler output stays readable in a terminal.
+/** *Every line of `s` prefixed with `pad`. The two-space indent the CLI puts */
+/** *under a `failed` line, so compiler output stays readable in a terminal. */
 fn indent_lines(s: string, pad: string) -> string {
     let lines = split_lines(s)
     let mut r = ""
@@ -541,8 +541,8 @@ fn indent_lines(s: string, pad: string) -> string {
     return r
 }
 
-/// `lines` joined with `\n` and closed with one, which is how the generated
-/// files in this tree end.
+/** *`lines` joined with `\n` and closed with one, which is how the generated */
+/** *files in this tree end. */
 fn join_lines(lines: []string) -> string {
     let mut r = ""
     for i in 0..lines.len {
@@ -554,7 +554,7 @@ fn join_lines(lines: []string) -> string {
     return cat(r, "\n")
 }
 
-/// `p` is an absolute `http:`/`https:` URL (`/^https?:\/\//`).
+/** *`p` is an absolute `http:`/`https:` URL (`/^https?:\/\//`). */
 fn is_http(s: string) -> bool {
     if starts_with(s, "http://") {
         return true
@@ -562,8 +562,8 @@ fn is_http(s: string) -> bool {
     return starts_with(s, "https://")
 }
 
-/// `base` and `p` joined into an absolute canonical URL, or `p` alone when it
-/// is already one or no `--base` was given.
+/** *`base` and `p` joined into an absolute canonical URL, or `p` alone when it */
+/** *is already one or no `--base` was given. */
 fn canonical_url(base: string, p: string) -> string {
     if is_http(p) {
         return p
@@ -577,9 +577,9 @@ fn canonical_url(base: string, p: string) -> string {
     return cat(cat(strip_slash(base), "/"), p)
 }
 
-/// The repository root. `bin/zeli` sits in `<repo>/bin`, so two levels up from
-/// the binary; with no directory in `argv[0]` (a bare `zeli` from
-/// `PATH`) the working directory is the best answer available.
+/** *The repository root. `bin/zeli` sits in `<repo>/bin`, so two levels up from */
+/** *the binary; with no directory in `argv[0]` (a bare `zeli` from */
+/** *`PATH`) the working directory is the best answer available. */
 fn repo_root() -> string {
     let bin = dir_of(sys.arg(0))
     if bin == "" {
@@ -592,22 +592,22 @@ fn repo_root() -> string {
     return abs_path(up)
 }
 
-/// `bin/loamc`, the compiler this CLI drives. It is looked up beside this
-/// binary and not through `PATH`, so a checkout can never pick up a different
-/// compiler than the one it built.
+/** *`bin/loamc`, the compiler this CLI drives. It is looked up beside this */
+/** *binary and not through `PATH`, so a checkout can never pick up a different */
+/** *compiler than the one it built. */
 fn loam_path() -> string {
     return join(repo_root(), "bin/loamc")
 }
 
-/// The TypeScript CLI's `die`: report and exit 2. The message goes to stdout
-/// here rather than stderr — `std:fmt` has no stderr writer, and the suite
-/// normalises the two streams when it diffs the CLIs.
+/** *The TypeScript CLI's `die`: report and exit 2. The message goes to stdout */
+/** *here rather than stderr — `std:fmt` has no stderr writer, and the suite */
+/** *normalises the two streams when it diffs the CLIs. */
 fn die(msg: string) {
     say(msg)
     sys.exit(2)
 }
 
-/// `die` with captured output indented under the headline.
+/** *`die` with captured output indented under the headline. */
 fn die_extra(head: string, body: string) {
     if body == "" {
         die(head)
@@ -616,23 +616,23 @@ fn die_extra(head: string, body: string) {
     sys.exit(2)
 }
 
-/// Run `bin/loamc` with `args` (already quoted) from the repo root, stderr
-/// merged into stdout. `env` is a `NAME=1` prefix, or `""`.
-///
-/// The headless switches are unset: they are compile-time — they decide whether
-/// a GUI host is linked — and the test runner exports them for *running*
-/// fixtures. A user build must not inherit them, or it silently produces a
-/// windowless binary.
-///
-/// `env` is applied to the `loamc` word itself, never to the `cd`: an
-/// assignment before `cd` scopes to that builtin alone and the compiler then
-/// runs without it — which for `LOAM_NO_DCE` means DCE silently returns and the
-/// metadata dump fails to compile.
+/** *Run `bin/loamc` with `args` (already quoted) from the repo root, stderr */
+/** *merged into stdout. `env` is a `NAME=1` prefix, or `""`. */
+/** */
+/** *The headless switches are unset: they are compile-time — they decide whether */
+/** *a GUI host is linked — and the test runner exports them for *running* */
+/** *fixtures. A user build must not inherit them, or it silently produces a */
+/** *windowless binary. */
+/** */
+/** *`env` is applied to the `loamc` word itself, never to the `cd`: an */
+/** *assignment before `cd` scopes to that builtin alone and the compiler then */
+/** *runs without it — which for `LOAM_NO_DCE` means DCE silently returns and the */
+/** *metadata dump fails to compile. */
 fn run_loam(env: string, args: string) -> string {
     return sys.exec(loam_cmd(env, args))
 }
 
-/// The shell command `run_loam` runs, for a caller running several at once.
+/** *The shell command `run_loam` runs, for a caller running several at once. */
 fn loam_cmd(env: string, args: string) -> string {
     let mut envs = ""
     if env != "" {
@@ -641,19 +641,19 @@ fn loam_cmd(env: string, args: string) -> string {
     return "unset ZEUS_HEADLESS LOAM_HEADLESS MAYA_HEADLESS; cd {{shell_quote(repo_root())}} && {{envs}}{{shell_quote(loam_path())}} {{args}} 2>&1"
 }
 
-/// What one command in `run_jobs` did: whether it exited 0, and its output.
+/** *What one command in `run_jobs` did: whether it exited 0, and its output. */
 struct JobResult {
     ok: bool,
     log: string,
 }
 
-/// Run shell commands side by side and return when all have finished, in the
-/// order given. `dir` holds each one's output and exit status until they are
-/// read back; a single command runs inline and leaves nothing there.
-///
-/// A compile is one clang on one core, so a build made of several gets the
-/// machine's other cores this way, and it costs as long as its slowest command
-/// rather than the sum of them.
+/** *Run shell commands side by side and return when all have finished, in the */
+/** *order given. `dir` holds each one's output and exit status until they are */
+/** *read back; a single command runs inline and leaves nothing there. */
+/** */
+/** *A compile is one clang on one core, so a build made of several gets the */
+/** *machine's other cores this way, and it costs as long as its slowest command */
+/** *rather than the sum of them. */
 fn run_jobs(dir: string, cmds: []string) -> []JobResult {
     let mut out = []JobResult {}
     if cmds.len == 1 && !ui_on {
@@ -690,7 +690,7 @@ fn run_jobs(dir: string, cmds: []string) -> []JobResult {
     return out
 }
 
-/// Keep the panel moving until all `n` jobs under `dir` have an exit status.
+/** *Keep the panel moving until all `n` jobs under `dir` have an exit status. */
 fn wait_jobs(dir: string, n: int) {
     while true {
         let mut done = 0
@@ -705,7 +705,7 @@ fn wait_jobs(dir: string, n: int) {
     }
 }
 
-/// Run `cmd` from the repo root, stderr merged into stdout.
+/** *Run `cmd` from the repo root, stderr merged into stdout. */
 fn run_here(cmd: string) -> string {
     return sys.exec("cd {{shell_quote(repo_root())}} && {{cmd}} 2>&1")
 }
@@ -726,28 +726,28 @@ fn run_here(cmd: string) -> string {
 let UI_RUN: int = 0
 let UI_OK: int = 1
 let UI_FAILED: int = 2
-/// How long a single compile is assumed to take before one has been timed.
+/** *How long a single compile is assumed to take before one has been timed. */
 let UI_FIRST_GUESS_MS: int = 15000
 let UI_MAX_WIDTH: int = 86
-/// Where the right column starts, counted from the right border.
+/** *Where the right column starts, counted from the right border. */
 let UI_RIGHT_ROOM: int = 28
-/// Below this the right column is dropped; below `UI_MIN_WIDTH`, the panel.
+/** *Below this the right column is dropped; below `UI_MIN_WIDTH`, the panel. */
 let UI_WIDE: int = 72
 let UI_MIN_WIDTH: int = 44
 let UI_LABEL_COL: int = 12
 
-/// One line of the panel.
+/** *One line of the panel. */
 struct Bar {
     label: string,
-    /// The file `loamc` reports to; empty for a bar zeli moves itself.
+    /** *The file `loamc` reports to; empty for a bar zeli moves itself. */
     progress: string,
-    /// Bytes of `progress` already applied.
+    /** *Bytes of `progress` already applied. */
     read: int,
-    /// The `run_jobs` index this bar waits on, or -1.
+    /** *The `run_jobs` index this bar waits on, or -1. */
     job: int,
-    /// Whether that job is the end of the bar, or only of its first step.
+    /** *Whether that job is the end of the bar, or only of its first step. */
     job_ends: bool,
-    /// Percent now, and where the current step began and ends.
+    /** *Percent now, and where the current step began and ends. */
     pct: int,
     lo: int,
     hi: int,
@@ -755,7 +755,7 @@ struct Bar {
     state: int,
     started: i64,
     ms: int,
-    /// Set during a compile that reports nothing: `pct` follows the clock.
+    /** *Set during a compile that reports nothing: `pct` follows the clock. */
     timed_from: i64,
     guess_ms: int,
 }
@@ -766,9 +766,9 @@ let mut ui_esc: string = ""
 let mut ui_color: bool = true
 let mut ui_width: int = 0
 let mut ui_bars: []Bar = []Bar {}
-/// The bar for what follows the compile, or -1.
+/** *The bar for what follows the compile, or -1. */
 let mut ui_bundle: int = -1
-/// What the running jobs are, when each finished job moves `ui_bundle` along.
+/** *What the running jobs are, when each finished job moves `ui_bundle` along. */
 let mut ui_counting: string = ""
 let mut ui_drawn: int = 0
 let mut ui_frame_last: string = ""
@@ -777,12 +777,12 @@ let mut ui_url: string = ""
 let mut ui_modules: int = 0
 let mut ui_units: int = 0
 let mut ui_t0: i64 = 0
-/// The status once nothing is running: its text, and what makes it a failure.
+/** *The status once nothing is running: its text, and what makes it a failure. */
 let mut ui_status: string = ""
 let mut ui_status_bad: bool = false
 let mut ui_status_ms: int = -1
 
-/// Turn the panel on, if stdout can show one and is wide enough.
+/** *Turn the panel on, if stdout can show one and is wide enough. */
 fn ui_open(platform: string, serving: bool) {
     if sys.stdout_tty() == 0 {
         return
@@ -806,14 +806,14 @@ fn ui_open(platform: string, serving: bool) {
     ui_on = true
 }
 
-/// Leave the panel where it is and go back to plain output.
+/** *Leave the panel where it is and go back to plain output. */
 fn ui_close() {
     ui_draw()
     ui_on = false
     ui_drawn = 0
 }
 
-/// Start a fresh set of bars.
+/** *Start a fresh set of bars. */
 fn ui_build_begin() {
     if ui_on {
         ui_bars = []Bar {}
@@ -825,7 +825,7 @@ fn ui_build_begin() {
     }
 }
 
-/// Add a bar and return its index. An empty `report` is a bar zeli moves itself.
+/** *Add a bar and return its index. An empty `report` is a bar zeli moves itself. */
 fn ui_add(label: string, report: string, job: int, job_ends: bool, note: string) -> int {
     if !ui_on {
         return -1
@@ -857,7 +857,7 @@ fn ui_add(label: string, report: string, job: int, job_ends: bool, note: string)
     return ui_bars.len - 1
 }
 
-/// The `LOAM_PROGRESS` file for `name`, emptied, or `""` with the panel off.
+/** *The `LOAM_PROGRESS` file for `name`, emptied, or `""` with the panel off. */
 fn ui_report_file(appdir: string, name: string) -> string {
     if !ui_on {
         return ""
@@ -869,7 +869,7 @@ fn ui_report_file(appdir: string, name: string) -> string {
     return file
 }
 
-/// `file` as an assignment for `loam_cmd`, after any assignments in `env`.
+/** *`file` as an assignment for `loam_cmd`, after any assignments in `env`. */
 fn ui_env(env: string, file: string) -> string {
     if file == "" {
         return env
@@ -881,7 +881,7 @@ fn ui_env(env: string, file: string) -> string {
     return cat(cat(env, " "), set)
 }
 
-/// Move bar `i` to `pct`, with the next step ending at `hi`.
+/** *Move bar `i` to `pct`, with the next step ending at `hi`. */
 fn ui_step(i: int, pct: int, hi: int, note: string) {
     if ui_on && i >= 0 {
         ui_bars[i].pct = pct
@@ -908,14 +908,14 @@ fn ui_bar_end(i: int, state: int) {
     }
 }
 
-/// End every bar still running as failed, for a build that is over.
+/** *End every bar still running as failed, for a build that is over. */
 fn ui_stop_bars() {
     for i in 0..ui_bars.len {
         ui_bar_end(i, UI_FAILED)
     }
 }
 
-/// Set the line under the bars.
+/** *Set the line under the bars. */
 fn ui_set_status(text: string, bad: bool, ms: int) {
     if ui_on {
         ui_status = text
@@ -925,12 +925,12 @@ fn ui_set_status(text: string, bad: bool, ms: int) {
     }
 }
 
-/// How long the build since `ui_build_begin` took.
+/** *How long the build since `ui_build_begin` took. */
 fn ui_build_ms() -> int {
     return int(async.now_ms() - ui_t0)
 }
 
-/// Apply one line of a `LOAM_PROGRESS` file to bar `i`.
+/** *Apply one line of a `LOAM_PROGRESS` file to bar `i`. */
 fn ui_apply(i: int, line: string) {
     let w = split_on(line, 32)
     let stage = w[0]
@@ -958,8 +958,8 @@ fn ui_apply(i: int, line: string) {
     }
 }
 
-/// Bring every bar up to date, given that `done` of `total` jobs under `dir` have
-/// finished, and redraw.
+/** *Bring every bar up to date, given that `done` of `total` jobs under `dir` have */
+/** *finished, and redraw. */
 fn ui_poll(dir: string, done: int, total: int) {
     for i in 0..ui_bars.len {
         if ui_bars[i].state != UI_RUN {
@@ -1024,7 +1024,7 @@ fn ui_amber(text: string) -> string {
     return ui_paint("33", text)
 }
 
-/// `text`, cut to `n` bytes. It is ASCII: target names.
+/** *`text`, cut to `n` bytes. It is ASCII: target names. */
 fn ui_clip(text: string, n: int) -> string {
     if text.len <= n {
         return text
@@ -1040,18 +1040,18 @@ fn ui_repeat(text: string, n: int) -> string {
     return out
 }
 
-/// Move to column `col` of this line. Emoji are not the same width on every
-/// terminal, so nothing to the right of one is placed by counting.
+/** *Move to column `col` of this line. Emoji are not the same width on every */
+/** *terminal, so nothing to the right of one is placed by counting. */
 fn ui_col(col: int) -> string {
     return "{{ui_esc}}[{{col}}G"
 }
 
-/// `ms` as `2.1s`.
+/** *`ms` as `2.1s`. */
 fn ui_time(ms: int) -> string {
     return "{{ms / 1000}}.{{ms % 1000 / 100}}s"
 }
 
-/// `done`, `failed` or `running`, by a bar's state.
+/** *`done`, `failed` or `running`, by a bar's state. */
 fn ui_tone(state: int, done: string, failed: string, running: string) -> string {
     if state == UI_OK {
         return done
@@ -1059,7 +1059,7 @@ fn ui_tone(state: int, done: string, failed: string, running: string) -> string 
     return if state == UI_FAILED { failed } else { running }
 }
 
-/// The bar's cells, then its percent and time.
+/** *The bar's cells, then its percent and time. */
 fn ui_cells(b: Bar, width: int) -> string {
     let fill = width * b.pct / 100
     let color = ui_tone(b.state, "32", "31", "36")
@@ -1077,7 +1077,7 @@ fn ui_pad_left(text: string, n: int) -> string {
     return cat(ui_repeat(" ", n - text.len), text)
 }
 
-/// The status row, from the first bar still running or else what was last set.
+/** *The status row, from the first bar still running or else what was last set. */
 fn ui_status_row() -> string {
     for i in 0..ui_bars.len {
         if ui_bars[i].state == UI_RUN {
@@ -1093,7 +1093,7 @@ fn ui_status_row() -> string {
     return "{{text}} {{ui_dim(ui_time(ui_status_ms))}}"
 }
 
-/// The right column, one entry per row.
+/** *The right column, one entry per row. */
 fn ui_facts() -> []string {
     let mut out = []string {}
     if ui_width < UI_WIDE {
@@ -1120,7 +1120,7 @@ fn ui_line(left: string, fact: string) -> string {
     return cat(cat(out, ui_col(ui_width)), "{{side}}\n")
 }
 
-/// The whole panel, one string so it reaches the terminal in one write.
+/** *The whole panel, one string so it reaches the terminal in one write. */
 fn ui_frame() -> string {
     let hint = if ui_serving_mode { " Ctrl-C to stop ─" } else { "" }
     let hint_cells = if ui_serving_mode { 17 } else { 0 }
@@ -1148,7 +1148,7 @@ fn ui_frame() -> string {
     return cat(out, ui_dim(cat(cat("╰", ui_repeat("─", width)), "╯\n")))
 }
 
-/// Clear the panel and leave the cursor where it began.
+/** *Clear the panel and leave the cursor where it began. */
 fn ui_erase() {
     if ui_drawn > 0 {
         fmt.write("\r{{ui_esc}}[{{ui_drawn}}A{{ui_esc}}[J")
@@ -1166,7 +1166,7 @@ fn ui_write_frame(frame: string) {
     }
 }
 
-/// Redraw if anything on the panel changed.
+/** *Redraw if anything on the panel changed. */
 fn ui_draw() {
     if ui_on {
         let frame = ui_frame()
@@ -1177,7 +1177,7 @@ fn ui_draw() {
     }
 }
 
-/// A line of output: above the panel when there is one.
+/** *A line of output: above the panel when there is one. */
 fn say(msg: string) {
     if ui_drawn == 0 {
         fmt.println(msg)
@@ -1188,7 +1188,7 @@ fn say(msg: string) {
     ui_write_frame(ui_frame())
 }
 
-/// A line the panel already shows while serving.
+/** *A line the panel already shows while serving. */
 fn chat(msg: string) {
     if !ui_on || !ui_serving_mode {
         say(msg)
@@ -1251,7 +1251,7 @@ fn dash_to_underscore(s: string) -> string {
     return string_from_bytes(x)
 }
 
-/// `s` from `i`, with spaces and tabs skipped.
+/** *`s` from `i`, with spaces and tabs skipped. */
 fn after_spaces(s: string, i: int) -> int {
     let mut j = i
     while j < s.len {
@@ -1276,9 +1276,9 @@ fn match_at(s: string, i: int, word: string) -> int {
     return 1
 }
 
-/// `1` when the source defines `fn <name> (`. This is what the TypeScript CLI
-/// tests with `\bfn\s+name\s*\(`, and it decides whether the route table wires
-/// up `meta` / `paths` for a page.
+/** *`1` when the source defines `fn <name> (`. This is what the TypeScript CLI */
+/** *tests with `\bfn\s+name\s*\(`, and it decides whether the route table wires */
+/** *up `meta` / `paths` for a page. */
 fn has_fn(src: string, name: string) -> int {
     let mut i = 0
     while i + 2 < src.len {
@@ -1300,7 +1300,7 @@ fn has_fn(src: string, name: string) -> int {
     return 0
 }
 
-/// `rel` split on `/` (empty when it is empty).
+/** *`rel` split on `/` (empty when it is empty). */
 fn segments(rel: string) -> []string {
     let mut out = []string {}
     if rel == "" {
@@ -1318,8 +1318,8 @@ fn segments(rel: string) -> []string {
     return out
 }
 
-/// The URL pattern a route directory serves: `(group)` segments drop out and
-/// `[x]` becomes `:x`.
+/** *The URL pattern a route directory serves: `(group)` segments drop out and */
+/** *`[x]` becomes `:x`. */
 fn url_for(rel: string) -> string {
     let segs = segments(rel)
     let mut url = ""
@@ -1340,8 +1340,8 @@ fn url_for(rel: string) -> string {
     return url
 }
 
-/// The import alias for a route file: `(group)` and `[param]` lose their
-/// brackets and `-` becomes `_`.
+/** *The import alias for a route file: `(group)` and `[param]` lose their */
+/** *brackets and `-` becomes `_`. */
 fn alias_for(rel: string, kind: string) -> string {
     let mut name = "root"
     let segs = segments(rel)
@@ -1360,7 +1360,7 @@ fn alias_for(rel: string, kind: string) -> string {
     return cat(cat(cat("r_", name), "_"), kind)
 }
 
-/// `rel` under `root` ("" keeps `root` itself).
+/** *`rel` under `root` ("" keeps `root` itself). */
 fn under(root: string, rel: string) -> string {
     if rel == "" {
         return root
@@ -1368,7 +1368,7 @@ fn under(root: string, rel: string) -> string {
     return join(root, rel)
 }
 
-/// `rel` cut after its `keep`-th segment.
+/** *`rel` cut after its `keep`-th segment. */
 fn first_segments(rel: string, keep: int) -> string {
     let mut seen = 0
     let mut i = 0
@@ -1406,8 +1406,8 @@ fn index_of(keys: []string, key: string) -> int {
     return -1
 }
 
-/// `1` when `a` sorts after `b` byte for byte — the order the TypeScript CLI's
-/// `Array.sort()` gives for these paths.
+/** *`1` when `a` sorts after `b` byte for byte — the order the TypeScript CLI's */
+/** *`Array.sort()` gives for these paths. */
 fn str_gt(a: string, b: string) -> int {
     let mut n = a.len
     if b.len < n {
@@ -1429,7 +1429,7 @@ fn str_gt(a: string, b: string) -> int {
     return 0
 }
 
-/// Does this directory hold a file the route table cares about?
+/** *Does this directory hold a file the route table cares about? */
 fn is_route_dir(here: string) -> int {
     if sys.exists(join(here, "page.loam")) == 1 {
         return 1
@@ -1443,9 +1443,9 @@ fn is_route_dir(here: string) -> int {
     return 0
 }
 
-/// Every directory under `routes/` that holds a route file, as a path relative
-/// to `routes/` ("" for the root), parents before children so a layout is always
-/// known by the time the page beneath it is wrapped.
+/** *Every directory under `routes/` that holds a route file, as a path relative */
+/** *to `routes/` ("" for the root), parents before children so a layout is always */
+/** *known by the time the page beneath it is wrapped. */
 fn route_dirs(routes: string, rel: string) -> []string {
     let mut out = []string {}
     let here = under(routes, rel)
@@ -1468,9 +1468,9 @@ fn route_dirs(routes: string, rel: string) -> []string {
     return out
 }
 
-/// What the generated app records: `zeus.toml`'s `logs` (`"all"`, `"debug"`,
-/// `"errors"`, `"off"`), else everything, in a release too. `""` after reporting
-/// a value that is none of these.
+/** *What the generated app records: `zeus.toml`'s `logs` (`"all"`, `"debug"`, */
+/** *`"errors"`, `"off"`), else everything, in a release too. `""` after reporting */
+/** *a value that is none of these. */
 fn logs_mode(appdir: string) -> string {
     let set = toml_str(appdir, "logs")
     if set == "" {
@@ -1483,10 +1483,10 @@ fn logs_mode(appdir: string) -> string {
     return ""
 }
 
-/// Write `<appdir>/app_routes.loam` from the `routes/` tree and return its
-/// path, or `""` after reporting why not. The worker behind both
-/// `zeli routes` and `zeli new`, which reports differently — which is why this
-/// one does not print on success.
+/** *Write `<appdir>/app_routes.loam` from the `routes/` tree and return its */
+/** *path, or `""` after reporting why not. The worker behind both */
+/** *`zeli routes` and `zeli new`, which reports differently — which is why this */
+/** *one does not print on success. */
 fn generate(appdir: string) -> string {
     let routes_dir = join(appdir, "routes")
     if sys.is_dir(routes_dir) == 0 {
@@ -1694,7 +1694,7 @@ fn generate(appdir: string) -> string {
     return out
 }
 
-/// `zeli routes <appdir>` — regenerate the route table and say so.
+/** *`zeli routes <appdir>` — regenerate the route table and say so. */
 fn routes(appdir: string) -> int {
     let out = generate(appdir)
     if out == "" {
@@ -1713,8 +1713,8 @@ fn routes(appdir: string) -> int {
 // `live_snippet`) so they can be read and tested as source rather than only
 // through a running server.
 
-/// The decimal integer in `s`, or `-1` when it holds none. Only what `--port`
-/// needs: an optional run of leading spaces, then digits.
+/** *The decimal integer in `s`, or `-1` when it holds none. Only what `--port` */
+/** *needs: an optional run of leading spaces, then digits. */
 fn int_of(s: string) -> int {
     let mut i = 0
     while i < s.len {
@@ -1741,9 +1741,9 @@ fn int_of(s: string) -> int {
     return n
 }
 
-/// `n` in decimal, as a string — the reverse of `int_of`. `std:fmt` writes an
-/// integer to stdout instead of returning it, and what is needed here is one
-/// inside a shell command: a pid to signal, a count to report.
+/** *`n` in decimal, as a string — the reverse of `int_of`. `std:fmt` writes an */
+/** *integer to stdout instead of returning it, and what is needed here is one */
+/** *inside a shell command: a pid to signal, a count to report. */
 fn int_str(n: int) -> string {
     let mut v = n
     if v < 0 {
@@ -1766,44 +1766,44 @@ fn int_str(n: int) -> string {
     return string_from_bytes(out)
 }
 
-/// The Server-Sent Events channel the injected snippet subscribes to.
+/** *The Server-Sent Events channel the injected snippet subscribes to. */
 fn live_path() -> string {
     return "/.zeli-live"
 }
 
-/// One SSE frame. `EventSource.onmessage` receives the payload as `data`.
+/** *One SSE frame. `EventSource.onmessage` receives the payload as `data`. */
 fn sse_frame(rev: int) -> string {
     return "data: {{rev}}\n\n"
 }
 
-/// The live-reload script injected into every served HTML page.
-///
-/// The server pushes a frame per successful rebuild, so an idle tab holds one
-/// open connection and does nothing — no `setInterval`, no request a second.
-/// `EventSource` reconnects by itself if the server restarts. The first
-/// frame on connect is the current revision: a baseline, not a reload. Only a
-/// later, different revision reloads, and it saves the signal arena first so an
-/// edit does not throw away app state.
+/** *The live-reload script injected into every served HTML page. */
+/** */
+/** *The server pushes a frame per successful rebuild, so an idle tab holds one */
+/** *open connection and does nothing — no `setInterval`, no request a second. */
+/** *`EventSource` reconnects by itself if the server restarts. The first */
+/** *frame on connect is the current revision: a baseline, not a reload. Only a */
+/** *later, different revision reloads, and it saves the signal arena first so an */
+/** *edit does not throw away app state. */
 fn live_snippet() -> string {
     return "<script>(function(){var r=null,s=new EventSource('{{live_path()}}');s.onmessage=function(e){if(r===null){r=e.data;return}if(e.data!==r){r=e.data;try{if(window.__zeus_save)window.__zeus_save()}catch(x){}location.reload()}}})()</script>"
 }
 
-/// Does a path under one of `roots` belong to the serve build's input set?
-///
-/// Only `.loam` sources count, and never anything under an output or cache dir —
-/// a rebuild writes into `<appdir>/build/`, which sits *inside* a watched root,
-/// so an unfiltered watch would rebuild forever. The skip list is the one the
-/// walk uses, which is what keeps "the sources" one idea across the commands.
-///
-/// `app_routes.loam` is rejected by name as well: it is the route table serve
-/// *generates* before every build, so it is an output like `build/` and not a
-/// source. Watching it closes a loop — the rebuild rewrites it, the rewrite is an
-/// event, the event is a rebuild — which runs until the server is stopped.
-///
-/// The decision is made on the path *relative* to the root it was under, so a
-/// checkout that happens to live under a dotted directory still reloads. With no
-/// roots the whole path is judged, which is all a path with no known root can be
-/// held to.
+/** *Does a path under one of `roots` belong to the serve build's input set? */
+/** */
+/** *Only `.loam` sources count, and never anything under an output or cache dir — */
+/** *a rebuild writes into `<appdir>/build/`, which sits *inside* a watched root, */
+/** *so an unfiltered watch would rebuild forever. The skip list is the one the */
+/** *walk uses, which is what keeps "the sources" one idea across the commands. */
+/** */
+/** *`app_routes.loam` is rejected by name as well: it is the route table serve */
+/** *generates* before every build, so it is an output like `build/` and not a */
+/** *source. Watching it closes a loop — the rebuild rewrites it, the rewrite is an */
+/** *event, the event is a rebuild — which runs until the server is stopped. */
+/** */
+/** *The decision is made on the path *relative* to the root it was under, so a */
+/** *checkout that happens to live under a dotted directory still reloads. With no */
+/** *roots the whole path is judged, which is all a path with no known root can be */
+/** *held to. */
 fn is_watched_source(file: string, roots: []string) -> bool {
     let mut rel = file
     for i in 0..roots.len {
@@ -1830,8 +1830,8 @@ fn is_watched_source(file: string, roots: []string) -> bool {
     return true
 }
 
-/// The file's text, or `""` when it is not there. The before/after read that
-/// tells serve whether the route table it regenerates actually changed.
+/** *The file's text, or `""` when it is not there. The before/after read that */
+/** *tells serve whether the route table it regenerates actually changed. */
 fn read_text_if_present(p: string) -> string {
     if sys.exists(p) == 0 {
         return ""
@@ -1839,9 +1839,9 @@ fn read_text_if_present(p: string) -> string {
     return sys.read_file(p)
 }
 
-/// Write `text` to `path` only when the bytes differ. A generated file that is
-/// rewritten with the same text still gets a new mtime, and that mtime is what
-/// makes the compiler treat an unchanged app as new.
+/** *Write `text` to `path` only when the bytes differ. A generated file that is */
+/** *rewritten with the same text still gets a new mtime, and that mtime is what */
+/** *makes the compiler treat an unchanged app as new. */
 fn write_if_same(path: string, text: string) {
     if read_text_if_present(path) == text {
         return
@@ -1849,19 +1849,19 @@ fn write_if_same(path: string, text: string) {
     sys.write_file(path, text)
 }
 
-/// A regenerated route table: whether it worked, and whether it differs from
-/// what was there before.
+/** *A regenerated route table: whether it worked, and whether it differs from */
+/** *what was there before. */
 struct Regen {
     ok: bool,
     changed: bool,
 }
 
-/// Regenerate `<appdir>/app_routes.loam` and report whether it changed.
-///
-/// The route table is a build artifact of the `routes/` tree, not a file to
-/// maintain: serve regenerates it before every build, so adding
-/// `routes/pricing/page.loam` is enough — nothing to run, nothing to keep in
-/// sync by hand.
+/** *Regenerate `<appdir>/app_routes.loam` and report whether it changed. */
+/** */
+/** *The route table is a build artifact of the `routes/` tree, not a file to */
+/** *maintain: serve regenerates it before every build, so adding */
+/** *`routes/pricing/page.loam` is enough — nothing to run, nothing to keep in */
+/** *sync by hand. */
 fn generate_tracked(appdir: string) -> Regen {
     let out = join(appdir, "app_routes.loam")
     let before = read_text_if_present(out)
@@ -1871,23 +1871,23 @@ fn generate_tracked(appdir: string) -> Regen {
     return Regen { ok: true, changed: read_text_if_present(out) != before }
 }
 
-/// One serve build: whether it worked, and whether the route table it regenerated
-/// moved.
+/** *One serve build: whether it worked, and whether the route table it regenerated */
+/** *moved. */
 struct BuildStep {
     ok: bool,
     routes_changed: bool,
 }
 
-/// The build a *watched* target gets: the compiler's development profile, which
-/// skips the optimizer and dead-strip. Those exist for the shipped binary, and in
-/// a loop that recompiles on every edit they are most of the edit's cost. Only
-/// `serve` asks for it, so nothing built by `zeli build` changes.
-///
-/// Web stays at `-Oz`, which here is faster than the lower levels; the post-link
-/// optimizer is what `split_web` skips.
-///
-/// Every serve build also compiles in units cached under `.zeus/cc`
-/// (`LOAM_SHARD`, see driver.c), so an edit recompiles the code it changed.
+/** *The build a *watched* target gets: the compiler's development profile, which */
+/** *skips the optimizer and dead-strip. Those exist for the shipped binary, and in */
+/** *a loop that recompiles on every edit they are most of the edit's cost. Only */
+/** *`serve` asks for it, so nothing built by `zeli build` changes. */
+/** */
+/** *Web stays at `-Oz`, which here is faster than the lower levels; the post-link */
+/** *optimizer is what `split_web` skips. */
+/** */
+/** *Every serve build also compiles in units cached under `.zeus/cc` */
+/** *(`LOAM_SHARD`, see driver.c), so an edit recompiles the code it changed. */
 fn serve_build_env(appdir: string, target: string) -> string {
     let shards = shard_env(appdir)
     if target == "web" {
@@ -1896,20 +1896,20 @@ fn serve_build_env(appdir: string, target: string) -> string {
     return "LOAM_DEV=1 {{shards}}"
 }
 
-/// Where this app's compiled units live: under `.zeus`, because a build clears
-/// `build/` and the point is for them to outlast one.
+/** *Where this app's compiled units live: under `.zeus`, because a build clears */
+/** *`build/` and the point is for them to outlast one. */
 fn shard_env(appdir: string) -> string {
     return cat("LOAM_SHARD=", shell_quote(join(join(appdir, ".zeus"), "cc")))
 }
 
-/// Bump when the HTML shell, the split, or the compression of a web build changes
-/// without the wasm bytes changing. The published site is reused only while this
-/// matches.
+/** *Bump when the HTML shell, the split, or the compression of a web build changes */
+/** *without the wasm bytes changing. The published site is reused only while this */
+/** *matches. */
 const WEB_STAMP: string = "1"
 
-/// The linked wasm for one web mode (`serve`, `build`, or `release`). It lives
-/// outside `build/web` so a republish can clear that directory and the next run
-/// can still see that the compile itself did not change.
+/** *The linked wasm for one web mode (`serve`, `build`, or `release`). It lives */
+/** *outside `build/web` so a republish can clear that directory and the next run */
+/** *can still see that the compile itself did not change. */
 fn wasm_object(appdir: string, kind: string, stem: string) -> string {
     let dir = join(join(join(appdir, ".zeus"), "out"), kind)
     sys.mkdir(dir)
@@ -1920,13 +1920,13 @@ fn site_stamp_text(kind: string, base: string, hash: string) -> string {
     return "{{WEB_STAMP}}\n{{kind}}\n{{base}}\n{{hash}}\n"
 }
 
-/// One stamp for the directory serve and build share. It records which mode
-/// last wrote `build/web`, so a serve cannot treat a build's pages as current.
+/** *One stamp for the directory serve and build share. It records which mode */
+/** *last wrote `build/web`, so a serve cannot treat a build's pages as current. */
 fn published_stamp(appdir: string) -> string {
     return join(join(appdir, ".zeus"), "web.site")
 }
 
-/// True when `build/web` is already the site for this wasm, mode, and base URL.
+/** *True when `build/web` is already the site for this wasm, mode, and base URL. */
 fn web_is_current(appdir: string, kind: string, base: string, stem: string) -> bool {
     let wasm = wasm_object(appdir, kind, stem)
     let web = join(join(appdir, "build"), "web")
@@ -1944,9 +1944,9 @@ fn write_site_stamp(appdir: string, kind: string, base: string, stem: string) {
     write_if_same(published_stamp(appdir), site_stamp_text(kind, base, short_hash(wasm)))
 }
 
-/// Copy the cached wasm, the C the splitter reads, and `loader.js` into `dir`.
-/// The compiler writes the loader next to the wasm, which is the cache, not
-/// `build/web`.
+/** *Copy the cached wasm, the C the splitter reads, and `loader.js` into `dir`. */
+/** *The compiler writes the loader next to the wasm, which is the cache, not */
+/** *`build/web`. */
 fn stage_wasm(src: string, dir: string, stem: string) -> bool {
     let dst = join(dir, cat(stem, ".wasm"))
     let loader = join(dir_of(src), "loader.js")
@@ -1956,9 +1956,9 @@ fn stage_wasm(src: string, dir: string, stem: string) -> bool {
     return sys.exec_status() == 0 && sys.exists(cat(dst, ".c")) == 1 && sys.exists(join(dir, "loader.js")) == 1
 }
 
-/// Regenerate the route table and typecheck the entry: the part of a build that
-/// is not the compiler, and the part every target needs before it can be built
-/// or launched.
+/** *Regenerate the route table and typecheck the entry: the part of a build that */
+/** *is not the compiler, and the part every target needs before it can be built */
+/** *or launched. */
 fn serve_prepare(appdir: string) -> BuildStep {
     let step = serve_routes(appdir)
     if !step.ok || check_entry(find_entry(appdir)) {
@@ -1967,7 +1967,7 @@ fn serve_prepare(appdir: string) -> BuildStep {
     return BuildStep { ok: false, routes_changed: step.routes_changed }
 }
 
-/// Regenerate the route table, when the app has one.
+/** *Regenerate the route table, when the app has one. */
 fn serve_routes(appdir: string) -> BuildStep {
     if sys.exists(join(appdir, "routes")) == 0 {
         return BuildStep { ok: true, routes_changed: false }
@@ -1976,21 +1976,21 @@ fn serve_routes(appdir: string) -> BuildStep {
     return BuildStep { ok: r.ok, routes_changed: r.changed }
 }
 
-/// Build one target into `build/<target>/` and, for web, refresh the HTML shell.
-///
-/// A failed prepare or compile is reported and is not fatal: `serve` keeps the
-/// last build that worked — the page it serves, or the process it started — up,
-/// so the error is on the terminal while the thing you were looking at stays
-/// where it was. Only the route table failing to generate stops the build here,
-/// because the entry imports it and nothing downstream can name it.
-///
-/// There is no separate check here: the compile below runs the same frontend and
-/// reports the same errors, so a check first would only pay for it twice.
-///
-/// `wipe` clears `build/web` before a split republish. The first serve of a
-/// process asks for that, so a route that was removed does not leave a page
-/// behind. A rebuild while the server is up does not: the pages stay until the
-/// new files replace them.
+/** *Build one target into `build/<target>/` and, for web, refresh the HTML shell. */
+/** */
+/** *A failed prepare or compile is reported and is not fatal: `serve` keeps the */
+/** *last build that worked — the page it serves, or the process it started — up, */
+/** *so the error is on the terminal while the thing you were looking at stays */
+/** *where it was. Only the route table failing to generate stops the build here, */
+/** *because the entry imports it and nothing downstream can name it. */
+/** */
+/** *There is no separate check here: the compile below runs the same frontend and */
+/** *reports the same errors, so a check first would only pay for it twice. */
+/** */
+/** *`wipe` clears `build/web` before a split republish. The first serve of a */
+/** *process asks for that, so a route that was removed does not leave a page */
+/** *behind. A rebuild while the server is up does not: the pages stay until the */
+/** *new files replace them. */
 fn serve_build(appdir: string, target: string, wipe: bool) -> BuildStep {
     ui_build_begin()
     let step = serve_routes(appdir)
@@ -2077,27 +2077,27 @@ fn serve_build(appdir: string, target: string, wipe: bool) -> BuildStep {
     return BuildStep { ok: true, routes_changed: step.routes_changed }
 }
 
-/// Where a launched app's output goes: `build/<target>/<stem>.log`. The CLI owns
-/// this rather than leaving it on the terminal, because that file is the only
-/// place a trap survives the window closing.
+/** *Where a launched app's output goes: `build/<target>/<stem>.log`. The CLI owns */
+/** *this rather than leaving it on the terminal, because that file is the only */
+/** *place a trap survives the window closing. */
 fn app_log(appdir: string, target: string, stem: string) -> string {
     return cat(join(join(join(appdir, "build"), target), stem), ".log")
 }
 
-/// This process's own pid. A shell it starts reports its parent, and `serve` is
-/// alive to be reported: the watchdog below needs a handle on it.
+/** *This process's own pid. A shell it starts reports its parent, and `serve` is */
+/** *alive to be reported: the watchdog below needs a handle on it. */
 fn self_pid() -> int {
     return int_of(trim(sys.exec("echo $PPID")))
 }
 
-/// Tie a launched app to this process: if `serve` goes away — Ctrl-C, a crash,
-/// a `kill -9` — the app goes with it.
-///
-/// The app cannot be relied on to *hear* the interrupt: a shell starts a
-/// background job with `SIGINT` ignored and `exec` inherits that, which is why
-/// Ctrl-C used to leave it running. `launch_app` resets the disposition, and this
-/// is the belt to those braces — the watchdog polls both pids and kills the app
-/// once either is gone. It exits by itself, so a rebuild leaves none behind.
+/** *Tie a launched app to this process: if `serve` goes away — Ctrl-C, a crash, */
+/** *a `kill -9` — the app goes with it. */
+/** */
+/** *The app cannot be relied on to *hear* the interrupt: a shell starts a */
+/** *background job with `SIGINT` ignored and `exec` inherits that, which is why */
+/** *Ctrl-C used to leave it running. `launch_app` resets the disposition, and this */
+/** *is the belt to those braces — the watchdog polls both pids and kills the app */
+/** *once either is gone. It exits by itself, so a rebuild leaves none behind. */
 fn guard_app(self: int, app: int) -> bool {
     if self <= 0 || app <= 0 {
         return false
@@ -2109,20 +2109,20 @@ fn guard_app(self: int, app: int) -> bool {
     return true
 }
 
-/// Start `cmd` in the background with its output appended to `log`, and return
-/// its pid (0 when the shell would not start it). `cmd` is a shell word — the
-/// caller quotes the path it passes — so a test can hand it anything runnable.
-///
-/// `&` on a single command makes the shell fork and `exec` it, so the pid it
-/// reports back is the app's own and `stop_pid` reaches the app rather than a
-/// wrapper around it. The output goes to a file rather than to the pipe
-/// `sys.exec` reads: otherwise that read would not return until the app exited.
-///
-/// The app is started as a shell *background job*, which means it inherits
-/// `SIGINT` ignored — and a non-interactive shell cannot reset a signal that was
-/// ignored on entry, so the app cannot be made to hear Ctrl-C from here. That is
-/// why `guard_app` exists: the app dies because `serve` did, not because it got
-/// the same signal. Doing better needs a spawn that skips the shell.
+/** *Start `cmd` in the background with its output appended to `log`, and return */
+/** *its pid (0 when the shell would not start it). `cmd` is a shell word — the */
+/** *caller quotes the path it passes — so a test can hand it anything runnable. */
+/** */
+/** *`&` on a single command makes the shell fork and `exec` it, so the pid it */
+/** *reports back is the app's own and `stop_pid` reaches the app rather than a */
+/** *wrapper around it. The output goes to a file rather than to the pipe */
+/** *`sys.exec` reads: otherwise that read would not return until the app exited. */
+/** */
+/** *The app is started as a shell *background job*, which means it inherits */
+/** *`SIGINT` ignored — and a non-interactive shell cannot reset a signal that was */
+/** *ignored on entry, so the app cannot be made to hear Ctrl-C from here. That is */
+/** *why `guard_app` exists: the app dies because `serve` did, not because it got */
+/** *the same signal. Doing better needs a spawn that skips the shell. */
 fn launch_app(cmd: string, log: string) -> int {
     let out = sys.exec(cat(cat(cat(cat(cmd, " >> "), shell_quote(log)), " 2>&1 & echo $!"), ""))
     let pid = int_of(trim(out))
@@ -2132,8 +2132,8 @@ fn launch_app(cmd: string, log: string) -> int {
     return pid
 }
 
-/// Is `pid` still running? `kill -0` asks the kernel without signalling, and
-/// says so through its exit status — the text it returns is not read.
+/** *Is `pid` still running? `kill -0` asks the kernel without signalling, and */
+/** *says so through its exit status — the text it returns is not read. */
 fn pid_alive(pid: int) -> bool {
     if pid <= 0 {
         return false
@@ -2145,8 +2145,8 @@ fn pid_alive(pid: int) -> bool {
     return false
 }
 
-/// Stop `pid` and wait for it to go: `SIGTERM` first, `SIGKILL` only if the app
-/// is still there. Returns whether it is gone.
+/** *Stop `pid` and wait for it to go: `SIGTERM` first, `SIGKILL` only if the app */
+/** *is still there. Returns whether it is gone. */
 fn stop_pid(pid: int) -> bool {
     if pid <= 0 {
         return true
@@ -2164,9 +2164,9 @@ fn stop_pid(pid: int) -> bool {
     return !pid_alive(pid)
 }
 
-/// True when something is already accepting connections at `addr`. A connect
-/// that fails is "nothing there", which is what a serve that has to start the
-/// backend needs to tell apart from one the operator started already.
+/** *True when something is already accepting connections at `addr`. A connect */
+/** *that fails is "nothing there", which is what a serve that has to start the */
+/** *backend needs to tell apart from one the operator started already. */
 fn backend_listening(addr: string) -> bool {
     let hp = rpc_addr_of(addr)
     if hp.port <= 0 {
@@ -2180,13 +2180,13 @@ fn backend_listening(addr: string) -> bool {
     return true
 }
 
-/// Build and start `<appdir>/server/main.loam` on the RPC address, once.
-///
-/// The UI talks to that process and has no way to say the process is missing,
-/// so a page that fetches data otherwise sits on its loading line. An address
-/// that is already open is left alone: that backend is not ours to stop.
-/// Returns the pid we started, `0` when there is nothing to start, and `-1`
-/// when the build or the listen failed.
+/** *Build and start `<appdir>/server/main.loam` on the RPC address, once. */
+/** */
+/** *The UI talks to that process and has no way to say the process is missing, */
+/** *so a page that fetches data otherwise sits on its loading line. An address */
+/** *that is already open is left alone: that backend is not ours to stop. */
+/** *Returns the pid we started, `0` when there is nothing to start, and `-1` */
+/** *when the build or the listen failed. */
 fn ensure_backend(appdir: string) -> int {
     let entry = join(join(appdir, "server"), "main.loam")
     if sys.exists(entry) == 0 {
@@ -2236,23 +2236,23 @@ fn ensure_backend(appdir: string) -> int {
     return pid
 }
 
-/// `zeli serve <appdir> [--target T] [--port N] [--build-only]`
-///
-/// Builds one target and watches `.loam` sources — the app plus the framework
-/// `src/` trees — so an edit is reflected without a manual rebuild. An app
-/// with `server/main.loam` gets that backend on the RPC address first, so the
-/// window and the data come up from this one command:
-///
-///   web      serves `build/web` on localhost, and every HTML page subscribes to
-///            the live channel, so the browser is *told* about a rebuild
-///   macos    runs the native binary, started again on every rebuild
-///   server   the same, for a service entry
-///   ios      builds the `.app` and installs it on the booted simulator
-///   android  builds the Gradle tree and installs it on the attached device
-///
-/// The device targets are the one place where the packaging is not ours: it is
-/// the compiler's host code, so `serve` runs `loamc --target=T --run <entry>`,
-/// which is also where a missing SDK reports itself, in its own words.
+/** *`zeli serve <appdir> [--target T] [--port N] [--build-only]` */
+/** */
+/** *Builds one target and watches `.loam` sources — the app plus the framework */
+/** *`src/` trees — so an edit is reflected without a manual rebuild. An app */
+/** *with `server/main.loam` gets that backend on the RPC address first, so the */
+/** *window and the data come up from this one command: */
+/** */
+/** *web      serves `build/web` on localhost, and every HTML page subscribes to */
+/** *the live channel, so the browser is *told* about a rebuild */
+/** *macos    runs the native binary, started again on every rebuild */
+/** *server   the same, for a service entry */
+/** *ios      builds the `.app` and installs it on the booted simulator */
+/** *android  builds the Gradle tree and installs it on the attached device */
+/** */
+/** *The device targets are the one place where the packaging is not ours: it is */
+/** *the compiler's host code, so `serve` runs `loamc --target=T --run <entry>`, */
+/** *which is also where a missing SDK reports itself, in its own words. */
 fn serve(appdir: string, target: string, port: int, build_only: bool) -> int {
     if sys.exists(loam_path()) == 0 {
         die("zeli: missing {{loam_path()}} — run `make` in {{repo_root()}} first")
@@ -2312,7 +2312,7 @@ fn serve(appdir: string, target: string, port: int, build_only: bool) -> int {
 // and tying the server's life to its own — so `zeli serve --target web` is the
 // one command either way.
 
-/// `<appdir>/web` when it holds a `vite.config.js`, else "".
+/** *`<appdir>/web` when it holds a `vite.config.js`, else "". */
 fn vite_host(appdir: string) -> string {
     let dir = join(appdir, "web")
     if sys.exists(join(dir, "vite.config.js")) == 1 {
@@ -2321,7 +2321,7 @@ fn vite_host(appdir: string) -> string {
     return ""
 }
 
-/// Run `npm install` in `webdir` when `node_modules` is missing.
+/** *Run `npm install` in `webdir` when `node_modules` is missing. */
 fn vite_install(webdir: string) -> bool {
     if sys.exists(join(webdir, "node_modules")) == 1 {
         return true
@@ -2336,8 +2336,8 @@ fn vite_install(webdir: string) -> bool {
     return true
 }
 
-/// Run the app's Vite server on `port` until it exits or `serve` does, echoing
-/// its output. `npm install` runs first when `node_modules` is missing.
+/** *Run the app's Vite server on `port` until it exits or `serve` does, echoing */
+/** *its output. `npm install` runs first when `node_modules` is missing. */
 fn serve_vite(appdir: string, webdir: string, port: int) -> int {
     if !vite_install(webdir) {
         return 1
@@ -2389,8 +2389,8 @@ let mut tail_tags: []string = []string {}
 let mut tail_from: []int = []int {}
 let mut tail_at: i64 = 0
 
-/// Follow `path` from its current end, printing new lines as `tag │ line`.
-/// A path already followed keeps its place (a restarted app appends to it).
+/** *Follow `path` from its current end, printing new lines as `tag │ line`. */
+/** *A path already followed keeps its place (a restarted app appends to it). */
 fn tail_add(path: string, tag: string) {
     for i in 0..tail_paths.len {
         if tail_paths[i] == path {
@@ -2402,8 +2402,8 @@ fn tail_add(path: string, tag: string) {
     push(tail_from, sys.read_file(path).len)
 }
 
-/// Print the complete lines each followed file gained; a partial last line
-/// waits for its newline.
+/** *Print the complete lines each followed file gained; a partial last line */
+/** *waits for its newline. */
 fn tail_pump() {
     let now = async.now_ms()
     if int(now - tail_at) < 200 {
@@ -2427,7 +2427,7 @@ fn tail_pump() {
     }
 }
 
-/// Each non-empty line of `text` as `tag │ line`.
+/** *Each non-empty line of `text` as `tag │ line`. */
 fn print_tagged(tag: string, text: string) {
     let ls = split_lines(text)
     for i in 0..ls.len {
@@ -2437,15 +2437,15 @@ fn print_tagged(tag: string, text: string) {
     }
 }
 
-/// Where a browser build posts its log lines (`std:log` and `fmt.println`),
-/// newline-separated. Served by `serve_web`; an app's own Vite config serves it
-/// too (see examples/zeus/vidget/web/vite.config.js).
+/** *Where a browser build posts its log lines (`std:log` and `fmt.println`), */
+/** *newline-separated. Served by `serve_web`; an app's own Vite config serves it */
+/** *too (see examples/zeus/vidget/web/vite.config.js). */
 fn log_path() -> string {
     return "/__zeus/log"
 }
 
-/// `line` from an app's output, in its level's color on a terminal that wants
-/// color. An app writing to a file does not color its own lines.
+/** *`line` from an app's output, in its level's color on a terminal that wants */
+/** *color. An app writing to a file does not color its own lines. */
 fn log_paint(line: string) -> string {
     if sys.stdout_tty() == 0 || sys.env_set("NO_COLOR") != 0 {
         return line
@@ -2453,7 +2453,7 @@ fn log_paint(line: string) -> string {
     return log.paint(line)
 }
 
-/// Print what `log` gained past byte `from`; returns the new length.
+/** *Print what `log` gained past byte `from`; returns the new length. */
 fn echo_log(logfile: string, from: int) -> int {
     let body = sys.read_file(logfile)
     if body.len > from {
@@ -2474,14 +2474,14 @@ fn echo_log(logfile: string, from: int) -> int {
 // two parallel vectors rather than a struct, because a helper cannot append to a
 // vector handed to it.
 
-/// Paths a registration is held for, parallel to `watch_ids`.
+/** *Paths a registration is held for, parallel to `watch_ids`. */
 let mut watch_paths: []string = []string {}
 
-/// The id `sys.watch_add` returned for `watch_paths[i]`. It is a descriptor, so
-/// closing one is `sys.watch_close`.
+/** *The id `sys.watch_add` returned for `watch_paths[i]`. It is a descriptor, so */
+/** *closing one is `sys.watch_close`. */
 let mut watch_ids: []int = []int {}
 
-/// The path a registration id stands for, or `""` when it is not ours.
+/** *The path a registration id stands for, or `""` when it is not ours. */
 fn watch_path_of(id: int) -> string {
     for i in 0..watch_ids.len {
         if watch_ids[i] == id {
@@ -2491,11 +2491,11 @@ fn watch_path_of(id: int) -> string {
     return ""
 }
 
-/// Hold a registration for `p`, and report whether it was new.
-///
-/// Re-arming must never stack a second watch on a path already held: the second
-/// descriptor would report the same edit again, and a rebuild that triggers
-/// itself never settles.
+/** *Hold a registration for `p`, and report whether it was new. */
+/** */
+/** *Re-arming must never stack a second watch on a path already held: the second */
+/** *descriptor would report the same edit again, and a rebuild that triggers */
+/** *itself never settles. */
 fn add_watch(h: int, p: string) -> int {
     for i in 0..watch_paths.len {
         if watch_paths[i] == p {
@@ -2511,13 +2511,13 @@ fn add_watch(h: int, p: string) -> int {
     return 1
 }
 
-/// Register `dir`, everything under it, and report the `.loam` files that were
-/// not held before.
-///
-/// The directories are registered so an *added* entry is seen, and the files so
-/// an *edited* one is; neither watch covers the other's case. A dotted name and
-/// the build/cache/vendor names are never entered, which is what keeps a rebuild
-/// from writing into what it watches.
+/** *Register `dir`, everything under it, and report the `.loam` files that were */
+/** *not held before. */
+/** */
+/** *The directories are registered so an *added* entry is seen, and the files so */
+/** *an *edited* one is; neither watch covers the other's case. A dotted name and */
+/** *the build/cache/vendor names are never entered, which is what keeps a rebuild */
+/** *from writing into what it watches. */
 fn watch_arm_dir(h: int, dir: string) -> []string {
     let mut added = []string {}
     add_watch(h, dir)
@@ -2544,10 +2544,10 @@ fn watch_arm_dir(h: int, dir: string) -> []string {
     return added
 }
 
-/// Drop registrations whose path is gone and report them.
-///
-/// A deleted route has to wake the reload as much as an added one, and its
-/// descriptor would otherwise hold a slot for a path that can never fire again.
+/** *Drop registrations whose path is gone and report them. */
+/** */
+/** *A deleted route has to wake the reload as much as an added one, and its */
+/** *descriptor would otherwise hold a slot for a path that can never fire again. */
 fn watch_forget_missing() -> []string {
     let mut gone = []string {}
     let mut kept_paths = []string {}
@@ -2566,7 +2566,7 @@ fn watch_forget_missing() -> []string {
     return gone
 }
 
-/// The sources `hits` names, each once, and only the ones a reload reacts to.
+/** *The sources `hits` names, each once, and only the ones a reload reacts to. */
 fn watch_keep(hits: []string, roots: []string) -> []string {
     let mut out = []string {}
     for i in 0..hits.len {
@@ -2586,14 +2586,14 @@ fn watch_keep(hits: []string, roots: []string) -> []string {
     return out
 }
 
-/// The source paths one change touched, or none when nothing happened in
-/// `wait_ms`.
-///
-/// Waits for the first event and then drains the rest at once, because a single
-/// save arrives as several events and reporting them one at a time would start a
-/// rebuild each. A file event names the file; a directory event names only the
-/// directory, so its entries are listed — that is the only way a brand-new route
-/// file can be named at all, and the only way a deleted one can be.
+/** *The source paths one change touched, or none when nothing happened in */
+/** *`wait_ms`. */
+/** */
+/** *Waits for the first event and then drains the rest at once, because a single */
+/** *save arrives as several events and reporting them one at a time would start a */
+/** *rebuild each. A file event names the file; a directory event names only the */
+/** *directory, so its entries are listed — that is the only way a brand-new route */
+/** *file can be named at all, and the only way a deleted one can be. */
 fn watch_batch(h: int, roots: []string, wait_ms: int) -> []string {
     let mut hits = []string {}
     let mut dirs = []string {}
@@ -2625,9 +2625,9 @@ fn watch_batch(h: int, roots: []string, wait_ms: int) -> []string {
     return watch_keep(hits, roots)
 }
 
-/// What a rebuild reacts to: the app, the framework `src/` trees it imports
-/// from, and the language `std/`. `is_watched_source` judges a path relative to
-/// these, so a checkout that lives under a dotted directory still reloads.
+/** *What a rebuild reacts to: the app, the framework `src/` trees it imports */
+/** *from, and the language `std/`. `is_watched_source` judges a path relative to */
+/** *these, so a checkout that lives under a dotted directory still reloads. */
 fn serve_roots(appdir: string) -> []string {
     let packages = join(repo_root(), "packages")
     let mut out = []string { appdir }
@@ -2639,18 +2639,18 @@ fn serve_roots(appdir: string) -> []string {
 
 // --- serve: serving build/web ---
 
-/// One serve reply: what to write back for a request.
+/** *One serve reply: what to write back for a request. */
 struct HttpReply {
     status: int,
     content_type: string,
-    /// The `Content-Encoding` of `body`, or "" for none.
+    /** *The `Content-Encoding` of `body`, or "" for none. */
     encoding: string,
     body: string,
 }
 
-/// The content type the build output is served with. `.wasm` and `.js` are the
-/// two that matter: a browser refuses to instantiate a module served with the
-/// wrong one.
+/** *The content type the build output is served with. `.wasm` and `.js` are the */
+/** *two that matter: a browser refuses to instantiate a module served with the */
+/** *wrong one. */
 fn serve_content_type(file: string) -> string {
     if ends_with(file, ".wasm") {
         return "application/wasm"
@@ -2670,19 +2670,19 @@ fn serve_content_type(file: string) -> string {
     return "application/octet-stream"
 }
 
-/// Resolve one serve request against `web`, the build output directory.
-///
-/// Pure but for reading the file it lands on, so it can be tested without a
-/// socket: a nested path serves its own `index.html`, a missing path falls back
-/// to the root shell (SPA-style), HTML gets the live-reload snippet, and the
-/// module and script types are the ones a browser insists on.
+/** *Resolve one serve request against `web`, the build output directory. */
+/** */
+/** *Pure but for reading the file it lands on, so it can be tested without a */
+/** *socket: a nested path serves its own `index.html`, a missing path falls back */
+/** *to the root shell (SPA-style), HTML gets the live-reload snippet, and the */
+/** *module and script types are the ones a browser insists on. */
 fn serve_reply(web: string, pathname: string, snippet: string) -> HttpReply {
     return serve_reply_for(web, pathname, snippet, "")
 }
 
-/// `serve_reply` for a client sending `accept`, its `Accept-Encoding`: an asset
-/// with a compressed copy beside it is answered with that copy, so a throttled
-/// Network tab shows the bytes a visitor is sent.
+/** *`serve_reply` for a client sending `accept`, its `Accept-Encoding`: an asset */
+/** *with a compressed copy beside it is answered with that copy, so a throttled */
+/** *Network tab shows the bytes a visitor is sent. */
 fn serve_reply_for(web: string, pathname: string, snippet: string, accept: string) -> HttpReply {
     let mut rel = strip_lead_slash(pathname)
     if rel == "" || ends_with(rel, "/") {
@@ -2723,7 +2723,7 @@ fn serve_reply_for(web: string, pathname: string, snippet: string, accept: strin
     return HttpReply { status: 200, content_type: ctype, encoding: "", body: text }
 }
 
-/// Whether an `Accept-Encoding` value allows `coding`. Only `q=0` refuses one.
+/** *Whether an `Accept-Encoding` value allows `coding`. Only `q=0` refuses one. */
 fn accepts_coding(accept: string, coding: string) -> bool {
     let items = split_on(accept, 44 /* , */ )
     for i in 0..items.len {
@@ -2746,8 +2746,8 @@ fn accepts_coding(accept: string, coding: string) -> bool {
     return false
 }
 
-/// The `Accept-Encoding` value in `hdrs`, a parsed request's lowercased
-/// `name\\0value\\0` pairs, or "".
+/** *The `Accept-Encoding` value in `hdrs`, a parsed request's lowercased */
+/** *`name\\0value\\0` pairs, or "". */
 fn accept_encoding(hdrs: string) -> string {
     let pairs = split_on(hdrs, 0)
     let mut i = 0
@@ -2760,9 +2760,9 @@ fn accept_encoding(hdrs: string) -> string {
     return ""
 }
 
-/// Read one request off `fd`: up to the end of the headers, then however many
-/// body bytes `content-length` asks for. A server reads one request per
-/// connection, so this is allowed to be simple.
+/** *Read one request off `fd`: up to the end of the headers, then however many */
+/** *body bytes `content-length` asks for. A server reads one request per */
+/** *connection, so this is allowed to be simple. */
 fn read_request(fd: int) -> string {
     let mut acc = ""
     let mut head = -1
@@ -2791,8 +2791,8 @@ fn read_request(fd: int) -> string {
     return acc
 }
 
-/// The index just past the `\r\n\r\n` that ends a request's headers, or `-1`
-/// while they are still incomplete.
+/** *The index just past the `\r\n\r\n` that ends a request's headers, or `-1` */
+/** *while they are still incomplete. */
 fn find_headers_end(s: string) -> int {
     for i in 0..s.len {
         if i + 3 < s.len && s[i] == 13 && s[i + 1] == 10 && s[i + 2] == 13 && s[i + 3] == 10 {
@@ -2802,7 +2802,7 @@ fn find_headers_end(s: string) -> int {
     return -1
 }
 
-/// The byte `c` as lower case, for a header name compare.
+/** *The byte `c` as lower case, for a header name compare. */
 fn lower_byte(c: int) -> int {
     if c >= 65 && c <= 90 {
         return c + 32
@@ -2810,8 +2810,8 @@ fn lower_byte(c: int) -> int {
     return c
 }
 
-/// The `content-length` a request's headers ask for, or `0` when it asks for no
-/// body. `head` is where the headers end, so only they are scanned.
+/** *The `content-length` a request's headers ask for, or `0` when it asks for no */
+/** *body. `head` is where the headers end, so only they are scanned. */
 fn request_body_len(s: string, head: int) -> int {
     let name = "content-length:"
     let mut i = 0
@@ -2830,20 +2830,20 @@ fn request_body_len(s: string, head: int) -> int {
     return 0
 }
 
-/// One HTTP/1.1 reply for the server.
-///
-/// Written here rather than through `http.http_reply` because that one hardens
-/// every reply with `Content-Security-Policy: default-src 'none'`. That is right
-/// for an RPC endpoint and wrong for a page: it would block the app's own
-/// `loader.js` and the live-reload snippet injected into the shell. `no-store`
-/// is the other thing a server wants — a cached `app.wasm` is a rebuild the
-/// browser never sees.
+/** *One HTTP/1.1 reply for the server. */
+/** */
+/** *Written here rather than through `http.http_reply` because that one hardens */
+/** *every reply with `Content-Security-Policy: default-src 'none'`. That is right */
+/** *for an RPC endpoint and wrong for a page: it would block the app's own */
+/** *`loader.js` and the live-reload snippet injected into the shell. `no-store` */
+/** *is the other thing a server wants — a cached `app.wasm` is a rebuild the */
+/** *browser never sees. */
 fn serve_http_reply(status: int, ctype: string, body: string) -> string {
     return serve_http_encoded(status, ctype, "", "no-store", body)
 }
 
-/// `serve_http_reply` for a body in `encoding`, which "" leaves out, and a
-/// `Cache-Control` of `cache`.
+/** *`serve_http_reply` for a body in `encoding`, which "" leaves out, and a */
+/** *`Cache-Control` of `cache`. */
 fn serve_http_encoded(
     status: int,
     ctype: string,
@@ -2856,12 +2856,12 @@ fn serve_http_encoded(
     return cat(head, body)
 }
 
-/// Answer one connection and hang up. A server has no keep-alive to hold,
-/// and a page's own requests are separate connections anyway — *except* a live
-/// channel subscription, which is the one reply that is deliberately left open.
-///
-/// `snippet` goes in every page, and is "" for `preview`, which is also what asks
-/// for a host's caching in place of `no-store`.
+/** *Answer one connection and hang up. A server has no keep-alive to hold, */
+/** *and a page's own requests are separate connections anyway — *except* a live */
+/** *channel subscription, which is the one reply that is deliberately left open. */
+/** */
+/** *`snippet` goes in every page, and is "" for `preview`, which is also what asks */
+/** *for a host's caching in place of `no-store`. */
 fn serve_http_one(fd: int, web: string, snippet: string, rev: int) {
     let raw = read_request(fd)
     if raw.len == 0 {
@@ -2908,19 +2908,19 @@ fn serve_http_one(fd: int, web: string, snippet: string, rev: int) {
 // one reply that is never closed: its descriptor is kept here and written to
 // once per successful rebuild, and a write that fails is the page going away.
 
-/// Descriptors of the pages subscribed to the live channel.
+/** *Descriptors of the pages subscribed to the live channel. */
 let mut live_clients: []int = []int {}
 
-/// The headers a subscription is answered with.
-///
-/// No `content-length` and no `connection: close`, because the point is to hold
-/// the connection open — and a reply built by `serve_http_reply` would end it.
+/** *The headers a subscription is answered with. */
+/** */
+/** *No `content-length` and no `connection: close`, because the point is to hold */
+/** *the connection open — and a reply built by `serve_http_reply` would end it. */
 fn live_head() -> string {
     return "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\nConnection: keep-alive\r\n\r\n"
 }
 
-/// Take one page's subscription. The first frame is the revision the page boots
-/// into: a baseline, not a reload, so only a *later* revision reloads.
+/** *Take one page's subscription. The first frame is the revision the page boots */
+/** *into: a baseline, not a reload, so only a *later* revision reloads. */
 fn live_subscribe(fd: int, rev: int) {
     if net.tcp_write(fd, cat(live_head(), sse_frame(rev))) < 0 {
         net.tcp_close(fd)
@@ -2929,7 +2929,7 @@ fn live_subscribe(fd: int, rev: int) {
     push(live_clients, fd)
 }
 
-/// One frame to every subscribed page, dropping the ones that have gone away.
+/** *One frame to every subscribed page, dropping the ones that have gone away. */
 fn live_push(rev: int) {
     let mut kept = []int {}
     for i in 0..live_clients.len {
@@ -2944,16 +2944,16 @@ fn live_push(rev: int) {
 
 // --- serve: forwarding the app's RPC ---
 
-/// A `host:port` split into its two halves. Named for the RPC address it comes
-/// from rather than for its shape: a struct name is shared across every module
-/// in a build, and `http` already has a `HostPort`.
+/** *A `host:port` split into its two halves. Named for the RPC address it comes */
+/** *from rather than for its shape: a struct name is shared across every module */
+/** *in a build, and `http` already has a `HostPort`. */
 struct RpcAddr {
     host: string,
     port: int,
 }
 
-/// `addr` as a host and a port. A missing port reads as `0`, which no backend
-/// listens on, so a malformed address fails the same way an absent one does.
+/** *`addr` as a host and a port. A missing port reads as `0`, which no backend */
+/** *listens on, so a malformed address fails the same way an absent one does. */
 fn rpc_addr_of(addr: string) -> RpcAddr {
     for i in 0..addr.len {
         if addr[i] == 58 /* : */ {
@@ -2963,8 +2963,8 @@ fn rpc_addr_of(addr: string) -> RpcAddr {
     return RpcAddr { host: addr, port: 0 }
 }
 
-/// Where the app's own backend listens. The same override `default_addr()` in
-/// `http` honours, so both ends agree without configuration.
+/** *Where the app's own backend listens. The same override `default_addr()` in */
+/** *`http` honours, so both ends agree without configuration. */
 fn serve_rpc_addr() -> string {
     let a = sys.env("LOAM_RPC_ADDR")
     if a == "" {
@@ -2973,15 +2973,15 @@ fn serve_rpc_addr() -> string {
     return a
 }
 
-/// Forward one gRPC-Web request to the app's backend, verbatim.
-///
-/// The reply is relayed as the backend framed it rather than rebuilt here: a
-/// gRPC-Web response carries its status in trailers, and a status and body
-/// copied out of it would drop exactly the part the client is waiting for.
-///
-/// No CORS handling is needed — the hop from the browser is same-origin and this
-/// hop is server-to-server. A missing backend is a 502, so it shows up as a
-/// failure rather than as silence.
+/** *Forward one gRPC-Web request to the app's backend, verbatim. */
+/** */
+/** *The reply is relayed as the backend framed it rather than rebuilt here: a */
+/** *gRPC-Web response carries its status in trailers, and a status and body */
+/** *copied out of it would drop exactly the part the client is waiting for. */
+/** */
+/** *No CORS handling is needed — the hop from the browser is same-origin and this */
+/** *hop is server-to-server. A missing backend is a 502, so it shows up as a */
+/** *failure rather than as silence. */
 fn serve_proxy_rpc(
     fd: int,
     addr: string,
@@ -3016,8 +3016,8 @@ fn serve_proxy_rpc(
     net.tcp_write(fd, resp)
 }
 
-/// The reply for a backend that is not there. Named rather than inlined because
-/// both the connect and the send can be the thing that fails.
+/** *The reply for a backend that is not there. Named rather than inlined because */
+/** *both the connect and the send can be the thing that fails. */
 fn serve_rpc_unreachable(fd: int, addr: string) {
     say("zeli: rpc backend {{addr}} unreachable")
     net.tcp_write(
@@ -3026,12 +3026,12 @@ fn serve_rpc_unreachable(fd: int, addr: string) {
     )
 }
 
-/// Watch the sources, rebuild on change, and serve `build/web` on localhost.
-///
-/// One loop, no threads: it waits a tick on the watcher, rebuilds if anything
-/// moved, then answers whatever connections are waiting. A change is picked up
-/// within a tick and a request is answered within a tick, and neither can starve
-/// the other.
+/** *Watch the sources, rebuild on change, and serve `build/web` on localhost. */
+/** */
+/** *One loop, no threads: it waits a tick on the watcher, rebuilds if anything */
+/** *moved, then answers whatever connections are waiting. A change is picked up */
+/** *within a tick and a request is answered within a tick, and neither can starve */
+/** *the other. */
 fn serve_web(appdir: string, port: int) -> int {
     let roots = serve_roots(appdir)
     let h = serve_watch(appdir)
@@ -3081,8 +3081,8 @@ fn serve_web(appdir: string, port: int) -> int {
 // `serve_build`, so a build error is reported once, the same way, whatever the
 // target is.
 
-/// The kernel watcher over the app's sources, or exit. Every target watches the
-/// same set — what differs is what a change does — so opening it lives here.
+/** *The kernel watcher over the app's sources, or exit. Every target watches the */
+/** *same set — what differs is what a change does — so opening it lives here. */
 fn serve_watch(appdir: string) -> int {
     let roots = serve_roots(appdir)
     let h = sys.watch_open()
@@ -3095,7 +3095,7 @@ fn serve_watch(appdir: string) -> int {
     return h
 }
 
-/// The name the panel gives a target.
+/** *The name the panel gives a target. */
 fn platform_name(target: string) -> string {
     if target == "web" {
         return "Web"
@@ -3115,11 +3115,11 @@ fn platform_name(target: string) -> string {
     return target
 }
 
-/// `serve` for a native target: one process, started again on every rebuild.
-///
-/// The app is checked on as well as the sources — a native app that traps leaves
-/// nothing on screen to say why, so that notice and the log are the whole report.
-/// A build that fails does not touch the process that is already up.
+/** *`serve` for a native target: one process, started again on every rebuild. */
+/** */
+/** *The app is checked on as well as the sources — a native app that traps leaves */
+/** *nothing on screen to say why, so that notice and the log are the whole report. */
+/** *A build that fails does not touch the process that is already up. */
 fn serve_native(appdir: string, target: string, stem: string) -> int {
     let roots = serve_roots(appdir)
     let h = serve_watch(appdir)
@@ -3181,10 +3181,10 @@ fn serve_native(appdir: string, target: string, stem: string) -> int {
     return 0
 }
 
-/// The id a platform needs to stop its app, read back out of the artifact the
-/// build just wrote: the `.app`'s `Info.plist` for the simulator, `app/build.gradle`
-/// for the device. Those ids are the compiler's naming rules, so reading them
-/// back is what keeps this from being a second copy of those rules.
+/** *The id a platform needs to stop its app, read back out of the artifact the */
+/** *build just wrote: the `.app`'s `Info.plist` for the simulator, `app/build.gradle` */
+/** *for the device. Those ids are the compiler's naming rules, so reading them */
+/** *back is what keeps this from being a second copy of those rules. */
 fn ios_bundle_id(appdir: string, stem: string) -> string {
     let plist = join(join(join(join(appdir, "build"), "ios"), cat(stem, ".app")), "Info.plist")
     if sys.exists(plist) == 0 {
@@ -3193,7 +3193,7 @@ fn ios_bundle_id(appdir: string, stem: string) -> string {
     return between(sys.read_file(plist), "<key>CFBundleIdentifier</key><string>", 60 /* < */ )
 }
 
-/// The `applicationId` the Gradle tree was generated with.
+/** *The `applicationId` the Gradle tree was generated with. */
 fn android_app_id(appdir: string, stem: string) -> string {
     let gradle = join(
         join(join(join(join(appdir, "build"), "android"), stem), "app"),
@@ -3205,12 +3205,12 @@ fn android_app_id(appdir: string, stem: string) -> string {
     return between(sys.read_file(gradle), "applicationId \"", 34 /* " */ )
 }
 
-/// Stop the instance the last install left running, so what the screen shows is
-/// the build just made. Both platforms keep the old process across an install,
-/// so without this an edit would land on disk and never appear.
-///
-/// Best effort: a device that has never run this app has nothing to stop, and the
-/// toolchain is allowed to say no. Either way it is not a failed serve.
+/** *Stop the instance the last install left running, so what the screen shows is */
+/** *the build just made. Both platforms keep the old process across an install, */
+/** *so without this an edit would land on disk and never appear. */
+/** */
+/** *Best effort: a device that has never run this app has nothing to stop, and the */
+/** *toolchain is allowed to say no. Either way it is not a failed serve. */
 fn stop_device(appdir: string, target: string, stem: string) -> bool {
     if target == "ios" {
         let bid = ios_bundle_id(appdir, stem)
@@ -3231,22 +3231,22 @@ fn stop_device(appdir: string, target: string, stem: string) -> bool {
     return sys.exec_status() == 0
 }
 
-/// Where a device build's output is followed from: the file the Simulator writes
-/// the app's stdout to, or the file `adb logcat` appends to for Android.
+/** *Where a device build's output is followed from: the file the Simulator writes */
+/** *the app's stdout to, or the file `adb logcat` appends to for Android. */
 fn device_log(appdir: string, target: string, stem: string) -> string {
     return abs_path(app_log(appdir, target, stem))
 }
 
-/// Follow Android's log, where the host sends the app's stdout, into `file`. The
-/// watchdog ends `adb` with this process.
+/** *Follow Android's log, where the host sends the app's stdout, into `file`. The */
+/** *watchdog ends `adb` with this process. */
 fn follow_logcat(file: string) {
     let adb = "PATH=\"${ANDROID_HOME:-$HOME/Library/Android/sdk}/platform-tools:$PATH\" exec adb logcat -v raw -T 1 zeus:I '*:S'"
     let pid = launch_app("sh -c {{shell_quote(adb)}}", file)
     guard_app(self_pid(), pid)
 }
 
-/// Follow the device's log in this terminal. Call before the launch, so the app's
-/// first lines are not missed.
+/** *Follow the device's log in this terminal. Call before the launch, so the app's */
+/** *first lines are not missed. */
 fn device_log_follow(appdir: string, target: string, stem: string) {
     let run_log = device_log(appdir, target, stem)
     sys.write_file(run_log, "")
@@ -3256,20 +3256,20 @@ fn device_log_follow(appdir: string, target: string, stem: string) {
     }
 }
 
-/// One device launch: `loamc --target=T --run <entry>` builds the artifact,
-/// installs it, and starts it. It is passed the same `-o` the `build` command
-/// uses so both leave the artifact in one place — which is also where
-/// `stop_device` reads the id back from.
+/** *One device launch: `loamc --target=T --run <entry>` builds the artifact, */
+/** *installs it, and starts it. It is passed the same `-o` the `build` command */
+/** *uses so both leave the artifact in one place — which is also where */
+/** *`stop_device` reads the id back from. */
 fn serve_device_run(appdir: string, target: string, stem: string, entry: string) -> bool {
     return device_run(appdir, target, stem, entry, cat(device_log_env(appdir, target, stem), serve_build_env(appdir, target)))
 }
 
-/// Tells `loamc --run` where the Simulator app's output goes.
+/** *Tells `loamc --run` where the Simulator app's output goes. */
 fn device_log_env(appdir: string, target: string, stem: string) -> string {
     return "ZEUS_RUN_LOG={{shell_quote(device_log(appdir, target, stem))}} "
 }
 
-/// `serve_device_run` for a compile environment of `compile_env`.
+/** *`serve_device_run` for a compile environment of `compile_env`. */
 fn device_run(
     appdir: string,
     target: string,
@@ -3296,9 +3296,9 @@ fn device_run(
     return true
 }
 
-/// `serve` for ios / android. The watch and the build are the ones every target
-/// uses; the step is "build, install, launch" rather than a process this CLI
-/// holds, so there is no pid to stop — the platform's runtime owns the app.
+/** *`serve` for ios / android. The watch and the build are the ones every target */
+/** *uses; the step is "build, install, launch" rather than a process this CLI */
+/** *holds, so there is no pid to stop — the platform's runtime owns the app. */
 fn serve_device(
     appdir: string,
     target: string,
@@ -3361,17 +3361,17 @@ fn serve_device(
 // build --release` makes, once. There is no watcher, and on the web nothing is
 // added to a page, so a throttled Network tab reads the same as production.
 
-/// `zeli preview <appdir> [--target T] [--port N] [--no-build]`.
-///
-///   web      serves the release from `build/web`, with a host's compression and
-///            caching. An app with a Vite host gets `vite build` first, and is
-///            served the same way, because `vite preview` cannot compress.
-///   macos    runs the release binary
-///   server   the same, for a service entry
-///   ios      installs and launches on the booted simulator
-///   android  installs and launches on the attached device
-///
-/// `reuse` skips the build and runs what is already in `build/<target>`.
+/** *`zeli preview <appdir> [--target T] [--port N] [--no-build]`. */
+/** */
+/** *web      serves the release from `build/web`, with a host's compression and */
+/** *caching. An app with a Vite host gets `vite build` first, and is */
+/** *served the same way, because `vite preview` cannot compress. */
+/** *macos    runs the release binary */
+/** *server   the same, for a service entry */
+/** *ios      installs and launches on the booted simulator */
+/** *android  installs and launches on the attached device */
+/** */
+/** *`reuse` skips the build and runs what is already in `build/<target>`. */
 fn preview(appdir: string, target: string, port: int, reuse: bool) -> int {
     if sys.exists(loam_path()) == 0 {
         die("zeli: missing {{loam_path()}} — run `make` in {{repo_root()}} first")
@@ -3405,8 +3405,8 @@ fn preview(appdir: string, target: string, port: int, reuse: bool) -> int {
     return preview_native(appdir, target, stem)
 }
 
-/// Make the release `preview` runs. `build` leaves an app with no routes without a
-/// page, and a Vite app's web build belongs to its own config.
+/** *Make the release `preview` runs. `build` leaves an app with no routes without a */
+/** *page, and a Vite app's web build belongs to its own config. */
 fn preview_build(appdir: string, target: string, stem: string) -> bool {
     if target != "web" {
         return build(appdir, []string { target }, "", true) == 0
@@ -3427,8 +3427,8 @@ fn preview_build(appdir: string, target: string, stem: string) -> bool {
     return true
 }
 
-/// `vite build` into `web`. `ZELI_RELEASE` tells the app's config to compile with
-/// `--wasm-release`.
+/** *`vite build` into `web`. `ZELI_RELEASE` tells the app's config to compile with */
+/** *`--wasm-release`. */
 fn preview_vite_build(web: string, webdir: string) -> bool {
     if !vite_install(webdir) {
         return false
@@ -3446,7 +3446,7 @@ fn preview_vite_build(web: string, webdir: string) -> bool {
     return true
 }
 
-/// What `build` does to a split release, for a web build it did not split.
+/** *What `build` does to a split release, for a web build it did not split. */
 fn preview_finish(web: string, assets: WebAssets) {
     let loader_js = join(web, strip_lead_slash(assets.loader))
     minify_js(loader_js)
@@ -3454,8 +3454,8 @@ fn preview_finish(web: string, assets: WebAssets) {
     report_web_sizes(web, assets)
 }
 
-/// The `Cache-Control` a host sends for `path`, as `web_headers` asks: hashed
-/// assets for a year, and everything else checked on each visit.
+/** *The `Cache-Control` a host sends for `path`, as `web_headers` asks: hashed */
+/** *assets for a year, and everything else checked on each visit. */
 fn preview_cache(path: string) -> string {
     if starts_with(path, "/_zeus/") {
         return "public, max-age=31536000, immutable"
@@ -3463,7 +3463,7 @@ fn preview_cache(path: string) -> string {
     return "no-cache"
 }
 
-/// Serve `build/web` until interrupted. RPC is forwarded as in `serve`.
+/** *Serve `build/web` until interrupted. RPC is forwarded as in `serve`. */
 fn preview_web(appdir: string, port: int) -> int {
     let web = join(join(appdir, "build"), "web")
     if sys.exists(join(web, "index.html")) == 0 {
@@ -3486,7 +3486,7 @@ fn preview_web(appdir: string, port: int) -> int {
     return 0
 }
 
-/// Run the release binary until it exits or this process does.
+/** *Run the release binary until it exits or this process does. */
 fn preview_native(appdir: string, target: string, stem: string) -> int {
     let bin = join(join(join(appdir, "build"), target), stem)
     if sys.exists(bin) == 0 {
@@ -3518,14 +3518,14 @@ fn preview_native(appdir: string, target: string, stem: string) -> int {
 // comes from and `loam.lock` records what was actually used, which is what makes
 // a vendored tree reproducible without the network being up.
 
-/// A `loam.deps` line split into its `name source [rev]` fields.
+/** *A `loam.deps` line split into its `name source [rev]` fields. */
 struct Dep {
     name: string,
     source: string,
     rev: string,
 }
 
-/// `line` without its comment, trimmed. A `#` anywhere starts one.
+/** *`line` without its comment, trimmed. A `#` anywhere starts one. */
 fn dep_line(line: string) -> string {
     let mut cut = line.len
     for i in 0..line.len {
@@ -3537,8 +3537,8 @@ fn dep_line(line: string) -> string {
     return trim(slice(line, 0, cut))
 }
 
-/// `s` split on runs of spaces and tabs, with empty pieces dropped. A dependency
-/// line is written in whitespace, not in one particular byte.
+/** *`s` split on runs of spaces and tabs, with empty pieces dropped. A dependency */
+/** *line is written in whitespace, not in one particular byte. */
 fn split_ws(s: string) -> []string {
     let mut out = []string {}
     let mut i = 0
@@ -3559,8 +3559,8 @@ fn split_ws(s: string) -> []string {
     return out
 }
 
-/// The fields of a non-empty `loam.deps` line. A missing `source` or `rev` reads
-/// as empty, which the caller reports in its own words.
+/** *The fields of a non-empty `loam.deps` line. A missing `source` or `rev` reads */
+/** *as empty, which the caller reports in its own words. */
 fn dep_of(line: string) -> Dep {
     let toks = split_ws(line)
     let mut name = ""
@@ -3578,8 +3578,8 @@ fn dep_of(line: string) -> Dep {
     return Dep { name: name, source: source, rev: rev }
 }
 
-/// A package name: an identifier, and unlike an app name a `-` is not allowed in
-/// one, because `import "pkg:name"` has to be spellable as a path segment.
+/** *A package name: an identifier, and unlike an app name a `-` is not allowed in */
+/** *one, because `import "pkg:name"` has to be spellable as a path segment. */
 fn valid_pkg_name(name: string) -> bool {
     if name.len == 0 {
         return false
@@ -3597,8 +3597,8 @@ fn valid_pkg_name(name: string) -> bool {
     return true
 }
 
-/// Copy the tree at `src` to `dst`, skipping `.git`. A vendored package should
-/// not carry the clone's history, which would be a second copy of the objects.
+/** *Copy the tree at `src` to `dst`, skipping `.git`. A vendored package should */
+/** *not carry the clone's history, which would be a second copy of the objects. */
 fn copy_tree(src: string, dst: string) {
     sys.mkdir(dst)
     let entries = sys.list_dir(src)
@@ -3617,8 +3617,8 @@ fn copy_tree(src: string, dst: string) {
     }
 }
 
-/// The first twelve characters of `s` — how a commit is shortened for a log
-/// line, long enough to be unmistakable and short enough to read.
+/** *The first twelve characters of `s` — how a commit is shortened for a log */
+/** *line, long enough to be unmistakable and short enough to read. */
 fn short_sha(s: string) -> string {
     if s.len <= 12 {
         return s
@@ -3626,15 +3626,15 @@ fn short_sha(s: string) -> string {
     return slice(s, 0, 12)
 }
 
-/// `git <args>` from the repo root, stderr merged into the captured output. A
-/// clone needs a cwd; a `-C <dir>` call does not, but running both the same way
-/// keeps the exit status handling in one place.
+/** *`git <args>` from the repo root, stderr merged into the captured output. A */
+/** *clone needs a cwd; a `-C <dir>` call does not, but running both the same way */
+/** *keeps the exit status handling in one place. */
 fn run_git(args: string) -> string {
     return run_here(cat("git ", args))
 }
 
-/// One step of the lock checksum. Matches `pkgresolve.c`: 31-bit FNV, prime
-/// 16777619, mask 2147483647. The extra 0 after a path or a file is a separator.
+/** *One step of the lock checksum. Matches `pkgresolve.c`: 31-bit FNV, prime */
+/** *16777619, mask 2147483647. The extra 0 after a path or a file is a separator. */
 fn hash_step(h: i64, b: int) -> i64 {
     let x = wrapping_xor(h, i64(b))
     let y = wrapping_mul(x, i64(16777619))
@@ -3706,8 +3706,8 @@ fn insert_sorted(v: []string, s: string) -> []string {
     return out
 }
 
-/// Relative paths of regular files under `root`, skipping `.git`. Returns a new
-/// list because a slice argument would not keep the callee's pushes.
+/** *Relative paths of regular files under `root`, skipping `.git`. Returns a new */
+/** *list because a slice argument would not keep the callee's pushes. */
 fn collect_files(root: string, rel: string) -> []string {
     let mut out = []string {}
     let dir = join_rel(root, rel)
@@ -3778,7 +3778,7 @@ fn after_key(s: string, key: string) -> string {
     return ""
 }
 
-/// `name = { path = "../dir" }` or `name = "git-url"`, one line.
+/** *`name = { path = "../dir" }` or `name = "git-url"`, one line. */
 fn dep_from_toml_line(line: string) -> Dep {
     let mut eq = -1
     for i in 0..line.len {
@@ -3844,7 +3844,7 @@ fn deps_from_file(text: string) -> []Dep {
     return deps
 }
 
-/// `[dependencies]` in `loam.toml` when it lists anything, otherwise `loam.deps`.
+/** *`[dependencies]` in `loam.toml` when it lists anything, otherwise `loam.deps`. */
 fn load_deps(appdir: string) -> []Dep {
     let toml = join(appdir, "loam.toml")
     if sys.exists(toml) == 1 {
@@ -3861,16 +3861,16 @@ fn load_deps(appdir: string) -> []Dep {
     return deps_from_file(sys.read_file(depsf))
 }
 
-/// `zeli pkg sync <appdir>`
-///
-/// Reads `[dependencies]` from `<appdir>/loam.toml` when that section lists
-/// anything, otherwise `<appdir>/loam.deps`. Materializes each package under
-/// `<appdir>/vendor/<name>/` and writes `<appdir>/loam.lock` with a checksum.
-///
-/// A `path:../dir` source is copied locally, so a checkout with no network still
-/// syncs; anything else is a git URL, cloned from the repo root and pinned to its
-/// HEAD (or to `rev`) commit. One package failing does not stop the others — the
-/// lock file is still written and the exit code says something went wrong.
+/** *`zeli pkg sync <appdir>` */
+/** */
+/** *Reads `[dependencies]` from `<appdir>/loam.toml` when that section lists */
+/** *anything, otherwise `<appdir>/loam.deps`. Materializes each package under */
+/** *`<appdir>/vendor/<name>/` and writes `<appdir>/loam.lock` with a checksum. */
+/** */
+/** *A `path:../dir` source is copied locally, so a checkout with no network still */
+/** *syncs; anything else is a git URL, cloned from the repo root and pinned to its */
+/** *HEAD (or to `rev`) commit. One package failing does not stop the others — the */
+/** *lock file is still written and the exit code says something went wrong. */
 fn pkg_sync(appdir: string) -> int {
     let deps = load_deps(appdir)
     let vendor = join(appdir, "vendor")
@@ -3965,8 +3965,8 @@ fn is_digit(c: int) -> int {
     return 0
 }
 
-/// A legal app name: `[A-Za-z_][A-Za-z0-9_-]*`. It becomes a directory, a TOML
-/// value and an identifier, so the rule is the strict one.
+/** *A legal app name: `[A-Za-z_][A-Za-z0-9_-]*`. It becomes a directory, a TOML */
+/** *value and an identifier, so the rule is the strict one. */
 fn valid_name(name: string) -> bool {
     if name.len == 0 {
         return false
@@ -3990,21 +3990,21 @@ fn valid_name(name: string) -> bool {
     return true
 }
 
-/// One scaffolded file: where it goes, relative to the app directory, and its
-/// whole contents. A vector of these rather than a map, which Loam has no need
-/// of here — the order is the write order and only the count is reported.
+/** *One scaffolded file: where it goes, relative to the app directory, and its */
+/** *whole contents. A vector of these rather than a map, which Loam has no need */
+/** *of here — the order is the write order and only the count is reported. */
 struct ScaffoldFile {
     rel: string,
     body: string,
 }
 
-/// The tree `zeli new` writes: an entry for every host, the `routes/` tree the
-/// router is generated from, a component, an RPC surface and a smoke test.
-///
-/// Every file that names the app interpolates it — `zeus.toml`, `app.loam`, the
-/// root layout's nav and the welcome page. A template used to keep a literal
-/// `myapp` there, which stayed invisible only because the one scaffolded app in
-/// the tree is called `myapp`; the suite now checks the name lands.
+/** *The tree `zeli new` writes: an entry for every host, the `routes/` tree the */
+/** *router is generated from, a component, an RPC surface and a smoke test. */
+/** */
+/** *Every file that names the app interpolates it — `zeus.toml`, `app.loam`, the */
+/** *root layout's nav and the welcome page. A template used to keep a literal */
+/** *`myapp` there, which stayed invisible only because the one scaffolded app in */
+/** *the tree is called `myapp`; the suite now checks the name lands. */
 fn scaffold_files(name: string) -> []ScaffoldFile {
     let mut out = []ScaffoldFile {}
     push(out, ScaffoldFile {
@@ -4017,15 +4017,15 @@ fn scaffold_files(name: string) -> []ScaffoldFile {
     })
     push(out, ScaffoldFile {
         rel: "app.loam",
-        body: "//! {{name}} — application entry. One entry, every host.\n//!\n//! `zeli routes` generates app_routes.loam from routes/; this file\n//! mounts it. `zeli build` emits all five targets from here.\n\nimport \"zeus\"\nimport \"app_routes.loam\" as approutes\nimport \"server/api.loam\" as api\nimport \"tests/smoke.loam\" as smoketest\n\nfn main() {\n    zeus.App(\"{{name}}\", fn() {\n        approutes.app()\n    })\n}\n",
+        body: "// {{name}} — application entry. One entry, every host.\n//\n// `zeli routes` generates app_routes.loam from routes/; this file\n// mounts it. `zeli build` emits all five targets from here.\n\nimport \"zeus\"\nimport \"app_routes.loam\" as approutes\nimport \"server/api.loam\" as api\nimport \"tests/smoke.loam\" as smoketest\n\nfn main() {\n    zeus.App(\"{{name}}\", fn() {\n        approutes.app()\n    })\n}\n",
     })
     push(out, ScaffoldFile {
         rel: "theme.loam",
-        body: "//! Theme tokens: palette roles. `zeus.theme(ROLE.X, light, dark)` sets\n//! both appearances; widgets resolve the role per appearance at paint time.\n\nimport \"zeus\"\n\nfn install() {\n    zeus.theme(ROLE.Accent, 0x2563EB, 0x60A5FA)\n    zeus.theme(ROLE.Paper, 0xFFFFFF, 0x111318)\n    zeus.theme(ROLE.Ink, 0x111318, 0xF3F4F6)\n}\n",
+        body: "// Theme tokens: palette roles. `zeus.theme(ROLE.X, light, dark)` sets\n// both appearances; widgets resolve the role per appearance at paint time.\n\nimport \"zeus\"\n\nfn install() {\n    zeus.theme(ROLE.Accent, 0x2563EB, 0x60A5FA)\n    zeus.theme(ROLE.Paper, 0xFFFFFF, 0x111318)\n    zeus.theme(ROLE.Ink, 0x111318, 0xF3F4F6)\n}\n",
     })
     push(out, ScaffoldFile {
         rel: "routes/layout.loam",
-        body: "//! Root shell: theme + nav. Retained across navigation, so its state\n//! survives — only the page slot rebuilds.\n\nimport \"zeus\"\nimport \"../theme.loam\" as theme\n\nfn Layout(build: fn()) -> Node {\n    theme.install()\n    return zeus.Box(style = Style(direction = Direction.Column, gap = 8, padding = 12)) {\n        zeus.Text(\"{{name}}\")\n        build()\n    }\n}\n",
+        body: "// Root shell: theme + nav. Retained across navigation, so its state\n// survives — only the page slot rebuilds.\n\nimport \"zeus\"\nimport \"../theme.loam\" as theme\n\nfn Layout(build: fn()) -> Node {\n    theme.install()\n    return zeus.Box(style = Style(direction = Direction.Column, gap = 8, padding = 12)) {\n        zeus.Text(\"{{name}}\")\n        build()\n    }\n}\n",
     })
     push(out, ScaffoldFile {
         rel: "routes/page.loam",
@@ -4033,11 +4033,11 @@ fn scaffold_files(name: string) -> []ScaffoldFile {
     })
     push(out, ScaffoldFile {
         rel: "routes/loading.loam",
-        body: "//! Shown while a route's loaders are pending.\n\nimport \"zeus\"\n\nfn Loading() -> Node {\n    return zeus.Text(\"loading...\")\n}\n",
+        body: "// Shown while a route's loaders are pending.\n\nimport \"zeus\"\n\nfn Loading() -> Node {\n    return zeus.Text(\"loading...\")\n}\n",
     })
     push(out, ScaffoldFile {
         rel: "routes/error.loam",
-        body: "//! Route error page. A trap in a page's build lands here (see zui.Boundary).\n\nimport \"zeus\"\n\nfn Error(msg: string) -> Node {\n    return zeus.Text(\"something went wrong\")\n}\n",
+        body: "// Route error page. A trap in a page's build lands here (see zui.Boundary).\n\nimport \"zeus\"\n\nfn Error(msg: string) -> Node {\n    return zeus.Text(\"something went wrong\")\n}\n",
     })
     push(out, ScaffoldFile {
         rel: "routes/not-found.loam",
@@ -4049,7 +4049,7 @@ fn scaffold_files(name: string) -> []ScaffoldFile {
     })
     push(out, ScaffoldFile {
         rel: "routes/blog/loader.loam",
-        body: "//! Blog list query. Make `posts` a `#[server] fn` to fetch it from the\n//! backend; it stays a plain fn here so the scaffold runs on every host.\n\nfn posts() -> []string {\n    return []string { \"hello world\", \"second post\" }\n}\n",
+        body: "// Blog list query. Make `posts` a `#[server] fn` to fetch it from the\n// backend; it stays a plain fn here so the scaffold runs on every host.\n\nfn posts() -> []string {\n    return []string { \"hello world\", \"second post\" }\n}\n",
     })
     push(out, ScaffoldFile {
         rel: "routes/blog/page.loam",
@@ -4057,7 +4057,7 @@ fn scaffold_files(name: string) -> []ScaffoldFile {
     })
     push(out, ScaffoldFile {
         rel: "routes/blog/[slug]/loader.loam",
-        body: "//! One post by slug. In a real app this is\n//! `#[server] fn get_post(slug: string) -> Post`.\n\nfn get_post(slug: string) -> string {\n    return slug\n}\n",
+        body: "// One post by slug. In a real app this is\n// `#[server] fn get_post(slug: string) -> Post`.\n\nfn get_post(slug: string) -> string {\n    return slug\n}\n",
     })
     push(out, ScaffoldFile {
         rel: "routes/blog/[slug]/page.loam",
@@ -4077,15 +4077,15 @@ fn scaffold_files(name: string) -> []ScaffoldFile {
     })
     push(out, ScaffoldFile {
         rel: "components/card.loam",
-        body: "//! Shared component, no routing knowledge: a fn that builds into the\n//! current host.\n\nimport \"zeus\"\n\nfn Card(text: string) -> Node {\n    return zeus.Box(style = Style(gap = 4, padding = 12, background = \"#FFFFFF\")) {\n        zeus.Text(text)\n    }\n}\n",
+        body: "// Shared component, no routing knowledge: a fn that builds into the\n// current host.\n\nimport \"zeus\"\n\nfn Card(text: string) -> Node {\n    return zeus.Box(style = Style(gap = 4, padding = 12, background = \"#FFFFFF\")) {\n        zeus.Text(text)\n    }\n}\n",
     })
     push(out, ScaffoldFile {
         rel: "server/api.loam",
-        body: "//! RPC surface: `#[proto]` contracts and `#[server]` fns. The entry\n//! imports this, so the same source compiles to a direct call on native\n//! and an RPC boundary on the client.\n\nimport \"http\"\n\n#[proto]\nstruct HelloReq {\n    name: string,\n}\n\n#[proto]\nstruct HelloResp {\n    greeting: string,\n}\n\n#[server]\nfn hello(req: HelloReq) -> HelloResp {\n    return HelloResp { greeting: req.name }\n}\n",
+        body: "// RPC surface: `#[proto]` contracts and `#[server]` fns. The entry\n// imports this, so the same source compiles to a direct call on native\n// and an RPC boundary on the client.\n\nimport \"http\"\n\n#[proto]\nstruct HelloReq {\n    name: string,\n}\n\n#[proto]\nstruct HelloResp {\n    greeting: string,\n}\n\n#[server]\nfn hello(req: HelloReq) -> HelloResp {\n    return HelloResp { greeting: req.name }\n}\n",
     })
     push(out, ScaffoldFile {
         rel: "server/db.loam",
-        body: "//! Database access belongs here, behind `#[server]` fns so handles and\n//! secrets never reach a client binary.\n",
+        body: "// Database access belongs here, behind `#[server]` fns so handles and\n// secrets never reach a client binary.\n",
     })
     push(out, ScaffoldFile {
         rel: "assets/README.md",
@@ -4097,17 +4097,17 @@ fn scaffold_files(name: string) -> []ScaffoldFile {
     })
     push(out, ScaffoldFile {
         rel: "tests/smoke.loam",
-        body: "//! `#[test]` fns. Import this from the entry and run `loam test app.loam`.\n\nimport \"std:test\"\n\nfn add(a: int, b: int) -> int {\n    return a + b\n}\n\n#[test]\nfn adds() {\n    assert_eq_int(add(1, 2), 3)\n}\n",
+        body: "// `#[test]` fns. Import this from the entry and run `loam test app.loam`.\n\nimport \"std:test\"\n\nfn add(a: int, b: int) -> int {\n    return a + b\n}\n\n#[test]\nfn adds() {\n    assert_eq_int(add(1, 2), 3)\n}\n",
     })
     return out
 }
 
-/// `zeli new <name> [dir]` — write the scaffold, then generate its route table,
-/// because the entry imports `app_routes.loam` and a fresh app has to typecheck
-/// under `loamc` (and the LSP) before anyone builds it.
-///
-/// Refuses a target that exists and holds anything: `zeli new` never merges
-/// into an app it did not write.
+/** *`zeli new <name> [dir]` — write the scaffold, then generate its route table, */
+/** *because the entry imports `app_routes.loam` and a fresh app has to typecheck */
+/** *under `loamc` (and the LSP) before anyone builds it. */
+/** */
+/** *Refuses a target that exists and holds anything: `zeli new` never merges */
+/** *into an app it did not write. */
 fn scaffold(appdir: string, name: string) -> int {
     if !valid_name(name) {
         say("zeli: bad app name '{{name}}'")
@@ -4139,14 +4139,14 @@ fn scaffold(appdir: string, name: string) -> int {
 
 // --- build: targets, the compiler gate, and the web shell ---
 
-/// The target names, in the order the TypeScript CLI lists them (`ALL_TARGETS`).
-/// `server` is the native binary a backend runs, so five targets come out of one
-/// entry.
+/** *The target names, in the order the TypeScript CLI lists them (`ALL_TARGETS`). */
+/** *`server` is the native binary a backend runs, so five targets come out of one */
+/** *entry. */
 fn all_targets() -> []string {
     return []string { "web", "macos", "ios", "android", "server" }
 }
 
-/// The same list as one string, for the `want ...` half of an error.
+/** *The same list as one string, for the `want ...` half of an error. */
 fn target_list() -> string {
     let ts = all_targets()
     let mut r = ""
@@ -4169,11 +4169,11 @@ fn known_target(t: string) -> bool {
     return false
 }
 
-/// The targets an app declares in `zeus.toml` (`targets = ["web", "macos"]`),
-/// which is what `zeli build` builds when no `--targets` is given. Every target
-/// comes out of the one entry, so declaring one is all it takes to get it; with
-/// no `zeus.toml` or no `targets` line, all of them. An unknown name is fatal,
-/// like a misspelt `--targets`.
+/** *The targets an app declares in `zeus.toml` (`targets = ["web", "macos"]`), */
+/** *which is what `zeli build` builds when no `--targets` is given. Every target */
+/** *comes out of the one entry, so declaring one is all it takes to get it; with */
+/** *no `zeus.toml` or no `targets` line, all of them. An unknown name is fatal, */
+/** *like a misspelt `--targets`. */
 fn app_targets(appdir: string) -> []string {
     let toml = sys.read_file(join(appdir, "zeus.toml"))
     let lines = split_on(toml, 10)
@@ -4198,8 +4198,8 @@ fn app_targets(appdir: string) -> []string {
     return all_targets()
 }
 
-/// `--targets a,b` as a list. An unknown name is fatal; with no argument at all
-/// every target is built.
+/** *`--targets a,b` as a list. An unknown name is fatal; with no argument at all */
+/** *every target is built. */
 fn parse_targets(arg: string, given: bool) -> []string {
     if !given {
         return all_targets()
@@ -4216,8 +4216,8 @@ fn parse_targets(arg: string, given: bool) -> []string {
     return out
 }
 
-/// The extra `loamc` flags for a target: wasm for the browser, the two mobile
-/// targets by name, and none at all for macos / server, which are native.
+/** *The extra `loamc` flags for a target: wasm for the browser, the two mobile */
+/** *targets by name, and none at all for macos / server, which are native. */
 fn target_flags(t: string) -> string {
     if t == "web" {
         return "--target=wasm32"
@@ -4231,8 +4231,8 @@ fn target_flags(t: string) -> string {
     return ""
 }
 
-/// What a target's build artifact is called: a `.wasm` module for the browser,
-/// the entry's stem everywhere else.
+/** *What a target's build artifact is called: a `.wasm` module for the browser, */
+/** *the entry's stem everywhere else. */
 fn out_name(t: string, stem: string) -> string {
     if t == "web" {
         return cat(stem, ".wasm")
@@ -4251,7 +4251,7 @@ fn out_name(t: string, stem: string) -> string {
 // own tools; `macos/Info.plist.part`, raw plist keys added to the dict (document
 // types, usage strings).
 
-/// A string setting from zeus.toml (`key = "value"`), or "".
+/** *A string setting from zeus.toml (`key = "value"`), or "". */
 fn toml_str(appdir: string, key: string) -> string {
     let lines = split_on(sys.read_file(join(appdir, "zeus.toml")), 10)
     for i in 0..lines.len {
@@ -4275,7 +4275,7 @@ fn slice_str(s: string, a: int, b: int) -> string {
     return string_from_bytes(x)
 }
 
-/// The app's display name: `title`, else `name` with its first letter raised.
+/** *The app's display name: `title`, else `name` with its first letter raised. */
 fn bundle_title(appdir: string) -> string {
     let t = toml_str(appdir, "title")
     if t != "" {
@@ -4314,14 +4314,14 @@ fn bundle_id(appdir: string) -> string {
     return cat("com.loam.", string_from_bytes(x))
 }
 
-/// AppKit draws an SVG into a transparent square PNG (macOS 14+ reads SVG).
-/// Quick Look's thumbnailer would paint it on white, which shows in the Dock.
+/** *AppKit draws an SVG into a transparent square PNG (macOS 14+ reads SVG). */
+/** *Quick Look's thumbnailer would paint it on white, which shows in the Dock. */
 fn icon_render_js() -> string {
     return "ObjC.import('AppKit')\nfunction run(argv) {\n    var size = parseInt(argv[2], 10)\n    var img = $.NSImage.alloc.initWithContentsOfFile(argv[0])\n    if (!img || img.isNil()) { throw new Error('cannot read ' + argv[0]) }\n    var rep = $.NSBitmapImageRep.alloc.initWithBitmapDataPlanesPixelsWidePixelsHighBitsPerSampleSamplesPerPixelHasAlphaIsPlanarColorSpaceNameBytesPerRowBitsPerPixel(null, size, size, 8, 4, true, false, $.NSDeviceRGBColorSpace, 0, 0)\n    $.NSGraphicsContext.saveGraphicsState\n    $.NSGraphicsContext.setCurrentContext($.NSGraphicsContext.graphicsContextWithBitmapImageRep(rep))\n    img.drawInRectFromRectOperationFraction($.NSMakeRect(0, 0, size, size), $.NSZeroRect, $.NSCompositingOperationSourceOver, 1)\n    $.NSGraphicsContext.restoreGraphicsState\n    var png = rep.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $())\n    if (!png.writeToFileAtomically(argv[1], true)) { throw new Error('cannot write ' + argv[1]) }\n}\n"
 }
 
-/// `svg` → `.icns` at `out`: render at 1024, scale an iconset with `sips`,
-/// pack it with `iconutil`. False (and no file) when any step fails.
+/** *`svg` → `.icns` at `out`: render at 1024, scale an iconset with `sips`, */
+/** *pack it with `iconutil`. False (and no file) when any step fails. */
 fn render_icns(svg: string, out: string) -> bool {
     let work = trim(sys.exec("mktemp -d \"${TMPDIR:-/tmp}/zeli-icon.XXXXXX\""))
     if work == "" {
@@ -4352,8 +4352,8 @@ fn render_icns(svg: string, out: string) -> bool {
     return ok
 }
 
-/// Wrap the macos binary `bin` into `build/macos/<Title>.app`; the bundle's
-/// path, or "" when it could not be written.
+/** *Wrap the macos binary `bin` into `build/macos/<Title>.app`; the bundle's */
+/** *path, or "" when it could not be written. */
 fn macos_bundle(appdir: string, bin: string) -> string {
     let title = bundle_title(appdir)
     if title == "" {
@@ -4405,7 +4405,7 @@ fn macos_bundle(appdir: string, bin: string) -> string {
     return app
 }
 
-/// `<appdir>/app.loam`, else `<appdir>/<dirname>.loam`, else `main.loam`.
+/** *`<appdir>/app.loam`, else `<appdir>/<dirname>.loam`, else `main.loam`. */
 fn find_entry(appdir: string) -> string {
     let base = base_name(appdir)
     let first = join(appdir, "app.loam")
@@ -4424,11 +4424,11 @@ fn find_entry(appdir: string) -> string {
     return ""
 }
 
-/// `loamc check <entry>` — the frontend only, no codegen.
-///
-/// Every command that runs or emits an app gates on this first, so a type error
-/// fails once, up front, instead of once per target — or not at all when a
-/// target's host toolchain is missing and its failure looks like the same thing.
+/** *`loamc check <entry>` — the frontend only, no codegen. */
+/** */
+/** *Every command that runs or emits an app gates on this first, so a type error */
+/** *fails once, up front, instead of once per target — or not at all when a */
+/** *target's host toolchain is missing and its failure looks like the same thing. */
 fn check_entry(entry: string) -> bool {
     let out = run_loam("", cat("check ", shell_quote(entry)))
     if sys.exec_status() == 0 {
@@ -4442,9 +4442,9 @@ fn check_entry(entry: string) -> bool {
     return false
 }
 
-/// Remove `<appdir>/build/<target>` if a previous build left it, and make it
-/// again empty, so nothing from an older build (a stale binary, a bundle, a
-/// log) survives into this one. Only ever a directory under `build/`.
+/** *Remove `<appdir>/build/<target>` if a previous build left it, and make it */
+/** *again empty, so nothing from an older build (a stale binary, a bundle, a */
+/** *log) survives into this one. Only ever a directory under `build/`. */
 fn fresh_target_dir(appdir: string, target: string) -> string {
     let dir = join(join(appdir, "build"), target)
     if target != "" && sys.exists(dir) == 1 {
@@ -4458,23 +4458,23 @@ fn fresh_target_dir(appdir: string, target: string) -> string {
     return dir
 }
 
-/// `zeli build <appdir> [--targets web,macos,...] [--base https://host] [--release]`
-///
-/// Generates the route table when `routes/` exists, then compiles the app for
-/// each target. The compile is the typecheck: a diagnostic is reported once,
-/// prefixed with `failed the compiler check`, and a clean app is not checked
-/// again before that compile.
-///
-/// Targets whose host toolchain is missing (iOS/Android SDKs) fail individually
-/// and the rest still build, so one missing SDK does not cost you the others.
-/// The exit code is 1 only when nothing built.
-///
-/// A routed web build keeps the linked wasm under `.zeus/out` and republishes
-/// `build/web` only when that wasm, the base URL, or the shell changed, and
-/// only when this command was the one that published the directory. An
-/// unchanged app finishes in well under a second. `--release` (`full`) is the
-/// smallest output instead: one whole-program compile and `-Oz`, several times
-/// slower, and it is cached the same way.
+/** *`zeli build <appdir> [--targets web,macos,...] [--base https://host] [--release]` */
+/** */
+/** *Generates the route table when `routes/` exists, then compiles the app for */
+/** *each target. The compile is the typecheck: a diagnostic is reported once, */
+/** *prefixed with `failed the compiler check`, and a clean app is not checked */
+/** *again before that compile. */
+/** */
+/** *Targets whose host toolchain is missing (iOS/Android SDKs) fail individually */
+/** *and the rest still build, so one missing SDK does not cost you the others. */
+/** *The exit code is 1 only when nothing built. */
+/** */
+/** *A routed web build keeps the linked wasm under `.zeus/out` and republishes */
+/** *`build/web` only when that wasm, the base URL, or the shell changed, and */
+/** *only when this command was the one that published the directory. An */
+/** *unchanged app finishes in well under a second. `--release` (`full`) is the */
+/** *smallest output instead: one whole-program compile and `-Oz`, several times */
+/** *slower, and it is cached the same way. */
 fn build(appdir: string, targets: []string, base: string, full: bool) -> int {
     if sys.exists(loam_path()) == 0 {
         die("zeli: missing {{loam_path()}} — run `make` in {{repo_root()}} first")
@@ -4630,9 +4630,9 @@ fn build(appdir: string, targets: []string, base: string, full: bool) -> int {
 
 // --- web shell: one HTML file per route, plus sitemap + robots ---
 
-/// One route's metadata, as the dump prints it. All strings — `collect_meta`
-/// gives a missing or mistyped field the empty string, which is what every use
-/// site here treats as "not set".
+/** *One route's metadata, as the dump prints it. All strings — `collect_meta` */
+/** *gives a missing or mistyped field the empty string, which is what every use */
+/** *site here treats as "not set". */
 struct MetaRec {
     path: string,
     title: string,
@@ -4642,28 +4642,28 @@ struct MetaRec {
     og_type: string,
     robots: string,
     jsonld: string,
-    /// Index of the route that serves this URL.
+    /** *Index of the route that serves this URL. */
     route: string,
-    /// The page's text, from `zeus.engine_text_outline`.
+    /** *The page's text, from `zeus.engine_text_outline`. */
     outline: string,
-    /// The theme's page colour as packed rgb, for the first paint. "" = unknown.
+    /** *The theme's page colour as packed rgb, for the first paint. "" = unknown. */
     paper: string,
-    /// The same colour in each appearance, for a visitor who chose one.
+    /** *The same colour in each appearance, for a visitor who chose one. */
     paper_light: string,
     paper_dark: string,
 }
 
-/// The URLs one web build's shells point at.
+/** *The URLs one web build's shells point at. */
 struct WebAssets {
     wasm: string,
     loader: string,
-    /// Route chunks, empty for an unsplit build.
+    /** *Route chunks, empty for an unsplit build. */
     chunks: []ChunkFile,
-    /// Chunk names each route needs, by route index.
+    /** *Chunk names each route needs, by route index. */
     routes: [][]string,
-    /// Chunks to fetch while the browser is idle, in order.
+    /** *Chunks to fetch while the browser is idle, in order. */
     idle: []string,
-    /// Chunks a screen without hover fetches after those.
+    /** *Chunks a screen without hover fetches after those. */
     idle_touch: []string,
 }
 
@@ -4672,12 +4672,12 @@ struct ChunkFile {
     url: string,
 }
 
-/// The most page text a route's HTML carries, in bytes.
+/** *The most page text a route's HTML carries, in bytes. */
 const MAX_PREPAINT: int = 40000
 
-/// The metadata dump: a native Loam program that prints one JSON record per
-/// concrete route URL by calling each route's `meta()` — and `paths()` for a
-/// dynamic route, to find out which URLs it even has.
+/** *The metadata dump: a native Loam program that prints one JSON record per */
+/** *concrete route URL by calling each route's `meta()` — and `paths()` for a */
+/** *dynamic route, to find out which URLs it even has. */
 fn meta_dump_source() -> string {
     let mut lines = []string {}
     push(lines, "// Generated by `zeli build`. Do not edit.")
@@ -4760,9 +4760,9 @@ fn meta_dump_source() -> string {
     return join_lines(lines)
 }
 
-/// A string member of a parsed record, or `""` when the field is absent or is
-/// not a string. `JSON.parse` gives the TypeScript CLI `undefined` for a missing
-/// key, which reads the same way at every use site here.
+/** *A string member of a parsed record, or `""` when the field is absent or is */
+/** *not a string. `JSON.parse` gives the TypeScript CLI `undefined` for a missing */
+/** *key, which reads the same way at every use site here. */
 fn fld(doc: JsonDoc, key: string) -> string {
     let v = json.field(doc.nodes, doc.root, key, key)
     if v.ok == 0 {
@@ -4775,12 +4775,12 @@ fn fld(doc: JsonDoc, key: string) -> string {
     return s.s
 }
 
-/// Write the dump's source and return the command that compiles it, to run
-/// alongside the web build it describes.
-///
-/// The dump runs once on this machine and is thrown away, so it gets the
-/// development profile even in a release: optimizing it costs more than the
-/// wasm that ships.
+/** *Write the dump's source and return the command that compiles it, to run */
+/** *alongside the web build it describes. */
+/** */
+/** *The dump runs once on this machine and is thrown away, so it gets the */
+/** *development profile even in a release: optimizing it costs more than the */
+/** *wasm that ships. */
 fn meta_compile_cmd(appdir: string) -> string {
     let zdir = join(appdir, ".zeus")
     let src = join(zdir, "meta_dump.loam")
@@ -4795,27 +4795,27 @@ fn meta_compile_cmd(appdir: string) -> string {
     )
 }
 
-/// Abort the command if the dump did not compile.
+/** *Abort the command if the dump did not compile. */
 fn require_meta(job: JobResult) {
     if !job.ok {
         die_extra("zeli: metadata dump failed to compile", trim(job.log))
     }
 }
 
-/// What the compiled dump printed, when it ran beside something else.
+/** *What the compiled dump printed, when it ran beside something else. */
 let mut meta_output: string = ""
 
-/// The program `short_hash` runs, once it has looked.
+/** *The program `short_hash` runs, once it has looked. */
 let mut hash_tool: string = ""
 
-/// The shell command that runs the compiled dump.
+/** *The shell command that runs the compiled dump. */
 fn meta_run_cmd(appdir: string) -> string {
     let bin = join(join(appdir, ".zeus"), "meta_dump")
     return "cd {{shell_quote(repo_root())}} && ZEUS_HEADLESS=1 {{shell_quote(bin)}} 2>&1"
 }
 
-/// Run the compiled dump and return the records it printed. Aborts the command
-/// on a run failure, exactly where the TypeScript CLI's `die` would.
+/** *Run the compiled dump and return the records it printed. Aborts the command */
+/** *on a run failure, exactly where the TypeScript CLI's `die` would. */
 fn collect_meta(appdir: string) -> []MetaRec {
     let mut log = meta_output
     meta_output = ""
@@ -4856,7 +4856,7 @@ fn collect_meta(appdir: string) -> []MetaRec {
     return recs
 }
 
-/// A span of page text, as `engine_text_outline` reports it.
+/** *A span of page text, as `engine_text_outline` reports it. */
 struct OutlineSpan {
     px: int,
     x: int,
@@ -4866,8 +4866,8 @@ struct OutlineSpan {
     text: string,
 }
 
-/// Spans in reading order, top to bottom and then left to right. Icons are text
-/// nodes holding SVG, with no font, and have no words to show.
+/** *Spans in reading order, top to bottom and then left to right. Icons are text */
+/** *nodes holding SVG, with no font, and have no words to show. */
 fn outline_spans(outline: string) -> []OutlineSpan {
     let mut out = []OutlineSpan {}
     let lines = split_lines(outline)
@@ -4895,8 +4895,8 @@ fn outline_spans(outline: string) -> []OutlineSpan {
     return out
 }
 
-/// The tag for a line of `px` type. Sizes, not roles: a page's headings are
-/// drawn big whatever its components call them.
+/** *The tag for a line of `px` type. Sizes, not roles: a page's headings are */
+/** *drawn big whatever its components call them. */
 fn prepaint_tag(px: int) -> string {
     if px >= 28 {
         return "h1"
@@ -4910,11 +4910,11 @@ fn prepaint_tag(px: int) -> string {
     return "p"
 }
 
-/// A page's text as plain semantic markup, for crawlers and for screen readers
-/// before the wasm has arrived. Spans on one line are joined, and a line built from several touching
-/// spans is highlighted code, which keeps going through its single-span lines
-/// (a comment) at the same size. Stops at `MAX_PREPAINT` bytes, as its weight is
-/// on every first load.
+/** *A page's text as plain semantic markup, for crawlers and for screen readers */
+/** *before the wasm has arrived. Spans on one line are joined, and a line built from several touching */
+/** *spans is highlighted code, which keeps going through its single-span lines */
+/** *(a comment) at the same size. Stops at `MAX_PREPAINT` bytes, as its weight is */
+/** *on every first load. */
 fn prepaint_html(outline: string) -> string {
     let spans = outline_spans(outline)
     let mut out = []string {}
@@ -4977,15 +4977,15 @@ fn prepaint_html(outline: string) -> string {
     return join_lines(out)
 }
 
-/// The stylesheet for `prepaint_html`. Hidden, not styled: only the canvas is
-/// ever on screen, as unstyled text flashing up on each load looked like a broken
-/// page. Crawlers and screen readers still read it.
+/** *The stylesheet for `prepaint_html`. Hidden, not styled: only the canvas is */
+/** *ever on screen, as unstyled text flashing up on each load looked like a broken */
+/** *page. Crawlers and screen readers still read it. */
 fn prepaint_css() -> string {
     return "#zeus-prepaint{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}"
 }
 
-/// The `<head>` a crawler and a link preview read, then the canvas the wasm
-/// module paints into. `canonical` arrives already resolved against `--base`.
+/** *The `<head>` a crawler and a link preview read, then the canvas the wasm */
+/** *module paints into. `canonical` arrives already resolved against `--base`. */
 fn shell_html(r: MetaRec, canonical: string, assets: WebAssets) -> string {
     let paper = css_hex(r.paper)
     let title = esc(r.title)
@@ -5062,8 +5062,8 @@ fn shell_html(r: MetaRec, canonical: string, assets: WebAssets) -> string {
     return join_lines(lines)
 }
 
-/// Packed rgb as `#rrggbb`, from the decimal string the metadata dump prints.
-/// Anything else falls back to the plain light page.
+/** *Packed rgb as `#rrggbb`, from the decimal string the metadata dump prints. */
+/** *Anything else falls back to the plain light page. */
 fn css_hex(rgb: string) -> string {
     if rgb == "" {
         return "#fafafa"
@@ -5079,21 +5079,21 @@ fn css_hex(rgb: string) -> string {
     return string_from_bytes(out)
 }
 
-/// A routed web app with binaryen installed. Without it `zeli serve` still works,
-/// as one module, and only a release insists.
+/** *A routed web app with binaryen installed. Without it `zeli serve` still works, */
+/** *as one module, and only a release insists. */
 fn can_split(appdir: string) -> bool {
     return sys.exists(join(appdir, "routes")) == 1 &&
         has_tool("wasm-opt") &&
         has_tool("wasm-split")
 }
 
-/// Paint a visitor's saved appearance before anything draws. Inline and ahead of
-/// the first paint: anywhere later, a light-mode visitor sees dark on every load.
+/** *Paint a visitor's saved appearance before anything draws. Inline and ahead of */
+/** *the first paint: anywhere later, a light-mode visitor sees dark on every load. */
 fn appearance_script() -> string {
     return "<script>try{var a=localStorage.getItem(\"zeus-appearance\"),r=document.documentElement,c=a===\"0\"?r.dataset.paperLight:a===\"1\"?r.dataset.paperDark:\"\";if(c){r.style.setProperty(\"--zeus-paper\",c);document.querySelector(\"meta[name=theme-color]\").content=c}}catch(e){}</script>"
 }
 
-/// The asset names `zeli serve` keeps when it cannot split.
+/** *The asset names `zeli serve` keeps when it cannot split. */
 fn plain_assets(stem: string) -> WebAssets {
     return WebAssets {
         wasm: "/{{stem}}.wasm",
@@ -5105,7 +5105,7 @@ fn plain_assets(stem: string) -> WebAssets {
     }
 }
 
-/// The page for an app with no routes, which has no metadata to build one from.
+/** *The page for an app with no routes, which has no metadata to build one from. */
 fn plain_page(title: string, assets: WebAssets) -> string {
     let mut lines = []string {}
     push(lines, "<!DOCTYPE html>")
@@ -5134,13 +5134,13 @@ fn has_tool(name: string) -> bool {
     return sys.exec_status() == 0
 }
 
-/// First 12 hex digits of a file's SHA-256.
+/** *First 12 hex digits of a file's SHA-256. */
 fn short_hash(file: string) -> string {
     return short_hashes(dir_of(file), []string { base_name(file) })[0]
 }
 
-/// `short_hash` of each of `names` under `dir`, in one process however many there
-/// are. Relative, so a build's chunks fit in what `sys.exec` accepts.
+/** *`short_hash` of each of `names` under `dir`, in one process however many there */
+/** *are. Relative, so a build's chunks fit in what `sys.exec` accepts. */
 fn short_hashes(dir: string, names: []string) -> []string {
     if hash_tool == "" {
         hash_tool = if has_tool("sha256sum") { "sha256sum" } else { "shasum -a 256" }
@@ -5160,13 +5160,13 @@ fn short_hashes(dir: string, names: []string) -> []string {
     return out
 }
 
-/// Move one build output into `dir` under its content hash and return its
-/// final name.
+/** *Move one build output into `dir` under its content hash and return its */
+/** *final name. */
 fn fingerprint_file(src: string, dir: string, stem: string, ext: string) -> string {
     return fingerprint_as(src, dir, stem, short_hash(src), ext)
 }
 
-/// `fingerprint_file` for a hash already known.
+/** *`fingerprint_file` for a hash already known. */
 fn fingerprint_as(src: string, dir: string, stem: string, hash: string, ext: string) -> string {
     let name = "{{stem}}.{{hash}}.{{ext}}"
     let dst = join(dir, name)
@@ -5176,8 +5176,8 @@ fn fingerprint_as(src: string, dir: string, stem: string, hash: string, ext: str
     return name
 }
 
-/// What a static host needs to cache a release: the hashed assets for a year,
-/// since a new build gets new names, and every page checked each visit.
+/** *What a static host needs to cache a release: the hashed assets for a year, */
+/** *since a new build gets new names, and every page checked each visit. */
 fn web_headers() -> string {
     let mut lines = []string {}
     push(lines, "/_zeus/*")
@@ -5187,9 +5187,9 @@ fn web_headers() -> string {
     return join_lines(lines)
 }
 
-/// Vercel rewrites, from zeus.toml: `backend` is the server's origin, and
-/// `backend_paths` the space-separated paths it answers, in Vercel's pattern form.
-/// The browser stays on one origin, so cookies and `sendBeacon` need no CORS.
+/** *Vercel rewrites, from zeus.toml: `backend` is the server's origin, and */
+/** *`backend_paths` the space-separated paths it answers, in Vercel's pattern form. */
+/** *The browser stays on one origin, so cookies and `sendBeacon` need no CORS. */
 fn vercel_rewrites(appdir: string) -> string {
     let backend = toml_str(appdir, "backend")
     let paths = split_ws(toml_str(appdir, "backend_paths"))
@@ -5208,7 +5208,7 @@ fn vercel_rewrites(appdir: string) -> string {
     return ",\"rewrites\":[{{out}}]"
 }
 
-/// `web_headers` for Vercel, which ignores that file.
+/** *`web_headers` for Vercel, which ignores that file. */
 fn vercel_config(appdir: string) -> string {
     let cache = "{\"key\":\"Cache-Control\",\"value\":\"public, max-age=31536000, immutable\"}"
     let sniff = "{\"key\":\"X-Content-Type-Options\",\"value\":\"nosniff\"}"
@@ -5220,7 +5220,7 @@ fn preload_link(url: string) -> string {
     return "<link rel=\"preload\" href=\"{{url}}\" as=\"fetch\" type=\"application/wasm\" crossorigin=\"anonymous\" />"
 }
 
-/// The chunks a page needs before its first frame.
+/** *The chunks a page needs before its first frame. */
 fn boot_chunks(r: MetaRec, assets: WebAssets) -> []string {
     let route = int_of(r.route)
     if r.route == "" || route >= assets.routes.len {
@@ -5248,8 +5248,8 @@ fn json_names(names: []string) -> string {
     return cat(out, "]")
 }
 
-/// What the loader needs in order to find a route's chunks, inline so that it
-/// costs no request.
+/** *What the loader needs in order to find a route's chunks, inline so that it */
+/** *costs no request. */
 fn chunk_table_json(assets: WebAssets, boot: []string) -> string {
     let mut urls = ""
     for i in 0..assets.chunks.len {
@@ -5273,7 +5273,7 @@ fn chunk_table_json(assets: WebAssets, boot: []string) -> string {
     )
 }
 
-/// The generated route table's builders, in route order (`b_root_page`, ...).
+/** *The generated route table's builders, in route order (`b_root_page`, ...). */
 fn route_builders(appdir: string) -> []string {
     let lines = split_lines(sys.read_file(join(appdir, "app_routes.loam")))
     let mut out = []string {}
@@ -5294,8 +5294,8 @@ fn route_builders(appdir: string) -> []string {
     return out
 }
 
-/// The C the runtime and the web host are written in. The names it uses are the
-/// entry points into Loam code.
+/** *The C the runtime and the web host are written in. The names it uses are the */
+/** *entry points into Loam code. */
 fn runtime_sources() -> string {
     let rt = join(repo_root(), "packages/loam/runtime")
     let web = join(repo_root(), "packages/zeus/hosts/web")
@@ -5312,12 +5312,12 @@ fn runtime_sources() -> string {
     return out
 }
 
-/// Split a `--wasm-split-input` build into a primary and route chunks, optimise
-/// each, and fingerprint them all. Optimising after the split matters: run first,
-/// `wasm-opt` merges identical functions, which ties routes to each other.
-///
-/// `dev` keeps the split and drops `-Oz`: the chunks and the Network tab match a
-/// release, a little larger, for a tenth of the time.
+/** *Split a `--wasm-split-input` build into a primary and route chunks, optimise */
+/** *each, and fingerprint them all. Optimising after the split matters: run first, */
+/** *`wasm-opt` merges identical functions, which ties routes to each other. */
+/** */
+/** *`dev` keeps the split and drops `-Oz`: the chunks and the Network tab match a */
+/** *release, a little larger, for a tenth of the time. */
 fn split_web(appdir: string, web: string, stem: string, opt_flag: string) -> WebAssets {
     let raw = join(web, "{{stem}}.wasm")
     let csrc = cat(raw, ".c")
@@ -5421,7 +5421,7 @@ fn split_web(appdir: string, web: string, stem: string, opt_flag: string) -> Web
     return finish_web(appdir, web, primary, files, routes, idle, idle_touch, opt_flag != "")
 }
 
-/// Fingerprint the loader and write the files a static host reads.
+/** *Fingerprint the loader and write the files a static host reads. */
 fn finish_web(
     appdir: string,
     web: string,
@@ -5452,18 +5452,18 @@ fn finish_web(
     }
 }
 
-/// Brotli quality for a dev or quick build, cheap enough to run on every edit.
+/** *Brotli quality for a dev or quick build, cheap enough to run on every edit. */
 const BR_DEV: int = 5
-/// Brotli quality for `--release`: slower, and about 13% smaller than `BR_DEV`.
+/** *Brotli quality for `--release`: slower, and about 13% smaller than `BR_DEV`. */
 const BR_RELEASE: int = 11
 
-/// `wasm-opt`'s level for `zeli build`. Most of what `-Oz` removes is gone at `-O1`
-/// for a third of the time; `--release` asks for the rest.
+/** *`wasm-opt`'s level for `zeli build`. Most of what `-Oz` removes is gone at `-O1` */
+/** *for a third of the time; `--release` asks for the rest. */
 fn release_opt(full: bool) -> string {
     return if full { "-Oz " } else { "-O1 " }
 }
 
-/// One size in KB, for the build report.
+/** *One size in KB, for the build report. */
 fn kb_of(file: string) -> string {
     if sys.exists(file) == 0 {
         return "-"
@@ -5472,7 +5472,7 @@ fn kb_of(file: string) -> string {
     return "{{(n + 512) / 1024}} KB"
 }
 
-/// The size in bytes of what a host that serves `file` compressed sends.
+/** *The size in bytes of what a host that serves `file` compressed sends. */
 fn wire_size(file: string) -> int {
     let compressed = []string { cat(file, ".br"), cat(file, ".gz") }
     for i in 0..compressed.len {
@@ -5483,13 +5483,13 @@ fn wire_size(file: string) -> int {
     return sys.read_file(file).len
 }
 
-/// `n` bytes in KB, rounded, for the build report.
+/** *`n` bytes in KB, rounded, for the build report. */
 fn kb_text(n: int) -> string {
     return "{{(n + 512) / 1024}} KB"
 }
 
-/// What a visitor actually downloads: each file, raw and on the wire, then the
-/// range of first loads. All of a first load arrives before the first frame.
+/** *What a visitor actually downloads: each file, raw and on the wire, then the */
+/** *range of first loads. All of a first load arrives before the first frame. */
 fn report_web_sizes(web: string, assets: WebAssets) {
     let dir = join(web, "_zeus")
     let names = sys.list_dir(dir)
@@ -5525,11 +5525,11 @@ fn report_web_sizes(web: string, assets: WebAssets) {
     }
 }
 
-/// Write a compressed copy beside every file a browser downloads, as `<file>.br`,
-/// or `<file>.gz` without `brotli`. `serve` and `preview` answer with them, and so
-/// do `nginx` (`brotli_static`) and Caddy (`precompressed`). Most of a first load's
-/// time on a slow connection is these bytes, and a host's own compression is rarely
-/// this thorough: quality 11 is about a quarter smaller than the level Vercel uses.
+/** *Write a compressed copy beside every file a browser downloads, as `<file>.br`, */
+/** *or `<file>.gz` without `brotli`. `serve` and `preview` answer with them, and so */
+/** *do `nginx` (`brotli_static`) and Caddy (`precompressed`). Most of a first load's */
+/** *time on a slow connection is these bytes, and a host's own compression is rarely */
+/** *this thorough: quality 11 is about a quarter smaller than the level Vercel uses. */
 fn compress_web(web: string, quality: int) {
     let one = if has_tool("brotli") {
         "brotli -f -q {{quality}} -w 24 -o \"$f.br\" \"$f\""
@@ -5540,8 +5540,8 @@ fn compress_web(web: string, quality: int) {
     sys.exec("cd {{shell_quote(web)}} && {{files}} | { while read -r f; do {{one}} & done; wait; }")
 }
 
-/// Minify the script `file` in place, with the esbuild in Zeus's own Vite install.
-/// Without Node, or if that fails, `strip_js` does most of the job with no tools.
+/** *Minify the script `file` in place, with the esbuild in Zeus's own Vite install. */
+/** *Without Node, or if that fails, `strip_js` does most of the job with no tools. */
 fn minify_js(file: string) {
     let pkg = join(repo_root(), "packages/zeus")
     if has_tool("node") && has_tool("npm") && vite_install(pkg) {
@@ -5556,7 +5556,7 @@ fn minify_js(file: string) {
     sys.write_file(file, strip_js(sys.read_file(file)))
 }
 
-/// Whether a `/` after `out` opens a regular expression, not a division.
+/** *Whether a `/` after `out` opens a regular expression, not a division. */
 fn regex_may_start(out: []int) -> bool {
     let mut end = out.len
     while end > 0 && out[end - 1] == 32 {
@@ -5587,9 +5587,9 @@ fn regex_may_start(out: []int) -> bool {
     return c != 41 /* ) */ && c != 93 /* ] */ && c != 125 /* } */
 }
 
-/// The index just past a string or regular expression that opens at `at` and
-/// closes with `quote`, copying it to `out`. A `/` inside a regular expression's
-/// `[...]` does not close it.
+/** *The index just past a string or regular expression that opens at `at` and */
+/** *closes with `quote`, copying it to `out`. A `/` inside a regular expression's */
+/** *`[...]` does not close it. */
 fn copy_literal(s: string, at: int, quote: int, out: &mut []int) -> int {
     let mut i = at
     let mut in_class = false
@@ -5613,9 +5613,9 @@ fn copy_literal(s: string, at: int, quote: int, out: &mut []int) -> int {
     return i
 }
 
-/// JavaScript without its comments, indentation and blank lines. Line breaks stay,
-/// because a statement can end at one. This is `minify_js`'s fallback: it takes
-/// `loader.js` from 26 KB to 15 KB compressed, where a minifier reaches 13 KB.
+/** *JavaScript without its comments, indentation and blank lines. Line breaks stay, */
+/** *because a statement can end at one. This is `minify_js`'s fallback: it takes */
+/** *`loader.js` from 26 KB to 15 KB compressed, where a minifier reaches 13 KB. */
 fn strip_js(s: string) -> string {
     let mut out = []int {}
     /* The `{` depth at which each open `${` of a template literal closes. */
@@ -5694,7 +5694,7 @@ fn strip_js(s: string) -> string {
     return string_from_bytes(out)
 }
 
-/// The panel's name for a set of targets.
+/** *The panel's name for a set of targets. */
 fn platform_list(targets: []string) -> string {
     let mut out = ""
     for i in 0..targets.len {
@@ -5703,13 +5703,13 @@ fn platform_list(targets: []string) -> string {
     return out
 }
 
-/// One HTML file per route, plus `sitemap.xml` and `robots.txt`, on top of a copy
-/// of the app's `public/`.
-///
-/// The route table is the source of the URLs: a static route contributes its
-/// pattern, and a dynamic one contributes each entry of its `paths()`. A route
-/// with no `meta()` still gets a shell, from the empty record. The metadata dump
-/// must already be compiled (`meta_compile_cmd`).
+/** *One HTML file per route, plus `sitemap.xml` and `robots.txt`, on top of a copy */
+/** *of the app's `public/`. */
+/** */
+/** *The route table is the source of the URLs: a static route contributes its */
+/** *pattern, and a dynamic one contributes each entry of its `paths()`. A route */
+/** *with no `meta()` still gets a shell, from the empty record. The metadata dump */
+/** *must already be compiled (`meta_compile_cmd`). */
 fn emit_web_shell(appdir: string, assets: WebAssets, base: string) {
     ui_step(ui_bundle, 92, 100, "Writing HTML shells")
     let web = join(join(appdir, "build"), "web")

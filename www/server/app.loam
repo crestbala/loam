@@ -1,5 +1,5 @@
-//! The analytics server's routes. `main.loam` starts it, and tests drive it. The
-//! wasm never imports this.
+// The analytics server's routes. `main.loam` starts it, and tests drive it. The
+// wasm never imports this.
 
 import "http"
 import "std:log"
@@ -11,26 +11,26 @@ import "track.loam" as track
 
 const DAY_MS: i64 = 86400000
 
-/// What the server needs from the environment.
+/** *What the server needs from the environment. */
 struct Config {
     auth: Auth,
-    /// The site's origin, such as "https://example.com". A rewrite changes `Host`,
-    /// so with this set a beacon's `Origin` must equal it. Empty compares `Host`.
+    /** *The site's origin, such as "https://example.com". A rewrite changes `Host`, */
+    /** *so with this set a beacon's `Origin` must equal it. Empty compares `Host`. */
     site_origin: string = "",
 }
 
 #[c("gettimeofday")]
 fn c_gettimeofday(out: []i64, zone: i64) -> i32 {}
 
-/// Real time in milliseconds since 1970. `async.now_ms` only counts from boot.
+/** *Real time in milliseconds since 1970. `async.now_ms` only counts from boot. */
 fn wall_ms() -> i64 {
     let out = []i64 { 0, 0 }
     let _ = c_gettimeofday(out, i64(0))
     return out[0] * 1000 + (out[1] % 4294967296) / 1000
 }
 
-/// Whether a beacon came from the site. A request with no `Origin` is not from a
-/// page on another site, as browsers send one there.
+/** *Whether a beacon came from the site. A request with no `Origin` is not from a */
+/** *page on another site, as browsers send one there. */
 fn same_origin(c: Config) -> bool {
     let origin = http.req_header("origin")
     if origin.len == 0 {
@@ -67,7 +67,7 @@ fn on_track(c: Config, body: string) -> string {
     return ""
 }
 
-/// Fly's health check: the process answers and the database reads.
+/** *Fly's health check: the process answers and the database reads. */
 fn on_health() -> string {
     if db.failures_since(i64(0)) < 0 {
         http.set_status(503)
@@ -86,7 +86,7 @@ fn on_stats(c: Config, req: StatsReq) -> StatsResp {
     return report.stats(db.connection(), req.days, now)
 }
 
-/// The app. Handlers are made once here: a closure made per request would leak.
+/** *The app. Handlers are made once here: a closure made per request would leak. */
 fn build(c: Config) -> App {
     let app = http.app()
     app.json("/api/track", |body| { on_track(c, body) })

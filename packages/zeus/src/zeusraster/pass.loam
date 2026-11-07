@@ -1,8 +1,8 @@
-//! pass — the software raster pass: the scene's draw list, rasterized in Loam
-//! into the one framebuffer `raster.loam` owns, then handed to a host through
-//! `plat_blit`. It reads `scene.draws` and nothing else of the engine, so the
-//! core never imports it: apps that replay the list through their host pay
-//! nothing for it. Reached through `zeus:zeusraster`.
+// pass — the software raster pass: the scene's draw list, rasterized in Loam
+// into the one framebuffer `raster.loam` owns, then handed to a host through
+// `plat_blit`. It reads `scene.draws` and nothing else of the engine, so the
+// core never imports it: apps that replay the list through their host pay
+// nothing for it. Reached through `zeus:zeusraster`.
 
 import "../zeuscore/arena.loam"
 import "../zeuscore/platform.loam"
@@ -34,22 +34,22 @@ import "std:unicode"
 let mut rs_scale: int = 1
 let mut rs_drawn: int = 0
 let mut rs_unhandled: []int = []int {}
-/// Clips whose radius > 0, which this pass currently treats as square.
+/** *Clips whose radius > 0, which this pass currently treats as square. */
 let mut rs_rounded_clips: int = 0
 let mut rs_clip_depth: int = 0
-/// Four ints per clip level: x0, y0, x1, y1 in device pixels.
+/** *Four ints per clip level: x0, y0, x1, y1 in device pixels. */
 let mut rs_clip: []int = []int {}
 let mut rs_r: int = 0
 let mut rs_g: int = 0
 let mut rs_b: int = 0
-/// Images the app has decoded and registered, so a draw op's `src` can be
-/// rasterized from the cache instead of the host.
+/** *Images the app has decoded and registered, so a draw op's `src` can be */
+/** *rasterized from the cache instead of the host. */
 let mut rs_img_src: []string = []string {}
 let mut rs_img_slot: []int = []int {}
 
-/// The font the pass draws with. The engine has one global family (the host
-/// holds it for its own text), so the raster pass holds one font too — the one
-/// the app hands it, parsed and rasterized in Loam, no CoreText anywhere.
+/** *The font the pass draws with. The engine has one global family (the host */
+/** *holds it for its own text), so the raster pass holds one font too — the one */
+/** *the app hands it, parsed and rasterized in Loam, no CoreText anywhere. */
 let mut rs_font: string = ""
 let mut rs_font_id: int = 1
 let mut rs_font_upm: int = 0
@@ -59,8 +59,8 @@ let mut rs_font_ok: int = 0
 let mut rs_glyphs_drawn: int = 0
 let mut rs_glyphs_missing: int = 0
 
-/// Load the font the raster pass draws text with. `src` is a file path. Returns
-/// 1 when the file parsed as a TrueType/OpenType font.
+/** *Load the font the raster pass draws text with. `src` is a file path. Returns */
+/** *1 when the file parsed as a TrueType/OpenType font. */
 fn raster_font_load(src: string) -> int {
     let s = sys.read_file(src)
     if s.len == 0 {
@@ -97,15 +97,15 @@ fn raster_glyphs_missing() -> int {
     return rs_glyphs_missing
 }
 
-/// Draw one text op: glyph by glyph through the atlas, at a quarter-pixel pen so
-/// small text gets subpixel positioning, compositing with the same
-/// gamma-correct blend as everything else.
-///
-/// `xd`/`yd` are DEVICE pixels of the line box's top-left (the convention every
-/// host uses — the web host draws at `y + ascent` with an alphabetic baseline),
-/// so the baseline is derived here from the font's own ascent. `kind` is the
-/// draw op's kind, so a pass with no font loaded reports the gap on the right
-/// counter rather than dropping pixels silently.
+/** *Draw one text op: glyph by glyph through the atlas, at a quarter-pixel pen so */
+/** *small text gets subpixel positioning, compositing with the same */
+/** *gamma-correct blend as everything else. */
+/** */
+/** *`xd`/`yd` are DEVICE pixels of the line box's top-left (the convention every */
+/** *host uses — the web host draws at `y + ascent` with an alphabetic baseline), */
+/** *so the baseline is derived here from the font's own ascent. `kind` is the */
+/** *draw op's kind, so a pass with no font loaded reports the gap on the right */
+/** *counter rather than dropping pixels silently. */
 fn rs_text_dev(xd: int, yd: int, logical: int, alpha: int, text: string, s: int, kind: int) {
     if rs_font_ok == 0 {
         rs_note_unhandled(kind)
@@ -203,7 +203,7 @@ fn rs_text_int(d: Draw, s: int) {
     rs_text_dev(d.x * s, d.y * s, d.font, d.alpha, rs_int_str(d.value), s, d.kind)
 }
 
-/// Advance width, in device pixels, of `text[a..b)`.
+/** *Advance width, in device pixels, of `text[a..b)`. */
 fn rs_span_w(px: int, text: string, a: int, b: int) -> int {
     let mut w = 0
     let mut i = a
@@ -336,7 +336,7 @@ fn rs_init() {
     }
 }
 
-/// Split a 0xRRGGBB op colour into the channels the rasterizer takes.
+/** *Split a 0xRRGGBB op colour into the channels the rasterizer takes. */
 fn rs_split(rgb: int) {
     rs_r = rgb / 65536 % 256
     rs_g = rgb / 256 % 256
@@ -351,17 +351,17 @@ fn rs_note_unhandled(kind: int) {
     }
 }
 
-/// Set the rasterizer's clip box to the top of the stack.
+/** *Set the rasterizer's clip box to the top of the stack. */
 fn rs_apply_clip() {
     let o = (rs_clip_depth - 1) * 4
     raster.raster_clip_box(rs_clip[o], rs_clip[o + 1], rs_clip[o + 2], rs_clip[o + 3])
 }
 
-/// Intersect the top clip with a logical rect at the current scale, in
-/// place. A clip is canvas-style: `save` (op 6) pushes a level, the clip
-/// narrows that level, and one `restore` pops it. Pushing here as well left
-/// every save + clip + restore one level deep, so whatever painted after a
-/// nested clip stayed clipped to it.
+/** *Intersect the top clip with a logical rect at the current scale, in */
+/** *place. A clip is canvas-style: `save` (op 6) pushes a level, the clip */
+/** *narrows that level, and one `restore` pops it. Pushing here as well left */
+/** *every save + clip + restore one level deep, so whatever painted after a */
+/** *nested clip stayed clipped to it. */
 fn rs_clip_push(x: int, y: int, w: int, h: int, radius: int, scale: int) {
     let o = (rs_clip_depth - 1) * 4
     let nx0 = rs_clip[o]
@@ -405,9 +405,9 @@ fn rs_clip_push(x: int, y: int, w: int, h: int, radius: int, scale: int) {
     rs_apply_clip()
 }
 
-/// One quarter-disc as a convex wedge polygon: centre, then the arc. Four of
-/// these plus the cross make a rect with four independent corner radii, which
-/// is what a per-corner `fill4` is.
+/** *One quarter-disc as a convex wedge polygon: centre, then the arc. Four of */
+/** *these plus the cross make a rect with four independent corner radii, which */
+/** *is what a per-corner `fill4` is. */
 fn rs_quarter(cx: float, cy: float, rad: float, a0: float, a1: float) {
     let mut xs: []float = []float {}
     let mut ys: []float = []float {}
@@ -503,8 +503,8 @@ fn rs_rect(x: float, y: float, w: float, h: float) {
     raster.raster_multi_add_poly(xs, ys, 1)
 }
 
-/// Register a decoded image slot under the `src` string a draw op carries, so
-/// `rasterize()` can blit it from the cache. Returns the number registered.
+/** *Register a decoded image slot under the `src` string a draw op carries, so */
+/** *`rasterize()` can blit it from the cache. Returns the number registered. */
 fn raster_register_image(src: string, slot: int) -> int {
     rs_init()
     push(rs_img_src, src)
@@ -523,9 +523,9 @@ fn rs_image_slot(src: string) -> int {
     return -1
 }
 
-/// Rasterize the current draw list into the framebuffer at `scale`, on a
-/// background colour. Returns the number of ops rasterized; per-kind counts of
-/// what was not are available through `raster_unhandled`.
+/** *Rasterize the current draw list into the framebuffer at `scale`, on a */
+/** *background colour. Returns the number of ops rasterized; per-kind counts of */
+/** *what was not are available through `raster_unhandled`. */
 fn rasterize(scale: int, br: int, bg: int, bb: int) -> int {
     rs_init()
     rs_scale = scale
@@ -690,15 +690,15 @@ fn raster_scene_count() -> int {
     return rs_drawn
 }
 
-/// The one blit of a finished frame: hand the framebuffer we rasterized into to
-/// the host, which wraps those very bytes (no copy) and shows them. Returns 1
-/// when a host presented, 0 when none is listening — headless, or a host that
-/// has no blit path (Linux / iOS / Android / web today).
-///
-/// `gen` is the buffer's generation, so a host rebuilds its wrapper only when
-/// the buffer was reallocated (a size or backing-scale change), never per frame.
-/// Nothing here touches a graphics API: this is the platform syscall boundary,
-/// the single point where our pixels leave the engine.
+/** *The one blit of a finished frame: hand the framebuffer we rasterized into to */
+/** *the host, which wraps those very bytes (no copy) and shows them. Returns 1 */
+/** *when a host presented, 0 when none is listening — headless, or a host that */
+/** *has no blit path (Linux / iOS / Android / web today). */
+/** */
+/** *`gen` is the buffer's generation, so a host rebuilds its wrapper only when */
+/** *the buffer was reallocated (a size or backing-scale change), never per frame. */
+/** *Nothing here touches a graphics API: this is the platform syscall boundary, */
+/** *the single point where our pixels leave the engine. */
 fn raster_blit() -> int {
     let w = raster.raster_width()
     let h = raster.raster_height()
@@ -714,9 +714,9 @@ fn raster_blit() -> int {
     )
 }
 
-/// Load the font the raster pass draws text with (a file path). Returns 1 on
-/// success. Until this is called, text ops are COUNTED as unhandled rather than
-/// dropped silently.
+/** *Load the font the raster pass draws text with (a file path). Returns 1 on */
+/** *success. Until this is called, text ops are COUNTED as unhandled rather than */
+/** *dropped silently. */
 fn raster_load_font(src: string) -> int {
     return raster_font_load(src)
 }
@@ -733,7 +733,7 @@ fn raster_glyphs_missing_count() -> int {
     return rs_glyphs_missing
 }
 
-/// How many ops of `kind` this pass could not rasterize.
+/** *How many ops of `kind` this pass could not rasterize. */
 fn raster_unhandled(kind: int) -> int {
     rs_init()
     if kind < 0 || kind > 15 {
@@ -772,7 +772,7 @@ let mut dt_y: []int = []int {}
 let mut dt_cols: int = 0
 let mut dt_rows: int = 0
 
-/// Build the frame's tile list from `arena.damage`. Returns the tile count.
+/** *Build the frame's tile list from `arena.damage`. Returns the tile count. */
 fn damage_tiles_build() -> int {
     let w = raster.raster_width()
     let h = raster.raster_height()

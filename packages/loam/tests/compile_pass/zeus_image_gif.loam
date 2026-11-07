@@ -27,8 +27,8 @@ fn load(name: string) -> string {
     return s
 }
 
-/// Decode a GIF and compare every channel against Pillow's expectation.
-/// Returns the number of mismatched bytes.
+/** *Decode a GIF and compare every channel against Pillow's expectation. */
+/** *Returns the number of mismatched bytes. */
 fn diff_against_oracle(name: string) -> int {
     must(zeusraster.image_decode_any(load(name)) == 1, "gif decodes")
     let w = zeusraster.image_src_width()

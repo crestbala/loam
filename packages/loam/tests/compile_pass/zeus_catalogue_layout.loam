@@ -21,12 +21,12 @@ fn frame() {
     zeus.engine_layout(800, 1600)
 }
 
-/// Centre of node `id` along x.
+/** *Centre of node `id` along x. */
 fn mid_x(id: int) -> int {
     return zeus.node_x(id) + zeus.node_width(id) / 2
 }
 
-/// `a` and `b` share a horizontal centre, give or take a pixel of rounding.
+/** *`a` and `b` share a horizontal centre, give or take a pixel of rounding. */
 fn centred(a: int, b: int) -> bool {
     let d = mid_x(a) - mid_x(b)
     return d >= -1 && d <= 1

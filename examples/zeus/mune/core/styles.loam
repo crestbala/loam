@@ -1,6 +1,6 @@
-//! The styles and the three energies. A style sets the tempo used when no
-//! recording has a pulse, the swing, the drum kit and patterns, the bass,
-//! the progression, and the default sound (`sound.preset`).
+// The styles and the three energies. A style sets the tempo used when no
+// recording has a pulse, the swing, the drum kit and patterns, the bass,
+// the progression, and the default sound (`sound.preset`).
 
 const DREAM: int = 0
 const LOFI: int = 1
@@ -62,7 +62,7 @@ fn energy_name(e: int) -> string {
     return ns[e]
 }
 
-/// Centi-BPM when no recording sets the tempo.
+/** *Centi-BPM when no recording sets the tempo. */
 fn default_bpm_c(s: int) -> int {
     if s == LOFI {
         return 8200
@@ -88,8 +88,8 @@ fn default_bpm_c(s: int) -> int {
     return 8400
 }
 
-/// The tempo a style sits in. A recording's pulse is folded by octaves
-/// into this range, so lo-fi does not run at 160.
+/** *The tempo a style sits in. A recording's pulse is folded by octaves */
+/** *into this range, so lo-fi does not run at 160. */
 fn bpm_range_c(s: int) -> []int {
     if s == LOFI {
         return []int { 7000, 9800 }
@@ -115,7 +115,7 @@ fn bpm_range_c(s: int) -> []int {
     return []int { 6600, 10400 }
 }
 
-/// Late sixteenths as a share of a sixteenth (0..30).
+/** *Late sixteenths as a share of a sixteenth (0..30). */
 fn swing(s: int) -> int {
     if s == LOFI {
         return 16
@@ -129,12 +129,12 @@ fn swing(s: int) -> int {
     return 0
 }
 
-/// Snare on beat three, not two and four: the half-time styles.
+/** *Snare on beat three, not two and four: the half-time styles. */
 fn half_time(s: int) -> bool {
     return s == TRAP || s == FUTURE
 }
 
-/// Which progression (`theory.progression`) a style starts from.
+/** *Which progression (`theory.progression`) a style starts from. */
 fn progression_pick(s: int) -> int {
     if s == LOFI || s == FUTURE {
         return 1
@@ -148,7 +148,7 @@ fn progression_pick(s: int) -> int {
     return 0
 }
 
-/// Chords that carry a seventh.
+/** *Chords that carry a seventh. */
 fn sevenths(s: int) -> bool {
     return s == LOFI || s == DREAM || s == FUTURE || s == AFRO
 }

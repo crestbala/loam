@@ -14,11 +14,11 @@ fn signal_spec() -> []TableCol {
     return h
 }
 
-/// The page for one load state. `MatchBy` keeps the arm while the state holds:
-/// a range change, a fetch that lands, adding to Holdings or acknowledging a
-/// gap updates the mounted arm through its view signal instead of rebuilding.
-/// The signal table is keyed by its row count, so it rebuilds only when that
-/// moves.
+/** *The page for one load state. `MatchBy` keeps the arm while the state holds: */
+/** *a range change, a fetch that lands, adding to Holdings or acknowledging a */
+/** *gap updates the mounted arm through its view signal instead of rebuilding. */
+/** *The signal table is keyed by its row count, so it rebuilds only when that */
+/** *moves. */
 fn arm(code: string, v: Signal<SchemeView>) -> Node {
     let st = v.peek().state
     if st == 1 {

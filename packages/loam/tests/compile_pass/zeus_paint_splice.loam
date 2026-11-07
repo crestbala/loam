@@ -37,8 +37,8 @@ fn draw_sum() -> int {
     return s
 }
 
-/// Paint the current state patched, then force a full record of the same
-/// state; the two op lists must agree.
+/** *Paint the current state patched, then force a full record of the same */
+/** *state; the two op lists must agree. */
 fn check(what: string) {
     zeus.engine_layout(300, 240)
     zeus.engine_paint()

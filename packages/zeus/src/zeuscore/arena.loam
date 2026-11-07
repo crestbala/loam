@@ -1,6 +1,6 @@
-//! arena — retained tree, signals, window/frame state (GPUI arena.rs).
-//! The node tables themselves live in `nodes.loam`; layout, scene and input
-//! read and write them there (`nodes.tree`, `nodes.lay`, `nodes.box`, ...).
+// arena — retained tree, signals, window/frame state (GPUI arena.rs).
+// The node tables themselves live in `nodes.loam`; layout, scene and input
+// read and write them there (`nodes.tree`, `nodes.lay`, `nodes.box`, ...).
 
 import "geometry.loam"
 import "logs.loam"
@@ -11,14 +11,14 @@ import "track.loam"
 import "style.loam"
 import "std:fmt"
 
-/// Set by `bar_expire`: 1 while any scrollbar thumb is mid-fade, so the frame
-/// marks itself dirty without a second pass over the nodes.
+/** *Set by `bar_expire`: 1 while any scrollbar thumb is mid-fade, so the frame */
+/** *marks itself dirty without a second pass over the nodes. */
 let mut bar_fading_live: int = 0
 let mut sigs: []int = []int {}
-/// Per-signal: 1 when a write can move geometry without an effect marking
-/// layout on its behalf (a node's `show` / `visible` predicate, or a number a
-/// bound label measures, reads the signal straight from layout). Grown lazily
-/// to `sigs.len` — the C signal allocators own `sigs` and are not mirrored.
+/** *Per-signal: 1 when a write can move geometry without an effect marking */
+/** *layout on its behalf (a node's `show` / `visible` predicate, or a number a */
+/** *bound label measures, reads the signal straight from layout). Grown lazily */
+/** *to `sigs.len` — the C signal allocators own `sigs` and are not mirrored. */
 let mut affects_layout: []int = []int {}
 let mut root_id: int = 0
 let mut win_w: int = 640
@@ -30,21 +30,21 @@ let mut theme_d: []int = []int {}
 let mut size_buffer: []int = []int {}
 let mut size_layout: []int = []int {}
 let mut focus_id: int = 0
-/// The node the last pointer press landed on (0 after a key). A roving item
-/// that was clicked becomes the pick only once its handler runs, after the
-/// click's own focus claim found it not yet focusable; this lets the pick
-/// claim focus for the press that made it.
+/** *The node the last pointer press landed on (0 after a key). A roving item */
+/** *that was clicked becomes the pick only once its handler runs, after the */
+/** *click's own focus claim found it not yet focusable; this lets the pick */
+/** *claim focus for the press that made it. */
 let mut press_target: int = 0
 let mut focus_at: int = -1
 let mut chain_nodes: []int = []int {}
 let mut chain_ctxs: []int = []int {}
 let mut focus_ring: []int = []int {}
-/// 1 = focus arrived by keyboard (tab/shift-tab); the painted focus ring
-/// shows only then, and a pointer click clears it (desktop convention).
+/** *1 = focus arrived by keyboard (tab/shift-tab); the painted focus ring */
+/** *shows only then, and a pointer click clears it (desktop convention). */
 let mut kb_focus: int = 0
-/// Modal focus trap (`Dialog`). Tab / shift-tab cycle inside this subtree
-/// while it is shown; 0 = no trap. `trap_restore` is the focus to return
-/// to when the trap releases.
+/** *Modal focus trap (`Dialog`). Tab / shift-tab cycle inside this subtree */
+/** *while it is shown; 0 = no trap. `trap_restore` is the focus to return */
+/** *to when the trap releases. */
 let mut trap_id: int = 0
 let mut trap_restore: int = 0
 let mut paint_sy: int = 0
@@ -56,18 +56,18 @@ let mut drag_bar: int = 0
 let mut pulse_t: int = 0
 let mut ptr_x: int = 0
 let mut ptr_y: int = 0
-/// Staged input payload. The engine invokes argument-less interned handlers,
-/// so `MouseEvent` / `KeyEvent` are read from here by `current_mouse()` /
-/// `current_key()` inside the handler.
+/** *Staged input payload. The engine invokes argument-less interned handlers, */
+/** *so `MouseEvent` / `KeyEvent` are read from here by `current_mouse()` / */
+/** *`current_key()` inside the handler. */
 let mut ev_x: int = 0
 let mut ev_y: int = 0
 let mut ev_button: int = 0
 let mut ev_key: int = 0
 let mut ev_mods: int = 0
-/// Text for a `KEY_TEXT` event: what was typed, pasted, or committed by an
-/// IME into a `capture_text` box that is not an input.
+/** *Text for a `KEY_TEXT` event: what was typed, pasted, or committed by an */
+/** *IME into a `capture_text` box that is not an input. */
 let mut ev_text: string = ""
-/// 1 while an `on_drag` handler runs for the press that starts the drag.
+/** *1 while an `on_drag` handler runs for the press that starts the drag. */
 let mut ev_drag_first: int = 0
 let mut down_id: int = 0
 let mut paint_skip_z: int = 1
@@ -103,15 +103,15 @@ let mut r_free: []int = []int {}
 let mut rec_seq: int = 0
 let mut rec_live_sig: int = 0
 let mut rec_live_fn: int = 0
-/// Signal id / handler id -> its newest record slot, -1 for none.
+/** *Signal id / handler id -> its newest record slot, -1 for none. */
 let mut sig_rec: []int = []int {}
 let mut fn_rec: []int = []int {}
-/// Owner -> first record slot (-1 for none): node owners, scope owners
-/// (`-eid`), and pending `View` tokens (`OWN_TOKEN_BASE - k`).
+/** *Owner -> first record slot (-1 for none): node owners, scope owners */
+/** *(`-eid`), and pending `View` tokens (`OWN_TOKEN_BASE - k`). */
 let mut own_node: []int = []int {}
 let mut own_eff: []int = []int {}
 let mut own_tok: []int = []int {}
-/// Freed node ids, recycled by `alloc_node`.
+/** *Freed node ids, recycled by `alloc_node`. */
 let mut free_nodes: []int = []int {}
 
 /* Ids freed by the current drop_children pass: effect teardown runs once per
@@ -119,13 +119,13 @@ let mut free_nodes: []int = []int {}
    table sweeps made every chart refit ~25 ms. */
 let mut drop_pool: []int = []int {}
 
-/// Hard ceiling on node slots: the arena never grows past this and never
-/// silently appends. `u16` node ids (Phase 3) make 65535 the structural
-/// maximum, so the cap is stated once, here. Raising it is a deliberate act;
-/// hitting it is loud (see `alloc_node`) rather than a silent realloc-double.
+/** *Hard ceiling on node slots: the arena never grows past this and never */
+/** *silently appends. `u16` node ids (Phase 3) make 65535 the structural */
+/** *maximum, so the cap is stated once, here. Raising it is a deliberate act; */
+/** *hitting it is loud (see `alloc_node`) rather than a silent realloc-double. */
 let mut node_cap: int = 65535
-/// 1 once `alloc_node` hit `node_cap`. The app keeps running; the widget that
-/// asked for the failed slot gets the null handle (id 0) and does not render.
+/** *1 once `alloc_node` hit `node_cap`. The app keeps running; the widget that */
+/** *asked for the failed slot gets the null handle (id 0) and does not render. */
 let mut node_overflow: int = 0
 
 // --- dirty channels + frame clock (Phase 3) --------------------------------
@@ -155,8 +155,8 @@ let mut paint_spans_ok: int = 0
    clear — the retained tree already follows those — so only this (or a resize
    the view read) rebuilds the view and resets the graph. */
 let mut view_stale: int = 1
-/// Nodes that only have a paint-marked *descendant* (bit 3). Kept so the bit can
-/// be cleared at the end of the frame like the PAINT marks are.
+/** *Nodes that only have a paint-marked *descendant* (bit 3). Kept so the bit can */
+/** *be cleared at the end of the frame like the PAINT marks are. */
 let mut dirty_desc: []int = []int {}
 // Phase 5: layout invalidation. `measure_gen` is bumped to invalidate every
 // cached measure at once; `invalidate_path` marks just a node and its ancestors
@@ -176,58 +176,58 @@ let mut chrome_sync_count: int = 0
 // `bind` reads it (a switch's tween is read by the chrome pass, not an effect).
 let mut bind_sig: []int = []int {}
 let mut bind_node: []int = []int {}
-/// Host consumers of a signal (a `Match` on its tag, an `Each` on its
-/// items): the host's refresh hook, not an effect, reads the signal, so a write
-/// would otherwise be unattributable and mark the whole frame. Indexed like
-/// `bind_*`; `hosts_for_signal` asks the frame to run the host refresh pass.
+/** *Host consumers of a signal (a `Match` on its tag, an `Each` on its */
+/** *items): the host's refresh hook, not an effect, reads the signal, so a write */
+/** *would otherwise be unattributable and mark the whole frame. Indexed like */
+/** *`bind_*`; `hosts_for_signal` asks the frame to run the host refresh pass. */
 let mut host_sig: []int = []int {}
 let mut host_node: []int = []int {}
-/// The host refresh pass must run this frame: a scroller moved (a windowed
-/// list's visible window may have shifted), or a signal a host rebuilds from
-/// was written (`hosts_for_signal`). Paint-only on its own; a host that does
-/// rebuild marks itself.
+/** *The host refresh pass must run this frame: a scroller moved (a windowed */
+/** *list's visible window may have shifted), or a signal a host rebuilds from */
+/** *was written (`hosts_for_signal`). Paint-only on its own; a host that does */
+/** *rebuild marks itself. */
 let mut virtual_dirty: int = 0
-/// Node ids whose PAINT bit was set since the last paint. The animation tick
-/// appends here; `scene.paint` drains it. Ids are deduped by the PAINT bit.
+/** *Node ids whose PAINT bit was set since the last paint. The animation tick */
+/** *appends here; `scene.paint` drains it. Ids are deduped by the PAINT bit. */
 let mut dirty_paint: []int = []int {}
-/// Monotonic frame clock in ms, advanced by the host-supplied delta.
+/** *Monotonic frame clock in ms, advanced by the host-supplied delta. */
 let mut now_ms: int = 0
-/// Tracks with `pulse` (skeleton shimmer) currently alive.
+/** *Tracks with `pulse` (skeleton shimmer) currently alive. */
 let mut pulse_count: int = 0
-/// Anchored floaters placed by the last layout (0 when none are on screen). A
-/// scroll must re-place them so a popup stays next to its trigger; when there
-/// are none, a scroll stays paint-only (`mark_scroll`).
+/** *Anchored floaters placed by the last layout (0 when none are on screen). A */
+/** *scroll must re-place them so a popup stays next to its trigger; when there */
+/** *are none, a scroll stays paint-only (`mark_scroll`). */
 let mut live_anchors: int = 0
-/// A scroll moved while anchored floaters were on screen: re-place them (and
-/// only them) before paint. The rule: a scroll offset is applied when boxes
-/// are positioned, never by re-measuring — so a scroll stays layout-free.
+/** *A scroll moved while anchored floaters were on screen: re-place them (and */
+/** *only them) before paint. The rule: a scroll offset is applied when boxes */
+/** *are positioned, never by re-measuring — so a scroll stays layout-free. */
 let mut anchors_dirty: int = 0
-/// Floater stack for one paint / hit pass. Sorted by z-index so a Select
-/// menu (80) paints over a later Combobox field (50). Within one z-index,
-/// anchored popups whose boxes are near each other then order by open time.
-/// A popup that is not near them stays in tree order.
+/** *Floater stack for one paint / hit pass. Sorted by z-index so a Select */
+/** *menu (80) paints over a later Combobox field (50). Within one z-index, */
+/** *anchored popups whose boxes are near each other then order by open time. */
+/** *A popup that is not near them stays in tree order. */
 let mut floater_id: []int = []int {}
 let mut floater_z: []int = []int {}
 let mut floater_screen_x: []int = []int {}
 let mut floater_screen_y: []int = []int {}
-/// Paint-pass filters for `floater_collect`, set by `scene` per collection.
-/// A floater inside a scroller is painted once: an in-place one (a z-indexed
-/// field) by its nearest scroller, inline, shifted and clipped with it; a
-/// window-level one (an overlay, an anchored popup) by the floaters section
-/// on top of everything, or by the root when the root is the scroller.
-/// `fc_skip_window` drops window-level floaters from this collection;
-/// `fc_nested` is set while the walk is inside a scroller below the start.
+/** *Paint-pass filters for `floater_collect`, set by `scene` per collection. */
+/** *A floater inside a scroller is painted once: an in-place one (a z-indexed */
+/** *field) by its nearest scroller, inline, shifted and clipped with it; a */
+/** *window-level one (an overlay, an anchored popup) by the floaters section */
+/** *on top of everything, or by the root when the root is the scroller. */
+/** *`fc_skip_window` drops window-level floaters from this collection; */
+/** *`fc_nested` is set while the walk is inside a scroller below the start. */
 let mut fc_skip_window: int = 0
 let mut fc_nested: int = 0
-/// Nodes with an indeterminate spin (`Spinner`) currently alive.
+/** *Nodes with an indeterminate spin (`Spinner`) currently alive. */
 let mut spin_count: int = 0
-/// Component-function runs (`Component`) and reactive-effect runs (`track.run`)
-/// since boot. Animation must leave both flat (Phase 3 proof harness).
+/** *Component-function runs (`Component`) and reactive-effect runs (`track.run`) */
+/** *since boot. Animation must leave both flat (Phase 3 proof harness). */
 let mut component_runs: int = 0
-/// 1 = reduced motion from the host. Animations jump to their final value.
+/** *1 = reduced motion from the host. Animations jump to their final value. */
 let mut reduced: int = 0
-/// 1 = a signal setter fired inside the animation tick (a hard invariant
-/// violation). `store_sig` records it and, while `anim_assert != 0`, traps.
+/** *1 = a signal setter fired inside the animation tick (a hard invariant */
+/** *violation). `store_sig` records it and, while `anim_assert != 0`, traps. */
 let mut anim_signal_writes: int = 0
 let mut anim_assert: int = 1
 
@@ -241,11 +241,11 @@ let mut anim_assert: int = 1
 // Phase 0 predates the persistent/scratch split (Phase 2), so "per bucket"
 // here means the arena's independent global vectors, not two bump arenas.
 
-/// Peak live node count over the sampled frames (0 until the first sample).
+/** *Peak live node count over the sampled frames (0 until the first sample). */
 let mut mem_peak_nodes: int = 0
-/// Peak arena bytes over the sampled frames.
+/** *Peak arena bytes over the sampled frames. */
 let mut mem_peak_bytes: i64 = 0
-/// Layouts sampled since boot.
+/** *Layouts sampled since boot. */
 let mut mem_frames: int = 0
 
 fn ensure() {
@@ -269,8 +269,8 @@ fn ensure() {
     anim_ensure()
 }
 
-/// Enter a rebuild scope: allocations from now on are owned by `node_id`.
-/// Returns the previous scope so the caller can restore it after the build.
+/** *Enter a rebuild scope: allocations from now on are owned by `node_id`. */
+/** *Returns the previous scope so the caller can restore it after the build. */
 fn scope_begin(node_id: int) -> int {
     let previous = scope_node
     scope_node = node_id
@@ -281,9 +281,9 @@ fn scope_end(previous: int) {
     scope_node = previous
 }
 
-/// An interned handler was created under a rebuild scope (or for `owner`):
-/// record it so teardown can release its captured env. A negative `owner` is a
-/// live-computation scope id, released by `release_owner`.
+/** *An interned handler was created under a rebuild scope (or for `owner`): */
+/** *record it so teardown can release its captured env. A negative `owner` is a */
+/** *live-computation scope id, released by `release_owner`. */
 fn record_intern(id: int, owner: int) {
     if id <= 0 {
         return
@@ -333,7 +333,7 @@ fn own_head_set(owner: int, slot: int) {
     }
 }
 
-/// Link `slot` at the front of `owner`'s list.
+/** *Link `slot` at the front of `owner`'s list. */
 fn rec_link(slot: int, owner: int) {
     let h = own_head(owner)
     r_owner[slot] = owner
@@ -394,8 +394,8 @@ fn rec_add(kind: int, key: int, owner: int) {
     }
 }
 
-/// Drop record `slot` (unlink, clear its key map, recycle the slot). Frees
-/// nothing: the caller decides whether the id itself is released.
+/** *Drop record `slot` (unlink, clear its key map, recycle the slot). Frees */
+/** *nothing: the caller decides whether the id itself is released. */
 fn rec_drop(slot: int) {
     rec_unlink(slot)
     let k = r_key[slot]
@@ -414,8 +414,8 @@ fn rec_drop(slot: int) {
     push(r_free, slot)
 }
 
-/// Slots of `owner`'s records of `kind` (-1 = both), collected before any is
-/// released, because releasing can file or drop records.
+/** *Slots of `owner`'s records of `kind` (-1 = both), collected before any is */
+/** *released, because releasing can file or drop records. */
 fn rec_of(owner: int, kind: int) -> []int {
     let mut out = []int {}
     let mut s = own_head(owner)
@@ -430,7 +430,7 @@ fn rec_of(owner: int, kind: int) -> []int {
     return out
 }
 
-/// Release record `slot`: free its signal or handler, then drop the record.
+/** *Release record `slot`: free its signal or handler, then drop the record. */
 fn rec_release(slot: int) {
     let k = r_key[slot]
     let kind = r_kind[slot]
@@ -445,7 +445,7 @@ fn rec_release(slot: int) {
     }
 }
 
-/// The current record sequence: records made after this are "since the mark".
+/** *The current record sequence: records made after this are "since the mark". */
 fn rec_mark() -> int {
     return rec_seq
 }
@@ -467,13 +467,13 @@ fn rec_reset() {
     own_tok = []int {}
 }
 
-/// Re-attribute a signal to `owner`, replacing whatever the alloc hook recorded
-/// for it (an id has exactly one owner). `computed<T>` uses this to hand its
-/// output and body cells to the scope that will dispose its memo, so a re-running
-/// `scope` frees them with the memo row instead of leaking two slots per run.
-/// Drop the owner record of interned handler `id`: it was freed by its own
-/// effect (a static style disposed after one run), so releasing the owner must
-/// not free the id again once it has been handed to someone else.
+/** *Re-attribute a signal to `owner`, replacing whatever the alloc hook recorded */
+/** *for it (an id has exactly one owner). `computed<T>` uses this to hand its */
+/** *output and body cells to the scope that will dispose its memo, so a re-running */
+/** *`scope` frees them with the memo row instead of leaking two slots per run. */
+/** *Drop the owner record of interned handler `id`: it was freed by its own */
+/** *effect (a static style disposed after one run), so releasing the owner must */
+/** *not free the id again once it has been handed to someone else. */
 fn forget_intern(id: int) {
     let slot = slot_map_get(fn_rec, id)
     if slot >= 0 {
@@ -496,31 +496,31 @@ fn record_sig(owner: int, signal_id: int) {
     rec_add(0, signal_id, owner)
 }
 
-/// The owner a freshly created signal or handler is filed under: the innermost
-/// live-computation `scope` (as a negative id, so it cannot collide with a node),
-/// else the host rebuild scope, else 0 (process-lifetime). A no-op walk when the
-/// reactive stack is empty, which is the common case at build time.
+/** *The owner a freshly created signal or handler is filed under: the innermost */
+/** *live-computation `scope` (as a negative id, so it cannot collide with a node), */
+/** *else the host rebuild scope, else 0 (process-lifetime). A no-op walk when the */
+/** *reactive stack is empty, which is the common case at build time. */
 // --- view frames: pending ownership ------------------------------------------
 // A `View` component creates its state before its root node exists. While its
 // frame is open, `scope_node` is a pending token, so signals and interned
 // handlers record under it; `own_end` moves those records onto the root, and
 // freeing the root releases them.
 
-/// Pending owners are below every scope eid (which are negative eids).
+/** *Pending owners are below every scope eid (which are negative eids). */
 let mut own_next: int = -1000000000
 const OWN_TOKEN_BASE: int = -1000000000
-/// `own_root_of[node_id]` = 1 when the node owns records moved by `own_end`.
+/** *`own_root_of[node_id]` = 1 when the node owns records moved by `own_end`. */
 let mut owns_records: []int = []int {}
 
-/// Open a pending owner; returns the token. The previous owner is restored by
-/// `own_end`.
+/** *Open a pending owner; returns the token. The previous owner is restored by */
+/** *`own_end`. */
 fn own_begin() -> int {
     own_next = own_next - 1
     return own_next
 }
 
-/// Move every record `token` holds onto `root`, and restore `previous` as the
-/// build owner.
+/** *Move every record `token` holds onto `root`, and restore `previous` as the */
+/** *build owner. */
 fn own_end(token: int, root: int) {
     let moving = rec_of(token, -1)
     let n = moving.len
@@ -536,13 +536,13 @@ fn own_end(token: int, root: int) {
     }
 }
 
-/// Owned signal + handler records, for tests: churning `View` components must
-/// keep it flat.
+/** *Owned signal + handler records, for tests: churning `View` components must */
+/** *keep it flat. */
 fn owned_records() -> int {
     return rec_live_sig + rec_live_fn
 }
 
-/// Release what a freed `View` root owns.
+/** *Release what a freed `View` root owns. */
 fn own_release(id: int) {
     if id > 0 && id < owns_records.len && owns_records[id] == 1 {
         owns_records[id] = 0
@@ -550,8 +550,8 @@ fn own_release(id: int) {
     }
 }
 
-/// The build owner: `scope_node` (a host node, or a `View` frame's pending
-/// token), replaced for the body of a `scope`.
+/** *The build owner: `scope_node` (a host node, or a `View` frame's pending */
+/** *token), replaced for the body of a `scope`. */
 fn set_scope_node(v: int) {
     scope_node = v
 }
@@ -568,9 +568,9 @@ fn owner_now() -> int {
     return scope_node
 }
 
-/// Free everything recorded under `owner`: the signals and interned handlers a
-/// live computation scope created. Complements `track.dispose_eid`, which frees
-/// the scope's effect rows; a negative owner is `-effect_id`.
+/** *Free everything recorded under `owner`: the signals and interned handlers a */
+/** *live computation scope created. Complements `track.dispose_eid`, which frees */
+/** *the scope's effect rows; a negative owner is `-effect_id`. */
 fn release_owner(owner: int) {
     if owner == 0 {
         return
@@ -583,11 +583,11 @@ fn release_owner(owner: int) {
     }
 }
 
-/// Free every signal a node's rebuilds allocated. Records are per build
-/// scope, so an id has one owner: swap-remove matching owners in one pass —
-/// rebuilding the keep-list on every release was O(all records) per chart
-/// refit, which is what made window-resize frames crawl once the catalog
-/// accumulated records.
+/** *Free every signal a node's rebuilds allocated. Records are per build */
+/** *scope, so an id has one owner: swap-remove matching owners in one pass — */
+/** *rebuilding the keep-list on every release was O(all records) per chart */
+/** *refit, which is what made window-resize frames crawl once the catalog */
+/** *accumulated records. */
 fn release_sigs(node_id: int) {
     let mine = rec_of(node_id, 0)
     for i in 0..mine.len {
@@ -597,7 +597,7 @@ fn release_sigs(node_id: int) {
     }
 }
 
-/// Free every interned handler a node's rebuilds created, in one pass.
+/** *Free every interned handler a node's rebuilds created, in one pass. */
 fn release_fns(node_id: int) {
     let mine = rec_of(node_id, 1)
     for i in 0..mine.len {
@@ -607,11 +607,11 @@ fn release_fns(node_id: int) {
     }
 }
 
-/// Re-attribute the allocations made since a mark from `host` to `row`. An
-/// incremental list reconcile sets the build scope to the host, builds one row,
-/// then hands that row its own signals and interned handlers so removing the row
-/// frees exactly them. Entries a nested scope already claimed (an `Each` inside the
-/// row) keep their owner and are left alone.
+/** *Re-attribute the allocations made since a mark from `host` to `row`. An */
+/** *incremental list reconcile sets the build scope to the host, builds one row, */
+/** *then hands that row its own signals and interned handlers so removing the row */
+/** *frees exactly them. Entries a nested scope already claimed (an `Each` inside the */
+/** *row) keep their owner and are left alone. */
 fn adopt_records(host: int, row: int, mark: int) {
     if row <= 0 {
         return
@@ -645,20 +645,20 @@ let mut kt_key: []string = []string {}
 let mut kt_node: []int = []int {}
 let mut kt_next: []int = []int {}
 let mut kt_prev: []int = []int {}
-/// Insertion serial of each slot. `release` drops every entry newer than its
-/// mark, which is what the old append-only table got from truncation.
+/** *Insertion serial of each slot. `release` drops every entry newer than its */
+/** *mark, which is what the old append-only table got from truncation. */
 let mut kt_serial: []int = []int {}
-/// Live entries, and live + tombstones (decides whether growing helps).
+/** *Live entries, and live + tombstones (decides whether growing helps). */
 let mut kt_len: int = 0
 let mut kt_filled: int = 0
 let mut key_serial: int = 0
-/// Per host node id: first slot of its chain (-1 = none) and its entry count.
+/** *Per host node id: first slot of its chain (-1 = none) and its entry count. */
 let mut key_head: []int = []int {}
 let mut key_cnt: []int = []int {}
 
-/// FNV-1a over the key's bytes, seeded with the host. Computed in `i64` and
-/// folded to 26 bits: `int` multiply is checked, so a full-width FNV step would
-/// trap (same reasoning as `std:map`'s `hash_str`). Never 0.
+/** *FNV-1a over the key's bytes, seeded with the host. Computed in `i64` and */
+/** *folded to 26 bits: `int` multiply is checked, so a full-width FNV step would */
+/** *trap (same reasoning as `std:map`'s `hash_str`). Never 0. */
 fn kt_hash_of(host: int, k: string) -> int {
     let mut h: i64 = (531216261 ^ i64(host)) & 67108863
     let mut i = 0
@@ -678,7 +678,7 @@ fn kt_hash_of(host: int, k: string) -> int {
     return out
 }
 
-/// Slot of `(host, k)`, or -1.
+/** *Slot of `(host, k)`, or -1. */
 fn kt_find(host: int, k: string) -> int {
     let cap = kt_used.len
     if cap == 0 {
@@ -719,7 +719,7 @@ fn key_host_ensure(host: int) {
     }
 }
 
-/// Put `s` at the front of its host's chain.
+/** *Put `s` at the front of its host's chain. */
 fn kt_link(s: int) {
     let host = kt_host[s]
     key_host_ensure(host)
@@ -733,8 +733,8 @@ fn kt_link(s: int) {
     key_cnt[host] = key_cnt[host] + 1
 }
 
-/// Take live slot `s` off its host's chain and leave a tombstone, so probe
-/// chains through it stay intact.
+/** *Take live slot `s` off its host's chain and leave a tombstone, so probe */
+/** *chains through it stay intact. */
 fn kt_unlink(s: int) {
     let host = kt_host[s]
     let p = kt_prev[s]
@@ -758,8 +758,8 @@ fn kt_unlink(s: int) {
     kt_len = kt_len - 1
 }
 
-/// Write a new entry into the first free slot on its probe; the caller has
-/// checked it is absent and that the table has room.
+/** *Write a new entry into the first free slot on its probe; the caller has */
+/** *checked it is absent and that the table has room. */
 fn kt_place(host: int, k: string, node: int, serial: int) {
     let cap = kt_used.len
     let h = kt_hash_of(host, k)
@@ -785,8 +785,8 @@ fn kt_place(host: int, k: string, node: int, serial: int) {
     }
 }
 
-/// Resize to `cap` slots and re-insert every live entry (dropping
-/// tombstones). Chains are rebuilt from scratch.
+/** *Resize to `cap` slots and re-insert every live entry (dropping */
+/** *tombstones). Chains are rebuilt from scratch. */
 fn kt_rehash(cap: int) {
     let o_used = kt_used
     let o_host = kt_host
@@ -828,8 +828,8 @@ fn kt_rehash(cap: int) {
     }
 }
 
-/// Make room for one more entry. A table that is mostly tombstones is rebuilt
-/// at the same capacity, so add / remove churn does not grow it without bound.
+/** *Make room for one more entry. A table that is mostly tombstones is rebuilt */
+/** *at the same capacity, so add / remove churn does not grow it without bound. */
 fn kt_reserve() {
     let cap = kt_used.len
     if cap == 0 {
@@ -884,7 +884,7 @@ fn key_clear(host: int) {
     }
 }
 
-/// Drop one keyed entry.
+/** *Drop one keyed entry. */
 fn key_forget(host: int, k: string) {
     let s = kt_find(host, k)
     if s >= 0 {
@@ -892,8 +892,8 @@ fn key_forget(host: int, k: string) {
     }
 }
 
-/// Every key currently mounted under `host`, in no particular order. An
-/// incremental reconcile diffs this against the new key set to find removals.
+/** *Every key currently mounted under `host`, in no particular order. An */
+/** *incremental reconcile diffs this against the new key set to find removals. */
 fn key_keys(host: int) -> []string {
     let mut out = []string {}
     if host < 0 || host >= key_head.len {
@@ -907,7 +907,7 @@ fn key_keys(host: int) -> []string {
     return out
 }
 
-/// Drop every entry inserted after serial `serial` (a `Boundary` rollback).
+/** *Drop every entry inserted after serial `serial` (a `Boundary` rollback). */
 fn key_drop_after(serial: int) {
     let cap = kt_used.len
     for s in 0..cap {
@@ -935,8 +935,8 @@ fn key_reset() {
     key_cnt = []int {}
 }
 
-/// 1 when `keys` holds no duplicate. One hash per key into a scratch table of
-/// indices, so O(n) where a pairwise scan is O(n^2).
+/** *1 when `keys` holds no duplicate. One hash per key into a scratch table of */
+/** *indices, so O(n) where a pairwise scan is O(n^2). */
 fn keys_unique(keys: []string) -> int {
     let n = keys.len
     if n < 2 {
@@ -981,10 +981,10 @@ fn keys_unique(keys: []string) -> int {
 // hook and the row order (`frag`). Freeing the parent frees rows and marker
 // together, like any children.
 
-/// Make `order` (then any of the host's rows still playing an exit) the
-/// host's rows, laid into its parent directly before the marker. Nodes the
-/// host held before and no longer lists leave the parent's children; freed
-/// ids are dropped.
+/** *Make `order` (then any of the host's rows still playing an exit) the */
+/** *host's rows, laid into its parent directly before the marker. Nodes the */
+/** *host held before and no longer lists leave the parent's children; freed */
+/** *ids are dropped. */
 fn frag_set(host: int, order: []int) {
     let parent = nodes.frag_parent(host)
     let old = nodes.tree[host].frag
@@ -1092,13 +1092,13 @@ fn stamp_has(id: int, g: int) -> bool {
     return stamp_at[id] == g
 }
 
-/// Tear down a node: free its subtree (sigs, interned handlers, effects) and
-/// recycle the slot. Freed slots are blanked so global scans (hover, cursor,
-/// refresh lists) treat them as empty. Effect cleanup is batched by the
-/// enclosing drop_children, so this only recurses and recycles.
-/// Masked text inputs (`PasswordInput`), by node id. Slots are re-stamped
-/// across nodes, so the flag is pushed to the slot each time it is used
-/// (`edit_sync_secure`) rather than stored on it once.
+/** *Tear down a node: free its subtree (sigs, interned handlers, effects) and */
+/** *recycle the slot. Freed slots are blanked so global scans (hover, cursor, */
+/** *refresh lists) treat them as empty. Effect cleanup is batched by the */
+/** *enclosing drop_children, so this only recurses and recycles. */
+/** *Masked text inputs (`PasswordInput`), by node id. Slots are re-stamped */
+/** *across nodes, so the flag is pushed to the slot each time it is used */
+/** *(`edit_sync_secure`) rather than stored on it once. */
 let mut secure_ids: []int = []int {}
 
 fn secure_set(id: int, on: bool) {
@@ -1130,10 +1130,10 @@ fn edit_sync_secure(id: int, slot: int) {
     runtime.edit_set_secure(slot, on)
 }
 
-/// Pointer hooks that only a few nodes carry — `on_context_menu` (kind
-/// `HOOK_CONTEXT`) and `on_drag` (`HOOK_DRAG`): node id → interned fn. A side
-/// table, not node fields, so the common node pays nothing. The fn's lifetime
-/// is its owner's, like any handler; a freed node drops its rows.
+/** *Pointer hooks that only a few nodes carry — `on_context_menu` (kind */
+/** *`HOOK_CONTEXT`) and `on_drag` (`HOOK_DRAG`): node id → interned fn. A side */
+/** *table, not node fields, so the common node pays nothing. The fn's lifetime */
+/** *is its owner's, like any handler; a freed node drops its rows. */
 const HOOK_CONTEXT: int = 1
 const HOOK_DRAG: int = 2
 let mut hook_node: []int = []int {}
@@ -1152,7 +1152,7 @@ fn hook_set(id: int, kind: int, fn_id: int) {
     push(hook_fn, fn_id)
 }
 
-/// The `kind` hook on `id`, or 0.
+/** *The `kind` hook on `id`, or 0. */
 fn hook_of(id: int, kind: int) -> int {
     for i in 0..hook_node.len {
         if hook_node[i] == id && hook_kind[i] == kind {
@@ -1162,7 +1162,7 @@ fn hook_of(id: int, kind: int) -> int {
     return 0
 }
 
-/// The nearest node at or above `id` carrying a `kind` hook, or 0.
+/** *The nearest node at or above `id` carrying a `kind` hook, or 0. */
 fn hook_owner(id: int, kind: int) -> int {
     if hook_node.len == 0 {
         return 0
@@ -1177,7 +1177,7 @@ fn hook_owner(id: int, kind: int) -> int {
     return 0
 }
 
-/// Drop `id`'s rows when the node is freed, so a recycled id never inherits them.
+/** *Drop `id`'s rows when the node is freed, so a recycled id never inherits them. */
 fn hook_forget(id: int) {
     let mut i = 0
     while i < hook_node.len {
@@ -1321,8 +1321,8 @@ fn reset_tree() {
 
 let mut scroll_save: []int = []int {}
 let mut scroll_save_x: []int = []int {}
-/// Engine clock at the last `physics_step`, so scroll easing and coast scale by
-/// the frame's real delta instead of assuming one 16 ms frame.
+/** *Engine clock at the last `physics_step`, so scroll easing and coast scale by */
+/** *the frame's real delta instead of assuming one 16 ms frame. */
 let mut physics_ms: int = 0
 
 fn snapshot_scroll() {
@@ -1365,8 +1365,8 @@ fn drop_children(id: int) {
     mark_tree_at(id)
 }
 
-/// One effect-table sweep for a whole batch of freed nodes, plus the animation
-/// tracks they owned. `free_node` appends to `drop_pool`; this drains it.
+/** *One effect-table sweep for a whole batch of freed nodes, plus the animation */
+/** *tracks they owned. `free_node` appends to `drop_pool`; this drains it. */
 fn flush_drops() {
     if drop_pool.len == 0 {
         return
@@ -1376,10 +1376,10 @@ fn flush_drops() {
     drop_pool = []int {}
 }
 
-/// Free `id` and its whole subtree, releasing the signals and interned handlers
-/// each node in it *owns*. `free_node` recycles slots but leaves per-node
-/// ownership to the enclosing rebuild scope; an incremental list removal has no
-/// such scope, so this walks the subtree and releases as it goes.
+/** *Free `id` and its whole subtree, releasing the signals and interned handlers */
+/** *each node in it *owns*. `free_node` recycles slots but leaves per-node */
+/** *ownership to the enclosing rebuild scope; an incremental list removal has no */
+/** *such scope, so this walks the subtree and releases as it goes. */
 fn free_subtree_walk(id: int) {
     if id <= 0 {
         return
@@ -1427,10 +1427,10 @@ fn defer_drops_end() {
     }
 }
 
-/// Release the signals and interned handlers every node in `id`'s subtree owns,
-/// without freeing the nodes. An incremental reconcile adopts records onto each
-/// row, so a host that later falls back to a full rebuild must hand those
-/// records back before the rebuild drops the rows.
+/** *Release the signals and interned handlers every node in `id`'s subtree owns, */
+/** *without freeing the nodes. An incremental reconcile adopts records onto each */
+/** *row, so a host that later falls back to a full rebuild must hand those */
+/** *records back before the rebuild drops the rows. */
 fn release_subtree(id: int) {
     if id <= 0 {
         return
@@ -1470,8 +1470,8 @@ fn release_children_ownership(id: int) {
 // shape. Insert / detach rebuild the parent's `kids` vec (O(siblings)); there is
 // no in-place `insert` builtin to lean on, and the sibling count is small.
 
-/// Detach `child` from whatever parent holds it, preserving sibling order.
-/// Returns 1 when it was attached, 0 when it was already free.
+/** *Detach `child` from whatever parent holds it, preserving sibling order. */
+/** *Returns 1 when it was attached, 0 when it was already free. */
 fn child_detach(child: int) -> int {
     if child <= 0 {
         return 0
@@ -1511,9 +1511,9 @@ fn child_detach(child: int) -> int {
     return 1
 }
 
-/// Insert `child` under `parent` at `at` (clamped to `0..kids.len`). A node has
-/// one parent, so any previous attachment is dropped first, which also makes
-/// this a move within the same host. Returns 1 on success, 0 on a bad handle.
+/** *Insert `child` under `parent` at `at` (clamped to `0..kids.len`). A node has */
+/** *one parent, so any previous attachment is dropped first, which also makes */
+/** *this a move within the same host. Returns 1 on success, 0 on a bad handle. */
 fn child_insert(parent: int, child: int, at: int) -> int {
     if parent <= 0 {
         return 0
@@ -1557,8 +1557,8 @@ fn child_insert(parent: int, child: int, at: int) -> int {
     return 1
 }
 
-/// Move `child` to position `at` under its current parent. No-op unless
-/// `parent` already holds `child`, so a caller cannot silently reparent.
+/** *Move `child` to position `at` under its current parent. No-op unless */
+/** *`parent` already holds `child`, so a caller cannot silently reparent. */
 fn child_move(parent: int, child: int, at: int) -> int {
     if parent <= 0 {
         return 0
@@ -1578,10 +1578,10 @@ fn child_move(parent: int, child: int, at: int) -> int {
     return child_insert(parent, child, at)
 }
 
-/// Start a host rebuild: free everything the host's previous build owned
-/// (signals, interned handlers, children) and open a build scope owned by
-/// `id`. Pair with `rebuild_end`. This is the only entry point that tears a
-/// subtree down, so callers outside the core never touch `drop_children`.
+/** *Start a host rebuild: free everything the host's previous build owned */
+/** *(signals, interned handlers, children) and open a build scope owned by */
+/** *`id`. Pair with `rebuild_end`. This is the only entry point that tears a */
+/** *subtree down, so callers outside the core never touch `drop_children`. */
 fn rebuild_begin(id: int) -> int {
     let previous = scope_begin(id)
     release_sigs(id)
@@ -1594,8 +1594,8 @@ fn rebuild_end(previous: int) {
     scope_end(previous)
 }
 
-/// Snapshot of the allocator for `zui.Boundary`: everything allocated after
-/// this point can be discarded by `release`.
+/** *Snapshot of the allocator for `zui.Boundary`: everything allocated after */
+/** *this point can be discarded by `release`. */
 struct ArenaMark {
     nodes: int,
     sigs: int,
@@ -1620,10 +1620,10 @@ fn mark() -> ArenaMark {
     }
 }
 
-/// Roll the arena back to `m`: free handlers recorded since the mark, drop
-/// signals allocated since it, and trim every growable table. Nodes freed or
-/// mutated before the mark are left alone — this recovers the tree, it does not
-/// undo C-seam side effects.
+/** *Roll the arena back to `m`: free handlers recorded since the mark, drop */
+/** *signals allocated since it, and trim every growable table. Nodes freed or */
+/** *mutated before the mark are left alone — this recovers the tree, it does not */
+/** *undo C-seam side effects. */
 fn release(m: ArenaMark) {
     // Handlers recorded since the mark are freed; signal records since it are
     // dropped here and their signals freed by the trim below.
@@ -1657,7 +1657,7 @@ fn release(m: ArenaMark) {
     drop_pool = []int {}
 }
 
-/// Discard a boundary host's partial subtree, then roll the arena back.
+/** *Discard a boundary host's partial subtree, then roll the arena back. */
 fn rollback(id: int, m: ArenaMark) {
     drop_children(id)
     release(m)
@@ -1673,7 +1673,7 @@ let mut lr_node: []int = []int {}
 let mut lr_next: []int = []int {}
 let mut lr_free: []int = []int {}
 
-/// 1 when `node` still reads `signal_id` directly from layout.
+/** *1 when `node` still reads `signal_id` directly from layout. */
 fn lr_reads(node: int, signal_id: int) -> int {
     if node <= 0 || node >= nodes.tree.len {
         return 0
@@ -1687,7 +1687,7 @@ fn lr_reads(node: int, signal_id: int) -> int {
     return 0
 }
 
-/// Record that `node` reads `signal_id` from layout (and flag the signal).
+/** *Record that `node` reads `signal_id` from layout (and flag the signal). */
 fn mark_sig_layout_node(signal_id: int, node: int) {
     mark_sig_layout(signal_id)
     if signal_id <= 0 || signal_id >= sigs.len || node <= 0 {
@@ -1717,10 +1717,10 @@ fn mark_sig_layout_node(signal_id: int, node: int) {
     lr_head[signal_id] = slot
 }
 
-/// Queue every live direct reader of `signal_id` for layout, and its parent
-/// for paint (a node that appears or disappears changes its parent's run).
-/// Drops readers that are gone. Returns how many were queued; 0 means the
-/// readers are unknown and the caller falls back to a frame-wide layout.
+/** *Queue every live direct reader of `signal_id` for layout, and its parent */
+/** *for paint (a node that appears or disappears changes its parent's run). */
+/** *Drops readers that are gone. Returns how many were queued; 0 means the */
+/** *readers are unknown and the caller falls back to a frame-wide layout. */
 fn mark_sig_readers(signal_id: int) -> int {
     if signal_id <= 0 || signal_id >= lr_head.len {
         return 0
@@ -1752,7 +1752,7 @@ fn mark_sig_readers(signal_id: int) -> int {
     return n
 }
 
-/// Mark `signal_id` as layout-affecting: a later write re-runs the layout solve.
+/** *Mark `signal_id` as layout-affecting: a later write re-runs the layout solve. */
 fn mark_sig_layout(signal_id: int) {
     if signal_id <= 0 {
         return
@@ -1766,8 +1766,8 @@ fn mark_sig_layout(signal_id: int) {
     affects_layout[signal_id] = 1
 }
 
-/// Drop the flag when a signal slot is freed, so a recycled id does not carry
-/// a stale layout mark onto an unrelated value.
+/** *Drop the flag when a signal slot is freed, so a recycled id does not carry */
+/** *a stale layout mark onto an unrelated value. */
 fn forget_sig_meta(signal_id: int) {
     if signal_id <= 0 {
         return
@@ -1795,15 +1795,15 @@ fn forget_sig_meta(signal_id: int) {
 // attribute — an effect that mutated arena state directly, or a signal layout
 // reads with no effect in between — falls back to the frame-wide mark, so
 // under-marking is impossible.
-/// Prop-setter writes since the last read, and how many of them can move the
-/// box model. `store_sig` compares the first with `track.runs`.
+/** *Prop-setter writes since the last read, and how many of them can move the */
+/** *box model. `store_sig` compares the first with `track.runs`. */
 let mut prop_writes: int = 0
 let mut prop_layout: int = 0
 
-/// Report that a prop write landed on `node_id`; `layout` is 1 when the property
-/// can move the box model. A paint-only write marks the node's PAINT bit so the
-/// damage pass scopes to it; a layout write still marks layout whole-tree
-/// (until phase 5).
+/** *Report that a prop write landed on `node_id`; `layout` is 1 when the property */
+/** *can move the box model. A paint-only write marks the node's PAINT bit so the */
+/** *damage pass scopes to it; a layout write still marks layout whole-tree */
+/** *(until phase 5). */
 fn note_prop_write(node_id: int, layout: int) {
     prop_writes = prop_writes + 1
     track.reports = track.reports + 1
@@ -1842,8 +1842,8 @@ fn invalidate(id: int, kind: int) {
     }
 }
 
-/// Queue `id` for the interaction-state pass without forcing a full walk.
-/// Deduped, so a node flagged twice in a frame syncs once.
+/** *Queue `id` for the interaction-state pass without forcing a full walk. */
+/** *Deduped, so a node flagged twice in a frame syncs once. */
 fn mark_chrome_id(id: int) {
     if id <= 0 {
         return
@@ -1868,9 +1868,9 @@ fn clear_chrome_ids() {
     dirty_chrome_nodes = []int {}
 }
 
-/// Record that `node_id` binds `sig_id`, so a write to `sig_id` can mark that
-/// node's chrome. A switch's tween is read by the chrome pass, not an effect, so
-/// without this a write would have to force a whole-frame chrome walk.
+/** *Record that `node_id` binds `sig_id`, so a write to `sig_id` can mark that */
+/** *node's chrome. A switch's tween is read by the chrome pass, not an effect, so */
+/** *without this a write would have to force a whole-frame chrome walk. */
 fn bind_chrome(sig_id: int, node_id: int) {
     if sig_id <= 0 {
         return
@@ -1882,10 +1882,10 @@ fn bind_chrome(sig_id: int, node_id: int) {
     push(bind_node, node_id)
 }
 
-/// Register `node_id` as a host that rebuilds from `sig_id`. A write to the
-/// signal is then attributed to the host: its refresh hook runs that frame and
-/// the rebuild marks the host for a scoped layout, instead of the write marking
-/// the frame whole because nothing the tracker knows about consumed it.
+/** *Register `node_id` as a host that rebuilds from `sig_id`. A write to the */
+/** *signal is then attributed to the host: its refresh hook runs that frame and */
+/** *the rebuild marks the host for a scoped layout, instead of the write marking */
+/** *the frame whole because nothing the tracker knows about consumed it. */
 fn bind_host(sig_id: int, node_id: int) {
     if sig_id <= 0 {
         return
@@ -1905,12 +1905,12 @@ fn bind_host(sig_id: int, node_id: int) {
     push(host_node, node_id)
 }
 
-/// A write to `sig_id` reached its bound hosts: request the host refresh pass,
-/// where each host's hook sees the new generation and rebuilds — marking
-/// itself, so the layout that follows is scoped to it. Returns how many hosts
-/// are bound — 0 means no host consumes the signal. Nothing is queued for
-/// layout here: the host has not changed yet, and queueing it would re-solve
-/// its subtree once before the hook and once after.
+/** *A write to `sig_id` reached its bound hosts: request the host refresh pass, */
+/** *where each host's hook sees the new generation and rebuilds — marking */
+/** *itself, so the layout that follows is scoped to it. Returns how many hosts */
+/** *are bound — 0 means no host consumes the signal. Nothing is queued for */
+/** *layout here: the host has not changed yet, and queueing it would re-solve */
+/** *its subtree once before the hook and once after. */
 fn hosts_for_signal(sig_id: int) -> int {
     let mut hits = 0
     let n = host_sig.len
@@ -1949,30 +1949,30 @@ fn hosts_for_signal(sig_id: int) -> int {
 // fallback at the next refresh pass — never mid-handler, while the subtree that
 // trapped may still be on the stack.
 
-/// 1 once any boundary exists: until then `invoke_on` skips the parent walk.
+/** *1 once any boundary exists: until then `invoke_on` skips the parent walk. */
 let mut bnd_any: int = 0
-/// Pending fallback message per boundary host id ("" = healthy).
+/** *Pending fallback message per boundary host id ("" = healthy). */
 let mut bnd_msg: []string = []string {}
-/// Guarded work in flight, innermost last: a handler / effect / refresh hook
-/// under a boundary (`trap_build` 0), or a boundary's own build (1, with the
-/// arena mark it rolls back to). Native traps are caught in-process and never
-/// need this; on wasm a trap unwinds the whole stack to the host, which calls
-/// `recover_trap` to find the boundary that should take it.
+/** *Guarded work in flight, innermost last: a handler / effect / refresh hook */
+/** *under a boundary (`trap_build` 0), or a boundary's own build (1, with the */
+/** *arena mark it rolls back to). Native traps are caught in-process and never */
+/** *need this; on wasm a trap unwinds the whole stack to the host, which calls */
+/** *`recover_trap` to find the boundary that should take it. */
 let mut trap_host: []int = []int {}
 let mut trap_build: []int = []int {}
 let mut trap_marks: []ArenaMark = []ArenaMark {}
-/// Build-order number of each frame's boundary (0 for a handler frame).
+/** *Build-order number of each frame's boundary (0 for a handler frame). */
 let mut trap_seqs: []int = []int {}
 
-/// Boundaries are numbered in build order (`boundary_next_seq`). A wasm trap
-/// during startup cannot be recovered in place — the build that was cut short
-/// is the whole app — so the web loader re-instantiates the module and
-/// pre-seeds the failed boundary's number and message in the C seam (module
-/// globals are re-initialised when `main` starts); that boundary then builds
-/// its fallback without running `build` at all (`boundary_preset_msg`).
+/** *Boundaries are numbered in build order (`boundary_next_seq`). A wasm trap */
+/** *during startup cannot be recovered in place — the build that was cut short */
+/** *is the whole app — so the web loader re-instantiates the module and */
+/** *pre-seeds the failed boundary's number and message in the C seam (module */
+/** *globals are re-initialised when `main` starts); that boundary then builds */
+/** *its fallback without running `build` at all (`boundary_preset_msg`). */
 let mut bnd_seq: int = 0
-/// The build-order number of the boundary the last `recover_trap` failed in
-/// its build (0 when the trap was in a handler / effect / refresh).
+/** *The build-order number of the boundary the last `recover_trap` failed in */
+/** *its build (0 when the trap was in a handler / effect / refresh). */
 let mut last_trap_seq: int = 0
 
 fn boundary_next_seq() -> int {
@@ -1980,13 +1980,13 @@ fn boundary_next_seq() -> int {
     return bnd_seq
 }
 
-/// The pre-seeded message for boundary `seq`, or "".
+/** *The pre-seeded message for boundary `seq`, or "". */
 fn boundary_preset_msg(seq: int) -> string {
     return runtime.boundary_preset(seq)
 }
 
-/// Mark `id` as a boundary host. Its refresh hook (push-only) builds the
-/// fallback when a run-time trap is recorded against it.
+/** *Mark `id` as a boundary host. Its refresh hook (push-only) builds the */
+/** *fallback when a run-time trap is recorded against it. */
 fn boundary_open(id: int) {
     if id <= 0 || id >= nodes.tree.len {
         return
@@ -1999,8 +1999,8 @@ fn boundary_open(id: int) {
     bnd_msg[id] = ""
 }
 
-/// Record a run-time trap against boundary `host` and queue its refresh. The
-/// first message wins until the fallback is built.
+/** *Record a run-time trap against boundary `host` and queue its refresh. The */
+/** *first message wins until the fallback is built. */
 fn boundary_fail(host: int, msg: string) {
     if host <= 0 || host >= nodes.tree.len {
         return
@@ -2025,7 +2025,7 @@ fn boundary_fail(host: int, msg: string) {
     paint_dirty = 1
 }
 
-/// Take (and clear) the pending fallback message of boundary `host`.
+/** *Take (and clear) the pending fallback message of boundary `host`. */
 fn boundary_take(host: int) -> string {
     if host <= 0 || host >= bnd_msg.len {
         return ""
@@ -2035,9 +2035,9 @@ fn boundary_take(host: int) -> string {
     return m
 }
 
-/// Invoke handler / effect body `fid` on behalf of `node`. Under a boundary it
-/// runs behind a trap arm; a trap fails the boundary and returns the message.
-/// Elsewhere it is a plain call, and a trap aborts as it always has.
+/** *Invoke handler / effect body `fid` on behalf of `node`. Under a boundary it */
+/** *runs behind a trap arm; a trap fails the boundary and returns the message. */
+/** *Elsewhere it is a plain call, and a trap aborts as it always has. */
 fn invoke_on(fid: int, node: int) -> string {
     if fid <= 0 {
         return ""
@@ -2071,9 +2071,9 @@ fn invoke_on(fid: int, node: int) -> string {
     return msg
 }
 
-/// The component layer's build stack (`zeusbase.ui_parents`), which this module
-/// cannot name: its depth, and a trim back to a depth. Installed by zeusbase
-/// on its first `ui_push`.
+/** *The component layer's build stack (`zeusbase.ui_parents`), which this module */
+/** *cannot name: its depth, and a trim back to a depth. Installed by zeusbase */
+/** *on its first `ui_push`. */
 let mut ui_depth_hook: fn() -> int = fn() -> int { return 0 }
 let mut ui_trim_hook: fn(int) = fn(d: int) {}
 
@@ -2084,8 +2084,8 @@ fn set_ui_hooks(depth: fn() -> int, trim: fn(int)) {
 
 let mut click_hook: fn(int) = fn(id: int) {}
 
-/// Have `watch` told about each click on a control, by node id, before the
-/// control's handler runs (that handler may rebuild the node away).
+/** *Have `watch` told about each click on a control, by node id, before the */
+/** *control's handler runs (that handler may rebuild the node away). */
 fn set_click_hook(watch: fn(int)) {
     click_hook = watch
 }
@@ -2094,7 +2094,7 @@ fn note_click(id: int) {
     click_hook(id)
 }
 
-/// A handler call site: run `fid` for `node` through the guard.
+/** *A handler call site: run `fid` for `node` through the guard. */
 fn invoke_handler(fid: int, node: int) {
     invoke_on(fid, node)
 }
@@ -2108,8 +2108,8 @@ fn trap_trim(depth: int) {
     }
 }
 
-/// Boundary number `seq`'s build is starting (`m` is its rollback mark). Pair
-/// with `build_leave`.
+/** *Boundary number `seq`'s build is starting (`m` is its rollback mark). Pair */
+/** *with `build_leave`. */
 fn build_enter(host: int, m: ArenaMark, seq: int) {
     push(trap_host, host)
     push(trap_build, 1)
@@ -2123,11 +2123,11 @@ fn build_leave() {
     }
 }
 
-/// A trap unwound the whole call stack to the host (wasm). Hand it to the
-/// innermost boundary that was at work — rolling back its partial build if the
-/// trap hit there — and reset the transient state every export starts from.
-/// Returns 1 when a boundary took it, 0 when nothing could (the app is in an
-/// unknown state and the host should stop).
+/** *A trap unwound the whole call stack to the host (wasm). Hand it to the */
+/** *innermost boundary that was at work — rolling back its partial build if the */
+/** *trap hit there — and reset the transient state every export starts from. */
+/** *Returns 1 when a boundary took it, 0 when nothing could (the app is in an */
+/** *unknown state and the host should stop). */
 fn recover_trap(msg: string) -> int {
     let mut ok = 0
     let n = trap_host.len
@@ -2164,7 +2164,7 @@ let mut exit_until: []int = []int {}
 let mut exit_hide: []int = []int {}
 let mut exit_save: [][]int = [][]int {}
 
-/// Declare `id`'s exit transition (see `anim.exit_fx`).
+/** *Declare `id`'s exit transition (see `anim.exit_fx`). */
 fn set_exit(id: int, fx: int, arg: int, ms: int) {
     if id <= 0 || id >= nodes.tree.len {
         return
@@ -2174,10 +2174,10 @@ fn set_exit(id: int, fx: int, arg: int, ms: int) {
     nodes.anim[id].exit_ms = ms
 }
 
-/// A control-flow host is removing child `id`. With no exit transition (or
-/// under reduced motion, or before the first frame) it is freed now and this
-/// returns 0. Otherwise it starts exiting and returns 1: the caller keeps it
-/// among the host's children until `exit_tick` frees it.
+/** *A control-flow host is removing child `id`. With no exit transition (or */
+/** *under reduced motion, or before the first frame) it is freed now and this */
+/** *returns 0. Otherwise it starts exiting and returns 1: the caller keeps it */
+/** *among the host's children until `exit_tick` frees it. */
 fn exit_or_free(id: int) -> int {
     if id <= 0 || id >= nodes.tree.len {
         return 0
@@ -2201,9 +2201,9 @@ fn exit_or_free(id: int) -> int {
     return 1
 }
 
-/// Start `id`'s exit: pin it where it laid out, make it inert, and run its
-/// exit track. `hide` 1 keeps it alive (its effects too): when the track ends
-/// it is hidden and `save` (from `exit_snapshot`) is put back.
+/** *Start `id`'s exit: pin it where it laid out, make it inert, and run its */
+/** *exit track. `hide` 1 keeps it alive (its effects too): when the track ends */
+/** *it is hidden and `save` (from `exit_snapshot`) is put back. */
 fn exit_start(id: int, hide: int, save: []int) {
     let fx = nodes.anim[id].exit_fx
     let parent = nodes.tree[id].parent
@@ -2246,8 +2246,8 @@ fn exit_start(id: int, hide: int, save: []int) {
     }
 }
 
-/// What an exit changes on `id`: position, pins, explicit size, and the
-/// paint tracks it animates.
+/** *What an exit changes on `id`: position, pins, explicit size, and the */
+/** *paint tracks it animates. */
 fn exit_snapshot(id: int) -> []int {
     return []int {
         i32(nodes.pin[id].pos), nodes.pin[id].pin_l, nodes.pin[id].pin_t, nodes.pin[id].pin_r,
@@ -2258,7 +2258,7 @@ fn exit_snapshot(id: int) -> []int {
     }
 }
 
-/// Put back what `exit_snapshot` saved; `id` stops exiting.
+/** *Put back what `exit_snapshot` saved; `id` stops exiting. */
 fn exit_restore(id: int, save: []int) {
     nodes.tree[id].exiting = 0
     if save.len < 10 {
@@ -2280,11 +2280,11 @@ fn exit_restore(id: int, save: []int) {
     }
 }
 
-/// A host is hiding (not removing) child `id` — a `MatchKeep` arm moving
-/// out of view. With no exit transition (or under reduced motion, or before
-/// the first frame) this returns 0 and the caller hides it now. Otherwise it
-/// plays its exit pinned and inert, stays alive, and is hidden — its layout
-/// and paint state put back — when the transition ends; returns 1.
+/** *A host is hiding (not removing) child `id` — a `MatchKeep` arm moving */
+/** *out of view. With no exit transition (or under reduced motion, or before */
+/** *the first frame) this returns 0 and the caller hides it now. Otherwise it */
+/** *plays its exit pinned and inert, stays alive, and is hidden — its layout */
+/** *and paint state put back — when the transition ends; returns 1. */
 fn exit_or_hide(id: int) -> int {
     if id <= 0 || id >= nodes.tree.len {
         return 0
@@ -2302,8 +2302,8 @@ fn exit_or_hide(id: int) -> int {
     return 1
 }
 
-/// Stop a hide-exit started by `exit_or_hide` (the host shows `id` again
-/// before its exit ended): it snaps back, shown. 0 if `id` was not hiding.
+/** *Stop a hide-exit started by `exit_or_hide` (the host shows `id` again */
+/** *before its exit ended): it snaps back, shown. 0 if `id` was not hiding. */
 fn exit_cancel(id: int) -> int {
     let n = exit_nodes.len
     for i in 0..n {
@@ -2317,7 +2317,7 @@ fn exit_cancel(id: int) -> int {
     return 0
 }
 
-/// Remove entry `at` from the exit lists.
+/** *Remove entry `at` from the exit lists. */
 fn exit_drop_at(at: int) {
     let mut kn = []int {}
     let mut kt = []int {}
@@ -2338,8 +2338,8 @@ fn exit_drop_at(at: int) {
     exit_save = ks
 }
 
-/// Free every node whose exit transition has run its course. Called once per
-/// frame, before layout.
+/** *Free every node whose exit transition has run its course. Called once per */
+/** *frame, before layout. */
 fn exit_tick() {
     if exit_nodes.len == 0 {
         return
@@ -2412,7 +2412,7 @@ fn exit_tick() {
     }
 }
 
-/// Exits still playing (the host keeps frames coming until they end).
+/** *Exits still playing (the host keeps frames coming until they end). */
 fn exit_live() -> int {
     return exit_nodes.len
 }
@@ -2440,13 +2440,13 @@ let mut geo_w: []int = []int {}
 let mut geo_h: []int = []int {}
 let mut geo_sx: []int = []int {}
 let mut geo_sy: []int = []int {}
-/// Polled hooks run, and geometry hooks skipped because nothing they read
-/// moved (diagnostics).
+/** *Polled hooks run, and geometry hooks skipped because nothing they read */
+/** *moved (diagnostics). */
 let mut poll_runs: int = 0
 let mut geo_skips: int = 0
 
-/// Declare polled host `id` a geometry host (see `geo_on`): its hook reads
-/// only its own box and scroll, and its bound signals. Call after `set_list_fn`.
+/** *Declare polled host `id` a geometry host (see `geo_on`): its hook reads */
+/** *only its own box and scroll, and its bound signals. Call after `set_list_fn`. */
 fn host_geo(id: int) {
     if id <= 0 || id >= nodes.tree.len {
         return
@@ -2477,8 +2477,8 @@ fn geo_forget(id: int) {
     }
 }
 
-/// 1 when geometry host `id` must run its hook: forced, or its box or scroll
-/// moved since it last ran. Records what it saw. Non-geometry hosts always run.
+/** *1 when geometry host `id` must run its hook: forced, or its box or scroll */
+/** *moved since it last ran. Records what it saw. Non-geometry hosts always run. */
 fn geo_due(id: int) -> int {
     if id >= geo_on.len {
         return 1
@@ -2506,8 +2506,8 @@ fn geo_due(id: int) -> int {
     return 1
 }
 
-/// Install `fid` as `id`'s refresh hook. A host not marked push-only is
-/// registered for polling the first time it gets a hook.
+/** *Install `fid` as `id`'s refresh hook. A host not marked push-only is */
+/** *registered for polling the first time it gets a hook. */
 fn set_list_fn(id: int, fid: int) {
     if id <= 0 || id >= nodes.tree.len {
         return
@@ -2519,9 +2519,9 @@ fn set_list_fn(id: int, fid: int) {
     }
 }
 
-/// Mark `id` as a push-only host: its hook runs only when a signal bound with
-/// `bind_host` is written. Call before the hook is installed. The host must
-/// build its initial content itself — no pass runs it until the first write.
+/** *Mark `id` as a push-only host: its hook runs only when a signal bound with */
+/** *`bind_host` is written. Call before the hook is installed. The host must */
+/** *build its initial content itself — no pass runs it until the first write. */
 fn host_push(id: int) {
     if id <= 0 || id >= nodes.tree.len {
         return
@@ -2544,11 +2544,11 @@ fn poll_forget(id: int) {
     }
 }
 
-/// Run the refresh hooks this frame needs: every polled host, then every
-/// queued push host. A hook may write a signal that queues another host (or
-/// rebuild a subtree holding new hosts), so the queue drains until empty; the
-/// round cap only guards against two hosts writing each other's signal
-/// forever.
+/** *Run the refresh hooks this frame needs: every polled host, then every */
+/** *queued push host. A hook may write a signal that queues another host (or */
+/** *rebuild a subtree holding new hosts), so the queue drains until empty; the */
+/** *round cap only guards against two hosts writing each other's signal */
+/** *forever. */
 fn refresh_hosts() {
     // Ids can go stale under a hook (a rebuild frees and recycles nodes), so
     // each entry is re-checked at the moment it runs, and duplicates (a
@@ -2600,9 +2600,9 @@ fn refresh_hosts() {
     }
 }
 
-/// Run host `id`'s refresh hook through the trap guard. A boundary host's own
-/// hook (which builds its fallback) is guarded by the boundary *above* it, so a
-/// trapping fallback fails the outer boundary instead of re-queuing itself.
+/** *Run host `id`'s refresh hook through the trap guard. A boundary host's own */
+/** *hook (which builds its fallback) is guarded by the boundary *above* it, so a */
+/** *trapping fallback fails the outer boundary instead of re-queuing itself. */
 fn invoke_hook(id: int) {
     let mut owner = id
     if nodes.tree[id].bnd != 0 {
@@ -2611,8 +2611,8 @@ fn invoke_hook(id: int) {
     invoke_on(nodes.tree[id].list_fn, owner)
 }
 
-/// Drop a freed node's host entries so a recycled id cannot be queued for an
-/// unrelated signal.
+/** *Drop a freed node's host entries so a recycled id cannot be queued for an */
+/** *unrelated signal. */
 fn host_forget(node_id: int) {
     let mut i = 0
     while i < host_node.len {
@@ -2628,8 +2628,8 @@ fn host_forget(node_id: int) {
     }
 }
 
-/// Drop a freed signal's host entries so a recycled slot cannot queue a host
-/// for a value it never read.
+/** *Drop a freed signal's host entries so a recycled slot cannot queue a host */
+/** *for a value it never read. */
 fn host_forget_sig(sig_id: int) {
     let mut i = 0
     while i < host_sig.len {
@@ -2645,8 +2645,8 @@ fn host_forget_sig(sig_id: int) {
     }
 }
 
-/// Drop a freed node's bind entry so a recycled id cannot be marked for an
-/// unrelated signal.
+/** *Drop a freed node's bind entry so a recycled id cannot be marked for an */
+/** *unrelated signal. */
 fn bind_forget(node_id: int) {
     let mut i = 0
     while i < bind_node.len {
@@ -2662,8 +2662,8 @@ fn bind_forget(node_id: int) {
     }
 }
 
-/// Mark the chrome (and paint) of every node bound to `sig_id`. Returns how many
-/// nodes were marked — 0 means the signal has no direct bound consumer.
+/** *Mark the chrome (and paint) of every node bound to `sig_id`. Returns how many */
+/** *nodes were marked — 0 means the signal has no direct bound consumer. */
 fn chrome_for_signal(sig_id: int) -> int {
     let mut hits = 0
     let n = bind_sig.len
@@ -2706,21 +2706,21 @@ fn store_sig(id: int, value: int) {
     note_write(id)
 }
 
-/// The accounting every state write shares. `store_sig` reaches it after binding
-/// an int; a value the C seam bound (a string, a struct, a list — anything but
-/// `int`) reaches it from generated code, which calls this by name. Both therefore
-/// decide targeted-vs-frame-wide the same way: a non-int prop write is as
-/// surgical as an int one, instead of draining a whole-frame mark once per frame.
-///
-/// `notify` runs every dependent effect now, and a prop effect reports the node it
-/// wrote. Count what ran and what reported to decide targeted vs frame-wide. The
-/// shared chrome pass still runs: it retargets hover / press / tween / fade tracks
-/// (a switch's tween or a scrollbar, none of which move the box model).
-/// Signal writes `note_write` attributed to their own nodes, ever. A nested
-/// write that was attributed lets the outer write count as attributed too.
+/** *The accounting every state write shares. `store_sig` reaches it after binding */
+/** *an int; a value the C seam bound (a string, a struct, a list — anything but */
+/** *`int`) reaches it from generated code, which calls this by name. Both therefore */
+/** *decide targeted-vs-frame-wide the same way: a non-int prop write is as */
+/** *surgical as an int one, instead of draining a whole-frame mark once per frame. */
+/** */
+/** *`notify` runs every dependent effect now, and a prop effect reports the node it */
+/** *wrote. Count what ran and what reported to decide targeted vs frame-wide. The */
+/** *shared chrome pass still runs: it retargets hover / press / tween / fade tracks */
+/** *(a switch's tween or a scrollbar, none of which move the box model). */
+/** *Signal writes `note_write` attributed to their own nodes, ever. A nested */
+/** *write that was attributed lets the outer write count as attributed too. */
 let mut targeted_writes: int = 0
-/// Hosts queued through a `computed` the write made stale (`Each(xs.get(), ...)`
-/// binds its host to that computed, not to `xs`), counted by the memo hook.
+/** *Hosts queued through a `computed` the write made stale (`Each(xs.get(), ...)` */
+/** *binds its host to that computed, not to `xs`), counted by the memo hook. */
 let mut memo_host_hits: int = 0
 
 fn note_write(id: int) {
@@ -2752,17 +2752,17 @@ fn note_write(id: int) {
     settle_write(id, ran, pw, memo_host_hits - mh0)
 }
 
-/// Decide what a write that ran `ran` effects (`pw` of them reported a node)
-/// leaves dirty. Every node an effect touched marked itself as it wrote — a
-/// prop setter or a chaining setter run from an effect (`zeusbase.touched`),
-/// a scroll, a structural operator — so an effect run that reported nothing
-/// touched nothing: a pure side effect, a forward to a signal that did not
-/// move, a `style` whose keys all held. That costs no dirt (it used to cost
-/// a frame-wide paint, chrome and layout). What still falls back:
-/// - a signal layout reads *directly*, with no effect in between: frame-wide
-///   layout;
-/// - a write nothing consumed — no effect, bound node or host: frame-wide
-///   paint, and a `view` app rebuilds (its build may have read it untracked).
+/** *Decide what a write that ran `ran` effects (`pw` of them reported a node) */
+/** *leaves dirty. Every node an effect touched marked itself as it wrote — a */
+/** *prop setter or a chaining setter run from an effect (`zeusbase.touched`), */
+/** *a scroll, a structural operator — so an effect run that reported nothing */
+/** *touched nothing: a pure side effect, a forward to a signal that did not */
+/** *move, a `style` whose keys all held. That costs no dirt (it used to cost */
+/** *a frame-wide paint, chrome and layout). What still falls back: */
+/** *- a signal layout reads *directly*, with no effect in between: frame-wide */
+/** *layout; */
+/** *- a write nothing consumed — no effect, bound node or host: frame-wide */
+/** *paint, and a `view` app rebuilds (its build may have read it untracked). */
 fn settle_write(id: int, ran: int, pw: int, memo_hits: int) {
     // A prop write marked its own path (`note_prop_write` -> `mark_layout_path`),
     // so its dirt is already recorded. Only a signal layout reads *directly* —
@@ -2825,15 +2825,15 @@ fn settle_write(id: int, ran: int, pw: int, memo_hits: int) {
     }
 }
 
-/// > 0 while a text field commits its buffer into its bound signal.
+/** *> 0 while a text field commits its buffer into its bound signal. */
 let mut edit_commit: int = 0
 
-/// Signals written inside the open `batch`, settled by `batch_end`.
+/** *Signals written inside the open `batch`, settled by `batch_end`. */
 let mut batch_sigs: []int = []int {}
 
-/// Close a `batch`: the outermost one runs every deferred effect once, then
-/// settles each write it deferred. A batch runs its effects together, so a
-/// write counts as consumed when anything still reads it.
+/** *Close a `batch`: the outermost one runs every deferred effect once, then */
+/** *settles each write it deferred. A batch runs its effects together, so a */
+/** *write counts as consumed when anything still reads it. */
 fn batch_end() {
     if track.batch_depth != 1 {
         track.batch_end()
@@ -2851,15 +2851,15 @@ fn batch_end() {
     }
 }
 
-/// Effect runs that reported no node (and so, now, left no dirt), and writes
-/// that still fell back to a frame-wide mark. Diagnostics: a patch test holds
-/// the second at zero.
+/** *Effect runs that reported no node (and so, now, left no dirt), and writes */
+/** *that still fell back to a frame-wide mark. Diagnostics: a patch test holds */
+/** *the second at zero. */
 let mut silent_runs: int = 0
 let mut frame_wide_writes: int = 0
 
-/// A paint-only signal write: the value moved but nothing about the tree's
-/// geometry did (scroll offsets, drag positions). Effects still run — one that
-/// changes a layout prop marks layout itself, through `note_prop_write`.
+/** *A paint-only signal write: the value moved but nothing about the tree's */
+/** *geometry did (scroll offsets, drag positions). Effects still run — one that */
+/** *changes a layout prop marks layout itself, through `note_prop_write`. */
 fn store_sig_paint(id: int, value: int) {
     if id <= 0 {
         return
@@ -2896,14 +2896,14 @@ fn store_sig_paint(id: int, value: int) {
     }
 }
 
-/// Thumb size of slider `id`.
+/** *Thumb size of slider `id`. */
 fn slider_knob(id: int) -> int {
     return geometry.min2(16, nodes.box[id].h)
 }
 
-/// Put slider `id`'s thumb under `px`. The bound value is a whole percent;
-/// `tween` keeps the same place in 1/100 percent, so a drag does not paint in
-/// steps of 1% of the track.
+/** *Put slider `id`'s thumb under `px`. The bound value is a whole percent; */
+/** *`tween` keeps the same place in 1/100 percent, so a drag does not paint in */
+/** *steps of 1% of the track. */
 fn slider_seek(id: int, px: int) {
     let kd = slider_knob(id)
     let travel = geometry.max2(nodes.box[id].w - kd, 1)
@@ -2914,8 +2914,8 @@ fn slider_seek(id: int, px: int) {
     mark_paint_id(id)
 }
 
-/// Thumb offset along `travel`. The drag's place stands only while it still
-/// rounds to the value: a key, a write or a coarse `step` moved it otherwise.
+/** *Thumb offset along `travel`. The drag's place stands only while it still */
+/** *rounds to the value: a key, a write or a coarse `step` moved it otherwise. */
 fn slider_x(id: int, travel: int) -> int {
     let pct = bind_pct(id)
     let fine = nodes.anim[id].tween
@@ -2987,12 +2987,12 @@ struct Track {
     dur: int,
     easing: int,
     state: int,
-    /// Spring state, used when `easing` names a spring (`spring_of`): position
-    /// and velocity in 1/256 of the track's unit, per second for the velocity.
-    /// Kept apart from `current_value` so a retarget inherits the speed.
+    /** *Spring state, used when `easing` names a spring (`spring_of`): position */
+    /** *and velocity in 1/256 of the track's unit, per second for the velocity. */
+    /** *Kept apart from `current_value` so a retarget inherits the speed. */
     pos: int,
     vel: int,
-    /// 1 until the track's first tick (`FIRST_STEP_MS`).
+    /** *1 until the track's first tick (`FIRST_STEP_MS`). */
     fresh: int,
 }
 
@@ -3055,7 +3055,7 @@ fn anim_ensure() {
 
 // `enter_fx` flags: the motion a surface adds to its fade. Values of the
 // `Enter` enum divided by 4 (Fade and Reveal have their own fields).
-/// `anim.tween` before a switch's first observation.
+/** *`anim.tween` before a switch's first observation. */
 const TWEEN_UNSET: int = -1
 const ENTER_POP: int = 1
 const ENTER_RISE: int = 2
@@ -3079,24 +3079,24 @@ fn motion_fast() -> int { return 70 }
 fn motion_base() -> int { return 120 }
 fn motion_slow() -> int { return 180 }
 
-/// `Style.transition` value naming an easing instead of a time: this plus an
-/// `EASE` code (`Motion.Pop`, ...).
+/** *`Style.transition` value naming an easing instead of a time: this plus an */
+/** *`EASE` code (`Motion.Pop`, ...). */
 const MOTION_EASED: int = 100000
-/// The time a `Motion.Fall` exit takes: the scrim's own exit, so a sheet
-/// leaving on it is still painted when it lands.
+/** *The time a `Motion.Fall` exit takes: the scrim's own exit, so a sheet */
+/** *leaving on it is still painted when it lands. */
 const FALL_MS: int = 110
 
-/// How long a surface takes to go: shorter than it took to arrive, because
-/// what leaves has already been read.
+/** *How long a surface takes to go: shorter than it took to arrive, because */
+/** *what leaves has already been read. */
 const ENTER_FADE_MS: int = 80
 const EXIT_FADE_MS: int = 90
-/// The scrim outlasts the panel it hosts: paint stops at a hidden scrim, so a
-/// shorter fade would cut the panel's exit off.
+/** *The scrim outlasts the panel it hosts: paint stops at a hidden scrim, so a */
+/** *shorter fade would cut the panel's exit off. */
 const SCRIM_FADE_MS: int = 110
-/// Where a `Enter.Pop` surface starts and leaves from (percent).
+/** *Where a `Enter.Pop` surface starts and leaves from (percent). */
 const POP_FROM: int = 96
 const POP_TO: int = 98
-/// How far `Enter.Rise` / `Enter.Drop` travel on the way in, and on the way out.
+/** *How far `Enter.Rise` / `Enter.Drop` travel on the way in, and on the way out. */
 const RISE_DP: int = 12
 const SINK_DP: int = 6
 
@@ -3121,11 +3121,11 @@ fn is_spring(easing: int) -> bool {
     return easing >= ease_snap() && easing <= ease_glide()
 }
 
-/// Integration step in ms. Small against the stiffest spring (k 2400, period
-/// about 130 ms), and whole frames of 60 and 120 Hz divide it evenly.
+/** *Integration step in ms. Small against the stiffest spring (k 2400, period */
+/** *about 130 ms), and whole frames of 60 and 120 Hz divide it evenly. */
 const SPRING_STEP: int = 4
-/// At rest, in 1/256 of a track's unit: closer than the eye can tell (half a
-/// percent or degree, 1/8 dp, 0.1% of a scale), and all but stopped.
+/** *At rest, in 1/256 of a track's unit: closer than the eye can tell (half a */
+/** *percent or degree, 1/8 dp, 0.1% of a scale), and all but stopped. */
 fn spring_near(prop: int) -> int {
     if prop == APROP.ScalePct {
         return 256
@@ -3137,8 +3137,8 @@ fn spring_near(prop: int) -> int {
 }
 const SPRING_SLOW: int = 16
 
-/// Sub-units a track runs in, for paint values that would stair-step in
-/// whole units: a percent of a 440dp panel is more than 4dp a step.
+/** *Sub-units a track runs in, for paint values that would stair-step in */
+/** *whole units: a percent of a 440dp panel is more than 4dp a step. */
 fn prop_unit(prop: int) -> int {
     if prop == APROP.ScalePct {
         return 10
@@ -3149,9 +3149,9 @@ fn prop_unit(prop: int) -> int {
     return 1
 }
 
-/// Cubic Bézier component at parameter `u` (0..1000): P0 = 0, P3 = 1000,
-/// P1 = `c1`, P2 = `c2` (all permille; `c1`/`c2` may exceed 1000 for Spring).
-/// i64 intermediates: 3 · 1000³ · ~2000 overflows i32.
+/** *Cubic Bézier component at parameter `u` (0..1000): P0 = 0, P3 = 1000, */
+/** *P1 = `c1`, P2 = `c2` (all permille; `c1`/`c2` may exceed 1000 for Spring). */
+/** *i64 intermediates: 3 · 1000³ · ~2000 overflows i32. */
 fn bezier_comp(u: int, c1: int, c2: int) -> int {
     let s = 1000 - u
     let uu = i64(u)
@@ -3162,8 +3162,8 @@ fn bezier_comp(u: int, c1: int, c2: int) -> int {
     return i32((a + b + c) / i64(1000000000))
 }
 
-/// `y` of cubic-bezier(x1, y1, x2, y2) at linear time `t`. Control points
-/// and `t`/`y` are permille. Binary-searches the parameter so x(u) ≈ t.
+/** *`y` of cubic-bezier(x1, y1, x2, y2) at linear time `t`. Control points */
+/** *and `t`/`y` are permille. Binary-searches the parameter so x(u) ≈ t. */
 fn bezier_at(t: int, x1: int, y1: int, x2: int, y2: int) -> int {
     let mut lo = 0
     let mut hi = 1000
@@ -3180,16 +3180,16 @@ fn bezier_at(t: int, x1: int, y1: int, x2: int, y2: int) -> int {
     return bezier_comp(hi, y1, y2)
 }
 
-/// One integration step of `dt` ms (semi-implicit Euler, stable at these
-/// stiffnesses). i64: k × 1000dp in 1/256 overflows i32.
+/** *One integration step of `dt` ms (semi-implicit Euler, stable at these */
+/** *stiffnesses). i64: k × 1000dp in 1/256 overflows i32. */
 fn spring_accel(easing: int, x: int, v: int, to: int) -> i64 {
     let k = i64(spring_k(easing))
     let c = i64(spring_c(easing))
     return (i64(to) - i64(x)) * k - i64(v) * c
 }
 
-/// A spring's response at permille `t` of a nominal 500 ms, for `anim_ease`
-/// callers that drive a value themselves. Tracks integrate directly.
+/** *A spring's response at permille `t` of a nominal 500 ms, for `anim_ease` */
+/** *callers that drive a value themselves. Tracks integrate directly. */
 fn spring_shape(easing: int, t: int) -> int {
     let mut x = 0
     let mut v = 0
@@ -3204,9 +3204,9 @@ fn spring_shape(easing: int, t: int) -> int {
     return x / 256
 }
 
-/// Shape a linear 0..1000 progress into an eased 0..1000 (Spring may overshoot
-/// mid-curve; the settled frame is always 1000). The first four `EASE` tokens
-/// are CSS cubic-béziers of the named curves they stood for as polynomials.
+/** *Shape a linear 0..1000 progress into an eased 0..1000 (Spring may overshoot */
+/** *mid-curve; the settled frame is always 1000). The first four `EASE` tokens */
+/** *are CSS cubic-béziers of the named curves they stood for as polynomials. */
 fn anim_ease(easing: int, t: int) -> int {
     if t <= 0 {
         return 0
@@ -3291,7 +3291,7 @@ fn trk_live(node: int, prop: int) -> int {
     return 0
 }
 
-/// 1 while `id`'s hover wash has a live track.
+/** *1 while `id`'s hover wash has a live track. */
 fn hover_easing(id: int) -> int {
     if trk_live(id, APROP.HoverAmt) == 0 {
         return 0
@@ -3339,7 +3339,7 @@ fn anim_clamp100(v: int) -> int {
     return v
 }
 
-/// Current paint value a track on (`node`, `prop`) is at.
+/** *Current paint value a track on (`node`, `prop`) is at. */
 fn anim_read(node: int, prop: int) -> int {
     if prop == APROP.HoverAmt {
         return int(nodes.anim[node].hover_amt)
@@ -3392,7 +3392,7 @@ fn anim_read(node: int, prop: int) -> int {
     return 0
 }
 
-/// Write a paint value (the track tick's only side effect on the tree).
+/** *Write a paint value (the track tick's only side effect on the tree). */
 fn anim_store(node: int, prop: int, v: int) {
     if prop == APROP.HoverAmt {
         nodes.anim[node].hover_amt = u8(anim_clamp100(v))
@@ -3463,14 +3463,14 @@ fn anim_reduced() -> int {
     return reduced
 }
 
-/// Retarget or start a track toward `to`. Retargeting keeps the current value
-/// as the new `from`, so an interrupted transition never pops or restarts.
-/// Before the first frame, and under reduced motion, the final value is written
-/// once instead.
-///
-/// A spring retarget keeps its velocity too: reversed mid-flight, the value
-/// carries on, slows and comes back, like anything with mass. `dur` is ignored
-/// for a spring, except that zero still jumps.
+/** *Retarget or start a track toward `to`. Retargeting keeps the current value */
+/** *as the new `from`, so an interrupted transition never pops or restarts. */
+/** *Before the first frame, and under reduced motion, the final value is written */
+/** *once instead. */
+/** */
+/** *A spring retarget keeps its velocity too: reversed mid-flight, the value */
+/** *carries on, slows and comes back, like anything with mass. `dur` is ignored */
+/** *for a spring, except that zero still jumps. */
 fn anim_schedule(node: int, prop: int, to_units: int, dur: int, easing: int) {
     // An empty ref (an effect's first run, before its element mounts).
     if node <= 0 {
@@ -3551,7 +3551,7 @@ fn anim_schedule(node: int, prop: int, to_units: int, dur: int, easing: int) {
     trk_inc(node, prop)
 }
 
-/// A paint transform: scale percent toward `to` (100 = identity).
+/** *A paint transform: scale percent toward `to` (100 = identity). */
 fn anim_scale(node: int, to: int, ms: int, easing: int = 1) {
     anim_schedule(node, APROP.ScalePct, to, ms, easing)
 }
@@ -3603,9 +3603,9 @@ fn layout_anim_ensure() {
     }
 }
 
-/// Record a layout prop that an in-flight `animate` just wrote. Keeps the
-/// node at `from` and tweens toward `to` on the signal's track. Returns 1
-/// when the write was intercepted (caller must not apply `to` this frame).
+/** *Record a layout prop that an in-flight `animate` just wrote. Keeps the */
+/** *node at `from` and tweens toward `to` on the signal's track. Returns 1 */
+/** *when the write was intercepted (caller must not apply `to` this frame). */
 fn layout_anim_push(node_id: int, setter: int, from: int, to: int) -> int {
     if in_anim_bind == 0 {
         return 0
@@ -3705,10 +3705,10 @@ fn live_layout_anims_count() -> int {
     return live_layout_anims
 }
 
-/// `colors.animate`: move a signal's *state* to `to` once (effects run once),
-/// then interpolate its paint value on the track pool. A layout prop that
-/// the same write lands on (width / height / a pin) stays at `from` and
-/// tweens toward `to` on this track, reflowing each frame until it lands.
+/** *`colors.animate`: move a signal's *state* to `to` once (effects run once), */
+/** *then interpolate its paint value on the track pool. A layout prop that */
+/** *the same write lands on (width / height / a pin) stays at `from` and */
+/** *tweens toward `to` on this track, reflowing each frame until it lands. */
 fn anim_signal(signal_id: int, to: int, ms: int) {
     if signal_id <= 0 {
         return
@@ -3747,7 +3747,7 @@ fn anim_signal(signal_id: int, to: int, ms: int) {
     }
 }
 
-/// 1 while any track is active (keeps the frame loop alive).
+/** *1 while any track is active (keeps the frame loop alive). */
 fn anim_live() -> int {
     return anim_active
 }
@@ -3756,13 +3756,13 @@ fn anim_live_count() -> int {
     return anim_active
 }
 
-/// The most a track advances on its first tick. Hosts sleep when idle, so the
-/// frame that starts a motion carries a delta of up to the 64 ms cap; spent on
-/// the motion, it would skip most of a short fade before it was ever seen.
+/** *The most a track advances on its first tick. Hosts sleep when idle, so the */
+/** *frame that starts a motion carries a delta of up to the 64 ms cap; spent on */
+/** *the motion, it would skip most of a short fade before it was ever seen. */
 const FIRST_STEP_MS: int = 16
 
-/// Advance every active track by `delta_ms` ms. Returns 1 when any track ran this
-/// frame (including the frame a track settles on, so its final value is drawn).
+/** *Advance every active track by `delta_ms` ms. Returns 1 when any track ran this */
+/** *frame (including the frame a track settles on, so its final value is drawn). */
 fn anim_tick(delta_ms: int) -> int {
     anim_ensure()
     if anim_active == 0 {
@@ -3816,8 +3816,8 @@ fn anim_tick(delta_ms: int) -> int {
     return 1
 }
 
-/// Advance spring track `i` by `delta_ms`. `elapsed` carries the part of a
-/// frame too short for a step, so 7 ms and 16 ms frames trace the same curve.
+/** *Advance spring track `i` by `delta_ms`. `elapsed` carries the part of a */
+/** *frame too short for a step, so 7 ms and 16 ms frames trace the same curve. */
 fn spring_tick(i: int, a: Track, delta_ms: int, is_sig: bool) {
     let goal = a.to * 256
     let mut x = a.pos
@@ -3867,7 +3867,7 @@ fn spring_tick(i: int, a: Track, delta_ms: int, is_sig: bool) {
     }
 }
 
-/// Drop tracks owned by a batched set of freed nodes (one sweep per subtree).
+/** *Drop tracks owned by a batched set of freed nodes (one sweep per subtree). */
 fn anim_free_pool(ids: []int) {
     if ids.len == 0 {
         return
@@ -3898,7 +3898,7 @@ fn anim_free_pool(ids: []int) {
     }
 }
 
-/// Drop the paint overlay for a signal that is being freed.
+/** *Drop the paint overlay for a signal that is being freed. */
 fn anim_drop_sig(signal_id: int) {
     if signal_id <= 0 {
         return
@@ -3923,7 +3923,7 @@ fn anim_drop_sig(signal_id: int) {
     }
 }
 
-/// Drop tracks for nodes at or above `n` (Boundary rollback trims the arena).
+/** *Drop tracks for nodes at or above `n` (Boundary rollback trims the arena). */
 fn anim_drop_above(n: int) {
     let mut i = 0
     while i < tracks.len {
@@ -3941,8 +3941,8 @@ fn anim_drop_above(n: int) {
     }
 }
 
-/// Reset all tracks (view-mode rebuild drops the whole tree). Buffers are
-/// reused, not dropped, so a per-frame rebuild does not reallocate them.
+/** *Reset all tracks (view-mode rebuild drops the whole tree). Buffers are */
+/** *reused, not dropped, so a per-frame rebuild does not reallocate them. */
 fn anim_reset() {
     anim_ensure()
     let mut i = 0
@@ -3977,8 +3977,8 @@ fn anim_reset() {
     in_anim_tick = 0
 }
 
-/// The child of `id` a selection of `index` lands on, or 0. An `Each` puts its
-/// rows here too, after its hidden marker, so the marker does not count.
+/** *The child of `id` a selection of `index` lands on, or 0. An `Each` puts its */
+/** *rows here too, after its hidden marker, so the marker does not count. */
 fn ind_target(id: int, index: int) -> int {
     if index < 0 {
         return 0
@@ -3997,8 +3997,8 @@ fn ind_target(id: int, index: int) -> int {
     return 0
 }
 
-/// Point the indicator at the selected child. A new selection travels on a
-/// spring; a resize or a reflow follows at once, because nothing was chosen.
+/** *Point the indicator at the selected child. A new selection travels on a */
+/** *spring; a resize or a reflow follows at once, because nothing was chosen. */
 fn indicator_sync(id: int) {
     let sel = sig_val(nodes.anim[id].ind_sig)
     let t = ind_target(id, sel)
@@ -4015,8 +4015,8 @@ fn indicator_sync(id: int) {
     anim_schedule(id, APROP.IndW, w, ms, ease_snap())
 }
 
-/// A surface with entrance motion is about to appear from nothing: put it
-/// where it starts. Jumped, because it is not on screen yet.
+/** *A surface with entrance motion is about to appear from nothing: put it */
+/** *where it starts. Jumped, because it is not on screen yet. */
 fn enter_motion_begin(id: int) {
     let fx = int(nodes.anim[id].enter_fx)
     if fx == 0 || anim_reduced() != 0 {
@@ -4033,8 +4033,8 @@ fn enter_motion_begin(id: int) {
     }
 }
 
-/// Spring to rest. From a closing surface this reverses with whatever speed
-/// it had.
+/** *Spring to rest. From a closing surface this reverses with whatever speed */
+/** *it had. */
 fn enter_motion_settle(id: int) {
     let fx = int(nodes.anim[id].enter_fx)
     if fx == 0 {
@@ -4048,8 +4048,8 @@ fn enter_motion_settle(id: int) {
     }
 }
 
-/// Fall away while the fade runs, at once. A short way: it is already going,
-/// and the eye has moved on.
+/** *Fall away while the fade runs, at once. A short way: it is already going, */
+/** *and the eye has moved on. */
 fn enter_motion_leave(id: int) {
     let fx = int(nodes.anim[id].enter_fx)
     // A surface that never came, or is already gone, has nowhere to leave from.
@@ -4071,11 +4071,11 @@ fn enter_motion_leave(id: int) {
 // its capacity instead of allocating an id vector every frame.
 let mut chrome_scan: []int = []int {}
 
-/// Recompute one frame's chrome targets from discrete state and schedule the
-/// tracks. Event-driven (pointer, signal, show change), never the per-frame
-/// paint path.
-/// Full pass: pointer motion, a scroll, a layout change or a tree change can
-/// move every hot target, so every node is re-synced.
+/** *Recompute one frame's chrome targets from discrete state and schedule the */
+/** *tracks. Event-driven (pointer, signal, show change), never the per-frame */
+/** *paint path. */
+/** *Full pass: pointer motion, a scroll, a layout change or a tree change can */
+/** *move every hot target, so every node is re-synced. */
 fn sync_chrome_all() {
     update_ptr_cover()
     let n = nodes.tree.len
@@ -4088,8 +4088,8 @@ fn sync_chrome_all() {
     sync_chrome_scan()
 }
 
-/// Re-sync only the flagged nodes: `invalidate(id, INV.Chrome)` queues a node
-/// whose own state changed, and a write queues the nodes bound to its signal.
+/** *Re-sync only the flagged nodes: `invalidate(id, INV.Chrome)` queues a node */
+/** *whose own state changed, and a write queues the nodes bound to its signal. */
 fn sync_chrome_targeted() {
     while chrome_scan.len > 0 {
         pop(chrome_scan)
@@ -4266,9 +4266,9 @@ fn mark_paint_id(id: int) {
     mark_descendants_of(id)
 }
 
-/// Record that node `id` has a paint-marked descendant, for `id` and every
-/// ancestor. Deduped per node, so marking many siblings of one parent walks the
-/// shared path once.
+/** *Record that node `id` has a paint-marked descendant, for `id` and every */
+/** *ancestor. Deduped per node, so marking many siblings of one parent walks the */
+/** *shared path once. */
 fn mark_descendants_of(id: int) {
     let mut p = id
     let mut guard = 0
@@ -4301,7 +4301,7 @@ fn mark_descendants_of(id: int) {
 // paint-dirty subtree. Expansion is deliberately generous — a rect that is too
 // small leaves a visible trail, one that is too large only costs fill rate.
 
-/// Analytic AA coverage reaches one device pixel past a shape's edge.
+/** *Analytic AA coverage reaches one device pixel past a shape's edge. */
 const AA_BLEED: int = 1
 
 struct Damage {
@@ -4312,19 +4312,19 @@ struct Damage {
 }
 
 let mut damage: []Damage = []Damage {}
-/// 1 = repaint the whole surface (layout, tree rebuild, resize, or an unknown
-/// global change). Wins over the per-node rects.
+/** *1 = repaint the whole surface (layout, tree rebuild, resize, or an unknown */
+/** *global change). Wins over the per-node rects. */
 let mut damage_full: int = 0
-/// > 0 while paint is inside a paint-dirty subtree; every node painted then
-/// contributes its rect, so a dirty container damages its descendants too.
+/** *> 0 while paint is inside a paint-dirty subtree; every node painted then */
+/** *contributes its rect, so a dirty container damages its descendants too. */
 let mut damage_cap: int = 0
-/// 1 = a frame is open (its damage is being accumulated). Set on the first of
-/// layout / paint in a frame, cleared when paint has presented it.
+/** *1 = a frame is open (its damage is being accumulated). Set on the first of */
+/** *layout / paint in a frame, cleared when paint has presented it. */
 let mut damage_open: int = 0
 
-/// Begin a frame's damage. Called by both `engine_layout` and `engine_paint`,
-/// so a paint-only frame damages correctly and a layout-then-paint frame does
-/// not reset the layout's `damage_all` between the two.
+/** *Begin a frame's damage. Called by both `engine_layout` and `engine_paint`, */
+/** *so a paint-only frame damages correctly and a layout-then-paint frame does */
+/** *not reset the layout's `damage_all` between the two. */
 fn damage_frame_begin() {
     if damage_open != 0 {
         return
@@ -4337,14 +4337,14 @@ fn damage_frame_begin() {
     damage_cap = 0
 }
 
-/// The frame has been presented; the next frame starts fresh. The list is left
-/// readable until then so a consumer (rasterizer / blit / test) can inspect it.
+/** *The frame has been presented; the next frame starts fresh. The list is left */
+/** *readable until then so a consumer (rasterizer / blit / test) can inspect it. */
 fn damage_frame_end() {
     damage_open = 0
 }
 
-/// Repaint everything. The safe answer whenever geometry could have moved, or a
-/// change is not known to be local.
+/** *Repaint everything. The safe answer whenever geometry could have moved, or a */
+/** *change is not known to be local. */
 fn damage_all() {
     damage_full = 1
 }
@@ -4359,9 +4359,9 @@ fn damage_add(x: int, y: int, w: int, h: int) {
     push(damage, Damage { x: x, y: y, w: w, h: h })
 }
 
-/// How far a node's paint can reach past its box: its resolved shadow (blur
-/// plus offset), any paint-transform travel, and AA bleed. Painting never
-/// changes layout, so all of this is read from the node as it stands.
+/** *How far a node's paint can reach past its box: its resolved shadow (blur */
+/** *plus offset), any paint-transform travel, and AA bleed. Painting never */
+/** *changes layout, so all of this is read from the node as it stands. */
 fn damage_node_pad(id: int) -> int {
     let mut p = AA_BLEED
     // The higher of the resting level and the hover lift: a lifted card's
@@ -4402,9 +4402,9 @@ fn damage_node_pad(id: int) -> int {
     return p
 }
 
-/// Paint-time capture. `x`/`y` are the node's window-space draw origin — the
-/// same numbers the draw list records — and `w`/`h` its box. Called for every
-/// node paint visits; only nodes inside a dirty subtree are recorded.
+/** *Paint-time capture. `x`/`y` are the node's window-space draw origin — the */
+/** *same numbers the draw list records — and `w`/`h` its box. Called for every */
+/** *node paint visits; only nodes inside a dirty subtree are recorded. */
 fn damage_visit(id: int, x: int, y: int, w: int, h: int) {
     if damage_cap <= 0 {
         return
@@ -4418,8 +4418,8 @@ fn damage_visit(id: int, x: int, y: int, w: int, h: int) {
     damage_add(x - p, y - p, w + 2 * p, h + 2 * p)
 }
 
-/// 1 while nothing at all has been recorded for this frame. Paint uses this to
-/// fall back to a full repaint when something dirty was marked without a node.
+/** *1 while nothing at all has been recorded for this frame. Paint uses this to */
+/** *fall back to a full repaint when something dirty was marked without a node. */
 fn damage_empty() -> int {
     if damage_full != 0 {
         return 0
@@ -4434,8 +4434,8 @@ fn mark_chrome() {
     chrome_dirty = 1
 }
 
-/// Mark a node's skeleton shimmer alive so the frame loop keeps running while
-/// it is visible (the case that reaches `paint_alpha`).
+/** *Mark a node's skeleton shimmer alive so the frame loop keeps running while */
+/** *it is visible (the case that reaches `paint_alpha`). */
 fn note_pulse(id: int) {
     if id <= 0 {
         return
@@ -4450,9 +4450,9 @@ fn note_pulse(id: int) {
     mark_paint()
 }
 
-/// Shimmer phase 0..1000 for a pulsing node: a 1.6 s left-to-right sweep
-/// on the frame clock, offset per node so a stack does not move in lockstep.
-/// Reduced motion parks it a third of the way in.
+/** *Shimmer phase 0..1000 for a pulsing node: a 1.6 s left-to-right sweep */
+/** *on the frame clock, offset per node so a stack does not move in lockstep. */
+/** *Reduced motion parks it a third of the way in. */
 const SHIMMER_MS: int = 1600
 
 fn shimmer_phase(id: int) -> int {
@@ -4478,8 +4478,8 @@ fn pulse_live() -> int {
     return 0
 }
 
-/// Mark a node's spinner alive: paint rotates it from the frame clock, and the
-/// frame loop keeps running while it is visible. Reduced motion stops it.
+/** *Mark a node's spinner alive: paint rotates it from the frame clock, and the */
+/** *frame loop keeps running while it is visible. Reduced motion stops it. */
 fn note_spin(id: int, period: int) {
     if id <= 0 {
         return
@@ -4502,7 +4502,7 @@ fn note_spin(id: int, period: int) {
     mark_paint()
 }
 
-/// Undo `note_spin`: the node stops keeping the frame loop alive.
+/** *Undo `note_spin`: the node stops keeping the frame loop alive. */
 fn clear_spin(id: int) {
     if id <= 0 {
         return
@@ -4519,10 +4519,10 @@ fn clear_spin(id: int) {
     mark_paint()
 }
 
-/// Tween a bound signal's *paint* value from `from` to its current state
-/// over `ms`, without writing the signal. `Progress` uses it so a plain
-/// `value.set(80)` eases instead of jumping; an in-flight tween retargets
-/// from where it is.
+/** *Tween a bound signal's *paint* value from `from` to its current state */
+/** *over `ms`, without writing the signal. `Progress` uses it so a plain */
+/** *`value.set(80)` eases instead of jumping; an in-flight tween retargets */
+/** *from where it is. */
 fn anim_paint_from(signal_id: int, from: int, ms: int) {
     if signal_id <= 0 {
         return
@@ -4579,23 +4579,23 @@ fn spin_live() -> int {
     return 0
 }
 
-/// A frame-wide paint mark: the caller cannot attribute the change to nodes, so
-/// the pass re-records every op (and the retained spans are not reused).
+/** *A frame-wide paint mark: the caller cannot attribute the change to nodes, so */
+/** *the pass re-records every op (and the retained spans are not reused). */
 fn mark_paint() {
     paint_dirty = 1
     paint_all = 1
 }
 
-/// A paint mark that *is* attributable: the nodes carry the dirt, so a frame
-/// whose only dirt came through `mark_paint_id` / `invalidate` may re-record just
-/// the marked subtrees and reuse the rest of the retained draw list.
+/** *A paint mark that *is* attributable: the nodes carry the dirt, so a frame */
+/** *whose only dirt came through `mark_paint_id` / `invalidate` may re-record just */
+/** *the marked subtrees and reuse the rest of the retained draw list. */
 fn mark_paint_targeted() {
     paint_dirty = 1
 }
 
-/// Can this frame's paint reuse the retained draw ops outside the marked
-/// subtrees? Needs a targeted mark (not a frame-wide one) and spans that still
-/// describe the retained list.
+/** *Can this frame's paint reuse the retained draw ops outside the marked */
+/** *subtrees? Needs a targeted mark (not a frame-wide one) and spans that still */
+/** *describe the retained list. */
 fn paint_can_patch() -> int {
     if paint_all != 0 {
         return 0
@@ -4606,34 +4606,34 @@ fn paint_can_patch() -> int {
     return 1
 }
 
-/// The paint pass records spans over the list it just built; from then on they
-/// describe the retained list.
+/** *The paint pass records spans over the list it just built; from then on they */
+/** *describe the retained list. */
 fn note_paint_spans() {
     paint_spans_ok = 1
 }
 
-/// Invalidate every cached measure. Called by the coarse layout events (a
-/// structural change, a resize, a theme / scale change) — a re-measure after
-/// this recomputes the whole tree.
+/** *Invalidate every cached measure. Called by the coarse layout events (a */
+/** *structural change, a resize, a theme / scale change) — a re-measure after */
+/** *this recomputes the whole tree. */
 fn invalidate_all() {
     measure_gen = measure_gen + 1
 }
 
-/// Record that a layout prop landed on `id`. Invalidates the path from `id` to
-/// the root (so a re-measure recomputes it) without forcing a whole-tree
-/// re-solve; `engine_layout` may then re-solve only `id`'s size-stable ancestor.
+/** *Record that a layout prop landed on `id`. Invalidates the path from `id` to */
+/** *the root (so a re-measure recomputes it) without forcing a whole-tree */
+/** *re-solve; `engine_layout` may then re-solve only `id`'s size-stable ancestor. */
 fn mark_layout_path(id: int) {
     queue_layout(id, 0)
 }
 
-/// Queue `id` for `layout.relayout`. `structural` is 1 for a change *under*
-/// the node (its kid list moved) and 0 for a prop write *on* it. The queue
-/// records the difference by sign — a structural entry is `-id` — because a
-/// prop write can change how the parent sizes the node itself (`w_pct`,
-/// `align_self`, a margin), so only a structural entry may resolve to the node
-/// as its own boundary. Queued once per frame: a host that attaches a thousand
-/// rows marks itself a thousand times, and `relayout` should see it once. A
-/// prop write on an already-queued structural entry demotes it.
+/** *Queue `id` for `layout.relayout`. `structural` is 1 for a change *under* */
+/** *the node (its kid list moved) and 0 for a prop write *on* it. The queue */
+/** *records the difference by sign — a structural entry is `-id` — because a */
+/** *prop write can change how the parent sizes the node itself (`w_pct`, */
+/** *`align_self`, a margin), so only a structural entry may resolve to the node */
+/** *as its own boundary. Queued once per frame: a host that attaches a thousand */
+/** *rows marks itself a thousand times, and `relayout` should see it once. A */
+/** *prop write on an already-queued structural entry demotes it. */
 fn queue_layout(id: int, structural: int) {
     layout_dirty = 1
     floater_gen = floater_gen + 1
@@ -4661,12 +4661,12 @@ fn queue_layout(id: int, structural: int) {
     }
 }
 
-/// A structural change under `id`: a child attached, detached or dropped, or
-/// the kid list reordered. Scoped like a layout-prop write — the path to the
-/// root is invalidated and `id` is queued for `layout.relayout`, which finds
-/// the nearest box the change cannot have moved — rather than marking the
-/// whole tree. Inside a host rebuild every attach under the host collapses
-/// onto the host: it is the unit of change, and it is queued once.
+/** *A structural change under `id`: a child attached, detached or dropped, or */
+/** *the kid list reordered. Scoped like a layout-prop write — the path to the */
+/** *root is invalidated and `id` is queued for `layout.relayout`, which finds */
+/** *the nearest box the change cannot have moved — rather than marking the */
+/** *whole tree. Inside a host rebuild every attach under the host collapses */
+/** *onto the host: it is the unit of change, and it is queued once. */
 fn mark_tree_at(id: int) {
     tree_dirty = 1
     // The node whose kid list moved re-records its run (spliced into the
@@ -4698,7 +4698,7 @@ fn mark_tree_at(id: int) {
     queue_layout(at, 1)
 }
 
-/// Scroll moved: repaint now, and let the virtual-list window pass run.
+/** *Scroll moved: repaint now, and let the virtual-list window pass run. */
 fn mark_scroll() {
     paint_dirty = 1
     virtual_dirty = 1
@@ -4710,11 +4710,11 @@ fn mark_scroll() {
     }
 }
 
-/// A scroller's offset changed: the global scroll flags plus the scroller's own
-/// PAINT bit. Marking the node is what makes damage capture cover its clipped
-/// rect and everything it paints, so a scroll repaints locally instead of
-/// needing a full-surface fallback (and cannot be masked by another node's
-/// dirty mark).
+/** *A scroller's offset changed: the global scroll flags plus the scroller's own */
+/** *PAINT bit. Marking the node is what makes damage capture cover its clipped */
+/** *rect and everything it paints, so a scroll repaints locally instead of */
+/** *needing a full-surface fallback (and cannot be masked by another node's */
+/** *dirty mark). */
 fn mark_scroll_node(id: int) {
     mark_scroll()
     mark_paint_id(id)
@@ -4743,16 +4743,16 @@ fn mark_tree() {
     paint_spans_ok = 0
 }
 
-/// 1 when this frame's layout must re-solve the whole tree. Read and cleared by
-/// `engine_layout`; `mark_layout` / `mark_tree` / a resize set it.
+/** *1 when this frame's layout must re-solve the whole tree. Read and cleared by */
+/** *`engine_layout`; `mark_layout` / `mark_tree` / a resize set it. */
 fn take_layout_full() -> int {
     let f = layout_full
     layout_full = 0
     return f
 }
 
-/// The nodes a layout prop landed on since the last call, copied and cleared.
-/// `engine_layout` hands them to `layout.relayout`.
+/** *The nodes a layout prop landed on since the last call, copied and cleared. */
+/** *`engine_layout` hands them to `layout.relayout`. */
 fn take_dirty_layout_nodes() -> []int {
     let out = dirty_layout_nodes
     dirty_layout_nodes = []int {}
@@ -4771,8 +4771,8 @@ fn take_dirty_layout_nodes() -> []int {
     return out
 }
 
-/// Drain the PAINT marks at the end of a paint pass. The buffer is popped, not
-/// dropped, so a steady animation allocates nothing frame to frame.
+/** *Drain the PAINT marks at the end of a paint pass. The buffer is popped, not */
+/** *dropped, so a steady animation allocates nothing frame to frame. */
 fn clear_dirty() {
     let n = dirty_paint.len
     for i in 0..n {
@@ -4840,8 +4840,8 @@ fn alloc_node(kind: int) -> int {
     return id
 }
 
-/// Lower or raise the node cap. Test hook and deliberate tuning; 0 is ignored
-/// so a stray call cannot lock the arena shut.
+/** *Lower or raise the node cap. Test hook and deliberate tuning; 0 is ignored */
+/** *so a stray call cannot lock the arena shut. */
 fn set_node_cap(n: int) {
     if n > 0 {
         node_cap = n
@@ -4860,17 +4860,17 @@ fn node_overflow_get() -> int {
 // `__sizeof(x)` is a compile-time size for x's type and does not evaluate x, so
 // the strides below are safe even when a vector is empty.
 
-/// 1 when the host says arena stats are on (`-DZEUS_MEM_STATS` or env).
+/** *1 when the host says arena stats are on (`-DZEUS_MEM_STATS` or env). */
 fn mem_stats_on() -> int {
     return runtime.mem_stats()
 }
 
-/// Bytes held by the signal table.
+/** *Bytes held by the signal table. */
 fn mem_sig_bytes() -> i64 {
     return i64(sigs.len) * i64(__sizeof(nodes.ui[0].bind_sig))
 }
 
-/// Bytes held by the rebuild-scope / keyed-`Each` interning tables.
+/** *Bytes held by the rebuild-scope / keyed-`Each` interning tables. */
 fn mem_intern_bytes() -> i64 {
     let sz = i64(__sizeof(nodes.tree[0].node_id))
     let ssz = i64(__sizeof(nodes.look[0].text))
@@ -4879,8 +4879,8 @@ fn mem_intern_bytes() -> i64 {
     return i64(ints) * sz + i64(kt_key.len) * ssz
 }
 
-/// Bytes held by the animation tables (tracks, their free list, and the paint
-/// / layout anim side lists).
+/** *Bytes held by the animation tables (tracks, their free list, and the paint */
+/** * / layout anim side lists). */
 fn mem_anim_bytes() -> i64 {
     let sz = i64(__sizeof(nodes.tree[0].node_id))
     let ints = track_free.len + sig_paint.len + sig_anim.len
@@ -4889,9 +4889,9 @@ fn mem_anim_bytes() -> i64 {
     return a + b + i64(ints) * sz
 }
 
-/// Bytes held by the remaining small arena vectors: theme slots, focus chains,
-/// scroll snapshots, floater stacks, dirty lists, and free lists. Phase 2 splits
-/// these between the persistent and scratch arenas; Phase 0 only measures them.
+/** *Bytes held by the remaining small arena vectors: theme slots, focus chains, */
+/** *scroll snapshots, floater stacks, dirty lists, and free lists. Phase 2 splits */
+/** *these between the persistent and scratch arenas; Phase 0 only measures them. */
 fn mem_misc_bytes() -> i64 {
     let sz = i64(__sizeof(nodes.tree[0].node_id))
     let mut ints = theme_l.len + theme_d.len + size_buffer.len + size_layout.len
@@ -4902,14 +4902,14 @@ fn mem_misc_bytes() -> i64 {
     return i64(ints) * sz + i64(damage.len) * i64(__sizeof(damage[0]))
 }
 
-/// Arena bytes across every bucket above (the draw list lives in `scene`; the
-/// software rasterizer's atlas and image cache report through `zeus:zeusraster`).
+/** *Arena bytes across every bucket above (the draw list lives in `scene`; the */
+/** *software rasterizer's atlas and image cache report through `zeus:zeusraster`). */
 fn mem_total_bytes() -> i64 {
     return nodes.mem_tree_bytes() + mem_sig_bytes() + mem_intern_bytes() + mem_anim_bytes() +
         mem_misc_bytes()
 }
 
-/// Update the high-water marks. Called once per layout while stats are on.
+/** *Update the high-water marks. Called once per layout while stats are on. */
 fn mem_sample() {
     mem_frames = mem_frames + 1
     let ln = nodes.mem_live_nodes()
@@ -4922,9 +4922,9 @@ fn mem_sample() {
     }
 }
 
-/// Print the arena side of the Phase 0 report. The caller prints the draw list
-/// and the host footprint. One line per bucket so `docs/mem-baseline.md` can
-/// quote it verbatim.
+/** *Print the arena side of the Phase 0 report. The caller prints the draw list */
+/** *and the host footprint. One line per bucket so `docs/mem-baseline.md` can */
+/** *quote it verbatim. */
 fn mem_report() {
     fmt.println(
         "ZEUS_MEM live_nodes=",
@@ -4976,13 +4976,13 @@ fn theme_grow(slot: int) {
 // node whose style effect is running. Both are skipped entirely (one int test)
 // until some node sets an override.
 
-/// 1 once any node has set `scheme`; 1 once any has set `dens_sid`.
+/** *1 once any node has set `scheme`; 1 once any has set `dens_sid`. */
 let mut scheme_scoped: int = 0
 let mut dens_scoped: int = 0
-/// The scheme paint is resolving against: -1 = follow `appearance()`, 0 light,
-/// 1 dark.
+/** *The scheme paint is resolving against: -1 = follow `appearance()`, 0 light, */
+/** *1 dark. */
 let mut paint_dark: int = -1
-/// The scoped role palette paint is resolving against (0 = none).
+/** *The scoped role palette paint is resolving against (0 = none). */
 let mut paint_pal: int = 0
 
 // Scoped role palettes, by id (index 0 unused): each is a short list of role
@@ -5001,7 +5001,7 @@ fn set_scheme(id: int, s: int) {
     mark_paint()
 }
 
-/// A new, empty role palette; returns its id.
+/** *A new, empty role palette; returns its id. */
 fn palette_new() -> int {
     push(pal_slot, []int {})
     push(pal_l, []int {})
@@ -5009,7 +5009,7 @@ fn palette_new() -> int {
     return pal_slot.len - 1
 }
 
-/// Palette `p` paints role `slot` as `light` / `dark` (packed rgb).
+/** *Palette `p` paints role `slot` as `light` / `dark` (packed rgb). */
 fn palette_set(p: int, slot: int, light: int, dark: int) {
     if p <= 0 || p >= pal_slot.len {
         return
@@ -5029,7 +5029,7 @@ fn palette_set(p: int, slot: int, light: int, dark: int) {
     mark_paint()
 }
 
-/// `id`'s subtree paints its roles from palette `p` (0 clears it).
+/** *`id`'s subtree paints its roles from palette `p` (0 clears it). */
 fn set_palette(id: int, p: int) {
     if id <= 0 || id >= nodes.tree.len {
         return
@@ -5039,7 +5039,7 @@ fn set_palette(id: int, p: int) {
     mark_paint()
 }
 
-/// The palette `id` paints with: its own or the nearest ancestor's, 0 none.
+/** *The palette `id` paints with: its own or the nearest ancestor's, 0 none. */
 fn palette_of(id: int) -> int {
     let mut c = id
     let mut hops = 0
@@ -5062,8 +5062,8 @@ fn set_density_scope(id: int, sid: int) {
     dens_scoped = 1
 }
 
-/// The scheme `id` paints with: its own override or the nearest ancestor's,
-/// -1 when none sets one.
+/** *The scheme `id` paints with: its own override or the nearest ancestor's, */
+/** *-1 when none sets one. */
 fn scheme_of(id: int) -> int {
     let mut c = id
     let mut hops = 0
@@ -5081,8 +5081,8 @@ fn scheme_of(id: int) -> int {
     return -1
 }
 
-/// The painter is entering node `id`: resolve against its scheme. Returns the
-/// value to hand back to `paint_scheme_leave` after its subtree.
+/** *The painter is entering node `id`: resolve against its scheme. Returns the */
+/** *value to hand back to `paint_scheme_leave` after its subtree. */
 fn paint_scheme_enter(id: int) -> int {
     let prev = paint_dark + 1 + paint_pal * 4
     if scheme_scoped != 0 {
@@ -5097,9 +5097,9 @@ fn paint_scheme_leave(prev: int) {
     paint_pal = prev / 4
 }
 
-/// The density signal for a node: the nearest scoped one at or above `node`,
-/// continuing from `slot` (its build parent) when `node` is not attached yet —
-/// a style effect first runs before its node joins the tree. 0 = the global.
+/** *The density signal for a node: the nearest scoped one at or above `node`, */
+/** *continuing from `slot` (its build parent) when `node` is not attached yet — */
+/** *a style effect first runs before its node joins the tree. 0 = the global. */
 fn density_at(node: int, slot: int) -> int {
     if dens_scoped == 0 {
         return 0
@@ -5127,14 +5127,14 @@ fn density_at(node: int, slot: int) -> int {
     return 0
 }
 
-/// The node whose effect is running now (0 outside any effect).
+/** *The node whose effect is running now (0 outside any effect). */
 fn effect_node_now() -> int {
     return track.current_node()
 }
 
-/// Paint-time color. The app registers light/dark RGB per slot; paint
-/// resolves against appearance(), or against the scheme a scoped subtree
-/// set (`paint_scheme_enter`).
+/** *Paint-time color. The app registers light/dark RGB per slot; paint */
+/** *resolves against appearance(), or against the scheme a scoped subtree */
+/** *set (`paint_scheme_enter`). */
 fn paint_rgb(c: int) -> int {
     if c < 0 {
         return 0
@@ -5241,8 +5241,8 @@ fn elevation_dark(level: int) -> Elev {
     return Elev(alpha = 110, blur = 10, dx = 0, dy = 4, amb_alpha = 125, amb_blur = 48, amb_dy = 20)
 }
 
-/// How far `e` reaches past the box on its widest side (blur plus offset,
-/// over both layers).
+/** *How far `e` reaches past the box on its widest side (blur plus offset, */
+/** *over both layers). */
 fn elev_reach(e: Elev) -> int {
     let mut dx = e.dx
     if dx < 0 {
@@ -5267,8 +5267,8 @@ fn elev_reach(e: Elev) -> int {
     return key
 }
 
-/// Shadow for a node right now: its resting level, blended toward `lift`
-/// by the eased hover amount.
+/** *Shadow for a node right now: its resting level, blended toward `lift` */
+/** *by the eased hover amount. */
 fn elev_hover(id: int) -> Elev {
     let base = elev_now(int(nodes.look[id].elev))
     let lift = int(nodes.look[id].lift)
@@ -5394,12 +5394,12 @@ fn clamp_h(id: int, h: int) -> int {
     return geometry.max2(v, 0)
 }
 
-/// Default w_pct is 100: fill the parent in a column. In a row the same
-/// default means content width so siblings sit side by side; `.set_width(px)` and
-/// any width_pct other than 100 still win. A raster image never grows past
-/// its decoded source size, so a widthless `Image` fills the container up to
-/// the source width (web `max-width: 100%`) — that is how an uploaded photo
-/// resizes to the device width without a caller-set `max_width`.
+/** *Default w_pct is 100: fill the parent in a column. In a row the same */
+/** *default means content width so siblings sit side by side; `.set_width(px)` and */
+/** *any width_pct other than 100 still win. A raster image never grows past */
+/** *its decoded source size, so a widthless `Image` fills the container up to */
+/** *the source width (web `max-width: 100%`) — that is how an uploaded photo */
+/** *resizes to the device width without a caller-set `max_width`. */
 fn sized_w(c: int, avail: int, row: int) -> int {
     let mut w = nodes.box[c].inner_width
     if nodes.lay[c].explicit_width >= 0 {
@@ -5474,7 +5474,7 @@ fn size_fit(n: int) {
     }
 }
 
-/// Copy size_buffer into size_layout so nested flex layout can reuse size_buffer.
+/** *Copy size_buffer into size_layout so nested flex layout can reuse size_buffer. */
 fn size_commit(n: int) {
     size_fit(n)
     let have = size_layout.len
@@ -5537,8 +5537,8 @@ fn want_show(id: int) -> int {
     return 1
 }
 
-/// Anchor a floating node (popover / tooltip / hover card) to `target`'s
-/// screen rect. `side` is the preferred placement, `gap` the offset in dp.
+/** *Anchor a floating node (popover / tooltip / hover card) to `target`'s */
+/** *screen rect. `side` is the preferred placement, `gap` the offset in dp. */
 fn anchor_to(id: int, target: int, side: int, gap: int) {
     if id <= 0 {
         return
@@ -5569,9 +5569,9 @@ fn set_anchor_flip(id: int, on: int) {
     mark_layout()
 }
 
-/// Jump this node's exit fade — and every other enter_fade node that shares
-/// its hide signal — to 0. A Menu pick must drop the panel in the same frame
-/// (`on_select`); a scheduled Fast fade would leave labels over the heading.
+/** *Jump this node's exit fade — and every other enter_fade node that shares */
+/** *its hide signal — to 0. A Menu pick must drop the panel in the same frame */
+/** *(`on_select`); a scheduled Fast fade would leave labels over the heading. */
 fn snap_exit(id: int) {
     if id <= 0 {
         return
@@ -5612,9 +5612,9 @@ fn snap_exit(id: int) {
     }
 }
 
-/// Paint visibility: `want_show`, or a hidden node whose exit fade has not
-/// landed yet. Paint alone reads this; layout, hit-test, focus, and the tree
-/// predicates keep `want_show`, so a closing floater is already inert.
+/** *Paint visibility: `want_show`, or a hidden node whose exit fade has not */
+/** *landed yet. Paint alone reads this; layout, hit-test, focus, and the tree */
+/** *predicates keep `want_show`, so a closing floater is already inert. */
 fn want_paint(id: int) -> int {
     if want_show(id) != 0 {
         return 1
@@ -5633,8 +5633,8 @@ fn want_paint(id: int) -> int {
     return 0
 }
 
-/// 1 when `id` and every ancestor is visible. `want_show` is per-node; a hidden
-/// container hides its subtree for paint, so a visibility check must walk up.
+/** *1 when `id` and every ancestor is visible. `want_show` is per-node; a hidden */
+/** *container hides its subtree for paint, so a visibility check must walk up. */
 fn shown_in_tree(id: int) -> int {
     if id <= 0 {
         return 0
@@ -5701,7 +5701,7 @@ fn state_bit(s: int) -> int {
     return 1 << (s - 1)
 }
 
-/// Bitmask of the shared interaction states for `id`.
+/** *Bitmask of the shared interaction states for `id`. */
 fn interaction_state(id: int) -> int {
     if id <= 0 {
         return 0
@@ -5790,8 +5790,8 @@ fn set_interaction_state(id: int, s: int, on: int) {
     invalidate(id, INV.Chrome)
 }
 
-/// Nodes the last chrome pass visited, then reset. A targeted pass after a
-/// signal write should visit only the affected nodes; the full pass visits all.
+/** *Nodes the last chrome pass visited, then reset. A targeted pass after a */
+/** *signal write should visit only the affected nodes; the full pass visits all. */
 fn take_chrome_sync_count() -> int {
     let c = chrome_sync_count
     chrome_sync_count = 0
@@ -5810,7 +5810,7 @@ fn set_invalid(id: int, on: int) {
     set_interaction_state(id, UISTATE.StInvalid, on)
 }
 
-/// One shared-state predicate per bit, so a caller never needs the bit number.
+/** *One shared-state predicate per bit, so a caller never needs the bit number. */
 fn state_disabled_of(id: int) -> int {
     if state_has(interaction_state(id), UISTATE.StDisabled) {
         return 1
@@ -5867,12 +5867,12 @@ fn hover_rgb() -> int {
     return 0
 }
 
-/// Scale a pressed `press_scale` node settles at (percent).
+/** *Scale a pressed `press_scale` node settles at (percent). */
 const PRESS_SCALE: int = 97
 
-/// 1 when the shared overlay says the node takes no activation: disabled or
-/// loading. Pointer clicks and Enter / Space consult this, so a component
-/// never has to guard its own handler.
+/** *1 when the shared overlay says the node takes no activation: disabled or */
+/** *loading. Pointer clicks and Enter / Space consult this, so a component */
+/** *never has to guard its own handler. */
 fn is_inert(id: int) -> int {
     if id <= 0 {
         return 0
@@ -5967,11 +5967,11 @@ fn ptr_in(id: int) -> int {
     return shown_in_tree(id)
 }
 
-/// 1 when the pointer is inside `id`'s box and inside every clip above it
-/// (a scroller's viewport, an `overflow` box), mapped through the scroll
-/// offsets the paint pass applies. Clips stop at the nearest floater: it paints
-/// after its parents' clips are restored. Window floaters (overlays, anchored
-/// popups) also stop the scroll sum: they are placed in window coordinates.
+/** *1 when the pointer is inside `id`'s box and inside every clip above it */
+/** *(a scroller's viewport, an `overflow` box), mapped through the scroll */
+/** *offsets the paint pass applies. Clips stop at the nearest floater: it paints */
+/** *after its parents' clips are restored. Window floaters (overlays, anchored */
+/** *popups) also stop the scroll sum: they are placed in window coordinates. */
 fn ptr_in_box(id: int) -> int {
     // Pass 1: the scroll sum `paint` applies to `id` (scroller ancestors up to
     // the first window floater).
@@ -6023,12 +6023,12 @@ fn ptr_in_box(id: int) -> int {
     return 1
 }
 
-/// The topmost floater under the pointer that captures it, or 0. An overlay
-/// (kind 9) is a full-window layer: it captures only when it paints a scrim or
-/// takes clicks (a modal), so a toast layer does not swallow the page. A node
-/// with `pointer_pass` set never captures.
+/** *The topmost floater under the pointer that captures it, or 0. An overlay */
+/** *(kind 9) is a full-window layer: it captures only when it paints a scrim or */
+/** *takes clicks (a modal), so a toast layer does not swallow the page. A node */
+/** *with `pointer_pass` set never captures. */
 let mut ptr_cover: int = 0
-/// Screen offset of `ptr_cover` (the scroll its in-place floater keeps).
+/** *Screen offset of `ptr_cover` (the scroll its in-place floater keeps). */
 let mut ptr_cover_sx: int = 0
 let mut ptr_cover_sy: int = 0
 
@@ -6051,10 +6051,10 @@ fn floater_captures(f: int, sx: int, sy: int) -> int {
     return in_box(f, ptr_x + sx, ptr_y + sy)
 }
 
-/// 1 when floater `f` is a surface of its own: a modal, a scrim, a popup, a
-/// panel placed in window coordinates. The page's scroll stops at one. The
-/// others are page content that merely draws in a higher layer, as a Select
-/// trigger does to stay above its scrim, and scrolling goes straight through.
+/** *1 when floater `f` is a surface of its own: a modal, a scrim, a popup, a */
+/** *panel placed in window coordinates. The page's scroll stops at one. The */
+/** *others are page content that merely draws in a higher layer, as a Select */
+/** *trigger does to stay above its scrim, and scrolling goes straight through. */
 fn floater_is_surface(f: int) -> int {
     if f <= 0 {
         return 0
@@ -6065,10 +6065,10 @@ fn floater_is_surface(f: int) -> int {
     return 0
 }
 
-/// The topmost surface capturing the pointer (0 = none), under whatever
-/// `update_ptr_cover` just left in the floater list. `surface_sx` / `_sy` are
-/// its screen offset. An open Select's trigger is not one, but the scrim under
-/// it is: this finds the scrim, so the page stays put.
+/** *The topmost surface capturing the pointer (0 = none), under whatever */
+/** *`update_ptr_cover` just left in the floater list. `surface_sx` / `_sy` are */
+/** *its screen offset. An open Select's trigger is not one, but the scrim under */
+/** *it is: this finds the scrim, so the page stays put. */
 let mut surface_sx: int = 0
 let mut surface_sy: int = 0
 fn scroll_surface() -> int {
@@ -6086,9 +6086,9 @@ fn scroll_surface() -> int {
     return 0
 }
 
-/// Recompute `ptr_cover` for the current pointer and boxes. Called when the
-/// pointer moves and before the hover states re-sync (a scroll or a layout can
-/// slide a popup under a still pointer).
+/** *Recompute `ptr_cover` for the current pointer and boxes. Called when the */
+/** *pointer moves and before the hover states re-sync (a scroll or a layout can */
+/** *slide a popup under a still pointer). */
 fn update_ptr_cover() {
     ptr_cover = 0
     ptr_cover_sx = 0
@@ -6156,15 +6156,15 @@ fn paint_alpha(id: int) -> int {
     return a * 255 / 100
 }
 
-/// `an_scale` at rest (permille).
+/** *`an_scale` at rest (permille). */
 const SCALE_ONE: int = 1000
 let mut origin_x: int = 0
 let mut origin_y: int = 0
 
-/// Where `id` scales and rotates about, in `origin_x` / `origin_y`: its centre,
-/// or for a panel anchored to a trigger the edge facing it, level with the
-/// trigger, so it grows out of what opened it. Read from the boxes, so a
-/// panel that flipped to fit grows the right way.
+/** *Where `id` scales and rotates about, in `origin_x` / `origin_y`: its centre, */
+/** *or for a panel anchored to a trigger the edge facing it, level with the */
+/** *trigger, so it grows out of what opened it. Read from the boxes, so a */
+/** *panel that flipped to fit grows the right way. */
 fn paint_origin(id: int) {
     let w = nodes.box[id].w
     let h = nodes.box[id].h
@@ -6193,8 +6193,8 @@ fn draw_y(id: int) -> int {
     return nodes.box[id].y - paint_sy
 }
 
-/// Apple HIG 44pt minimum tappable area. Applied only on overlay-scroll
-/// (iOS / Android) hosts, and only to nodes that already take a pointer.
+/** *Apple HIG 44pt minimum tappable area. Applied only on overlay-scroll */
+/** *(iOS / Android) hosts, and only to nodes that already take a pointer. */
 const HIT_MIN: int = 44
 
 fn hit_expand(id: int) -> int {
@@ -6298,8 +6298,8 @@ fn physics_axis_live(pos: int, vel: int, maxs: int) -> int {
     return 0
 }
 
-/// 1 if any scroller is coasting, easing to a wheel target, or overscrolled —
-/// hosts should keep frames.
+/** *1 if any scroller is coasting, easing to a wheel target, or overscrolled — */
+/** *hosts should keep frames. */
 fn physics_live() -> int {
     let n = nodes.tree.len
     for i in 1..n {
@@ -6328,17 +6328,17 @@ struct Axis {
     dirty: int,
 }
 
-/// How fast a coast dies, per mille per ms: about 3% a 60 Hz frame, the glide
-/// of a native list. A flick covers around 30 times its speed in px per frame.
+/** *How fast a coast dies, per mille per ms: about 3% a 60 Hz frame, the glide */
+/** *of a native list. A flick covers around 30 times its speed in px per frame. */
 const COAST_DECAY: int = 2
-/// A flick leaves faster than the finger was measured, as on a phone: the last
-/// frames of a flick are its fastest, and the measure averages them away.
+/** *A flick leaves faster than the finger was measured, as on a phone: the last */
+/** *frames of a flick are its fastest, and the measure averages them away. */
 const COAST_GAIN_NUM: int = 3
 const COAST_GAIN_DEN: int = 2
-/// Speed limit in px per 16 ms. High enough to cross a long page in a swipe.
+/** *Speed limit in px per 16 ms. High enough to cross a long page in a swipe. */
 const COAST_MAX: int = 420
-/// `vel_x` / `vel_y` are in 1/16 px per 16 ms: whole pixels would round every
-/// decay down, and cut the glide short as it slowed.
+/** *`vel_x` / `vel_y` are in 1/16 px per 16 ms: whole pixels would round every */
+/** *decay down, and cut the glide short as it slowed. */
 const VEL_UNIT: int = 16
 
 fn physics_axis(pos: int, vel: int, maxs: int, dt: int) -> Axis {
@@ -6366,14 +6366,14 @@ fn physics_axis(pos: int, vel: int, maxs: int, dt: int) -> Axis {
     return Axis { pos: y, vel: v, dirty: dirty }
 }
 
-/// Share of a wheel target's gap covered per 16 ms. A notch has landed in about
-/// 100 ms: smooth enough to follow, quick enough never to be waited for.
+/** *Share of a wheel target's gap covered per 16 ms. A notch has landed in about */
+/** *100 ms: smooth enough to follow, quick enough never to be waited for. */
 const WHEEL_EASE: int = 50
 
-/// One frame toward a wheel target, at least 1 px, so
-/// a 100 px notch lands smoothly and never stalls short. `dt` keeps the feel the
-/// same on a 120 Hz display as on a 60 Hz one. Returns the new position; the
-/// caller clears the bit when it equals the target.
+/** *One frame toward a wheel target, at least 1 px, so */
+/** *a 100 px notch lands smoothly and never stalls short. `dt` keeps the feel the */
+/** *same on a 120 Hz display as on a 60 Hz one. Returns the new position; the */
+/** *caller clears the bit when it equals the target. */
 fn smooth_axis(pos: int, target_value: int, dt: int) -> int {
     let d = target_value - pos
     if d == 0 {
@@ -6399,14 +6399,14 @@ fn smooth_axis(pos: int, target_value: int, dt: int) -> int {
     return pos + step
 }
 
-/// A finger is panning: from the first `input.scroll` to its `mouseup`. The
-/// position is the finger's until then, so nothing coasts. Touch reports slower
-/// than a fast screen draws, so most frames have no pan in them, and coasting
-/// those moved the content at twice the finger's speed.
+/** *A finger is panning: from the first `input.scroll` to its `mouseup`. The */
+/** *position is the finger's until then, so nothing coasts. Touch reports slower */
+/** *than a fast screen draws, so most frames have no pan in them, and coasting */
+/** *those moved the content at twice the finger's speed. */
 let mut pan_held: int = 0
 
-/// One frame of momentum + rubber-band + wheel easing. Returns 1 if anything
-/// moved. Thumb drag (`drag_bar`) owns the position until mouseup.
+/** *One frame of momentum + rubber-band + wheel easing. Returns 1 if anything */
+/** *moved. Thumb drag (`drag_bar`) owns the position until mouseup. */
 fn physics_step() -> int {
     if drag_id > 0 {
         if drag_bar != 0 {
@@ -6518,7 +6518,7 @@ fn physics_step() -> int {
     return dirty
 }
 
-/// The finger lifted: what it was measured at becomes the coast.
+/** *The finger lifted: what it was measured at becomes the coast. */
 fn pan_release() {
     pan_held = 0
     let n = nodes.tree.len
@@ -6533,8 +6533,8 @@ fn pan_release() {
     }
 }
 
-/// The speed at lift, with the moves no frame has measured yet: a hard flick
-/// can be over before one comes.
+/** *The speed at lift, with the moves no frame has measured yet: a hard flick */
+/** *can be over before one comes. */
 fn lift_speed(vel: int, acc: int) -> int {
     if acc == 0 {
         return vel
@@ -6555,13 +6555,13 @@ fn coast_speed(v: int) -> int {
     return s
 }
 
-/// Notches in a row, while the last is still landing.
+/** *Notches in a row, while the last is still landing. */
 let mut wheel_streak: int = 0
 const WHEEL_STREAK_MAX: int = 6
 
-/// A notch's distance, for a scroller at `pos` easing to `tgt` if `easing`. Each
-/// notch in a row reaches further, up to four times: a turn of the wheel moves
-/// a line, a spin crosses the page, as it does with an accelerated wheel.
+/** *A notch's distance, for a scroller at `pos` easing to `tgt` if `easing`. Each */
+/** *notch in a row reaches further, up to four times: a turn of the wheel moves */
+/** *a line, a spin crosses the page, as it does with an accelerated wheel. */
 fn wheel_notch(easing: int, pos: int, tgt: int, d: int) -> int {
     if easing != 0 && (tgt - pos) * d > 0 {
         if wheel_streak < WHEEL_STREAK_MAX {
@@ -6573,9 +6573,9 @@ fn wheel_notch(easing: int, pos: int, tgt: int, d: int) -> int {
     return d * (2 + wheel_streak) / 2
 }
 
-/// Move a wheel target by `d` (clamped to the content). Starts from the live
-/// target when one is pending, so back-to-back notches add up instead of
-/// restarting. Returns how much of `d` the scroller could take.
+/** *Move a wheel target by `d` (clamped to the content). Starts from the live */
+/** *target when one is pending, so back-to-back notches add up instead of */
+/** *restarting. Returns how much of `d` the scroller could take. */
 fn apply_smooth_y(id: int, d: int) -> int {
     if id <= 0 {
         return 0
@@ -6636,11 +6636,11 @@ fn apply_smooth_x(id: int, d: int) -> int {
     return t - from
 }
 
-/// Apply a pan delta. `momentum` 1 arms the coast (touch pans, precise
-/// trackpads); 0 is a discrete wheel click, which must stop exactly where it
-/// lands. Both clamp at the content bounds — a scroll ends at the first or
-/// last content, never past it (no blank strip). Returns 1 if `scroll_y`
-/// changed.
+/** *Apply a pan delta. `momentum` 1 arms the coast (touch pans, precise */
+/** *trackpads); 0 is a discrete wheel click, which must stop exactly where it */
+/** *lands. Both clamp at the content bounds — a scroll ends at the first or */
+/** *last content, never past it (no blank strip). Returns 1 if `scroll_y` */
+/** *changed. */
 fn apply_delta_y(id: int, dy: int, momentum: int) -> int {
     if id <= 0 {
         return 0
@@ -6770,44 +6770,44 @@ const BAR_FADE_IN: int = 120
 const BAR_FADE_OUT: int = 300
 const BAR_LINGER: int = 800
 const BAR_ALPHA: int = 140
-/// How fast a yielding bar clears out of the lead's way.
+/** *How fast a yielding bar clears out of the lead's way. */
 const BAR_YIELD_MS: int = 100
-/// Thumb thickness at rest and when hot, and the hot strip along the edge.
+/** *Thumb thickness at rest and when hot, and the hot strip along the edge. */
 const BAR_W: int = 4
 const BAR_W_HOT: int = 8
 const BAR_HOT_STRIP: int = 14
 const BAR_HOT_MS: int = 140
 
-/// The scroller whose bar leads its nested chain (0 = none yet).
+/** *The scroller whose bar leads its nested chain (0 = none yet). */
 let mut bar_lead: int = 0
 
-/// The scroller whose bar the pointer is on (0 = none), the one it just left,
-/// when that changed, and each one's hot amount (0..1000) at that moment.
+/** *The scroller whose bar the pointer is on (0 = none), the one it just left, */
+/** *when that changed, and each one's hot amount (0..1000) at that moment. */
 let mut bar_hot: int = 0
 let mut bar_hot_prev: int = 0
 let mut bar_hot_t: int = 0
 let mut bar_hot_a0: int = 0
 let mut bar_prev_a0: int = 0
 
-/// Ease-out cubic over `t` in 0..1000 (fast start, soft landing).
+/** *Ease-out cubic over `t` in 0..1000 (fast start, soft landing). */
 fn ease_out_k(t: int) -> int {
     let u = 1000 - geometry.min2(geometry.max2(t, 0), 1000)
     return 1000 - u * u / 1000 * u / 1000
 }
 
-/// Smoothstep over `t` in 0..1000 (soft start and end).
+/** *Smoothstep over `t` in 0..1000 (soft start and end). */
 fn ease_io_k(t: int) -> int {
     let u = geometry.min2(geometry.max2(t, 0), 1000)
     return u * u / 1000 * (3000 - 2 * u) / 1000
 }
 
-/// How long the thumb stays after the last scroll before it is fully gone.
+/** *How long the thumb stays after the last scroll before it is fully gone. */
 fn bar_hide() -> int {
     return BAR_LINGER + BAR_FADE_OUT
 }
 
-/// Scroll / drag / pointer bumped the bar: it takes the lead of its chain,
-/// related bars yield, and it shows (`bar_show`).
+/** *Scroll / drag / pointer bumped the bar: it takes the lead of its chain, */
+/** *related bars yield, and it shows (`bar_show`). */
 fn bar_on(id: int) {
     if id <= 0 {
         return
@@ -6824,9 +6824,9 @@ fn bar_on(id: int) {
     bar_show(id, now, a_live)
 }
 
-/// Motion the scroller is still finishing (a wheel ease, a momentum coast)
-/// keeps its bar up, unless it yielded: follow-on frames never take the lead
-/// back from the bar the user moved to.
+/** *Motion the scroller is still finishing (a wheel ease, a momentum coast) */
+/** *keeps its bar up, unless it yielded: follow-on frames never take the lead */
+/** *back from the bar the user moved to. */
 fn bar_keep(id: int) {
     if id <= 0 {
         return
@@ -6841,9 +6841,9 @@ fn bar_keep(id: int) {
     bar_show(id, now, bar_alpha(id))
 }
 
-/// Show the bar and push the hide deadline out. A fade-in starts on the
-/// hidden edge, or from the live alpha `a_live` when the bar was fading out;
-/// a stream of scroll events at full opacity restarts nothing.
+/** *Show the bar and push the hide deadline out. A fade-in starts on the */
+/** *hidden edge, or from the live alpha `a_live` when the bar was fading out; */
+/** *a stream of scroll events at full opacity restarts nothing. */
 fn bar_show(id: int, now: int, a_live: int) {
     if nodes.scrl[id].bar_t <= now {
         nodes.scrl[id].bar_s = now
@@ -6856,7 +6856,7 @@ fn bar_show(id: int, now: int, a_live: int) {
     mark_paint_id(id)
 }
 
-/// 1 when one of `a` / `b` contains the other (the same scroll chain).
+/** *1 when one of `a` / `b` contains the other (the same scroll chain). */
 fn bar_related(a: int, b: int) -> int {
     if a <= 0 || b <= 0 || a == b {
         return 0
@@ -6886,8 +6886,8 @@ fn bar_related(a: int, b: int) -> int {
     return 0
 }
 
-/// 1 while `id`'s bar stands aside for the lead: the lead is a different,
-/// still-shown scroller in the same chain.
+/** *1 while `id`'s bar stands aside for the lead: the lead is a different, */
+/** *still-shown scroller in the same chain. */
 fn bar_yields(id: int) -> int {
     let l = bar_lead
     if l <= 0 || l == id || l >= nodes.tree.len {
@@ -6902,10 +6902,10 @@ fn bar_yields(id: int) -> int {
     return bar_related(id, l)
 }
 
-/// The lead is about to move to `id`: every shown bar in its chain starts a
-/// `BAR_YIELD_MS` fade from its live alpha (kept in `bar_a0`), so two thumbs
-/// never sit in one gutter for longer than that. Runs before `bar_lead`
-/// changes, so the alpha read is the one on screen. A held thumb never yields.
+/** *The lead is about to move to `id`: every shown bar in its chain starts a */
+/** *`BAR_YIELD_MS` fade from its live alpha (kept in `bar_a0`), so two thumbs */
+/** *never sit in one gutter for longer than that. Runs before `bar_lead` */
+/** *changes, so the alpha read is the one on screen. A held thumb never yields. */
 fn bar_yield_related(id: int, now: int) {
     let n = nodes.tree.len
     for i in 1..n {
@@ -6937,7 +6937,7 @@ fn bar_yield_related(id: int, now: int) {
     }
 }
 
-/// 1 while the bar should be visible: mid-drag, hot, or before its deadline.
+/** *1 while the bar should be visible: mid-drag, hot, or before its deadline. */
 fn bar_active(id: int) -> int {
     if drag_id == id {
         if drag_bar != 0 {
@@ -6953,8 +6953,8 @@ fn bar_active(id: int) -> int {
     return 0
 }
 
-/// Hot amount 0..1000 of `id`'s bar: easing up while the pointer is on it,
-/// easing down after it left, from wherever it was.
+/** *Hot amount 0..1000 of `id`'s bar: easing up while the pointer is on it, */
+/** *easing down after it left, from wherever it was. */
 fn bar_hot_amt(id: int) -> int {
     if id <= 0 {
         return 0
@@ -6980,7 +6980,7 @@ fn bar_hot_moving() -> int {
     return 0
 }
 
-/// The pointer moved onto (`id` > 0) or off (`id` 0) a scroller's bar strip.
+/** *The pointer moved onto (`id` > 0) or off (`id` 0) a scroller's bar strip. */
 fn bar_set_hot(id: int) {
     if id == bar_hot {
         return
@@ -7002,8 +7002,8 @@ fn bar_set_hot(id: int) {
     }
 }
 
-/// 1 when (`px`, `py`) in window space is on scroller `id`'s bar strip and
-/// that bar is shown and not yielding.
+/** *1 when (`px`, `py`) in window space is on scroller `id`'s bar strip and */
+/** *that bar is shown and not yielding. */
 fn bar_strip_at(id: int, px: int, py: int) -> int {
     if id <= 0 || id >= nodes.tree.len {
         return 0
@@ -7025,8 +7025,8 @@ fn bar_strip_at(id: int, px: int, py: int) -> int {
     return 0
 }
 
-/// Scroll above `id` (window floaters stop it), y in the return, x in
-/// `scroll_sx` — the screen offset of a scroller's own box.
+/** *Scroll above `id` (window floaters stop it), y in the return, x in */
+/** *`scroll_sx` — the screen offset of a scroller's own box. */
 let mut scroll_sx: int = 0
 
 fn screen_scroll_of(id: int) -> int {
@@ -7051,9 +7051,9 @@ fn screen_scroll_of(id: int) -> int {
     return sy
 }
 
-/// Per-frame: clear deadlines that passed and ask for one paint to hide the
-/// thumb. Returns 1 if any bar just hid. Also records whether any bar is
-/// mid-fade (`bar_fading`) while it is already walking the nodes.
+/** *Per-frame: clear deadlines that passed and ask for one paint to hide the */
+/** *thumb. Returns 1 if any bar just hid. Also records whether any bar is */
+/** *mid-fade (`bar_fading`) while it is already walking the nodes. */
 fn bar_expire() -> int {
     let n = nodes.tree.len
     let mut hid = 0
@@ -7096,9 +7096,9 @@ fn bar_expire() -> int {
     return hid
 }
 
-/// Milliseconds until the host must paint the bar again; 0 when none is shown.
-/// 16 while a fade or hot ease is in flight, else one wake at the start of the
-/// soonest fade-out (no busy loop while a thumb sits at full opacity).
+/** *Milliseconds until the host must paint the bar again; 0 when none is shown. */
+/** *16 while a fade or hot ease is in flight, else one wake at the start of the */
+/** *soonest fade-out (no busy loop while a thumb sits at full opacity). */
 fn bar_next_ms() -> int {
     let n = nodes.tree.len
     let mut soon = 0
@@ -7126,9 +7126,9 @@ fn bar_next_ms() -> int {
     return soon
 }
 
-/// 1 while any thumb is inside a fade window (a fade-in or fade-out is in
-/// flight), so `scene.step` marks the frame dirty and the fade advances even
-/// though no scroll position changed. Read from `bar_expire`'s pass.
+/** *1 while any thumb is inside a fade window (a fade-in or fade-out is in */
+/** *flight), so `scene.step` marks the frame dirty and the fade advances even */
+/** *though no scroll position changed. Read from `bar_expire`'s pass. */
 fn bar_fading() -> int {
     return bar_fading_live
 }
@@ -7149,8 +7149,8 @@ fn bar_visible(id: int) -> int {
     return bar_active(id)
 }
 
-/// `bar_visible`, minus a bar that is yielding to its chain's lead: the bar
-/// the pointer can hover, grab and drag.
+/** *`bar_visible`, minus a bar that is yielding to its chain's lead: the bar */
+/** *the pointer can hover, grab and drag. */
 fn bar_live(id: int) -> int {
     if bar_visible(id) == 0 {
         return 0
@@ -7228,7 +7228,7 @@ fn bar_alpha(id: int) -> int {
     return a
 }
 
-/// Track alpha: the track shows only while the bar is hot or dragged.
+/** *Track alpha: the track shows only while the bar is hot or dragged. */
 fn bar_track_alpha(id: int) -> int {
     let mut amt = bar_hot_amt(id)
     if drag_id == id && drag_bar != 0 {
@@ -7237,13 +7237,13 @@ fn bar_track_alpha(id: int) -> int {
     return bar_alpha(id) * amt / 1000 * 36 / BAR_ALPHA
 }
 
-/// Base thumb thickness: the gutter the track geometry is built on, so a
-/// widening thumb never moves along its track.
+/** *Base thumb thickness: the gutter the track geometry is built on, so a */
+/** *widening thumb never moves along its track. */
 fn bar_w() -> int {
     return BAR_W
 }
 
-/// Drawn (and hit) thickness of `id`'s thumb: widens while hot or dragged.
+/** *Drawn (and hit) thickness of `id`'s thumb: widens while hot or dragged. */
 fn bar_w_of(id: int) -> int {
     let mut amt = bar_hot_amt(id)
     if drag_id == id && drag_bar != 0 {
@@ -7290,8 +7290,8 @@ fn bar_thumb_y(id: int, oy: int) -> int {
     return bar_y(id, oy) + (text_height - thh) * nodes.scrl[id].scroll_y / maxs
 }
 
-/// A press on the track at `py`, off the thumb: the page jumps so the thumb
-/// sits centred there, and the press goes on as a drag of it. On the thumb, nothing.
+/** *A press on the track at `py`, off the thumb: the page jumps so the thumb */
+/** *sits centred there, and the press goes on as a drag of it. On the thumb, nothing. */
 fn bar_track_press_y(id: int, py: int) {
     let ty = bar_thumb_y(id, nodes.box[id].y)
     let th = bar_thumb_h(id)
@@ -7379,9 +7379,9 @@ fn bind_pct(id: int) -> int {
     return v
 }
 
-/// The window-space rect clipping what `id`'s parent paints: the intersection
-/// of every scroller / `overflow` box above it, up to the nearest floater.
-/// Written to `clip_*`; returns 0 when nothing clips it.
+/** *The window-space rect clipping what `id`'s parent paints: the intersection */
+/** *of every scroller / `overflow` box above it, up to the nearest floater. */
+/** *Written to `clip_*`; returns 0 when nothing clips it. */
 let mut clip_x0: int = 0
 let mut clip_y0: int = 0
 let mut clip_x1: int = 0
@@ -7437,8 +7437,8 @@ fn parent_clip_rect(id: int) -> int {
     return any
 }
 
-/// 1 unless `id` floats with `clip` set and the pointer is outside the clip
-/// its parent paints under.
+/** *1 unless `id` floats with `clip` set and the pointer is outside the clip */
+/** *its parent paints under. */
 fn ptr_in_float_clip(id: int) -> int {
     if int(nodes.pin[id].fl_clip) == 0 {
         return 1
@@ -7478,14 +7478,14 @@ fn floater_push(id: int, sx: int, sy: int) {
    visits nodes still fading out, which no layout event announces. */
 let mut floater_gen: int = 1
 let mut fc_prunes: int = 0
-/// Next `open_ord` for an anchored popup that just became visible.
+/** *Next `open_ord` for an anchored popup that just became visible. */
 let mut popup_ord: int = 0
-/// Gap, in dp, under which two anchored popups count as near. Overlap is
-/// near. Farther apart, a newer popup does not climb over an older one.
+/** *Gap, in dp, under which two anchored popups count as near. Overlap is */
+/** *near. Farther apart, a newer popup does not climb over an older one. */
 const POPUP_NEAR: int = 8
 
-/// Remember which anchored popup opened most recently. A fade keeps the old
-/// order until the panel is gone, and the next show takes a fresh one.
+/** *Remember which anchored popup opened most recently. A fade keeps the old */
+/** *order until the panel is gone, and the next show takes a fresh one. */
 fn note_popup_stack(id: int) {
     if id <= 0 || id >= nodes.pin.len {
         return
@@ -7587,8 +7587,8 @@ fn floater_swap(i: int, j: int) {
     floater_screen_y[j] = sy
 }
 
-/// Insertion sort. `desc` 1 = high z first (hit-test), 0 = low z first (paint).
-/// Equal z keeps tree order, then near popups reorder by open time.
+/** *Insertion sort. `desc` 1 = high z first (hit-test), 0 = low z first (paint). */
+/** *Equal z keeps tree order, then near popups reorder by open time. */
 fn floater_sort(desc: int) {
     let n = floater_id.len
     for i in 1..n {
@@ -7614,8 +7614,8 @@ fn floater_sort(desc: int) {
     floater_near_order(desc)
 }
 
-/// 1 when the two floater boxes are within `POPUP_NEAR` dp, edges included.
-/// Both are anchored panels, so the box is already in window coordinates.
+/** *1 when the two floater boxes are within `POPUP_NEAR` dp, edges included. */
+/** *Both are anchored panels, so the box is already in window coordinates. */
 fn floater_near(i: int, j: int) -> int {
     let a = floater_id[i]
     let b = floater_id[j]
@@ -7638,10 +7638,10 @@ fn floater_near(i: int, j: int) -> int {
     return 1
 }
 
-/// Within one equal-z run, anchored popups that sit near each other paint
-/// and hit in open order. `desc` 0 paints the newer one last (on top); `desc`
-/// 1 hit-tests it first. A popup outside the cluster keeps its slot, so a
-/// newer panel across the page does not climb over this one.
+/** *Within one equal-z run, anchored popups that sit near each other paint */
+/** *and hit in open order. `desc` 0 paints the newer one last (on top); `desc` */
+/** *1 hit-tests it first. A popup outside the cluster keeps its slot, so a */
+/** *newer panel across the page does not climb over this one. */
 fn floater_near_run(lo: int, hi: int, desc: int) {
     let mut ids = []int {}
     for t in lo..hi {
@@ -7749,7 +7749,7 @@ fn floater_near_run(lo: int, hi: int, desc: int) {
     }
 }
 
-/// Apply `floater_near_run` to each equal-z run. z-order itself stays put.
+/** *Apply `floater_near_run` to each equal-z run. z-order itself stays put. */
 fn floater_near_order(desc: int) {
     let n = floater_id.len
     if n < 2 {
@@ -7772,9 +7772,9 @@ fn floater_near_order(desc: int) {
     }
 }
 
-/// Paint-time ring color for the keyboard-focused node. Theme slot 36 is
-/// registered by the design system's `roles()` (foreground in both
-/// appearances); before that it falls back to paint_rgb(0) = black.
+/** *Paint-time ring color for the keyboard-focused node. Theme slot 36 is */
+/** *registered by the design system's `roles()` (foreground in both */
+/** *appearances); before that it falls back to paint_rgb(0) = black. */
 fn focus_ring_rgb() -> int {
     return paint_rgb(2130706432 + 36)
 }
@@ -7795,8 +7795,8 @@ fn is_focusable(id: int) -> int {
     return 0
 }
 
-/// Subtree Tab walks while a modal is open: the trapped node if it is still
-/// shown in the tree, otherwise the window root.
+/** *Subtree Tab walks while a modal is open: the trapped node if it is still */
+/** *shown in the tree, otherwise the window root. */
 fn focus_walk_root() -> int {
     if trap_id > 0 {
         if shown_in_tree(trap_id) != 0 {
@@ -7806,8 +7806,8 @@ fn focus_walk_root() -> int {
     return root_id
 }
 
-/// Install a modal trap on `id`. Saves the current focus and moves into the
-/// first focusable descendant (or `id` itself).
+/** *Install a modal trap on `id`. Saves the current focus and moves into the */
+/** *first focusable descendant (or `id` itself). */
 fn claim_trap(id: int) {
     if id <= 0 {
         return
@@ -7836,7 +7836,7 @@ fn claim_trap(id: int) {
     claim_focus(first)
 }
 
-/// Release the trap if it is still `id`, and put focus back where it was.
+/** *Release the trap if it is still `id`, and put focus back where it was. */
 fn release_trap(id: int) {
     if trap_id != id {
         return
@@ -7911,10 +7911,10 @@ fn claim_focus(id: int) {
     claim_focus(nodes.tree[id].parent)
 }
 
-/// A roving group moved its pick to `id`: carry focus along only if focus is
-/// already in the group — on one of `id`'s siblings, or inside one — or the
-/// pointer just pressed `id`. A pick set from elsewhere (a button, a route,
-/// the group's own mount) must not pull focus away from where the user is.
+/** *A roving group moved its pick to `id`: carry focus along only if focus is */
+/** *already in the group — on one of `id`'s siblings, or inside one — or the */
+/** *pointer just pressed `id`. A pick set from elsewhere (a button, a route, */
+/** *the group's own mount) must not pull focus away from where the user is. */
 fn claim_roving_focus(id: int) {
     if id <= 0 {
         return
@@ -8069,8 +8069,8 @@ fn input_shown(id: int) -> string {
     return nodes.look[id].text
 }
 
-/// 1 while an input paints its placeholder: no editor text and no masked
-/// display string. `paint_input` dims it so it does not read as a value.
+/** *1 while an input paints its placeholder: no editor text and no masked */
+/** *display string. `paint_input` dims it so it does not read as a value. */
 fn input_is_placeholder(id: int) -> int {
     let slot = nodes.ui[id].edit_slot
     if slot < 0 {
@@ -8138,11 +8138,11 @@ fn edit_ready(id: int) -> int {
 
 let mut style_rows: []Style = []Style {}
 let mut style_free: []int = []int {}
-/// `style_row_of[node_id]` = its row in `style_rows`, 0 = none. Grown on
-/// demand, only when a reactive style is first kept.
+/** *`style_row_of[node_id]` = its row in `style_rows`, 0 = none. Grown on */
+/** *demand, only when a reactive style is first kept. */
 let mut style_row_of: []int = []int {}
 
-/// The row `id` holds, or 0.
+/** *The row `id` holds, or 0. */
 fn style_row(id: int) -> int {
     if id > 0 && id < style_row_of.len {
         return style_row_of[id]
@@ -8150,7 +8150,7 @@ fn style_row(id: int) -> int {
     return 0
 }
 
-/// The last `Style` written to `id`, or an empty one (every key absent).
+/** *The last `Style` written to `id`, or an empty one (every key absent). */
 fn style_last(id: int) -> Style {
     let row = style_row(id)
     if row > 0 {
@@ -8159,7 +8159,7 @@ fn style_last(id: int) -> Style {
     return Style {}
 }
 
-/// Record `s` as the last `Style` written to `id`.
+/** *Record `s` as the last `Style` written to `id`. */
 fn style_keep(id: int, s: Style) {
     if id <= 0 || id >= nodes.tree.len {
         return
@@ -8184,7 +8184,7 @@ fn style_keep(id: int, s: Style) {
     style_rows[row] = s
 }
 
-/// Return `id`'s row, if it holds one.
+/** *Return `id`'s row, if it holds one. */
 fn style_forget(id: int) {
     let row = style_row(id)
     if row > 0 {
@@ -8194,8 +8194,8 @@ fn style_forget(id: int) {
     }
 }
 
-/// Live reactive-style rows, for tests: churning reactive elements must not
-/// grow it.
+/** *Live reactive-style rows, for tests: churning reactive elements must not */
+/** *grow it. */
 fn style_row_count() -> int {
     if style_rows.len == 0 {
         return 0
@@ -8212,16 +8212,16 @@ fn style_row_count() -> int {
 // Such a node paints no default hover wash or press overlay: its state styles
 // are its feedback.
 
-/// Mask bits a state style can follow.
+/** *Mask bits a state style can follow. */
 const STATE_HOVER: int = 1
 const STATE_PRESS: int = 2
 const STATE_FOCUS: int = 4
 const STATE_DISABLED: int = 8
 
-/// `state_sig_of[node_id]` = its mask signal, 0 = not watched.
+/** *`state_sig_of[node_id]` = its mask signal, 0 = not watched. */
 let mut state_sig_of: []int = []int {}
 let mut state_mask_of: []int = []int {}
-/// Watched node ids, so the sync visits only them.
+/** *Watched node ids, so the sync visits only them. */
 let mut state_ids: []int = []int {}
 
 fn state_watched(id: int) -> int {
@@ -8233,7 +8233,7 @@ fn state_watched(id: int) -> int {
     return 0
 }
 
-/// The mask `id` shows now.
+/** *The mask `id` shows now. */
 fn state_mask(id: int) -> int {
     let st = interaction_state(id)
     let mut m = 0
@@ -8252,7 +8252,7 @@ fn state_mask(id: int) -> int {
     return m
 }
 
-/// Start tracking `id`'s interaction state into `sig_id`. Returns the mask now.
+/** *Start tracking `id`'s interaction state into `sig_id`. Returns the mask now. */
 fn state_watch(id: int, sig_id: int) -> int {
     if id <= 0 || id >= nodes.tree.len {
         return 0
@@ -8286,7 +8286,7 @@ fn state_unwatch(id: int) {
     }
 }
 
-/// Once a frame: write each watched node's mask signal if its state moved.
+/** *Once a frame: write each watched node's mask signal if its state moved. */
 fn state_sync() {
     let n = state_ids.len
     for i in 0..n {
@@ -8299,7 +8299,7 @@ fn state_sync() {
     }
 }
 
-/// Watched nodes, for tests: churn must not grow it.
+/** *Watched nodes, for tests: churn must not grow it. */
 fn state_watch_count() -> int {
     return state_ids.len
 }

@@ -1,24 +1,24 @@
-//! media — video and audio playback, played by the host (an HTMLVideoElement
-//! on the web, AVPlayer on macOS) and painted through the ordinary `Image`
-//! draw op: an `Image` whose src is `media_src(p)` shows the player's current
-//! frame, scaled by its `fit`. Hosts keep frames coming while a player plays,
-//! so the picture moves without any signal write.
-//!
-//! The host owns time. A UI reads position / duration / state by polling
-//! these getters (each frame while playing, on a timer otherwise) and copying
-//! them into its own signals; there are no callbacks, so the same code runs on
-//! every host and headless, where a null player stands in.
-//!
-//! ```
-//! let p = zeus.media_player(1)
-//! zeus.media_open(p, "/path/movie.mp4")
-//! zeus.media_play(p)
-//! zui.Image(fn() => zeus.media_src(p), fit = Fit.Contain)
-//! ```
+// media — video and audio playback, played by the host (an HTMLVideoElement
+// on the web, AVPlayer on macOS) and painted through the ordinary `Image`
+// draw op: an `Image` whose src is `media_src(p)` shows the player's current
+// frame, scaled by its `fit`. Hosts keep frames coming while a player plays,
+// so the picture moves without any signal write.
+//
+// The host owns time. A UI reads position / duration / state by polling
+// these getters (each frame while playing, on a timer otherwise) and copying
+// them into its own signals; there are no callbacks, so the same code runs on
+// every host and headless, where a null player stands in.
+//
+// ```
+// let p = zeus.media_player(1)
+// zeus.media_open(p, "/path/movie.mp4")
+// zeus.media_play(p)
+// zui.Image(fn() => zeus.media_src(p), fit = Fit.Contain)
+// ```
 
 import "zeuscore/platform.loam"
 
-/// Player states (`media_state`).
+/** *Player states (`media_state`). */
 const MEDIA_EMPTY: int = 0
 const MEDIA_LOADING: int = 1
 const MEDIA_PAUSED: int = 2
@@ -44,12 +44,12 @@ const MEDIA_GET_H: int = 5
 const MEDIA_GET_BUFFERED: int = 6
 const MEDIA_GET_PICKED: int = 7
 
-/// One host player. `slot` is 1..7; two `Player`s on one slot are one player.
+/** *One host player. `slot` is 1..7; two `Player`s on one slot are one player. */
 struct Player {
     slot: int = 1,
 }
 
-/// A handle on host player `slot` (1..7).
+/** *A handle on host player `slot` (1..7). */
 fn media_player(slot: int) -> Player {
     let mut s = slot
     if s < 1 || s > 7 {
@@ -58,14 +58,14 @@ fn media_player(slot: int) -> Player {
     return Player { slot: s }
 }
 
-/// The `Image` src that paints `p`'s current frame.
+/** *The `Image` src that paints `p`'s current frame. */
 fn media_src(p: Player) -> string {
     return "media:{{p.slot}}"
 }
 
-/// Load `src` (a path, `file://`, `http(s)://`, or a picked file's src).
-/// Starts paused at 0. False when the host refused it outright; a source
-/// that fails later shows as `MEDIA_ERROR` with `media_error`.
+/** *Load `src` (a path, `file://`, `http(s)://`, or a picked file's src). */
+/** *Starts paused at 0. False when the host refused it outright; a source */
+/** *that fails later shows as `MEDIA_ERROR` with `media_error`. */
 fn media_open(p: Player, src: string) -> bool {
     return platform.plat_media_open(p.slot, src) != 0
 }
@@ -78,7 +78,7 @@ fn media_pause(p: Player) {
     platform.plat_media_cmd(p.slot, MEDIA_CMD_PAUSE, 0)
 }
 
-/// Jump to `ms` (clamped by the host to the media's length).
+/** *Jump to `ms` (clamped by the host to the media's length). */
 fn media_seek(p: Player, ms: int) {
     let mut at = ms
     if at < 0 {
@@ -87,12 +87,12 @@ fn media_seek(p: Player, ms: int) {
     platform.plat_media_cmd(p.slot, MEDIA_CMD_SEEK, at)
 }
 
-/// Playback rate in percent: 100 is normal, 50 half speed, 200 double.
+/** *Playback rate in percent: 100 is normal, 50 half speed, 200 double. */
 fn media_rate(p: Player, pct: int) {
     platform.plat_media_cmd(p.slot, MEDIA_CMD_RATE, pct)
 }
 
-/// Volume 0..100.
+/** *Volume 0..100. */
 fn media_volume(p: Player, v: int) {
     let mut vol = v
     if vol < 0 {
@@ -112,7 +112,7 @@ fn media_loop(p: Player, on: bool) {
     platform.plat_media_cmd(p.slot, MEDIA_CMD_LOOP, if on { 1 } else { 0 })
 }
 
-/// Stop and release the source; the slot paints nothing until the next open.
+/** *Stop and release the source; the slot paints nothing until the next open. */
 fn media_close(p: Player) {
     platform.plat_media_cmd(p.slot, MEDIA_CMD_CLOSE, 0)
 }
@@ -121,7 +121,7 @@ fn media_position(p: Player) -> int {
     return platform.plat_media_get(p.slot, MEDIA_GET_POS)
 }
 
-/// Length in ms; 0 while unknown (loading) and for live streams.
+/** *Length in ms; 0 while unknown (loading) and for live streams. */
 fn media_duration(p: Player) -> int {
     return platform.plat_media_get(p.slot, MEDIA_GET_DUR)
 }
@@ -130,7 +130,7 @@ fn media_state(p: Player) -> int {
     return platform.plat_media_get(p.slot, MEDIA_GET_STATE)
 }
 
-/// Decoded picture size in pixels (0 for audio or while loading).
+/** *Decoded picture size in pixels (0 for audio or while loading). */
 fn media_width(p: Player) -> int {
     return platform.plat_media_get(p.slot, MEDIA_GET_W)
 }
@@ -139,7 +139,7 @@ fn media_height(p: Player) -> int {
     return platform.plat_media_get(p.slot, MEDIA_GET_H)
 }
 
-/// End of the buffered range that contains the playhead, in ms.
+/** *End of the buffered range that contains the playhead, in ms. */
 fn media_buffered(p: Player) -> int {
     return platform.plat_media_get(p.slot, MEDIA_GET_BUFFERED)
 }
@@ -148,46 +148,46 @@ fn media_error(p: Player) -> string {
     return platform.plat_media_text(p.slot, 0)
 }
 
-/// Open the host's media picker. Poll `media_picks()`: when it moves,
-/// `media_picked_name()` / `media_picked_src()` hold the file. Files dropped
-/// on the window arrive the same way. A drop of several files queues; each
-/// read of `media_picks()` that follows a read of the current file publishes
-/// the next one.
+/** *Open the host's media picker. Poll `media_picks()`: when it moves, */
+/** *`media_picked_name()` / `media_picked_src()` hold the file. Files dropped */
+/** *on the window arrive the same way. A drop of several files queues; each */
+/** *read of `media_picks()` that follows a read of the current file publishes */
+/** *the next one. */
 fn media_pick() {
     platform.plat_media_pick()
 }
 
-/// Open a panel for audio files. On macOS this is a Finder open panel that
-/// accepts several files. Other hosts use `media_pick`. Each file is
-/// published the same way as a drop: poll `media_picks()` and read the name
-/// and path before the next call.
+/** *Open a panel for audio files. On macOS this is a Finder open panel that */
+/** *accepts several files. Other hosts use `media_pick`. Each file is */
+/** *published the same way as a drop: poll `media_picks()` and read the name */
+/** *and path before the next call. */
 fn media_pick_audio() {
     platform.plat_media_pick_audio()
 }
 
-/// Deliver one file the way a drop does. Tests use this; the window drop and
-/// Open With call the same queue.
+/** *Deliver one file the way a drop does. Tests use this; the window drop and */
+/** *Open With call the same queue. */
 fn media_dropped(name: string, src: string) {
     platform.plat_media_dropped(name, src)
 }
 
-/// Find where a voice is in the audio file `src`, in the background. On macOS
-/// this is Apple's sound classifier: `out` gets one line per 1.5 s window
-/// (hop 0.75 s), `start_ms end_ms voice`, voice the highest singing / speech
-/// confidence 0..100. Then `out.done` appears, or `out.fail` holding the
-/// reason. False when this host cannot do it.
+/** *Find where a voice is in the audio file `src`, in the background. On macOS */
+/** *this is Apple's sound classifier: `out` gets one line per 1.5 s window */
+/** *(hop 0.75 s), `start_ms end_ms voice`, voice the highest singing / speech */
+/** *confidence 0..100. Then `out.done` appears, or `out.fail` holding the */
+/** *reason. False when this host cannot do it. */
 fn media_voice_map(src: string, out: string) -> bool {
     return platform.plat_media_voice(1, src, out) == 1
 }
 
-/// Write `src` minus its voice to `out` (32-bit float WAV), in the background.
-/// On macOS 13+ an ML voice isolator finds the voice. Then `out.done`
-/// appears, or `out.fail`. False when this host cannot do it.
+/** *Write `src` minus its voice to `out` (32-bit float WAV), in the background. */
+/** *On macOS 13+ an ML voice isolator finds the voice. Then `out.done` */
+/** *appears, or `out.fail`. False when this host cannot do it. */
 fn media_voice_split(src: string, out: string) -> bool {
     return platform.plat_media_voice(2, src, out) == 1
 }
 
-/// How many files the picker (or a drop) has published so far.
+/** *How many files the picker (or a drop) has published so far. */
 fn media_picks() -> int {
     return platform.plat_media_get(0, MEDIA_GET_PICKED)
 }

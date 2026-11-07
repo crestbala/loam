@@ -1,4 +1,4 @@
-//! The vault's sign in: the only place the password is checked. Native only.
+// The vault's sign in: the only place the password is checked. Native only.
 
 import "crypto"
 import "http"
@@ -11,18 +11,18 @@ const COOKIE: string = "vault"
 const COOKIE_PATH: string = "/Vault"
 const SESSION_MS: i64 = 604800000
 const SESSION_SECONDS: int = 604800
-/// Failures across all callers, as no addresses are stored. A flood can lock the
-/// owner out for this window, but it cannot try many passwords, and it cannot keep
-/// the server busy hashing them.
+/** *Failures across all callers, as no addresses are stored. A flood can lock the */
+/** *owner out for this window, but it cannot try many passwords, and it cannot keep */
+/** *the server busy hashing them. */
 const MAX_FAILURES: int = 20
 const WINDOW_MS: i64 = 900000
 
-/// Secrets, from the environment. Never logged, and never in the repo.
+/** *Secrets, from the environment. Never logged, and never in the repo. */
 struct Auth {
     email: string,
     password_hash: string,
     session_secret: string,
-    /// Turn off only to try this over plain http on localhost.
+    /** *Turn off only to try this over plain http on localhost. */
     secure_cookie: bool,
 }
 
@@ -68,7 +68,7 @@ fn parse_ms(s: string) -> i64 {
     return v
 }
 
-/// Whether `cookie` is a session this server signed that has not expired.
+/** *Whether `cookie` is a session this server signed that has not expired. */
 fn session_ok(a: Auth, cookie: string, now: i64) -> bool {
     if !configured(a) {
         return false
@@ -86,7 +86,7 @@ fn signed_in(a: Auth, now: i64) -> bool {
     return session_ok(a, http.req_cookie(COOKIE), now)
 }
 
-/// Check an attempt. Returns an `api` status, and sets the cookie on success.
+/** *Check an attempt. Returns an `api` status, and sets the cookie on success. */
 fn login(a: Auth, req: LoginReq, now: i64) -> int {
     if !configured(a) {
         return api.UNAVAILABLE
@@ -109,7 +109,7 @@ fn login(a: Auth, req: LoginReq, now: i64) -> int {
     return if issue(a, now) { api.OK } else { api.UNAVAILABLE }
 }
 
-/// Clear the cookie, with the attributes it was set with.
+/** *Clear the cookie, with the attributes it was set with. */
 fn logout(a: Auth) -> int {
     let cleared = http.set_cookie(
         COOKIE,

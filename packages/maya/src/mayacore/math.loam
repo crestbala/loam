@@ -1,4 +1,4 @@
-//! Integer-turn and float trig for Maya. No C libm.
+// Integer-turn and float trig for Maya. No C libm.
 
 let PI: float = 3.141592653589793
 let TAU: float = 6.283185307179586
@@ -115,7 +115,7 @@ fn fexp(x: float) -> float {
     return s * k
 }
 
-/// Sine. `turns` is 1024 = 360°. Result is -1024..1024. Exact at cardinals.
+/** *Sine. `turns` is 1024 = 360°. Result is -1024..1024. Exact at cardinals. */
 fn sin_turns(turns: int) -> int {
     let t = wrap1024(turns)
     if t == 0 {

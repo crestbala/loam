@@ -1,17 +1,17 @@
-//! The session: recordings in, a take out. Views read these signals and
-//! call these functions; the work runs in the background and `poll` moves
-//! it along.
-//!
-//! Generate walks the stages. A stage that is already done for these
-//! recordings is skipped, so a new take or a changed effect only renders.
-//!
-//!   decode   ffmpeg: 48 kHz copies, envelopes, pitch copies, loudness
-//!   voices   the host's classifier maps where anyone sings or speaks
-//!   analyze  Loam: tempo, grid, key, phrases and their pitch (one
-//!            recording per tick)
-//!   split    the host removes the voice from recordings that have almost
-//!            no voice-free phrase (only when voices are removed)
-//!   render   ffmpeg: the graph, loudness, 24-bit WAV, the waveform
+// The session: recordings in, a take out. Views read these signals and
+// call these functions; the work runs in the background and `poll` moves
+// it along.
+//
+// Generate walks the stages. A stage that is already done for these
+// recordings is skipped, so a new take or a changed effect only renders.
+//
+//   decode   ffmpeg: 48 kHz copies, envelopes, pitch copies, loudness
+//   voices   the host's classifier maps where anyone sings or speaks
+//   analyze  Loam: tempo, grid, key, phrases and their pitch (one
+//            recording per tick)
+//   split    the host removes the voice from recordings that have almost
+//            no voice-free phrase (only when voices are removed)
+//   render   ffmpeg: the graph, loudness, 24-bit WAV, the waveform
 
 import "std:async"
 import "std:str"
@@ -38,10 +38,10 @@ const PHASE_RENDER: int = 5
 const PHASE_READY: int = 6
 const PHASE_ERR: int = 7
 
-/// Bars in the waveform overview.
+/** *Bars in the waveform overview. */
 const WAVE_BARS: int = 120
 
-/// Export formats, in the order of the picker.
+/** *Export formats, in the order of the picker. */
 const FMT_WAV: int = 0
 const FMT_M4A: int = 1
 const FMT_MP3: int = 2
@@ -49,7 +49,7 @@ const FMT_MP3: int = 2
 // Recordings, in the order they were added.
 let names = zeus.signal([]string {})
 let paths = zeus.signal([]string {})
-/// One line per recording once heard: tempo, key, length, voice-free time.
+/** *One line per recording once heard: tempo, key, length, voice-free time. */
 let details = zeus.signal([]string {})
 let roles = zeus.signal([]int {})
 let listened = zeus.signal(false)
@@ -67,10 +67,10 @@ let take = zeus.signal("")
 let take_ms = zeus.signal(0)
 let take_line = zeus.signal("")
 let peaks = zeus.signal([]int {})
-/// Sections for the waveform: kind, start ‰, length ‰, repeated.
+/** *Sections for the waveform: kind, start ‰, length ‰, repeated. */
 let sections = zeus.signal([]int {})
-/// The energy arc, one entry per bar: the target (0..1000) and the energy
-/// of the phrase the chain put there (-1 for none).
+/** *The energy arc, one entry per bar: the target (0..1000) and the energy */
+/** *of the phrase the chain put there (-1 for none). */
 let path = zeus.signal([]int {})
 let path_heard = zeus.signal([]int {})
 let playing = zeus.signal(false)
@@ -83,29 +83,29 @@ let saving = zeus.signal(false)
 let saved = zeus.signal("")
 
 let tools_ok = zeus.signal(true)
-/// The wasm build only: whether the engine answered. False shows "engine
-/// offline" rather than a missing ffmpeg that may well be installed.
+/** *The wasm build only: whether the engine answered. False shows "engine */
+/** *offline" rather than a missing ffmpeg that may well be installed. */
 let engine_up = zeus.signal(true)
 
 let host = zeus.media_player(1)
 
 let mut started: bool = false
-/// When `poll_job` last returned. `poll` runs from the per-frame step and
-/// from the interval, and both can fire in one tick: a step that costs a
-/// second must not run twice before the window draws.
+/** *When `poll_job` last returned. `poll` runs from the per-frame step and */
+/** *from the interval, and both can fire in one tick: a step that costs a */
+/** *second must not run twice before the window draws. */
 let mut job_at: i64 = 0
 const JOB_GAP_MS: int = 10
 let mut last_pick: int = 0
-/// The engine's take this client last showed (`TakeResp.id`).
+/** *The engine's take this client last showed (`TakeResp.id`). */
 let mut rem_take: int = 0
-/// The last generate / poll / save reply this client acted on.
+/** *The last generate / poll / save reply this client acted on. */
 let mut rem_gen: int = 0
 let mut rem_poll: int = 0
 let mut rem_save: int = 0
-/// When the engine's state was last asked for, so a down engine is asked
-/// again once a second rather than every frame.
+/** *When the engine's state was last asked for, so a down engine is asked */
+/** *again once a second rather than every frame. */
 let mut rem_state_at: i64 = 0
-/// A Generate asked for while the recordings were still being sent.
+/** *A Generate asked for while the recordings were still being sent. */
 let mut rem_gen_wait: bool = false
 let mut session: string = ""
 let mut session_n: int = 0
@@ -122,8 +122,8 @@ let mut roles_pinned: bool = false
 let mut dirty: bool = false
 let mut render_ms: int = 0
 let mut render_score: Score = arrange.empty_score()
-/// The render's graph and sound while its voices are being written, one
-/// slice of them per tick; `voicing` until the last is on disk.
+/** *The render's graph and sound while its voices are being written, one */
+/** *slice of them per tick; `voicing` until the last is on disk. */
 let mut render_graph: Graph = graph.empty()
 let mut render_snd: Sound = sound.preset(styles.LOFI)
 let mut voicing: bool = false
@@ -165,12 +165,12 @@ fn poll() {
     poll_player()
 }
 
-/// Read the engine's replies into the local signals. The engine does the
-/// decode / voices / analyze / split / render; this only mirrors it.
-///
-/// Polls go out only while a piece is being made or saved: the engine
-/// advances one step per poll, and an idle client asking every frame would
-/// keep a fetch in flight and the page redrawing for nothing.
+/** *Read the engine's replies into the local signals. The engine does the */
+/** *decode / voices / analyze / split / render; this only mirrors it. */
+/** */
+/** *Polls go out only while a piece is being made or saved: the engine */
+/** *advances one step per poll, and an idle client asking every frame would */
+/** *keep a fetch in flight and the page redrawing for nothing. */
 fn poll_remote() {
     let now = async.now_ms()
     if engine.state_ok {
@@ -239,7 +239,7 @@ fn poll_remote() {
     }
 }
 
-/// The engine's finished take, into the player.
+/** *The engine's finished take, into the player. */
 fn adopt_take() {
     let out = engine.take_path
     playing.set(false)
@@ -274,7 +274,7 @@ fn adopt_take() {
     }
 }
 
-/// "LoFi · 110 BPM · F#m · 4:38" → a title for the take.
+/** *"LoFi · 110 BPM · F#m · 4:38" → a title for the take. */
 fn suggest_title(line: string) -> string {
     let parts = str.split(line, " · ")
     if parts.len < 3 {
@@ -351,8 +351,8 @@ fn remove_at(ix: int) {
     }
 }
 
-/// What was heard belongs to the old list. A running listen stops at its
-/// next step; a finished take keeps playing.
+/** *What was heard belongs to the old list. A running listen stops at its */
+/** *next step; a finished take keeps playing. */
 fn recordings_changed() {
     let n = names.peek().len
     sources = []Source {}
@@ -371,7 +371,7 @@ fn recordings_changed() {
     }
 }
 
-/// Rhythm → motif → air for recording `ix`, kept for the next take.
+/** *Rhythm → motif → air for recording `ix`, kept for the next take. */
 fn cycle_role(ix: int) {
     let cur = roles.peek()
     if ix < 0 || ix >= cur.len || !listened.peek() {
@@ -454,7 +454,7 @@ fn say(msg: string, pct: int) {
 
 // ---- Generate ----------------------------------------------------------------
 
-/// Listen if these recordings have not been heard, then render.
+/** *Listen if these recordings have not been heard, then render. */
 fn generate() {
     if busy() {
         return
@@ -483,8 +483,8 @@ fn generate() {
     begin_listen()
 }
 
-/// The remote path: build the flat `GenerateReq` from the sound controls and
-/// hand it to the engine. The engine's progress is read back in `poll_remote`.
+/** *The remote path: build the flat `GenerateReq` from the sound controls and */
+/** *hand it to the engine. The engine's progress is read back in `poll_remote`. */
 fn generate_remote() {
     error.set("")
     notice.set("")
@@ -496,8 +496,8 @@ fn generate_remote() {
     send_generate()
 }
 
-/// Send the waiting generate once the engine holds the current list; until
-/// then `poll_remote` calls this again each tick.
+/** *Send the waiting generate once the engine holds the current list; until */
+/** *then `poll_remote` calls this again each tick. */
 fn send_generate() {
     if !rem_gen_wait || !engine.synced() {
         return
@@ -520,7 +520,7 @@ fn send_generate() {
     )
 }
 
-/// Instrument on/off, `[rec, drums, bass, pad, arp, bells]`, for the wire.
+/** *Instrument on/off, `[rec, drums, bass, pad, arp, bells]`, for the wire. */
 fn inst_on(s: Sound) -> []int {
     return []int {
         b(s.rec_on),
@@ -536,12 +536,12 @@ fn inst_lvl(s: Sound) -> []int {
     return []int { s.rec_lvl, s.drums_lvl, s.bass_lvl, s.pad_lvl, s.arp_lvl, s.bells_lvl }
 }
 
-/// Effect on/off, `[echo, reverb, mod]`.
+/** *Effect on/off, `[echo, reverb, mod]`. */
 fn fx_on(s: Sound) -> []int {
     return []int { g(s.echo), g(s.reverb), if s.mod_kind != sound.MOD_NONE { 1 } else { 0 } }
 }
 
-/// The effect amounts, then the pad/arp tones and the remaining values.
+/** *The effect amounts, then the pad/arp tones and the remaining values. */
 fn fx_amt(s: Sound) -> []int {
     return []int {
         s.echo, s.reverb, s.echo_time, s.space, s.mod_kind, s.mod_amt,
@@ -563,7 +563,7 @@ fn g(v: int) -> int {
     return 0
 }
 
-/// The same recordings and sound, other phrases and another melody.
+/** *The same recordings and sound, other phrases and another melody. */
 fn new_take() {
     if busy() {
         return
@@ -610,7 +610,7 @@ fn poll_job() {
     }
 }
 
-/// A listen stage ended while the list changed: stop and say so.
+/** *A listen stage ended while the list changed: stop and say so. */
 fn stale() -> bool {
     if !dirty {
         return false
@@ -647,7 +647,7 @@ fn poll_decode() {
     next_voice()
 }
 
-/// Start the next voice map, or move on when there is none (or no tool).
+/** *Start the next voice map, or move on when there is none (or no tool). */
 fn next_voice() {
     let n = paths.peek().len
     voice_at = voice_at + 1
@@ -691,7 +691,7 @@ fn begin_analyze() {
     say("Listening for tempo, key, and phrases…", 40)
 }
 
-/// One recording per tick, so the window stays live.
+/** *One recording per tick, so the window stays live. */
 fn step_analyze() {
     if stale() {
         return
@@ -743,7 +743,7 @@ fn finish_analyze() {
     after_listen()
 }
 
-/// "110 BPM · F♯m · 4:38 · 1:21 voice-free"
+/** *"110 BPM · F♯m · 4:38 · 1:21 voice-free" */
 fn describe(s: Source) -> string {
     let h = s.heard
     if h.dur_ms <= 0 {
@@ -771,7 +771,7 @@ fn describe(s: Source) -> string {
     return str.join(parts, " · ")
 }
 
-/// Voice-free phrases a recording offers.
+/** *Voice-free phrases a recording offers. */
 fn free_phrases(s: Source) -> int {
     let mut n = 0
     for p in 0..s.heard.ph_voice.len {
@@ -783,7 +783,7 @@ fn free_phrases(s: Source) -> int {
     return n
 }
 
-/// Splits wanted for this sound, then the render.
+/** *Splits wanted for this sound, then the render. */
 fn after_listen() {
     split_queue = []int {}
     if controls.voices.peek() == sound.VOICES_REMOVE {
@@ -869,10 +869,10 @@ fn render() {
     say("Playing the instruments…", 60)
 }
 
-/// Milliseconds of voice synthesis per tick before the window gets it back.
+/** *Milliseconds of voice synthesis per tick before the window gets it back. */
 const VOICE_SLICE_MS: int = 40
 
-/// Write the next voices, then start the render once the last is written.
+/** *Write the next voices, then start the render once the last is written. */
 fn step_voices() {
     let g = render_graph
     let n = g.voice_path.len
@@ -895,7 +895,7 @@ fn step_voices() {
     launch_render()
 }
 
-/// The voices are on disk: write the render job and start ffmpeg.
+/** *The voices are on disk: write the render job and start ffmpeg. */
 fn launch_render() {
     let sc = render_score
     let g = render_graph
@@ -920,7 +920,7 @@ fn launch_render() {
     jobs.launch(script)
 }
 
-/// Say when a recording had to give voiced phrases.
+/** *Say when a recording had to give voiced phrases. */
 fn note_voices(sc: Score) {
     if controls.voices.peek() != sound.VOICES_REMOVE {
         return
@@ -1003,12 +1003,12 @@ fn finish_render(n: int) {
     }
 }
 
-/// "F♯m" → "F#m", for a file name.
+/** *"F♯m" → "F#m", for a file name. */
 fn plain_key(k: string) -> string {
     return str.replace_all(str.replace_all(k, "♯", "#"), "♭", "b")
 }
 
-/// The waveform: `bars` peaks of the 50 Hz overview, 4..100.
+/** *The waveform: `bars` peaks of the 50 Hz overview, 4..100. */
 fn load_peaks(path: string, bars: int) -> []int {
     let b = sys.read_file(path)
     let n = b.len / 2
@@ -1097,7 +1097,7 @@ fn toggle_play() {
     playing.set(true)
 }
 
-/// Jump to `permille` of the take.
+/** *Jump to `permille` of the take. */
 fn seek(permille: int) {
     let ms = take_ms.peek()
     if ms <= 0 || take.peek().len == 0 {
@@ -1136,7 +1136,7 @@ fn format_names() -> []string {
     return []string { "WAV", "M4A", "MP3" }
 }
 
-/// Copy the take to `~/Documents/Mune` under the title, in the format.
+/** *Copy the take to `~/Documents/Mune` under the title, in the format. */
 fn save() {
     let t = take.peek()
     if t.len == 0 || saving.peek() {

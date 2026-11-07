@@ -22,7 +22,7 @@ struct LeafProps {
     text: string = "leaf",
 }
 
-/// A component: a fn whose tail returns an element with a trailing block.
+/** *A component: a fn whose tail returns an element with a trailing block. */
 fn Leaf(p: LeafProps) -> Node {
     return zeus.Box(style = Style(direction = Direction.Column, gap = 2)) {
         zeus.Text(p.text)
@@ -33,7 +33,7 @@ struct BoxProps2 {
     label: string = "box",
 }
 
-/// State above the return is owned by the root; the nested `Leaf` is a child.
+/** *State above the return is owned by the root; the nested `Leaf` is a child. */
 fn Wrapper(p: BoxProps2) -> Node {
     let n = zeus.signal(7)
     zeus.effect(|| {

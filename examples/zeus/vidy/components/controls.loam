@@ -1,5 +1,5 @@
-//! The floating glass control panel: seek bar over one row of transport,
-//! volume, time, and the loop / speed / aspect / open / full screen buttons.
+// The floating glass control panel: seek bar over one row of transport,
+// volume, time, and the loop / speed / aspect / open / full screen buttons.
 
 import "zeus"
 import "zui"
@@ -11,9 +11,9 @@ import { SeekBar } "seekbar.loam"
 import { WHITE, SOFT, GLASS, ACCENT, TRACK } "../theme.loam"
 import { Glyph, When } "kit.loam"
 
-/// Narrow windows drop the least-used controls instead of overflowing:
-/// below `WIDE` the secondary transport and the volume slider go, below
-/// `NARROW` the skip buttons and the chip labels too.
+/** *Narrow windows drop the least-used controls instead of overflowing: */
+/** *below `WIDE` the secondary transport and the volume slider go, below */
+/** *`NARROW` the skip buttons and the chip labels too. */
 const WIDE: int = 780
 
 const NARROW: int = 560
@@ -26,7 +26,7 @@ fn roomy() -> bool {
     return player.stage_w.get() >= NARROW
 }
 
-/// The floating glass panel: seek bar over one row of controls.
+/** *The floating glass panel: seek bar over one row of controls. */
 fn Panel() -> Node {
     return zeus.Box(
         style = Style(
@@ -103,7 +103,7 @@ fn Panel() -> Node {
     }
 }
 
-/// A transport icon button: a 40 dp hit target with a soft hover disc.
+/** *A transport icon button: a 40 dp hit target with a soft hover disc. */
 fn Ctl(icon: string, label: string, size: int, run: fn()) -> Node {
     return zeus.Box(
         style = Style(
@@ -163,7 +163,7 @@ fn PlayPause() -> Node {
     }
 }
 
-/// -10 s / +10 s: a circular arrow with "10" inside.
+/** *-10 s / +10 s: a circular arrow with "10" inside. */
 fn Skip(dir: int) -> Node {
     return zeus.Box(
         style = Style(
@@ -197,7 +197,7 @@ fn Skip(dir: int) -> Node {
     }
 }
 
-/// Mute button and a draggable level.
+/** *Mute button and a draggable level. */
 fn Volume() -> Node {
     let tw = 76
     return zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 4)) {
@@ -287,7 +287,7 @@ fn VolumeBar(tw: int) -> Node {
     }
 }
 
-/// An on / off icon button (loop).
+/** *An on / off icon button (loop). */
 fn Toggle(icon: string, label: string, on: Signal<bool>, run: fn()) -> Node {
     return zeus.Box(
         style = Style(
@@ -321,7 +321,7 @@ fn Toggle(icon: string, label: string, on: Signal<bool>, run: fn()) -> Node {
     }
 }
 
-/// A labelled chip that opens popover `which` (speed, aspect).
+/** *A labelled chip that opens popover `which` (speed, aspect). */
 fn Chip(icon: string, text: Signal<string>, label: string, which: int) -> Node {
     return zeus.Box(
         style = Style(

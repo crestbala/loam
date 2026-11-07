@@ -84,7 +84,7 @@ typedef struct {
     const char *name;
     AstNode *type;
     AstNode *def;    /* `= expr` default, or NULL. Constant expressions only. */
-    const char *doc; /* `///` above this field, or NULL */
+    const char *doc; /* doc comment above this field, or NULL */
 } Field;
 
 typedef struct {
@@ -106,7 +106,7 @@ struct AstNode {
     Type *ty;       /* filled by typecheck */
     int flags;
     int place_mut;  /* 1 if this place can be assigned */
-    const char *doc; /* `///` item docs; heap-owned, or NULL */
+    const char *doc; /* item doc comment; heap-owned, or NULL */
     union {
         struct {
             AstNode **imports;
@@ -114,7 +114,7 @@ struct AstNode {
             AstNode **decls;
             size_t decl_count;
             const char *mod_name;
-            const char *mod_doc; /* `//!` lines at module scope */
+            const char *mod_doc; /* module doc comment at file scope */
             CDirective *c_dirs;  /* `#![c_source(...)]` and `#![c_link(...)]` */
             size_t c_dir_count;
         } program;

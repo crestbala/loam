@@ -1,31 +1,31 @@
-//! `http` — unary RPC over gRPC-Web (HTTP/1.1) and h2c. gRPC is the default
-//! wire; optional REST/JSON routes (`app.json`) and a REST client (`rest_send`)
-//! exist for third-party interop only.
-//!
-//! Protobuf field codecs live here (`encode_int_field`, `bytes_of`, …).
-//! `#[proto]` structs get `encode_Name` / `decode_Name` in **their** module;
-//! those functions call this library. Sockets are `std/net`. `listen` is Loam: a
-//! non-blocking loop over HTTP/1.1 and h2c, on one thread. `ZEUS_HEADLESS=1` runs a
-//! Loam self-test.
-//!
-//! ```
-//! import "http"
-//!
-//! fn main() {
-//!     let app = http.app()
-//!     app.rpc("Counter.Increment", |body| {
-//!         let req = decode_Inc(body)
-//!         encode_Count(Count { n: req.by })
-//!     })
-//!     app.listen(8080)
-//! }
-//! ```
-//!
-//! `app.rpc` / `c.call` are method rewrite, like `node.set_width(32)` in Zeus.
-//! `c.call` is gRPC-Web (HTTP/1.1); `http.h2_call` is unary h2c. First-party
-//! traffic is always gRPC; `app.json` + `rest_send` are the optional REST/JSON
-//! interop path (`#[server]` side only).
-//! `ZEUS_HEADLESS=1` runs a self-test and exits.
+// `http` — unary RPC over gRPC-Web (HTTP/1.1) and h2c. gRPC is the default
+// wire; optional REST/JSON routes (`app.json`) and a REST client (`rest_send`)
+// exist for third-party interop only.
+//
+// Protobuf field codecs live here (`encode_int_field`, `bytes_of`, …).
+// `#[proto]` structs get `encode_Name` / `decode_Name` in **their** module;
+// those functions call this library. Sockets are `std/net`. `listen` is Loam: a
+// non-blocking loop over HTTP/1.1 and h2c, on one thread. `ZEUS_HEADLESS=1` runs a
+// Loam self-test.
+//
+// ```
+// import "http"
+//
+// fn main() {
+//     let app = http.app()
+//     app.rpc("Counter.Increment", |body| {
+//         let req = decode_Inc(body)
+//         encode_Count(Count { n: req.by })
+//     })
+//     app.listen(8080)
+// }
+// ```
+//
+// `app.rpc` / `c.call` are method rewrite, like `node.set_width(32)` in Zeus.
+// `c.call` is gRPC-Web (HTTP/1.1); `http.h2_call` is unary h2c. First-party
+// traffic is always gRPC; `app.json` + `rest_send` are the optional REST/JSON
+// interop path (`#[server]` side only).
+// `ZEUS_HEADLESS=1` runs a self-test and exits.
 
 import "std:net"
 import "std:async"
@@ -37,28 +37,28 @@ import "httpcore/wire.loam"
 import "httpcore/h2.loam"
 import "httpcore/ws.loam"
 
-/// Handle for a listening app (runtime table index). Copy.
+/** *Handle for a listening app (runtime table index). Copy. */
 struct App {
-    /// Runtime slot. Do not build this yourself; call `http.app()`.
+    /** *Runtime slot. Do not build this yourself; call `http.app()`. */
     id: int,
 }
 
-/// RPC error. `code` 0 is unused (success lives on `RpcResult.ok`).
+/** *RPC error. `code` 0 is unused (success lives on `RpcResult.ok`). */
 struct Error {
     code: int,
     msg: string,
 }
 
-/// Unary RPC outcome. Read `val` only when `ok == 1`. Named `RpcResult` (not
-/// `Result`) so it does not shadow the language's `Result<T>` in `std:result`;
-/// this edge keeps a structured `Error` payload rather than a message string.
+/** *Unary RPC outcome. Read `val` only when `ok == 1`. Named `RpcResult` (not */
+/** *`Result`) so it does not shadow the language's `Result<T>` in `std:result`; */
+/** *this edge keeps a structured `Error` payload rather than a message string. */
 struct RpcResult<T> {
     ok: int,
     val: T,
     err: Error,
 }
 
-/// Named RPC contract. `Req` / `Resp` are phantom type arguments.
+/** *Named RPC contract. `Req` / `Resp` are phantom type arguments. */
 struct Rpc<Req, Resp> {
     name: string,
 }
@@ -74,38 +74,38 @@ struct MwEntry {
     hid: int,
 }
 
-/// One optional REST/JSON route. gRPC (`RpcEntry`) is the default; these exist
-/// only when the app registers one with `app.json`.
+/** *One optional REST/JSON route. gRPC (`RpcEntry`) is the default; these exist */
+/** *only when the app registers one with `app.json`. */
 struct JsonRoute {
     app: int,
     path: string,
     hid: int,
 }
 
-/// A client endpoint. `addr` is `host:port` for plain TCP (h1 gRPC-Web, h2c,
-/// SSE, ws) or `https://host[:port]` for TLS — `call`/`rt_call` then use
-/// `net.tls_connect`, which verifies the server certificate. Empty `addr`
-/// (and `http.client()` with no argument) is filled by `default_addr`.
+/** *A client endpoint. `addr` is `host:port` for plain TCP (h1 gRPC-Web, h2c, */
+/** *SSE, ws) or `https://host[:port]` for TLS — `call`/`rt_call` then use */
+/** *`net.tls_connect`, which verifies the server certificate. Empty `addr` */
+/** *(and `http.client()` with no argument) is filled by `default_addr`. */
 struct Client {
     addr: string,
 }
 
-/// `host:port` from a client address. `port == 0` means parse failed.
+/** *`host:port` from a client address. `port == 0` means parse failed. */
 struct HostPort {
     host: string,
     port: int,
-    /// 1 when the address had an `https://` scheme (TLS transport).
+    /** *1 when the address had an `https://` scheme (TLS transport). */
     tls: int,
 }
 
-/// Percent-decode / path-normalize result. Read `val` only when `ok == 1`.
+/** *Percent-decode / path-normalize result. Read `val` only when `ok == 1`. */
 struct Decoded {
     ok: int,
     val: string,
 }
 
-/// `http(s)://host[:port][/path]` parsed for the optional REST client
-/// (third-party interop only; first-party traffic is gRPC).
+/** *`http(s)://host[:port][/path]` parsed for the optional REST client */
+/** *(third-party interop only; first-party traffic is gRPC). */
 struct Url {
     ok: int,
     tls: int,
@@ -114,15 +114,15 @@ struct Url {
     path: string,
 }
 
-/// Outcome of an optional REST call. `ok` is 1 only for a 2xx status.
-/// `status` is the HTTP status (0 when the exchange never happened).
+/** *Outcome of an optional REST call. `ok` is 1 only for a 2xx status. */
+/** *`status` is the HTTP status (0 when the exchange never happened). */
 struct RestResult {
     ok: int,
     status: int,
     body: string,
 }
 
-/// HTTP/1.1 request. `err` is 0 on success, otherwise an HTTP status.
+/** *HTTP/1.1 request. `err` is 0 on success, otherwise an HTTP status. */
 struct ParsedReq {
     err: int,
     method: string,
@@ -131,11 +131,11 @@ struct ParsedReq {
     body: string,
     host: string,
     ctype: string,
-    /// Lowercased `name\\0value\\0` pairs (C copies these into the transaction).
+    /** *Lowercased `name\\0value\\0` pairs (C copies these into the transaction). */
     hdrs: string,
 }
 
-/// String field read from a protobuf buffer, plus the next index.
+/** *String field read from a protobuf buffer, plus the next index. */
 struct DecodedStr {
     val: string,
     next: int,
@@ -144,18 +144,18 @@ struct DecodedStr {
 let mut rpcs: []RpcEntry = []RpcEntry {}
 let mut mws: []MwEntry = []MwEntry {}
 let mut json_routes: []JsonRoute = []JsonRoute {}
-/// HTTP status chosen by the last `serve_json` (0 = no route matched).
+/** *HTTP status chosen by the last `serve_json` (0 = no route matched). */
 let mut json_status: int = 0
 let mut json_ctype: string = "application/json; charset=utf-8"
 let mut last_status: int = 0
-/// Bytes allowed for the request line and headers, on top of the body.
+/** *Bytes allowed for the request line and headers, on top of the body. */
 const HEAD_ROOM: int = 24576
-/// Headers in one request. A browser sends about 20, and a proxy such as Vercel adds
-/// as many again, so a low limit refuses real visitors and only them.
+/** *Headers in one request. A browser sends about 20, and a proxy such as Vercel adds */
+/** *as many again, so a low limit refuses real visitors and only them. */
 const MAX_HEADERS: int = 128
-/// One header's value. Proxies send signed tokens, and cookies run long.
+/** *One header's value. Proxies send signed tokens, and cookies run long. */
 const MAX_HEADER_VALUE: int = 8192
-/// The largest body `parse_http11` takes, and the most it reads for one request.
+/** *The largest body `parse_http11` takes, and the most it reads for one request. */
 let mut body_cap: int = 65536
 let mut request_cap: int = 65536 + HEAD_ROOM
 let mut handlers: []fn(string) -> string = []fn(string) -> string {}
@@ -174,23 +174,23 @@ let mut req_hdrs: string = ""
 let mut reply_cookies: []string = []string {}
 let mut gate: int = 0
 
-/// Set the bearer token the sync/async clients send on every call.
+/** *Set the bearer token the sync/async clients send on every call. */
 fn set_token(t: string) {
     auth_tok = t
 }
 
-/// Current client token ("" = anonymous).
+/** *Current client token ("" = anonymous). */
 fn token() -> string {
     return auth_tok
 }
 
-/// Bearer token of the request being dispatched (server side).
+/** *Bearer token of the request being dispatched (server side). */
 fn req_token() -> string {
     return req_tok
 }
 
-/// Header `name`, in lowercase, of the HTTP/1.1 request being dispatched. "" when
-/// absent. The first wins if it repeats.
+/** *Header `name`, in lowercase, of the HTTP/1.1 request being dispatched. "" when */
+/** *absent. The first wins if it repeats. */
 fn req_header(name: string) -> string {
     let mut pos = 0
     while pos < req_hdrs.len {
@@ -204,7 +204,7 @@ fn req_header(name: string) -> string {
     return ""
 }
 
-/// The index of the next NUL in `s` from `at`, or `s.len`.
+/** *The index of the next NUL in `s` from `at`, or `s.len`. */
 fn find_nul(s: string, at: int) -> int {
     let mut i = at
     while i < s.len && s[i] != 0 {
@@ -213,7 +213,7 @@ fn find_nul(s: string, at: int) -> int {
     return i
 }
 
-/// The value of cookie `name` on the request being dispatched. "" when absent.
+/** *The value of cookie `name` on the request being dispatched. "" when absent. */
 fn req_cookie(name: string) -> string {
     let mut pos = 0
     while pos < req_hdrs.len {
@@ -235,7 +235,7 @@ struct CookieValue {
     value: string,
 }
 
-/// Find `name` in a `Cookie` header: `a=1; b=2`.
+/** *Find `name` in a `Cookie` header: `a=1; b=2`. */
 fn cookie_in(header: string, name: string) -> CookieValue {
     let mut at = 0
     while at < header.len {
@@ -265,18 +265,18 @@ fn cookie_in(header: string, name: string) -> CookieValue {
 }
 
 struct CookieProps {
-    /// Seconds to keep it. Negative lasts until the browser closes.
+    /** *Seconds to keep it. Negative lasts until the browser closes. */
     max_age: int = -1,
     path: string = "/",
-    /// "Strict", "Lax", or "None".
+    /** *"Strict", "Lax", or "None". */
     same_site: string = "Lax",
-    /// Hide it from scripts in the page.
+    /** *Hide it from scripts in the page. */
     http_only: bool = true,
-    /// Send it over HTTPS only. Turn this off only for a local http server.
+    /** *Send it over HTTPS only. Turn this off only for a local http server. */
     secure: bool = true,
 }
 
-/// A cookie name: an RFC 6265 token.
+/** *A cookie name: an RFC 6265 token. */
 fn cookie_name_ok(s: string) -> bool {
     if s.len == 0 {
         return false
@@ -290,7 +290,7 @@ fn cookie_name_ok(s: string) -> bool {
     return true
 }
 
-/// A cookie value or path: printable, with nothing that ends the attribute.
+/** *A cookie value or path: printable, with nothing that ends the attribute. */
 fn cookie_text_ok(s: string) -> bool {
     for i in 0..s.len {
         let c = s[i]
@@ -301,8 +301,8 @@ fn cookie_text_ok(s: string) -> bool {
     return true
 }
 
-/// Add a `Set-Cookie` to the reply being built, from a handler or `before` hook of
-/// an HTTP/1.1 request. False, and no cookie, when a value could change the header.
+/** *Add a `Set-Cookie` to the reply being built, from a handler or `before` hook of */
+/** *an HTTP/1.1 request. False, and no cookie, when a value could change the header. */
 fn set_cookie(name: string, value: string, p: CookieProps) -> bool {
     let site_ok = eq(p.same_site, "Strict") || eq(p.same_site, "Lax") || eq(p.same_site, "None")
     if !cookie_name_ok(name) || !cookie_text_ok(value) || !cookie_text_ok(p.path) || !site_ok {
@@ -323,35 +323,35 @@ fn set_cookie(name: string, value: string, p: CookieProps) -> bool {
     return true
 }
 
-/// Tell the browser to drop cookie `name`. Pass the `path` it was set with.
+/** *Tell the browser to drop cookie `name`. Pass the `path` it was set with. */
 fn clear_cookie(name: string, path: string = "/") -> bool {
     return set_cookie(name, "", CookieProps { max_age: 0, path: path })
 }
 
-/// From a `before` hook: skip the handler, answer grpc-status 16.
+/** *From a `before` hook: skip the handler, answer grpc-status 16. */
 fn reject() {
     gate = 1
 }
 
-/// Middleware alias matching the roadmap convention: `app.before(fn)`.
+/** *Middleware alias matching the roadmap convention: `app.before(fn)`. */
 fn before(app: App, hook: fn(string, string) -> string) -> App {
     return use(app, hook)
 }
 
-/// Allocate an empty app. Register RPCs, then `listen`.
-///
-/// Example:
-/// ```
-/// let app = http.app()
-/// app.rpc("Counter.Hello", |body| { body })
-/// app.listen(8080)
-/// ```
+/** *Allocate an empty app. Register RPCs, then `listen`. */
+/** */
+/** *Example: */
+/** *``` */
+/** *let app = http.app() */
+/** *app.rpc("Counter.Hello", |body| { body }) */
+/** *app.listen(8080) */
+/** *``` */
 fn app() -> App {
     next_app = next_app + 1
     App { id: next_app }
 }
 
-/// Length-based string equality (not C `strcmp`).
+/** *Length-based string equality (not C `strcmp`). */
 fn eq(a: string, b: string) -> bool {
     let mut same = true
     if a.len != b.len {
@@ -367,22 +367,22 @@ fn eq(a: string, b: string) -> bool {
     return same
 }
 
-/// Logical `>> 7` on the i64 bit pattern (proto3 unsigned varint).
+/** *Logical `>> 7` on the i64 bit pattern (proto3 unsigned varint). */
 fn u_shr7(v: int) -> int {
     return wrapping_shr(v, 7)
 }
 
-/// `acc | ((chunk & 127) << shift)` on the i64 bit pattern.
+/** *`acc | ((chunk & 127) << shift)` on the i64 bit pattern. */
 fn u_or7(acc: int, chunk: int, shift: int) -> int {
     return wrapping_or(acc, wrapping_shl(wrapping_and(chunk, 127), shift))
 }
 
-/// Copy `[]int` bytes (0..255) into a `string`. Adds a trailing NUL for Canvas2D.
+/** *Copy `[]int` bytes (0..255) into a `string`. Adds a trailing NUL for Canvas2D. */
 fn string_of(b: []int) -> string {
     return string_from_bytes(b)
 }
 
-/// Copy a `string` into `[]int` bytes (0..255).
+/** *Copy a `string` into `[]int` bytes (0..255). */
 fn bytes_of(s: string) -> []int {
     let mut out = []int {}
     for i in 0..s.len {
@@ -391,7 +391,7 @@ fn bytes_of(s: string) -> []int {
     return out
 }
 
-/// Decimal digits of a non-negative int (`0` if `n < 0`).
+/** *Decimal digits of a non-negative int (`0` if `n < 0`). */
 fn u_itoa(n: int) -> []int {
     let mut v = n
     if v < 0 {
@@ -416,9 +416,9 @@ fn u_itoa(n: int) -> []int {
     return out
 }
 
-/// Minimal single-field JSON body: `{"key":123}`. Not a general JSON writer —
-/// each `json_from_*` has a matching `json_get_*` that reads back exactly
-/// what it wrote, not arbitrary JSON from elsewhere.
+/** *Minimal single-field JSON body: `{"key":123}`. Not a general JSON writer — */
+/** *each `json_from_*` has a matching `json_get_*` that reads back exactly */
+/** *what it wrote, not arbitrary JSON from elsewhere. */
 fn json_from_int(key: string, value: int) -> string {
     let mut b = []int {}
     b.push(123)
@@ -437,8 +437,8 @@ fn json_from_int(key: string, value: int) -> string {
     return string_of(b)
 }
 
-/// Read the int value out of a `json_from_int` body — the digits between the
-/// last `:` and the end of the string.
+/** *Read the int value out of a `json_from_int` body — the digits between the */
+/** *last `:` and the end of the string. */
 fn json_get_int(body: string, key: string) -> int {
     let mut colon = -1
     for i in 0..body.len {
@@ -462,7 +462,7 @@ fn json_get_int(body: string, key: string) -> int {
     return n
 }
 
-/// `{"key":"value"}` — the string counterpart to `json_from_int`.
+/** *`{"key":"value"}` — the string counterpart to `json_from_int`. */
 fn json_from_string(key: string, value: string) -> string {
     let mut b = []int {}
     b.push(123)
@@ -483,8 +483,8 @@ fn json_from_string(key: string, value: string) -> string {
     return string_of(b)
 }
 
-/// Read the string value out of a `json_from_string` body — the text between
-/// the quotes that follow the last `:`.
+/** *Read the string value out of a `json_from_string` body — the text between */
+/** *the quotes that follow the last `:`. */
 fn json_get_string(body: string, key: string) -> string {
     let mut colon = -1
     for i in 0..body.len {
@@ -521,7 +521,7 @@ fn json_get_string(body: string, key: string) -> string {
     return string_of(out)
 }
 
-/// `/Service/Method` → `Service.Method`. Last `/` splits; empty on a bad path.
+/** *`/Service/Method` → `Service.Method`. Last `/` splits; empty on a bad path. */
 fn path_to_name(path: string) -> string {
     if path.len < 3 {
         return ""
@@ -558,7 +558,7 @@ fn path_to_name(path: string) -> string {
     return string_of(b)
 }
 
-/// `Service.Method` → `/Service/Method`. Last `.` splits; empty on a bad name.
+/** *`Service.Method` → `/Service/Method`. Last `.` splits; empty on a bad name. */
 fn name_to_path(name: string) -> string {
     if name.len < 3 {
         return ""
@@ -593,12 +593,12 @@ fn name_to_path(name: string) -> string {
     return string_of(b)
 }
 
-/// Wrap `val` as a successful `RpcResult`.
+/** *Wrap `val` as a successful `RpcResult`. */
 fn ok<T>(val: T) -> RpcResult<T> {
     RpcResult { ok: 1, val: val, err: Error { code: 0, msg: "" } }
 }
 
-/// Build an error payload. Put it in `RpcResult.err` with `ok: 0`.
+/** *Build an error payload. Put it in `RpcResult.err` with `ok: 0`. */
 fn fail(code: int, msg: string) -> Error {
     Error { code: code, msg: msg }
 }
@@ -665,7 +665,7 @@ fn unframe(buf: &[]int) -> []int {
     return wire.unframe(buf)
 }
 
-/// Join two byte buffers. Used by `#[proto]` encode.
+/** *Join two byte buffers. Used by `#[proto]` encode. */
 fn concat_bytes(a: []int, b: []int) -> []int {
     let mut out = []int {}
     for i in 0..a.len {
@@ -677,14 +677,14 @@ fn concat_bytes(a: []int, b: []int) -> []int {
     return out
 }
 
-/// Append `src` onto `dst`. Avoids `dst = concat(dst, src)` (that moves `dst`).
+/** *Append `src` onto `dst`. Avoids `dst = concat(dst, src)` (that moves `dst`). */
 fn append_bytes(dst: &mut []int, src: []int) {
     for i in 0..src.len {
         dst.push(src[i])
     }
 }
 
-/// Strip a gRPC data-frame header from a wire `string`. Compressed payloads are empty.
+/** *Strip a gRPC data-frame header from a wire `string`. Compressed payloads are empty. */
 fn unframe_str(s: string) -> string {
     if s.len < 5 {
         return ""
@@ -697,14 +697,14 @@ fn unframe_str(s: string) -> string {
     return string_of(u)
 }
 
-/// Wrap protobuf bytes as a gRPC data frame (`string`).
+/** *Wrap protobuf bytes as a gRPC data frame (`string`). */
 fn frame_str(s: string) -> string {
     let b = bytes_of(s)
     let f = frame(b)
     return string_of(f)
 }
 
-/// gRPC-Web body: data frame plus a `grpc-status` trailer frame.
+/** *gRPC-Web body: data frame plus a `grpc-status` trailer frame. */
 fn grpc_web_frame(proto: string, status: int) -> string {
     let mut trail = bytes_of("grpc-status: ")
     append_bytes(trail, u_itoa(status))
@@ -717,7 +717,7 @@ fn grpc_web_frame(proto: string, status: int) -> string {
     return string_of(out)
 }
 
-/// Proto3 key + varint. Zero is omitted.
+/** *Proto3 key + varint. Zero is omitted. */
 fn encode_int_field(tag: int, v: int) -> []int {
     let mut out = []int {}
     if v != 0 {
@@ -727,7 +727,7 @@ fn encode_int_field(tag: int, v: int) -> []int {
     return out
 }
 
-/// Proto3 key + length-delimited string. Empty is omitted.
+/** *Proto3 key + length-delimited string. Empty is omitted. */
 fn encode_string_field(tag: int, s: string) -> []int {
     let mut out = []int {}
     if s.len > 0 {
@@ -743,7 +743,7 @@ fn encode_string_field(tag: int, s: string) -> []int {
 // is emitted even when it holds the default value: an empty string or a 0 in a
 // list is data, so omitting it would come back shorter than it was sent.
 
-/// One element of a `repeated int` field.
+/** *One element of a `repeated int` field. */
 fn encode_int_elem(tag: int, v: int) -> []int {
     let mut out = []int {}
     append_bytes(out, put_varint(tag * 8))
@@ -751,7 +751,7 @@ fn encode_int_elem(tag: int, v: int) -> []int {
     return out
 }
 
-/// One element of a `repeated string` field.
+/** *One element of a `repeated string` field. */
 fn encode_string_elem(tag: int, s: string) -> []int {
     let mut out = []int {}
     append_bytes(out, put_varint(tag * 8 + 2))
@@ -760,10 +760,10 @@ fn encode_string_elem(tag: int, s: string) -> []int {
     return out
 }
 
-/// Append a *packed* `repeated int` field's elements to `dst`, returning the
-/// index after it. Packed is protobuf's default for repeated numerics, so this
-/// is the form a writer in another language sends; the unpacked form (one key
-/// per element) is the caller's other branch.
+/** *Append a *packed* `repeated int` field's elements to `dst`, returning the */
+/** *index after it. Packed is protobuf's default for repeated numerics, so this */
+/** *is the form a writer in another language sends; the unpacked form (one key */
+/** *per element) is the caller's other branch. */
 fn push_packed_ints(dst: &mut []int, b: &[]int, i: int) -> int {
     let sl = get_varint(b, i)
     let mut p = sl.next
@@ -782,7 +782,7 @@ fn push_packed_ints(dst: &mut []int, b: &[]int, i: int) -> int {
     return p
 }
 
-/// Skip one field payload starting at `i` (after the key). Returns the new index.
+/** *Skip one field payload starting at `i` (after the key). Returns the new index. */
 fn skip_field(b: &[]int, i: int, wt: int) -> int {
     if wt == 0 {
         let v = get_varint(b, i)
@@ -805,7 +805,7 @@ fn skip_field(b: &[]int, i: int, wt: int) -> int {
     return i
 }
 
-/// Length-delimited string at `i`.
+/** *Length-delimited string at `i`. */
 fn decode_string_at(b: &[]int, i: int) -> DecodedStr {
     let sl = get_varint(b, i)
     let mut bytes = []int {}
@@ -874,10 +874,10 @@ fn parse_port(s: string) -> int {
     return n
 }
 
-/// Split `[scheme://]host[:port]`. `tls == 1` when the address has an
-/// `https://` scheme — the caller must use a TLS transport. A scheme with no
-/// port defaults to 443 (`https`) or 80 (`http`); a bare `host:port` keeps
-/// its explicit port. `port == 0` means parse failed.
+/** *Split `[scheme://]host[:port]`. `tls == 1` when the address has an */
+/** *`https://` scheme — the caller must use a TLS transport. A scheme with no */
+/** *port defaults to 443 (`https`) or 80 (`http`); a bare `host:port` keeps */
+/** *its explicit port. `port == 0` means parse failed. */
 fn parse_addr(addr: string) -> HostPort {
     if addr.len < 3 {
         return HostPort { host: "", port: 0, tls: 0 }
@@ -943,8 +943,8 @@ fn concat_str(a: string, b: string) -> string {
     return string_of(out)
 }
 
-/// Unary gRPC-Web POST request (headers + framed body). Carries the bearer
-/// token set by `set_token` (the auth/session convention, Phase 1b).
+/** *Unary gRPC-Web POST request (headers + framed body). Carries the bearer */
+/** *token set by `set_token` (the auth/session convention, Phase 1b). */
 fn client_post(host: string, port: int, path: string, body: string) -> string {
     let mut b = bytes_of("POST ")
     append_bytes(b, bytes_of(path))
@@ -963,9 +963,9 @@ fn client_post(host: string, port: int, path: string, body: string) -> string {
     return string_of(b)
 }
 
-/// Parse `http(s)://host[:port][/base]` for the optional REST client. A
-/// bare `host:port` (no scheme) is also accepted. `ok == 0` means malformed —
-/// including a scheme-less name with no explicit port.
+/** *Parse `http(s)://host[:port][/base]` for the optional REST client. A */
+/** *bare `host:port` (no scheme) is also accepted. `ok == 0` means malformed — */
+/** *including a scheme-less name with no explicit port. */
 fn parse_url(addr: string) -> Url {
     let mut rest = addr
     let mut tls = 0
@@ -1033,8 +1033,8 @@ fn parse_url(addr: string) -> Url {
     return Url { ok: 1, tls: tls, host: host, port: port, path: base }
 }
 
-/// HTTP/1.1 request for the optional REST client. `method` is `GET`/`POST`/…
-/// Carries the bearer token set by `set_token`, same as `client_post`.
+/** *HTTP/1.1 request for the optional REST client. `method` is `GET`/`POST`/… */
+/** *Carries the bearer token set by `set_token`, same as `client_post`. */
 fn client_rest(host: string, port: int, method: string, path: string, ctype: string, body: string) -> string {
     let mut b = bytes_of(method)
     append_bytes(b, bytes_of(" "))
@@ -1058,7 +1058,7 @@ fn client_rest(host: string, port: int, method: string, path: string, ctype: str
     return string_of(b)
 }
 
-/// Raw HTTP/1.1 response bytes read on `fd` until EOF. Does not close `fd`.
+/** *Raw HTTP/1.1 response bytes read on `fd` until EOF. Does not close `fd`. */
 fn h1_read_all(fd: int) -> string {
     let mut acc = ""
     let mut more = 1
@@ -1076,10 +1076,10 @@ fn h1_read_all(fd: int) -> string {
     return acc
 }
 
-/// Optional REST/JSON client for third-party interop — first-party traffic is
-/// gRPC (`call` / `async_call`). `addr` is `http(s)://host[:port]`; `path` is
-/// the request path, appended to any base path in `addr`. Native only: wasm
-/// returns `ok == 0`, so reach REST from a `#[server]` fn, not client code.
+/** *Optional REST/JSON client for third-party interop — first-party traffic is */
+/** *gRPC (`call` / `async_call`). `addr` is `http(s)://host[:port]`; `path` is */
+/** *the request path, appended to any base path in `addr`. Native only: wasm */
+/** *returns `ok == 0`, so reach REST from a `#[server]` fn, not client code. */
 fn rest_send(addr: string, method: string, path: string, ctype: string, body: string) -> RestResult {
     let u = parse_url(addr)
     if u.ok == 0 {
@@ -1113,17 +1113,17 @@ fn rest_send(addr: string, method: string, path: string, ctype: string, body: st
     return RestResult { ok: ok, status: st, body: http_payload(raw) }
 }
 
-/// `GET` a JSON document (optional interop; see `rest_send`).
+/** *`GET` a JSON document (optional interop; see `rest_send`). */
 fn rest_get(addr: string, path: string) -> RestResult {
     return rest_send(addr, "GET", path, "application/json", "")
 }
 
-/// `POST` a JSON body (optional interop; see `rest_send`).
+/** *`POST` a JSON body (optional interop; see `rest_send`). */
 fn rest_post(addr: string, path: string, body: string) -> RestResult {
     return rest_send(addr, "POST", path, "application/json", body)
 }
 
-/// Unary h2c request: preface, SETTINGS, HEADERS (`POST` + `:path`), DATA.
+/** *Unary h2c request: preface, SETTINGS, HEADERS (`POST` + `:path`), DATA. */
 fn client_h2(path: string, body: string) -> string {
     let mut b = bytes_of("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
     append_bytes(b, bytes_of(h2.frame(4, 0, 0, "")))
@@ -1136,7 +1136,7 @@ fn client_h2(path: string, body: string) -> string {
     return string_of(b)
 }
 
-/// Bytes after the first `\r\n\r\n`. Empty if the splitter is missing.
+/** *Bytes after the first `\r\n\r\n`. Empty if the splitter is missing. */
 fn http_payload(resp: string) -> string {
     let mut hit = 0
     let mut at = 0
@@ -1166,7 +1166,7 @@ fn http_payload(resp: string) -> string {
     return string_of(b)
 }
 
-/// Concatenate HTTP/2 DATA payloads. Ignores SETTINGS / HEADERS / trailers.
+/** *Concatenate HTTP/2 DATA payloads. Ignores SETTINGS / HEADERS / trailers. */
 fn h2_data(raw: string) -> string {
     let mut i = 0
     let mut out = []int {}
@@ -1203,7 +1203,7 @@ fn h2_data(raw: string) -> string {
     return string_of(out)
 }
 
-/// `grpc-status` from trailing HEADERS. `-1` if the trailer is missing.
+/** *`grpc-status` from trailing HEADERS. `-1` if the trailer is missing. */
 fn h2_grpc_status(raw: string) -> int {
     let mut i = 0
     let mut st = -1
@@ -1421,7 +1421,7 @@ fn parse_cl(s: string) -> int {
     return n
 }
 
-/// Decode `%XX`. Reject `%00`, truncated `%`, backslash, raw NUL.
+/** *Decode `%XX`. Reject `%00`, truncated `%`, backslash, raw NUL. */
 fn pct_decode(s: string) -> Decoded {
     let mut ok = 1
     let mut out = []int {}
@@ -1473,7 +1473,7 @@ fn pct_decode(s: string) -> Decoded {
     return Decoded { ok: ok, val: string_of(out) }
 }
 
-/// Decode, require a leading `/`, drop `.`, reject `..`.
+/** *Decode, require a leading `/`, drop `.`, reject `..`. */
 fn norm_path(raw: string) -> Decoded {
     let d = pct_decode(raw)
     let mut ok = d.ok
@@ -1594,7 +1594,7 @@ fn eq_ci(a: string, b: string) -> int {
     return ok
 }
 
-/// HTTP/1.1 request line + headers + body. `err` is an HTTP status on failure.
+/** *HTTP/1.1 request line + headers + body. `err` is an HTTP status on failure. */
 fn parse_http11(raw: string) -> ParsedReq {
     let mut err = 0
     let mut method = ""
@@ -1940,7 +1940,7 @@ fn header_cl(raw: string, hdr_end: int) -> int {
     return cl
 }
 
-/// `1` when `raw` has a full HTTP/1.1 message (headers + declared body).
+/** *`1` when `raw` has a full HTTP/1.1 message (headers + declared body). */
 fn request_ready(raw: string) -> int {
     let mut ready = 0
     if raw.len > request_cap {
@@ -2042,7 +2042,7 @@ fn ctype_json(ct: string) -> int {
     return ok
 }
 
-/// HTTP/1.1 response with the same security headers as the old C writer.
+/** *HTTP/1.1 response with the same security headers as the old C writer. */
 fn http_reply(code: int, ctype: string, body: string) -> string {
     let mut b = bytes_of("HTTP/1.1 ")
     append_bytes(b, u_itoa(code))
@@ -2064,7 +2064,7 @@ fn http_reply(code: int, ctype: string, body: string) -> string {
     return string_of(b)
 }
 
-/// Unary gRPC-Web POST, or an HTTP error. GET and other REST methods are 404.
+/** *Unary gRPC-Web POST, or an HTTP error. GET and other REST methods are 404. */
 fn str_slice(s: string, a: int, b: int) -> string {
     let mut out = []int {}
     let mut i = a
@@ -2082,8 +2082,8 @@ fn str_slice(s: string, a: int, b: int) -> string {
     return string_of(out)
 }
 
-/// Bearer token from the lowercased `name\0value\0` header pairs
-/// (`ParsedReq.hdrs`). "" when absent.
+/** *Bearer token from the lowercased `name\0value\0` header pairs */
+/** *(`ParsedReq.hdrs`). "" when absent. */
 fn bearer_of(hdrs: string) -> string {
     let mut pos = 0
     let n = hdrs.len
@@ -2184,7 +2184,7 @@ fn h2_rst_stream(stream: int, code: int) -> string {
     return h2.rst_stream(stream, code)
 }
 
-/// Last GOAWAY error code in `raw`, or `-1` if none.
+/** *Last GOAWAY error code in `raw`, or `-1` if none. */
 fn h2_goaway_code(raw: string) -> int {
     let mut i = 0
     let mut st = -1
@@ -2229,7 +2229,7 @@ fn h2_goaway_code(raw: string) -> int {
     return st
 }
 
-/// RFC 7540 frame checks. `0` means the frame is acceptable.
+/** *RFC 7540 frame checks. `0` means the frame is acceptable. */
 fn h2_check_frame(ty: int, flags: int, stream: int, payload: string) -> int {
     let mut code = 0
     if ty == 4 {
@@ -2308,7 +2308,7 @@ fn h2_reply(app: App, path: string, data: string, stream: int) -> string {
     return string_of(b)
 }
 
-/// Unary h2c on `fd`. Preface + frames in Loam; `tcp_*` is `std/net`.
+/** *Unary h2c on `fd`. Preface + frames in Loam; `tcp_*` is `std/net`. */
 fn h2_serve(fd: int, app: App) {
     let pre = h2.read_exact(fd, 24)
     if eq(pre, "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n") {
@@ -2434,7 +2434,7 @@ fn h2_serve(fd: int, app: App) {
     }
 }
 
-/// Unary h2c from a complete client preface + frames (HEADLESS / tests).
+/** *Unary h2c from a complete client preface + frames (HEADLESS / tests). */
 fn serve_h2(app: App, raw: string) -> string {
     let mut outb = []int {}
     let mut path = ""
@@ -2719,8 +2719,8 @@ fn xss_probe(app: App) -> int {
     return 0
 }
 
-/// If `ZEUS_HEADLESS` (or `LOAM_HEADLESS` / `LOAM_HTTP_SELFTEST`) is set, run
-/// the security checklist and return `1`. Otherwise return `0`.
+/** *If `ZEUS_HEADLESS` (or `LOAM_HEADLESS` / `LOAM_HTTP_SELFTEST`) is set, run */
+/** *the security checklist and return `1`. Otherwise return `0`. */
 fn headless_selftest(user_app: App) -> int {
     let mut on = 0
     if sys.env_set("LOAM_HEADLESS") != 0 {
@@ -2772,13 +2772,13 @@ fn headless_selftest(user_app: App) -> int {
 }
 
 struct ListenProps {
-    /// The IPv4 address to bind. "0.0.0.0" accepts other machines.
+    /** *The IPv4 address to bind. "0.0.0.0" accepts other machines. */
     host: string = "127.0.0.1",
-    /// The largest request body in bytes. Larger gets 413.
+    /** *The largest request body in bytes. Larger gets 413. */
     max_body: int = 65536,
-    /// How long a client gets to send its request, and then to read the reply.
+    /** *How long a client gets to send its request, and then to read the reply. */
     timeout_ms: int = 10000,
-    /// Connections held at once, streams included. More wait to be accepted.
+    /** *Connections held at once, streams included. More wait to be accepted. */
     max_conns: int = 128,
 }
 
@@ -2786,7 +2786,7 @@ const CONN_READING: int = 0
 const CONN_WRITING: int = 1
 const CONN_CLOSED: int = 2
 
-/// One client. Its socket never blocks, so a slow one only ever costs its own turn.
+/** *One client. Its socket never blocks, so a slow one only ever costs its own turn. */
 struct Conn {
     fd: int,
     state: int,
@@ -2796,7 +2796,7 @@ struct Conn {
     deadline: i64,
 }
 
-/// A running server. `server_step` moves it along.
+/** *A running server. `server_step` moves it along. */
 struct Server {
     app: App,
     fd: int,
@@ -2805,7 +2805,7 @@ struct Server {
     conns: []Conn,
 }
 
-/// Bind and start serving. `fd` is `-1` when the address cannot be bound.
+/** *Bind and start serving. `fd` is `-1` when the address cannot be bound. */
 fn server_start(app: App, port: int, p: ListenProps) -> Server {
     body_cap = p.max_body
     request_cap = p.max_body + HEAD_ROOM
@@ -2816,7 +2816,7 @@ fn server_start(app: App, port: int, p: ListenProps) -> Server {
     return Server { app: app, fd: fd, port: net.tcp_bound_port(fd), p: p, conns: []Conn {} }
 }
 
-/// Close the server and its connections. Open streams stay with the process.
+/** *Close the server and its connections. Open streams stay with the process. */
 fn server_stop(s: &mut Server) {
     for i in 0..s.conns.len {
         net.tcp_close(s.conns[i].fd)
@@ -2830,14 +2830,14 @@ fn h2_preface() -> string {
     return "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
 }
 
-/// `raw` could still become the h2c preface.
+/** *`raw` could still become the h2c preface. */
 fn may_be_h2(raw: string) -> bool {
     let pre = h2_preface()
     let n = if raw.len < pre.len { raw.len } else { pre.len }
     return eq(str_slice(raw, 0, n), str_slice(pre, 0, n))
 }
 
-/// `raw`, which opens with the preface, holds a frame that ends the request.
+/** *`raw`, which opens with the preface, holds a frame that ends the request. */
 fn h2_request_ready(raw: string) -> bool {
     let mut i = 24
     while i + 9 <= raw.len {
@@ -2860,7 +2860,7 @@ fn h2_request_ready(raw: string) -> bool {
     return false
 }
 
-/// `raw` declares a body over `body_cap`, before that body has to arrive.
+/** *`raw` declares a body over `body_cap`, before that body has to arrive. */
 fn declared_too_big(raw: string) -> bool {
     let hdr_end = find_dbl_crlf(raw)
     if hdr_end < 0 {
@@ -2884,7 +2884,7 @@ fn conn_refuse(c: &mut Conn, code: int, timeout_ms: int) {
     conn_reply(c, http_reply(code, "text/plain; charset=utf-8", reason_phrase(code)), timeout_ms)
 }
 
-/// Answer the buffered request, or hand the socket to a stream.
+/** *Answer the buffered request, or hand the socket to a stream. */
 fn conn_serve(app: App, c: &mut Conn, timeout_ms: int, is_h2: bool) {
     if is_h2 {
         conn_reply(c, serve_h2(app, c.acc), timeout_ms)
@@ -2899,7 +2899,7 @@ fn conn_serve(app: App, c: &mut Conn, timeout_ms: int, is_h2: bool) {
     conn_reply(c, serve_h1(app, c.acc), timeout_ms)
 }
 
-/// Take what the socket has, and answer once the request is whole.
+/** *Take what the socket has, and answer once the request is whole. */
 fn conn_read(s: &Server, c: &mut Conn) {
     let chunk = net.tcp_read(c.fd, 16384)
     if chunk.len == 0 {
@@ -2926,7 +2926,7 @@ fn conn_read(s: &Server, c: &mut Conn) {
     }
 }
 
-/// Send what the socket takes, and finish once the reply is out.
+/** *Send what the socket takes, and finish once the reply is out. */
 fn conn_write(c: &mut Conn) {
     while c.off < c.out.len {
         let n = net.tcp_send(c.fd, c.out, c.off)
@@ -2942,7 +2942,7 @@ fn conn_write(c: &mut Conn) {
     c.state = CONN_CLOSED
 }
 
-/// Whichever deadline comes first, capped at `ms`.
+/** *Whichever deadline comes first, capped at `ms`. */
 fn server_wait(s: &Server, ms: int) -> int {
     let mut wait = ms
     if watchers.len > 0 && STREAM_MS < wait {
@@ -2970,8 +2970,8 @@ fn server_accept(s: &mut Server) {
     }
 }
 
-/// Wait up to `ms` for something to do, and do it. Nothing here waits on a client,
-/// but a handler that takes a long time holds up everyone.
+/** *Wait up to `ms` for something to do, and do it. Nothing here waits on a client, */
+/** *but a handler that takes a long time holds up everyone. */
 fn server_step(s: &mut Server, ms: int) {
     net.tcp_poll_clear()
     let accepting = s.conns.len + watchers.len < s.p.max_conns
@@ -3026,8 +3026,8 @@ fn server_step(s: &mut Server, ms: int) {
     }
 }
 
-/// Bind `p.host`, 127.0.0.1 by default, and serve until killed. Port 0 picks an
-/// ephemeral port.
+/** *Bind `p.host`, 127.0.0.1 by default, and serve until killed. Port 0 picks an */
+/** *ephemeral port. */
 fn listen(app: App, port: int, p: ListenProps = ListenProps {}) {
     if headless_selftest(app) != 0 {
         return
@@ -3081,8 +3081,8 @@ fn rt_call(addr: string, name: string, body: string) -> string {
     return out
 }
 
-/// Read one gRPC-Web HTTP/1.1 response on `fd` until EOF (`Connection: close`).
-/// Does not close `fd`.
+/** *Read one gRPC-Web HTTP/1.1 response on `fd` until EOF (`Connection: close`). */
+/** *Does not close `fd`. */
 fn h1_read_unary(fd: int) -> string {
     let mut acc = ""
     let mut more = 1
@@ -3100,8 +3100,8 @@ fn h1_read_unary(fd: int) -> string {
     return unframe_str(http_payload(acc))
 }
 
-/// Read one unary h2c response on `fd`. ACKs SETTINGS/PING; WINDOW_UPDATE after DATA; stops on END_STREAM, RST_STREAM, or GOAWAY.
-/// Sets `last_rpc_status` from trailing `grpc-status`. Does not close `fd`.
+/** *Read one unary h2c response on `fd`. ACKs SETTINGS/PING; WINDOW_UPDATE after DATA; stops on END_STREAM, RST_STREAM, or GOAWAY. */
+/** *Sets `last_rpc_status` from trailing `grpc-status`. Does not close `fd`. */
 fn h2_read_unary(fd: int) -> string {
     let mut data = ""
     let mut done = 0
@@ -3183,7 +3183,7 @@ fn h2_read_unary(fd: int) -> string {
     return unframe_str(data)
 }
 
-/// Unary gRPC over h2c. Empty if connect fails (wasm has no TCP).
+/** *Unary gRPC over h2c. Empty if connect fails (wasm has no TCP). */
 fn h2_call(addr: string, name: string, body: string) -> string {
     let path = name_to_path(name)
     if path.len == 0 {
@@ -3210,30 +3210,30 @@ fn h2_call(addr: string, name: string, body: string) -> string {
     return out
 }
 
-/// Register unary RPC `name` (`Service.Method`). Handler gets protobuf bytes.
+/** *Register unary RPC `name` (`Service.Method`). Handler gets protobuf bytes. */
 fn rpc(app: App, name: string, handler: fn(string) -> string) -> App {
     let hid = intern_handler(handler)
     rpcs.push(RpcEntry { app: app.id, name: name, hid: hid })
     return app
 }
 
-/// How often an open stream's handler is asked for the current message.
+/** *How often an open stream's handler is asked for the current message. */
 const STREAM_MS: int = 500
-/// Bytes a stream's client may fall behind by before it is dropped.
+/** *Bytes a stream's client may fall behind by before it is dropped. */
 const STREAM_BACKLOG: int = 1048576
 
-/// Register a server-streaming RPC: the reply stays open. The client gets
-/// `handler(req)` at once, then again each time its bytes change (asked every
-/// `STREAM_MS`), until it disconnects; read it with `client.watch`. For state
-/// a client would otherwise poll. Plain `rpc`s are still served in between.
+/** *Register a server-streaming RPC: the reply stays open. The client gets */
+/** *`handler(req)` at once, then again each time its bytes change (asked every */
+/** *`STREAM_MS`), until it disconnects; read it with `client.watch`. For state */
+/** *a client would otherwise poll. Plain `rpc`s are still served in between. */
 fn stream(app: App, name: string, handler: fn(string) -> string) -> App {
     let hid = intern_handler(handler)
     streams.push(RpcEntry { app: app.id, name: name, hid: hid })
     return app
 }
 
-/// An open `stream` reply: its socket, the request it answers, and the last
-/// message sent (the next goes out only when it differs).
+/** *An open `stream` reply: its socket, the request it answers, and the last */
+/** *message sent (the next goes out only when it differs). */
 struct Watcher {
     fd: int,
     hid: int,
@@ -3242,7 +3242,7 @@ struct Watcher {
     name: string,
     t0: i64,
     sent: int,
-    /// Bytes the socket has not taken yet, from `off`.
+    /** *Bytes the socket has not taken yet, from `off`. */
     out: string,
     off: int,
 }
@@ -3251,9 +3251,9 @@ let mut streams: []RpcEntry = []RpcEntry {}
 let mut watchers: []Watcher = []Watcher {}
 let mut watch_last: i64 = 0
 
-/// Hand `fd` to a registered stream when `raw` is a gRPC-Web POST for one:
-/// write the head and the first message, then keep it. Returns 1 when the
-/// request was a stream (served or refused), 0 to serve it as usual.
+/** *Hand `fd` to a registered stream when `raw` is a gRPC-Web POST for one: */
+/** *write the head and the first message, then keep it. Returns 1 when the */
+/** *request was a stream (served or refused), 0 to serve it as usual. */
 fn watch_accept(app: App, fd: int, raw: string) -> int {
     if streams.len == 0 {
         return 0
@@ -3291,7 +3291,7 @@ fn watch_accept(app: App, fd: int, raw: string) -> int {
     return 0
 }
 
-/// Send what `w` has queued, as far as the socket takes it. False when it failed.
+/** *Send what `w` has queued, as far as the socket takes it. False when it failed. */
 fn watch_flush(w: &mut Watcher) -> bool {
     while w.off < w.out.len {
         let n = net.tcp_send(w.fd, w.out, w.off)
@@ -3308,9 +3308,9 @@ fn watch_flush(w: &mut Watcher) -> bool {
     return true
 }
 
-/// Drop every open stream whose client went away, or fell too far behind, and
-/// send what the rest have queued. The client sends nothing after its request, so
-/// readable means it closed or the socket failed.
+/** *Drop every open stream whose client went away, or fell too far behind, and */
+/** *send what the rest have queued. The client sends nothing after its request, so */
+/** *readable means it closed or the socket failed. */
 fn watch_io() {
     let mut keep = []Watcher {}
     for i in 0..watchers.len {
@@ -3334,8 +3334,8 @@ fn watch_io() {
     watchers = keep
 }
 
-/// Queue the next message of every open stream whose message changed. At most once
-/// per `STREAM_MS`.
+/** *Queue the next message of every open stream whose message changed. At most once */
+/** *per `STREAM_MS`. */
 fn watch_tick() {
     let now = async.now_ms()
     if int(now - watch_last) < STREAM_MS {
@@ -3353,7 +3353,7 @@ fn watch_tick() {
     }
 }
 
-/// Middleware: `(name, body) -> body` before the RPC handler.
+/** *Middleware: `(name, body) -> body` before the RPC handler. */
 fn use(app: App, hook: fn(string, string) -> string) -> App {
     let hid = intern_mw(hook)
     mws.push(MwEntry { app: app.id, hid: hid })
@@ -3364,11 +3364,11 @@ fn last_rpc_status() -> int {
     return last_status
 }
 
-/// A handler slower than this is logged as a warning.
+/** *A handler slower than this is logged as a warning. */
 const SLOW_MS: int = 1000
 
-/// Look up `name` and run middleware + handler. Every call is logged under
-/// `http.server` (see `std:log`): name, outcome, sizes and time.
+/** *Look up `name` and run middleware + handler. Every call is logged under */
+/** *`http.server` (see `std:log`): name, outcome, sizes and time. */
 fn dispatch(app: App, name: string, body: string) -> string {
     let t0 = async.now_ms()
     let mut b = body
@@ -3405,7 +3405,7 @@ fn dispatch(app: App, name: string, body: string) -> string {
     return ""
 }
 
-/// HTTP/1.1 gRPC-Web POST: path → dispatch → framed body. Empty means HTTP 404.
+/** *HTTP/1.1 gRPC-Web POST: path → dispatch → framed body. Empty means HTTP 404. */
 fn serve_grpc_web(app: App, path: string, body: string) -> string {
     let name = path_to_name(path)
     if name.len == 0 {
@@ -3423,28 +3423,28 @@ fn serve_grpc_web(app: App, path: string, body: string) -> string {
 // branch declines the request, so adding a route never changes RPC behaviour.
 // The handler returns the response body; `json_status` carries the status.
 
-/// Register an optional REST/JSON route. First-party traffic should still use
-/// `app.rpc` (gRPC); this is for third-party webhooks and REST clients.
+/** *Register an optional REST/JSON route. First-party traffic should still use */
+/** *`app.rpc` (gRPC); this is for third-party webhooks and REST clients. */
 fn json(app: App, path: string, handler: fn(string) -> string) -> App {
     let hid = intern_handler(handler)
     json_routes.push(JsonRoute { app: app.id, path: path, hid: hid })
     return app
 }
 
-/// From an `app.json` handler: answer with `code`, not 200.
+/** *From an `app.json` handler: answer with `code`, not 200. */
 fn set_status(code: int) {
     json_status = code
 }
 
-/// Status chosen by the last `serve_json` call (0 = no route matched).
+/** *Status chosen by the last `serve_json` call (0 = no route matched). */
 fn last_json_status() -> int {
     return json_status
 }
 
-/// Serve one inbound JSON request against the routes registered with
-/// `app.json`. Returns the response body and sets `json_status`:
-/// 200 for a handled `GET`/`POST`/`PUT`/`PATCH`/`DELETE`, 405 when the path
-/// matched but the method did not, 0 when no route matched (caller sends 404).
+/** *Serve one inbound JSON request against the routes registered with */
+/** *`app.json`. Returns the response body and sets `json_status`: */
+/** *200 for a handled `GET`/`POST`/`PUT`/`PATCH`/`DELETE`, 405 when the path */
+/** *matched but the method did not, 0 when no route matched (caller sends 404). */
 fn serve_json(app: App, method: string, path: string, body: string) -> string {
     json_status = 0
     json_ctype = "application/json; charset=utf-8"
@@ -3480,10 +3480,10 @@ fn serve_json(app: App, method: string, path: string, body: string) -> string {
     return ""
 }
 
-/// Default RPC address for this `--target`. `LOAM_RPC_ADDR` (native) wins
-/// when set — use it for a physical Android device's LAN IP. Otherwise:
-/// wasm same-origin `""`, Android emulator `10.0.2.2:8080`, mac/iOS
-/// `127.0.0.1:8080`.
+/** *Default RPC address for this `--target`. `LOAM_RPC_ADDR` (native) wins */
+/** *when set — use it for a physical Android device's LAN IP. Otherwise: */
+/** *wasm same-origin `""`, Android emulator `10.0.2.2:8080`, mac/iOS */
+/** *`127.0.0.1:8080`. */
 fn default_addr() -> string {
     let ov = sys.env("LOAM_RPC_ADDR")
     if ov.len > 0 {
@@ -3499,8 +3499,8 @@ fn default_addr() -> string {
     return "127.0.0.1:8080"
 }
 
-/// Client for `call` / `async_call` / `ws_open`. Omit `addr` (or pass `""`)
-/// to use `default_addr` for this host. An explicit `host:port` always wins.
+/** *Client for `call` / `async_call` / `ws_open`. Omit `addr` (or pass `""`) */
+/** *to use `default_addr` for this host. An explicit `host:port` always wins. */
 fn client(addr: string = "") -> Client {
     if addr.len > 0 {
         return Client { addr: addr }
@@ -3508,9 +3508,9 @@ fn client(addr: string = "") -> Client {
     return Client { addr: default_addr() }
 }
 
-/// Unary gRPC-Web call. The result is `#[must_check]`: read `r.ok` / `r.val`,
-/// or use `res.or` / `res.or_trap`. An empty reply body is reported as a
-/// failure (`r.ok` false), since the transport exposes no `grpc-status`.
+/** *Unary gRPC-Web call. The result is `#[must_check]`: read `r.ok` / `r.val`, */
+/** *or use `res.or` / `res.or_trap`. An empty reply body is reported as a */
+/** *failure (`r.ok` false), since the transport exposes no `grpc-status`. */
 fn call(c: Client, name: string, body: string) -> Res<string> {
     let t0 = async.now_ms()
     let out = rt_call(c.addr, name, body)
@@ -3521,9 +3521,9 @@ fn call(c: Client, name: string, body: string) -> Res<string> {
     return result.ok(out)
 }
 
-/// Awaitable unary gRPC-Web call: `let raw = await c.async_call(name, body)`
-/// inside an `async fn`. Same `#[proto]` contract as `call` / `call_async`;
-/// the await pumps the one-thread async world until the response lands.
+/** *Awaitable unary gRPC-Web call: `let raw = await c.async_call(name, body)` */
+/** *inside an `async fn`. Same `#[proto]` contract as `call` / `call_async`; */
+/** *the await pumps the one-thread async world until the response lands. */
 fn async_call(c: Client, name: string, body: string) -> Future<string> {
     let f = async.future_str()
     // `await` pumps without yielding to the browser, so on wasm this one call
@@ -3534,12 +3534,12 @@ fn async_call(c: Client, name: string, body: string) -> Future<string> {
     return f
 }
 
-/// How long a wasm fetch may take. Longer than the socket path's 8 s: the
-/// request waits behind a slow handler on a one-request-at-a-time server,
-/// and the page keeps running meanwhile.
+/** *How long a wasm fetch may take. Longer than the socket path's 8 s: the */
+/** *request waits behind a slow handler on a one-request-at-a-time server, */
+/** *and the page keeps running meanwhile. */
 const FETCH_TIMEOUT_MS: int = 30000
 
-/// 1 while `async_call` is starting its call: the wasm fetch blocks.
+/** *1 while `async_call` is starting its call: the wasm fetch blocks. */
 let mut fetch_sync: int = 0
 
 // --- Async unary client (`call_async`) -------------------------------
@@ -3554,9 +3554,9 @@ let mut fetch_sync: int = 0
 // Transport failure — or an empty browser-style address on native — yields
 // "", the same shape as `call`.
 
-/// One in-flight async call. `stage`: 1 connecting, 2 sending, 3 reading,
-/// 4 wasm fetch wait, 5 TLS handshake. `cbid` indexes `acbs`; callbacks stay
-/// in their own table so this record remains a plain Copy struct.
+/** *One in-flight async call. `stage`: 1 connecting, 2 sending, 3 reading, */
+/** *4 wasm fetch wait, 5 TLS handshake. `cbid` indexes `acbs`; callbacks stay */
+/** *in their own table so this record remains a plain Copy struct. */
 struct RpcCall {
     req: string,
     sent: int,
@@ -3565,12 +3565,12 @@ struct RpcCall {
     acc: string,
     cbid: int,
     at: i64,
-    /// For the `http.client` log line: RPC name, address, start time.
+    /** *For the `http.client` log line: RPC name, address, start time. */
     name: string,
     addr: string,
     t0: i64,
     size: int,
-    /// Wasm fetch slot (stage 4), else -1.
+    /** *Wasm fetch slot (stage 4), else -1. */
     slot: int,
 }
 
@@ -3589,8 +3589,8 @@ fn acb_drop(cbid: int) {
     acbs = keep
 }
 
-/// Rewrite every live record's `cbid` after `acb_drop` shifted the table:
-/// ids above the dropped one move down by one.
+/** *Rewrite every live record's `cbid` after `acb_drop` shifted the table: */
+/** *ids above the dropped one move down by one. */
 fn acbs_remap(dropped: int) {
     let n = acalls.len
     for i in 0..n {
@@ -3611,12 +3611,12 @@ fn acall_remove(idx: int) {
     acalls = keep
 }
 
-/// Terminal path for call `idx`: close the socket, release the in-flight
-/// count, drop the callback slot, then run the callback with `out`. The
-/// callback value is retained before the table is rebuilt, so the drop and
-/// the id remap cannot free it.
-/// End call `idx` with `out` and run its callback. `why` says what went
-/// wrong ("" when the reply arrived), for the `http.client` log line.
+/** *Terminal path for call `idx`: close the socket, release the in-flight */
+/** *count, drop the callback slot, then run the callback with `out`. The */
+/** *callback value is retained before the table is rebuilt, so the drop and */
+/** *the id remap cannot free it. */
+/** *End call `idx` with `out` and run its callback. `why` says what went */
+/** *wrong ("" when the reply arrived), for the `http.client` log line. */
 fn acall_finish(idx: int, out: string, why: string) {
     log_call(acalls[idx].name, acalls[idx].addr, acalls[idx].size, out, why, acalls[idx].t0)
     let fd = acalls[idx].fd
@@ -3632,8 +3632,8 @@ fn acall_finish(idx: int, out: string, why: string) {
     cb(out)
 }
 
-/// Advance call `idx` by as much as the socket allows right now. Returns 1
-/// when the call terminated (its record was removed and the callback ran).
+/** *Advance call `idx` by as much as the socket allows right now. Returns 1 */
+/** *when the call terminated (its record was removed and the callback ran). */
 fn acall_advance(idx: int) -> int {
     let mut guard = 0
     while guard < 8 {
@@ -3733,7 +3733,7 @@ fn acall_advance(idx: int) -> int {
     return 0
 }
 
-/// Per-frame stepper: give every in-flight call one non-blocking advance.
+/** *Per-frame stepper: give every in-flight call one non-blocking advance. */
 fn io_pump() {
     let mut i = 0
     while i < acalls.len {
@@ -3752,10 +3752,10 @@ fn io_pump() {
     }
 }
 
-/// Unary gRPC-Web call whose completion runs `cb` on the UI thread (inside a
-/// frame's async tick) with the same protobuf `out` `call` returns. Native:
-/// non-blocking TCP, pumped per frame. Wasm: JS fetch slots (`http.client("")`
-/// is same-origin). Prefer `await c.async_call(...)` inside an `async fn`.
+/** *Unary gRPC-Web call whose completion runs `cb` on the UI thread (inside a */
+/** *frame's async tick) with the same protobuf `out` `call` returns. Native: */
+/** *non-blocking TCP, pumped per frame. Wasm: JS fetch slots (`http.client("")` */
+/** *is same-origin). Prefer `await c.async_call(...)` inside an `async fn`. */
 fn call_async(c: Client, name: string, body: string, cb: fn(string)) {
     let t0 = async.now_ms()
     let path = name_to_path(name)
@@ -3806,9 +3806,9 @@ fn call_async(c: Client, name: string, body: string, cb: fn(string)) {
     cb("")
 }
 
-/// One `http.client` log line for a finished call. An empty reply is a
-/// warning: it is what a down server or a proxy error looks like, though an
-/// all-default message also encodes to nothing.
+/** *One `http.client` log line for a finished call. An empty reply is a */
+/** *warning: it is what a down server or a proxy error looks like, though an */
+/** *all-default message also encodes to nothing. */
 fn log_call(name: string, addr: string, sent: int, out: string, why: string, t0: i64) {
     let ms = int(async.now_ms() - t0)
     let at = if addr.len > 0 { addr } else { "same origin" }
@@ -3854,13 +3854,13 @@ fn read_head(fd: int) -> string {
     return acc
 }
 
-/// SSE response head (text/event-stream, close at EOF).
+/** *SSE response head (text/event-stream, close at EOF). */
 fn sse_start(fd: int) {
     let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n"
     net.tcp_write(fd, head)
 }
 
-/// One SSE event: `data: <data>\n\n`.
+/** *One SSE event: `data: <data>\n\n`. */
 fn sse_send(fd: int, data: string) {
     let mut b = bytes_of("data: ")
     append_bytes(b, bytes_of(data))
@@ -3868,8 +3868,8 @@ fn sse_send(fd: int, data: string) {
     net.tcp_write(fd, string_of(b))
 }
 
-/// WebSocket upgrade reply for a client `Sec-WebSocket-Key`. Returns 0 on
-/// success, 1 when the write failed.
+/** *WebSocket upgrade reply for a client `Sec-WebSocket-Key`. Returns 0 on */
+/** *success, 1 when the write failed. */
 fn ws_upgrade(fd: int, key: string) -> int {
     let mut b = bytes_of("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ")
     append_bytes(b, bytes_of(ws.accept_key(key)))
@@ -3881,13 +3881,13 @@ fn ws_upgrade(fd: int, key: string) -> int {
     return 0
 }
 
-/// Header value (case-insensitive) from a raw request head — thin wrapper
-/// over the ws codec so apps do not need to import httpcore.
+/** *Header value (case-insensitive) from a raw request head — thin wrapper */
+/** *over the ws codec so apps do not need to import httpcore. */
 fn ws_header(head: string, name: string) -> string {
     return ws.header_val(head, name)
 }
 
-/// Push one WebSocket text frame (server side).
+/** *Push one WebSocket text frame (server side). */
 fn ws_send_text(fd: int, s: string) -> int {
     let n = net.tcp_write(fd, ws.server_text(s))
     if n < 0 {
@@ -3910,8 +3910,8 @@ struct SseCall {
 let mut sse_calls: []SseCall = []SseCall {}
 let mut sse_on: int = 0
 
-/// Stream one SSE endpoint: `on_event(data)` per `data:` line, `on_done` at
-/// EOF/error. Callbacks run on the UI thread inside a frame's async tick.
+/** *Stream one SSE endpoint: `on_event(data)` per `data:` line, `on_done` at */
+/** *EOF/error. Callbacks run on the UI thread inside a frame's async tick. */
 fn sse_open(c: Client, path: string, on_event: fn(string), on_done: fn()) {
     let hp = parse_addr(c.addr)
     if hp.tls == 1 {
@@ -3961,7 +3961,7 @@ fn sse_finish(idx: int) {
     done()
 }
 
-/// Index of the next "\n\n" at or after `from`, or -1.
+/** *Index of the next "\n\n" at or after `from`, or -1. */
 fn find_nl2(s: string, from: int) -> int {
     let mut i = from
     if i < 0 {
@@ -3978,8 +3978,8 @@ fn find_nl2(s: string, from: int) -> int {
     return -1
 }
 
-/// Deliver every complete `\n\n`-separated event in `sse_calls[idx].acc`;
-/// returns the undelivered remainder.
+/** *Deliver every complete `\n\n`-separated event in `sse_calls[idx].acc`; */
+/** *returns the undelivered remainder. */
 fn sse_deliver(idx: int) -> string {
     let buf = sse_calls[idx].acc
     let n = buf.len
@@ -4114,8 +4114,8 @@ fn sse_pump() {
     }
 }
 
-/// One open `watch`. `stage`: 1 connecting, 2 sending, 3 reading the
-/// response head, 4 reading messages, 6 the wasm stream bridge (`slot`).
+/** *One open `watch`. `stage`: 1 connecting, 2 sending, 3 reading the */
+/** *response head, 4 reading messages, 6 the wasm stream bridge (`slot`). */
 struct WatchCall {
     req: string,
     sent: int,
@@ -4124,7 +4124,7 @@ struct WatchCall {
     acc: string,
     on_msg: fn(string),
     on_end: fn(),
-    /// Deadline for the head (0 once the stream is open: it may stay quiet).
+    /** *Deadline for the head (0 once the stream is open: it may stay quiet). */
     at: i64,
     name: string,
     addr: string,
@@ -4137,16 +4137,16 @@ let mut watch_calls: []WatchCall = []WatchCall {}
 let mut watch_on: int = 0
 let mut watch_waking: int = 0
 
-/// How often an open, quiet stream is read. A pending request keeps the host
-/// drawing every frame (`async.io_open`); an open stream only needs a wake
-/// this often, so an idle app does not spin.
+/** *How often an open, quiet stream is read. A pending request keeps the host */
+/** *drawing every frame (`async.io_open`); an open stream only needs a wake */
+/** *this often, so an idle app does not spin. */
 const WATCH_WAKE_MS: int = 100
 
-/// Open a server-streaming RPC (`app.stream` on the server). `on_msg` runs
-/// with each message as it arrives, on the UI thread inside a frame's async
-/// tick; `on_end` runs once when the stream closes or cannot open. Native:
-/// one socket, read per frame. Wasm: the loader's streaming XHR, same-origin
-/// for `http.client("")`.
+/** *Open a server-streaming RPC (`app.stream` on the server). `on_msg` runs */
+/** *with each message as it arrives, on the UI thread inside a frame's async */
+/** *tick; `on_end` runs once when the stream closes or cannot open. Native: */
+/** *one socket, read per frame. Wasm: the loader's streaming XHR, same-origin */
+/** *for `http.client("")`. */
 fn watch(c: Client, name: string, body: string, on_msg: fn(string), on_end: fn()) {
     let t0 = async.now_ms()
     let path = name_to_path(name)
@@ -4187,7 +4187,7 @@ fn watch(c: Client, name: string, body: string, on_msg: fn(string), on_end: fn()
     on_end()
 }
 
-/// Keep the host waking while a stream is open (see `WATCH_WAKE_MS`).
+/** *Keep the host waking while a stream is open (see `WATCH_WAKE_MS`). */
 fn watch_wake() {
     if watch_waking != 0 {
         return
@@ -4201,7 +4201,7 @@ fn watch_wake() {
     })
 }
 
-/// End stream `idx`: close it, log it, drop it, then run its `on_end`.
+/** *End stream `idx`: close it, log it, drop it, then run its `on_end`. */
 fn watch_finish(idx: int, why: string) {
     let done = watch_calls[idx].on_end
     let fd = watch_calls[idx].fd
@@ -4235,8 +4235,8 @@ fn watch_finish(idx: int, why: string) {
     done()
 }
 
-/// Run `on_msg` for every complete gRPC data frame in `acc` (trailer frames
-/// are skipped); returns the bytes of a frame still arriving.
+/** *Run `on_msg` for every complete gRPC data frame in `acc` (trailer frames */
+/** *are skipped); returns the bytes of a frame still arriving. */
 fn watch_deliver(idx: int, acc: string) -> string {
     let mut rest = acc
     while rest.len >= 5 {
@@ -4260,8 +4260,8 @@ fn watch_deliver(idx: int, acc: string) -> string {
     return rest
 }
 
-/// Advance stream `idx` as far as its socket allows now. Returns 1 when it
-/// ended (its record is gone and `on_end` ran).
+/** *Advance stream `idx` as far as its socket allows now. Returns 1 when it */
+/** *ended (its record is gone and `on_end` ran). */
 fn watch_advance(idx: int) -> int {
     let mut guard = 0
     while guard < 8 {
@@ -4361,7 +4361,7 @@ fn watch_advance(idx: int) -> int {
     return 0
 }
 
-/// Per-frame stepper for every open `watch`.
+/** *Per-frame stepper for every open `watch`. */
 fn watch_pump() {
     let mut i = 0
     while i < watch_calls.len {
@@ -4389,10 +4389,10 @@ struct WsCall {
 let mut ws_calls: []WsCall = []WsCall {}
 let mut ws_on: int = 0
 
-/// Open one WebSocket: `on_text(payload)` per text frame, `on_done` on
-/// close/EOF/error. Callbacks run on the UI thread inside a frame's tick.
-/// Native: TCP + the RFC 6455 codec. Wasm (`client("")`): the browser's
-/// WebSocket via the JS bridge — `path` is same-origin (`"/ws"`).
+/** *Open one WebSocket: `on_text(payload)` per text frame, `on_done` on */
+/** *close/EOF/error. Callbacks run on the UI thread inside a frame's tick. */
+/** *Native: TCP + the RFC 6455 codec. Wasm (`client("")`): the browser's */
+/** *WebSocket via the JS bridge — `path` is same-origin (`"/ws"`). */
 fn ws_open(c: Client, path: string, on_text: fn(string), on_done: fn()) {
     let hp = parse_addr(c.addr)
     if hp.tls == 1 {

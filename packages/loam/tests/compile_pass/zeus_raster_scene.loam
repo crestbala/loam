@@ -25,9 +25,9 @@ fn must(ok: bool, what: string) {
     sys.exit(1)
 }
 
-/// Index of the first fill op (any of the three fill kinds — a node with a
-/// radius is emitted as `fill4`) of the given LOGICAL size, or -1. Finding ops by
-/// size rather than by colour keeps the test independent of the theme.
+/** *Index of the first fill op (any of the three fill kinds — a node with a */
+/** *radius is emitted as `fill4`) of the given LOGICAL size, or -1. Finding ops by */
+/** *size rather than by colour keeps the test independent of the theme. */
 fn find_box(w: int, h: int) -> int {
     let n = zeus.draw_count()
     let mut i = 0
@@ -58,7 +58,7 @@ fn count_kind(kind: int) -> int {
     return c
 }
 
-/// Index of the first op of `kind`, or -1.
+/** *Index of the first op of `kind`, or -1. */
 fn find_kind(kind: int) -> int {
     let n = zeus.draw_count()
     let mut i = 0

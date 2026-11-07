@@ -1,5 +1,5 @@
-//! Route error page. The message is not drawn: a trap can name a source file,
-//! and this page is what a browser shows.
+// Route error page. The message is not drawn: a trap can name a source file,
+// and this page is what a browser shows.
 
 import "zeus"
 import "zui"

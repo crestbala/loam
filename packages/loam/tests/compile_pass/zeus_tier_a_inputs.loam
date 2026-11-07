@@ -38,7 +38,7 @@ fn tap(label: string) {
     frame()
 }
 
-/// True when some text draw of the last paint equals `s`.
+/** *True when some text draw of the last paint equals `s`. */
 fn drawn(s: string) -> bool {
     zeus.engine_paint()
     for i in 0..zeus.draw_count() {

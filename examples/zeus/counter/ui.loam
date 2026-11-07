@@ -1,5 +1,5 @@
-//! Shared counter UI. Hosts are three-line stubs that call `ui.start`.
-//! `--target` picks the RPC address (`http.client()`) and the chip label.
+// Shared counter UI. Hosts are three-line stubs that call `ui.start`.
+// `--target` picks the RPC address (`http.client()`) and the chip label.
 
 import "std:async"
 import "zeus"

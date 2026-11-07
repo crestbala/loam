@@ -1,4 +1,4 @@
-//! Language tour: ownership, control flow, errors, modules, closures.
+// Language tour: ownership, control flow, errors, modules, closures.
 
 import "zeus"
 import "zui:spacing"

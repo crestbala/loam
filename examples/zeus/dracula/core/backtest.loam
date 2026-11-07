@@ -1,22 +1,22 @@
-//! Event-driven backtest. Cash is paise. Units are millionths of a unit.
-//!
-//! A signal dated on a bar is filled at the next published NAV after that
-//! date, never at the bar that produced it. There is no flag that fills on
-//! the signal. An order with no later bar is left unfilled.
-//!
-//! Buys spend a paise budget (zero means all free cash). Stamp duty comes
-//! off that budget, and the rest buys units at the fill NAV. Sells are
-//! FIFO. A sell budget of zero closes the position; a positive budget is
-//! the gross paise to redeem, and the rest of the lot stays. Each lot pays
-//! its own exit load from its own holding period, and STT comes off the
-//! redemption. The expense ratio is not applied: it is already in the NAV.
-//!
-//! One scheme is a book of one. Several schemes share the cash. A deposit
-//! is external money arriving on a date, which is what a monthly SIP is,
-//! and the reported XIRR prices every deposit, not only the opening cash.
-//!
-//! The result is the net of those dealing costs. Capital-gains tax is not
-//! part of it.
+// Event-driven backtest. Cash is paise. Units are millionths of a unit.
+//
+// A signal dated on a bar is filled at the next published NAV after that
+// date, never at the bar that produced it. There is no flag that fills on
+// the signal. An order with no later bar is left unfilled.
+//
+// Buys spend a paise budget (zero means all free cash). Stamp duty comes
+// off that budget, and the rest buys units at the fill NAV. Sells are
+// FIFO. A sell budget of zero closes the position; a positive budget is
+// the gross paise to redeem, and the rest of the lot stays. Each lot pays
+// its own exit load from its own holding period, and STT comes off the
+// redemption. The expense ratio is not applied: it is already in the NAV.
+//
+// One scheme is a book of one. Several schemes share the cash. A deposit
+// is external money arriving on a date, which is what a monthly SIP is,
+// and the reported XIRR prices every deposit, not only the opening cash.
+//
+// The result is the net of those dealing costs. Capital-gains tax is not
+// part of it.
 
 import "std:math"
 import "std:date"
@@ -26,26 +26,26 @@ import "sortx.loam"
 import "stats.loam"
 
 struct Orders {
-    /// The bar whose NAV the decision saw. The fill is a later bar.
+    /** *The bar whose NAV the decision saw. The fill is a later bar. */
     dates: []int,
-    /// `1` buy, `-1` sell.
+    /** *`1` buy, `-1` sell. */
     sides: []int,
-    /// Buy: paise to spend, or `0` for all free cash. Sell: paise of gross
-    /// NAV to redeem, or `0` to close whatever is still held.
+    /** *Buy: paise to spend, or `0` for all free cash. Sell: paise of gross */
+    /** *NAV to redeem, or `0` to close whatever is still held. */
     amounts: []i64,
 }
 
-/// External paise arriving in the account. Not a fill: the cash is there
-/// on the first published bar on or after `dates[i]`, and a buy can spend
-/// it only at a later NAV.
+/** *External paise arriving in the account. Not a fill: the cash is there */
+/** *on the first published bar on or after `dates[i]`, and a buy can spend */
+/** *it only at a later NAV. */
 struct Flows {
     dates: []int,
     amounts: []i64,
 }
 
-/// One row per scheme, columns laid end to end. `starts` has one more entry
-/// than `codes`: scheme `i` occupies `[starts[i], starts[i + 1])` of the
-/// date and NAV columns. Each scheme's own dates are in order.
+/** *One row per scheme, columns laid end to end. `starts` has one more entry */
+/** *than `codes`: scheme `i` occupies `[starts[i], starts[i + 1])` of the */
+/** *date and NAV columns. Each scheme's own dates are in order. */
 struct Panel {
     codes: []string,
     starts: []int,
@@ -57,13 +57,13 @@ struct BookOrders {
     dates: []int,
     sides: []int,
     amounts: []i64,
-    /// Index into `Panel.codes`.
+    /** *Index into `Panel.codes`. */
     scheme: []int,
 }
 
-/// Equal-weight rebalance points. Group `g` is the schemes in
-/// `[off[g], off[g + 1])`, held in rank order, and it is decided on
-/// `dates[g]`.
+/** *Equal-weight rebalance points. Group `g` is the schemes in */
+/** *`[off[g], off[g + 1])`, held in rank order, and it is decided on */
+/** *`dates[g]`. */
 struct Targets {
     dates: []int,
     off: []int,
@@ -74,7 +74,7 @@ struct Ledger {
     signal_dates: []int,
     fill_dates: []int,
     sides: []int,
-    /// Scheme index. Zero for a one-scheme run.
+    /** *Scheme index. Zero for a one-scheme run. */
     schemes: []int,
     navs: []i64,
     units: []i64,
@@ -87,13 +87,13 @@ struct Ledger {
 
 struct Report {
     end_cash: i64,
-    /// Sum of units still held. A book of several schemes adds them, which
-    /// is only meaningful scheme by scheme via the ledger.
+    /** *Sum of units still held. A book of several schemes adds them, which */
+    /** *is only meaningful scheme by scheme via the ledger. */
     end_units: i64,
     end_equity: i64,
-    /// Equity at the close of the last bar strictly before `mark`, or the
-    /// starting cash when the mark is on the first bar or was left at 0.
-    /// Walk-forward reads this as the capital the test window opens with.
+    /** *Equity at the close of the last bar strictly before `mark`, or the */
+    /** *starting cash when the mark is on the first bar or was left at 0. */
+    /** *Walk-forward reads this as the capital the test window opens with. */
     mark_equity: i64,
     cagr: f64,
     xirr: f64,
@@ -104,16 +104,16 @@ struct Report {
     wins: int,
     losses: int,
     win_rate: f64,
-    /// Net profit of winning closed lots, in paise.
+    /** *Net profit of winning closed lots, in paise. */
     gross_win: i64,
-    /// Net loss of losing closed lots, in paise, as a positive number.
+    /** *Net loss of losing closed lots, in paise, as a positive number. */
     gross_loss: i64,
-    /// `gross_win / gross_loss`, or `0` when there is no losing lot.
+    /** *`gross_win / gross_loss`, or `0` when there is no losing lot. */
     profit_factor: f64,
-    /// (paise bought + paise sold) / starting cash. Deposits are not a trade.
+    /** *(paise bought + paise sold) / starting cash. Deposits are not a trade. */
     turnover: f64,
-    /// One point per published bar, after that bar's fills. The equity
-    /// curve is this close, so a fill marker sits on the bar that booked it.
+    /** *One point per published bar, after that bar's fills. The equity */
+    /** *curve is this close, so a fill marker sits on the bar that booked it. */
     curve_dates: []int,
     curve_paise: []i64,
     ledger: Ledger,
@@ -154,9 +154,9 @@ fn empty_orders() -> BookOrders {
     }
 }
 
-/// Append one scheme. The columns are copied, so the caller's arrays stay
-/// put. Dates are taken as already ordered; the cache does not write them
-/// any other way.
+/** *Append one scheme. The columns are copied, so the caller's arrays stay */
+/** *put. Dates are taken as already ordered; the cache does not write them */
+/** *any other way. */
 fn add_scheme(p: Panel, code: string, dates: []int, navs: []i64) -> Panel {
     let mut codes = p.codes
     let mut starts = p.starts
@@ -180,7 +180,7 @@ fn add_scheme(p: Panel, code: string, dates: []int, navs: []i64) -> Panel {
     return Panel { codes: codes, starts: starts, dates: out_d, navs: out_n }
 }
 
-/// One scheme, copied out so an indicator can take a `NavSeries`.
+/** *One scheme, copied out so an indicator can take a `NavSeries`. */
 fn scheme_series(p: Panel, i: int) -> NavSeries {
     if i < 0 || i + 1 >= p.starts.len {
         return series.build("", []int {}, []i64 {})
@@ -243,7 +243,7 @@ fn empty_report(cash: i64) -> Report {
     }
 }
 
-/// First bar strictly after `signal`, or `-1` when the series has ended.
+/** *First bar strictly after `signal`, or `-1` when the series has ended. */
 fn next_bar(dates: []int, signal: int) -> int {
     let mut i = 0
     while i < dates.len {
@@ -312,8 +312,8 @@ fn npv_at(start: i64, endv: i64, years: f64, rate: f64) -> f64 {
     return f64(endv) / growth - f64(start)
 }
 
-/// One deposit at the first date and the terminal equity at the last date.
-/// Bisection, so a short window with a large rate still settles.
+/** *One deposit at the first date and the terminal equity at the last date. */
+/** *Bisection, so a short window with a large rate still settles. */
 fn xirr_two(start: i64, endv: i64, years: f64) -> f64 {
     if start <= 0 || endv <= 0 || years <= 0.0 {
         return 0.0
@@ -360,10 +360,10 @@ fn npv_flows(dates: []int, amounts: []i64, rate: f64) -> f64 {
     return sum
 }
 
-/// Internal rate on dated cash flows. Money into the account is negative,
-/// money out (the terminal equity included) is positive. Same-day flows are
-/// summed. `0` when the flows do not change sign or the root sits outside
-/// the range the bisection will search.
+/** *Internal rate on dated cash flows. Money into the account is negative, */
+/** *money out (the terminal equity included) is positive. Same-day flows are */
+/** *summed. `0` when the flows do not change sign or the root sits outside */
+/** *the range the bisection will search. */
 fn xirr(dates: []int, amounts: []i64) -> f64 {
     let mut n = dates.len
     if amounts.len < n {
@@ -632,8 +632,8 @@ fn flow_sum(amounts: []i64) -> i64 {
     return s
 }
 
-/// Size today's rebalance off the NAV already in hand. Fills are scheduled
-/// on a later bar, so this must run after today's fills have updated `units`.
+/** *Size today's rebalance off the NAV already in hand. Fills are scheduled */
+/** *on a later bar, so this must run after today's fills have updated `units`. */
 fn emit_rebalance(
     p: Panel,
     targets: Targets,
@@ -728,10 +728,10 @@ fn emit_rebalance(
     }
 }
 
-/// `mark` is a `YYYYMMDD`. Equity at the last bar before it is stored on
-/// the report. `0` leaves that field at the starting cash and changes nothing
-/// else. `targets` is read only when it has dates; the orders are then the
-/// ones the rebalance emits, and `seed` is ignored.
+/** *`mark` is a `YYYYMMDD`. Equity at the last bar before it is stored on */
+/** *the report. `0` leaves that field at the starting cash and changes nothing */
+/** *else. `targets` is read only when it has dates; the orders are then the */
+/** *ones the rebalance emits, and `seed` is ignored. */
 fn execute(
     p: Panel,
     seed: BookOrders,
@@ -1069,19 +1069,19 @@ fn execute(
     }
 }
 
-/// Run `orders` against `s`. `start_cash` is the paise in the account before
-/// the first bar.
+/** *Run `orders` against `s`. `start_cash` is the paise in the account before */
+/** *the first bar. */
 fn run(s: NavSeries, orders: Orders, c: Costs, start_cash: i64) -> Report {
     return run_marked(s, orders, c, start_cash, 0)
 }
 
-/// Like `run`, and `report.mark_equity` is the close before `mark`.
+/** *Like `run`, and `report.mark_equity` is the close before `mark`. */
 fn run_marked(s: NavSeries, orders: Orders, c: Costs, start_cash: i64, mark: int) -> Report {
     return run_flows_marked(s, orders, empty_flows(), c, start_cash, mark)
 }
 
-/// `flows` are SIP contributions. They are not trades, and the XIRR counts
-/// each of them.
+/** *`flows` are SIP contributions. They are not trades, and the XIRR counts */
+/** *each of them. */
 fn run_flows(s: NavSeries, orders: Orders, flows: Flows, c: Costs, start_cash: i64) -> Report {
     return run_flows_marked(s, orders, flows, c, start_cash, 0)
 }
@@ -1101,7 +1101,7 @@ fn run_flows_marked(
     return done.report
 }
 
-/// Several schemes, one cash balance.
+/** *Several schemes, one cash balance. */
 fn run_book(p: Panel, orders: BookOrders, c: Costs, start_cash: i64) -> Report {
     return run_book_flows(p, orders, empty_flows(), c, start_cash)
 }
@@ -1116,9 +1116,9 @@ fn run_book_marked(p: Panel, orders: BookOrders, c: Costs, start_cash: i64, mark
     return done.report
 }
 
-/// Rebalance to `targets` and return both the orders that were emitted and
-/// the result of filling them. Sizing uses only the NAV already published
-/// on the signal date; the fill is the next one.
+/** *Rebalance to `targets` and return both the orders that were emitted and */
+/** *the result of filling them. Sizing uses only the NAV already published */
+/** *on the signal date; the fill is the next one. */
 fn run_targets(p: Panel, targets: Targets, c: Costs, start_cash: i64) -> BookRun {
     return execute(p, empty_orders(), targets, empty_flows(), c, start_cash, 0)
 }

@@ -1,15 +1,15 @@
-//! Watchlist, scheme cache, and catalog search.
-//!
-//! Signals are created in `start`, which `app.loam` calls before `zeus.App`.
-//! The zero handle means not started, which is what a headless route drive
-//! sees. One signal per column. NAV columns live beside the signals: a
-//! signal of a struct that owns a list drops the list when an RPC callback
-//! stores it.
-//!
-//! A scheme's fetch state is `0` loading, `1` loaded, `2` no NAV file, `3`
-//! the server did not answer. `call_async` reports a dead server or a
-//! timeout as an empty body; that is state 3, never a loading line that
-//! does not end.
+// Watchlist, scheme cache, and catalog search.
+//
+// Signals are created in `start`, which `app.loam` calls before `zeus.App`.
+// The zero handle means not started, which is what a headless route drive
+// sees. One signal per column. NAV columns live beside the signals: a
+// signal of a struct that owns a list drops the list when an RPC callback
+// stores it.
+//
+// A scheme's fetch state is `0` loading, `1` loaded, `2` no NAV file, `3`
+// the server did not answer. `call_async` reports a dead server or a
+// timeout as an empty body; that is state 3, never a loading line that
+// does not end.
 
 import "std:date"
 import "http"
@@ -27,10 +27,10 @@ import "present.loam" as present
 
 let mut gen: Signal<int> = Signal { id: 0 }
 let mut scheme_gen: Signal<int> = Signal { id: 0 }
-/// The focused scheme as one value (see `SchemeView`).
+/** *The focused scheme as one value (see `SchemeView`). */
 let mut scheme_view: Signal<SchemeView> = Signal { id: 0 }
-/// The fund search, the holdings and the screener ranks as values: the pages
-/// bind to these, and a write that left a row as it was keeps that row.
+/** *The fund search, the holdings and the screener ranks as values: the pages */
+/** *bind to these, and a write that left a row as it was keeps that row. */
 let mut search_view: Signal<FundSearch> = Signal { id: 0 }
 let mut holdings_view: Signal<RowList> = Signal { id: 0 }
 let mut ranks_view: Signal<RowList> = Signal { id: 0 }
@@ -111,8 +111,8 @@ fn bump_scheme() {
     publish_scheme_view()
 }
 
-/// The load generation moved (a fetch landed, the watchlist changed): the
-/// focused scheme's state and badges may have too.
+/** *The load generation moved (a fetch landed, the watchlist changed): the */
+/** *focused scheme's state and badges may have too. */
 fn bump_load() {
     if gen.id != 0 {
         gen.set(gen.get() + 1)
@@ -121,8 +121,8 @@ fn bump_load() {
     publish_lists()
 }
 
-/// What the scheme page shows. `state`: 0 loading, 1 loaded, 2 missing,
-/// 3 server down.
+/** *What the scheme page shows. `state`: 0 loading, 1 loaded, 2 missing, */
+/** *3 server down. */
 struct SchemeView {
     state: int,
     code: string,
@@ -151,8 +151,8 @@ fn empty_scheme_view() -> SchemeView {
     }
 }
 
-/// Publish the focus globals as the view value. Equal values are no write, so
-/// a publish that moved nothing the page shows re-runs nothing.
+/** *Publish the focus globals as the view value. Equal values are no write, so */
+/** *a publish that moved nothing the page shows re-runs nothing. */
 fn publish_scheme_view() {
     if scheme_view.id == 0 {
         return
@@ -181,16 +181,16 @@ fn bump_search() {
     publish_lists()
 }
 
-/// A fund search row: the code it opens, its cells, and whether it is on the
-/// watchlist (the row's action).
+/** *A fund search row: the code it opens, its cells, and whether it is on the */
+/** *watchlist (the row's action). */
 struct FundHit {
     code: string,
     cells: []string,
     watching: bool,
 }
 
-/// What the fund search shows. `state`: 0 no query, 1 asking, 2 answered,
-/// 3 server down.
+/** *What the fund search shows. `state`: 0 no query, 1 asking, 2 answered, */
+/** *3 server down. */
 struct FundSearch {
     state: int,
     query: string,
@@ -198,13 +198,13 @@ struct FundSearch {
     hits: []FundHit,
 }
 
-/// A table row that opens a scheme.
+/** *A table row that opens a scheme. */
 struct CodeRow {
     code: string,
     cells: []string,
 }
 
-/// A list of scheme rows, and whether a fetch behind them failed.
+/** *A list of scheme rows, and whether a fetch behind them failed. */
 struct RowList {
     down: bool,
     rows: []CodeRow,
@@ -222,8 +222,8 @@ fn ranks() -> Signal<RowList> {
     return ranks_view
 }
 
-/// Publish the search, holdings and ranks as values. Equal values are no
-/// write, so a bump that moved none of them re-runs nothing.
+/** *Publish the search, holdings and ranks as values. Equal values are no */
+/** *write, so a bump that moved none of them re-runs nothing. */
 fn publish_lists() {
     if search_view.id == 0 {
         return
@@ -251,8 +251,8 @@ fn publish_lists() {
     ranks_view.set(RowList { down: any_down(), rows: ranked })
 }
 
-/// Remove `code` from the watchlist (by code, so a row that moved still
-/// removes itself).
+/** *Remove `code` from the watchlist (by code, so a row that moved still */
+/** *removes itself). */
 fn remove_code(code: string) {
     let at = find_str(watch_codes, code)
     if at >= 0 {
@@ -289,8 +289,8 @@ fn clear_hits() {
     hit_dormant = []int {}
 }
 
-/// Runs in an effect on the search field. A new query asks `Data.Catalog`
-/// for one page. A reply to an older query is dropped.
+/** *Runs in an effect on the search field. A new query asks `Data.Catalog` */
+/** *for one page. A reply to an older query is dropped. */
 fn search_tick() {
     if search_input.id == 0 {
         return
@@ -345,7 +345,7 @@ fn got_catalog(q: string, raw: string) {
     bump_search()
 }
 
-/// Search again after the server was down.
+/** *Search again after the server was down. */
 fn search_retry() {
     asked_query = ""
     search_tick()
@@ -355,7 +355,7 @@ fn search_query() -> string {
     return asked_query
 }
 
-/// `0` no query, `1` asking, `2` answered, `3` the server did not answer.
+/** *`0` no query, `1` asking, `2` answered, `3` the server did not answer. */
 fn search_status() -> int {
     return search_state
 }
@@ -375,7 +375,7 @@ fn hit_code(i: int) -> string {
     return hit_codes[i]
 }
 
-/// Scheme, code, last NAV, as of, and a dormant mark.
+/** *Scheme, code, last NAV, as of, and a dormant mark. */
 fn hit_cells(i: int) -> []string {
     let mut row = []string {}
     if i < 0 || i >= hit_codes.len {
@@ -540,7 +540,7 @@ fn server_down(code: string) {
     }
 }
 
-/// Ask again for every scheme the server did not answer for.
+/** *Ask again for every scheme the server did not answer for. */
 fn retry() {
     let mut i = 0
     while i < cache_codes.len {
@@ -751,7 +751,7 @@ fn publish_scheme(code: string) {
     bump_scheme()
 }
 
-/// Runs in an effect on the range control. Redraws the focused chart.
+/** *Runs in an effect on the range control. Redraws the focused chart. */
 fn range_tick() {
     if range_sel.id == 0 {
         return
@@ -771,7 +771,7 @@ fn clear_focus_view() {
     clear_chart()
 }
 
-/// The scheme page. Fetches `code` without adding it to the watchlist.
+/** *The scheme page. Fetches `code` without adding it to the watchlist. */
 fn focus(code: string) {
     if gen.id == 0 || code.len == 0 {
         return
@@ -807,7 +807,7 @@ fn first_watch() -> string {
     return watch_code(0)
 }
 
-/// Scheme, code, last NAV, as of, signal.
+/** *Scheme, code, last NAV, as of, signal. */
 fn holding_row(i: int) -> []string {
     let mut row = []string {}
     let code = watch_code(i)
@@ -842,8 +842,8 @@ fn rank_code(i: int) -> string {
     return rank_codes[i]
 }
 
-/// Rank, scheme, code, 12-month momentum, status. A scheme in warm-up has
-/// no momentum figure and no place number.
+/** *Rank, scheme, code, 12-month momentum, status. A scheme in warm-up has */
+/** *no momentum figure and no place number. */
 fn rank_cells(i: int) -> []string {
     let mut row = []string {}
     if i < 0 || i >= rank_codes.len {
@@ -895,7 +895,7 @@ fn add_watch(code: string) {
     bump_scheme()
 }
 
-/// The search field holds a bare scheme code: add it without a result row.
+/** *The search field holds a bare scheme code: add it without a result row. */
 fn add_typed() {
     if search_input.id == 0 {
         return
@@ -963,7 +963,7 @@ fn chart_decimals() -> int {
     return nav_decimals
 }
 
-/// Label, value, caption triples for the stat cards.
+/** *Label, value, caption triples for the stat cards. */
 fn stat_cells() -> []string {
     return stat_texts
 }

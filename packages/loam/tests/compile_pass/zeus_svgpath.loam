@@ -23,7 +23,7 @@ const PAUSE: string = "<svg viewBox=\"0 0 24 24\" fill=\"currentColor\"><rect x=
 const ARC: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"butt\" stroke-linejoin=\"bevel\"><path d=\"M2 12A10 10 0 0 1 22 12\"/></svg>"
 const WIDE: string = "<svg viewBox=\"0 0 10 20\" fill=\"#ff0000\"><rect x=\"0\" y=\"0\" width=\"10\" height=\"20\"/></svg>"
 
-/// Path ops of `kind` in the last frame.
+/** *Path ops of `kind` in the last frame. */
 fn count(kind: int) -> int {
     let mut n = 0
     for i in 0..scene.frame_n {
@@ -34,7 +34,7 @@ fn count(kind: int) -> int {
     return n
 }
 
-/// Commands of `cmd` across the path stream of op `i`.
+/** *Commands of `cmd` across the path stream of op `i`. */
 fn cmds_in(i: int, cmd: int) -> int {
     let start = scene.frame_ops[i * 11 + 9]
     let len = scene.frame_ops[i * 11 + 3]

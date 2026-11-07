@@ -80,7 +80,7 @@ def main() -> int:
     uri = loam_path.resolve().as_uri()
     bad = "fn main() {\n    let x = y\n}\n"
     good = (
-        "/// Adds two integers.\n"
+        "/** *Adds two integers. */\n"
         "fn add(a: int, b: int) -> int {\n"
         "    return a + b\n"
         "}\n"
@@ -131,6 +131,16 @@ def main() -> int:
         "}\n"
     )
     kv_uri = (ROOT / "tmp" / "lsp_kv.loam").resolve().as_uri()
+
+    doc_src = (
+        "/**\n"
+        " * Adds two integers.\n"
+        " */\n"
+        "fn add(a: int, b: int) -> int { return a + b }\n"
+        "/** *plain one */\n"
+        "// note\n"
+    )
+    doc_uri = (ROOT / "tmp" / "lsp_doc.loam").resolve().as_uri()
 
     payload = (
         rpc({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {}}})
@@ -397,6 +407,36 @@ def main() -> int:
                 "params": {"textDocument": {"uri": kv_uri}, "position": {"line": 0, "character": 12}},
             }
         )
+        + rpc(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": doc_uri,
+                        "languageId": "loam",
+                        "version": 1,
+                        "text": doc_src,
+                    }
+                },
+            }
+        )
+        + rpc(
+            {
+                "jsonrpc": "2.0",
+                "id": 24,
+                "method": "textDocument/hover",
+                "params": {"textDocument": {"uri": doc_uri}, "position": {"line": 3, "character": 3}},
+            }
+        )
+        + rpc(
+            {
+                "jsonrpc": "2.0",
+                "id": 25,
+                "method": "textDocument/semanticTokens/full",
+                "params": {"textDocument": {"uri": doc_uri}},
+            }
+        )
         + rpc({"jsonrpc": "2.0", "id": 6, "method": "shutdown", "params": None})
         + rpc({"jsonrpc": "2.0", "method": "exit"})
     )
@@ -434,6 +474,9 @@ def main() -> int:
     types = legend.get("tokenTypes") if isinstance(legend, dict) else None
     if not isinstance(types, list) or "keyword" not in types:
         return fail("semanticTokens legend missing keyword", caps)
+    mods = legend.get("tokenModifiers") if isinstance(legend, dict) else None
+    if not isinstance(mods, list) or "documentation" not in mods:
+        return fail("semanticTokens legend missing documentation modifier", caps)
 
     diags_msgs = [m for m in messages if m.get("method") == "textDocument/publishDiagnostics"]
     if not diags_msgs:
@@ -464,7 +507,7 @@ def main() -> int:
     if "add" not in value or "fn(" not in value:
         return fail("hover on add() should show fn type", value)
     if "Adds two integers" not in value:
-        return fail("hover on add() should include /// doc comment", value)
+        return fail("hover on add() should include the doc comment", value)
 
     if 5 not in hovers:
         return fail("no hover result for param a", messages)
@@ -655,6 +698,35 @@ def main() -> int:
     ilabs = [it.get("label") for it in iitems if isinstance(it, dict)] if isinstance(iitems, list) else []
     if "std:kv" not in ilabs:
         return fail("import completion should list std:kv", ilabs[:40])
+
+    doc_hover = [m for m in messages if m.get("id") == 24 and "result" in m]
+    if not doc_hover:
+        return fail("no hover result for a block doc comment", messages)
+    value_doc = hover_text(doc_hover[0].get("result"))
+    if "Adds two integers" not in value_doc:
+        return fail("hover should include a multi-line doc comment", value_doc)
+
+    dtoks = [m for m in messages if m.get("id") == 25 and "result" in m]
+    if not dtoks:
+        return fail("no semanticTokens/full result for doc buffer", messages)
+    ddata = dtoks[0].get("result", {}).get("data")
+    if not isinstance(ddata, list) or len(ddata) < 5:
+        return fail("doc semantic tokens empty", dtoks[0].get("result"))
+    dline = dcol = 0
+    dpos = {}
+    for j in range(0, len(ddata) - 4, 5):
+        dline += ddata[j]
+        if ddata[j] == 0:
+            dcol += ddata[j + 1]
+        else:
+            dcol = ddata[j + 1]
+        dpos[(dline, dcol, ddata[j + 2])] = (ddata[j + 3], ddata[j + 4])
+    if dpos.get((0, 0, 3)) != (10, 2):
+        return fail("block doc opener should be comment + documentation", dpos)
+    if dpos.get((4, 0, len("/** *plain one */"))) != (10, 2):
+        return fail("single-line doc comment should be comment + documentation", dpos)
+    if dpos.get((5, 0, len("// note"))) != (10, 0):
+        return fail("plain // comment should not be documentation", dpos)
 
     print("ok   loam-lsp (%d diagnostic(s), hover, definition, completion, semantic tokens)" % len(items))
     return 0

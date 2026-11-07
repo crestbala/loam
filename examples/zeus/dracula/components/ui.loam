@@ -1,13 +1,13 @@
-//! Screen pieces the pages share, built from `zui`. Nothing here is a
-//! widget of its own: stat cards from label, value, caption triples, the
-//! server-down state, and a table row with an action beside it.
+// Screen pieces the pages share, built from `zui`. Nothing here is a
+// widget of its own: stat cards from label, value, caption triples, the
+// server-down state, and a table row with an action beside it.
 
 import "zeus:router"
 import "zui:spacing"
 import "zeus"
 import "zui"
 
-/// Label, value, caption triples as stat cards that wrap across the row.
+/** *Label, value, caption triples as stat cards that wrap across the row. */
 fn StatGrid(cells: []string) -> Node {
     let n = cells.len / 3
     return zui.RowWrap(Space.Sm) {
@@ -24,8 +24,8 @@ fn StatGrid(cells: []string) -> Node {
     }
 }
 
-/// `StatGrid` over live cells: a write that keeps the number of cards moves
-/// their text in place; only a different count rebuilds the grid.
+/** *`StatGrid` over live cells: a write that keeps the number of cards moves */
+/** *their text in place; only a different count rebuilds the grid. */
 fn StatGridOf(cells: Signal<[]string>) -> Node {
     return zui.MatchBy(cells, fn(c: []string) -> string { return "{{c.len / 3}}" }, fn(
         p: Signal<[]string>
@@ -53,7 +53,7 @@ fn stat_grid_live(p: Signal<[]string>) -> Node {
     }
 }
 
-/// What a dead RPC looks like on a page, with the way out.
+/** *What a dead RPC looks like on a page, with the way out. */
 fn ServerDown(retry: fn()) -> Node {
     return zui.Empty(
         icon = zeus.IC_INFO,
@@ -64,7 +64,7 @@ fn ServerDown(retry: fn()) -> Node {
     }
 }
 
-/// Header for a table whose rows carry an action at the right end.
+/** *Header for a table whose rows carry an action at the right end. */
 fn HeadWithAction(spec: []TableCol) -> Node {
     return zui.Row(Space.Sm) {
         let head = zui.Column(0) {
@@ -75,8 +75,8 @@ fn HeadWithAction(spec: []TableCol) -> Node {
     }
 }
 
-/// A row that opens `href` on click, with `action` at the right end, kept
-/// out of the row so the click on it does not navigate.
+/** *A row that opens `href` on click, with `action` at the right end, kept */
+/** *out of the row so the click on it does not navigate. */
 fn LinkRowWithAction(cells: []string, spec: []TableCol, href: string, action: fn()) -> Node {
     return zui.Row(Space.Sm) {
         let body = zui.Column(0) {
