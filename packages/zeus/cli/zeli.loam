@@ -1690,7 +1690,7 @@ fn generate(appdir: string) -> string {
         text = cat(text, lines[i])
     }
     text = cat(text, "\n")
-    sys.write_file(out, text)
+    write_if_same(out, text)
     return out
 }
 
@@ -1839,6 +1839,16 @@ fn read_text_if_present(p: string) -> string {
     return sys.read_file(p)
 }
 
+/// Write `text` to `path` only when the bytes differ. A generated file that is
+/// rewritten with the same text still gets a new mtime, and that mtime is what
+/// makes the compiler treat an unchanged app as new.
+fn write_if_same(path: string, text: string) {
+    if read_text_if_present(path) == text {
+        return
+    }
+    sys.write_file(path, text)
+}
+
 /// A regenerated route table: whether it worked, and whether it differs from
 /// what was there before.
 struct Regen {
@@ -1892,6 +1902,60 @@ fn shard_env(appdir: string) -> string {
     return cat("LOAM_SHARD=", shell_quote(join(join(appdir, ".zeus"), "cc")))
 }
 
+/// Bump when the HTML shell, the split, or the compression of a web build changes
+/// without the wasm bytes changing. The published site is reused only while this
+/// matches.
+const WEB_STAMP: string = "1"
+
+/// The linked wasm for one web mode (`serve`, `build`, or `release`). It lives
+/// outside `build/web` so a republish can clear that directory and the next run
+/// can still see that the compile itself did not change.
+fn wasm_object(appdir: string, kind: string, stem: string) -> string {
+    let dir = join(join(join(appdir, ".zeus"), "out"), kind)
+    sys.mkdir(dir)
+    return join(dir, cat(stem, ".wasm"))
+}
+
+fn site_stamp_text(kind: string, base: string, hash: string) -> string {
+    return "{{WEB_STAMP}}\n{{kind}}\n{{base}}\n{{hash}}\n"
+}
+
+/// One stamp for the directory serve and build share. It records which mode
+/// last wrote `build/web`, so a serve cannot treat a build's pages as current.
+fn published_stamp(appdir: string) -> string {
+    return join(join(appdir, ".zeus"), "web.site")
+}
+
+/// True when `build/web` is already the site for this wasm, mode, and base URL.
+fn web_is_current(appdir: string, kind: string, base: string, stem: string) -> bool {
+    let wasm = wasm_object(appdir, kind, stem)
+    let web = join(join(appdir, "build"), "web")
+    if sys.exists(wasm) == 0 || sys.exists(join(web, "index.html")) == 0 {
+        return false
+    }
+    if sys.exists(join(web, "_zeus")) == 0 {
+        return false
+    }
+    return read_text_if_present(published_stamp(appdir)) == site_stamp_text(kind, base, short_hash(wasm))
+}
+
+fn write_site_stamp(appdir: string, kind: string, base: string, stem: string) {
+    let wasm = wasm_object(appdir, kind, stem)
+    write_if_same(published_stamp(appdir), site_stamp_text(kind, base, short_hash(wasm)))
+}
+
+/// Copy the cached wasm, the C the splitter reads, and `loader.js` into `dir`.
+/// The compiler writes the loader next to the wasm, which is the cache, not
+/// `build/web`.
+fn stage_wasm(src: string, dir: string, stem: string) -> bool {
+    let dst = join(dir, cat(stem, ".wasm"))
+    let loader = join(dir_of(src), "loader.js")
+    sys.exec(
+        "cp {{shell_quote(src)}} {{shell_quote(dst)}} && cp {{shell_quote(cat(src, \".c\"))}} {{shell_quote(cat(dst, \".c\"))}} && cp {{shell_quote(loader)}} {{shell_quote(join(dir, \"loader.js\"))}}",
+    )
+    return sys.exec_status() == 0 && sys.exists(cat(dst, ".c")) == 1 && sys.exists(join(dir, "loader.js")) == 1
+}
+
 /// Regenerate the route table and typecheck the entry: the part of a build that
 /// is not the compiler, and the part every target needs before it can be built
 /// or launched.
@@ -1922,7 +1986,12 @@ fn serve_routes(appdir: string) -> BuildStep {
 ///
 /// There is no separate check here: the compile below runs the same frontend and
 /// reports the same errors, so a check first would only pay for it twice.
-fn serve_build(appdir: string, target: string) -> BuildStep {
+///
+/// `wipe` clears `build/web` before a split republish. The first serve of a
+/// process asks for that, so a route that was removed does not leave a page
+/// behind. A rebuild while the server is up does not: the pages stay until the
+/// new files replace them.
+fn serve_build(appdir: string, target: string, wipe: bool) -> BuildStep {
     ui_build_begin()
     let step = serve_routes(appdir)
     if !step.ok {
@@ -1932,10 +2001,20 @@ fn serve_build(appdir: string, target: string) -> BuildStep {
     let entry = find_entry(appdir)
     let stem = drop_suffix(base_name(entry), ".loam")
     let dir = join(join(appdir, "build"), target)
-    sys.mkdir(dir)
-    let out = join(dir, out_name(target, stem))
     // Dev splits like a release, so the Network tab shows what visitors get.
     let split = target == "web" && can_split(appdir)
+    let mut out = join(dir, out_name(target, stem))
+    if split {
+        // Keep the linked module where a later serve can reuse it. The C has to
+        // sit beside it: a fresh compile does not write the C again.
+        out = wasm_object(appdir, "serve", stem)
+        if sys.exists(cat(out, ".c")) == 0 && sys.exists(out) == 1 {
+            sys.remove_path(out)
+        }
+    } else if wipe && target == "web" {
+        fresh_target_dir(appdir, target)
+    }
+    sys.mkdir(dir)
     let mut flags = target_flags(target)
     if split {
         flags = cat(flags, " --wasm-split-input")
@@ -1966,6 +2045,19 @@ fn serve_build(appdir: string, target: string) -> BuildStep {
         require_meta(jobs[1])
     }
     if split {
+        if web_is_current(appdir, "serve", "", stem) {
+            chat("zeli: web up to date")
+            ui_bar_end(ui_bundle, UI_OK)
+            return BuildStep { ok: true, routes_changed: step.routes_changed }
+        }
+        if wipe {
+            fresh_target_dir(appdir, target)
+        }
+        if !stage_wasm(out, dir, stem) {
+            ui_set_status("Build failed", true, ui_build_ms())
+            say("zeli: could not stage the compiled wasm")
+            return BuildStep { ok: false, routes_changed: step.routes_changed }
+        }
         // Hashes change with every edit, so clear the last build's files.
         let assets = join(dir, "_zeus")
         sys.exec("rm -rf {{shell_quote(assets)}}")
@@ -1973,6 +2065,7 @@ fn serve_build(appdir: string, target: string) -> BuildStep {
         emit_web_shell(appdir, web_assets, "")
         compress_web(dir, BR_DEV)
         report_web_sizes(dir, web_assets)
+        write_site_stamp(appdir, "serve", "", stem)
     } else if target == "web" && routed {
         emit_web_shell(appdir, plain_assets(stem), "")
         compress_web(dir, BR_DEV)
@@ -2173,14 +2266,15 @@ fn serve(appdir: string, target: string, port: int, build_only: bool) -> int {
     if target == "web" && !build_only {
         ui_url = "http://127.0.0.1:{{port}}"
     }
-    // Start from an empty `build/<target>`; the watch rebuilds that follow
-    // write over it in place, so the running app and its log stay put.
-    fresh_target_dir(appdir, target)
+    // Device builds own a directory of generated project files, so start those
+    // empty. Web and native keep the last binary: when nothing changed the
+    // compiler reuses it instead of compiling again.
     chat("zeli: initial build…")
     if target == "ios" || target == "android" {
+        fresh_target_dir(appdir, target)
         return serve_device(appdir, target, stem, entry, build_only)
     }
-    let first = serve_build(appdir, target)
+    let first = serve_build(appdir, target, true)
     if first.routes_changed {
         chat("zeli: routes -> app_routes.loam")
     }
@@ -2954,7 +3048,7 @@ fn serve_web(appdir: string, port: int) -> int {
         let batch = watch_batch(h, roots, 50)
         if batch.len > 0 {
             chat("zeli: {{batch.len}} source file(s) changed, rebuilding…")
-            let r = serve_build(appdir, "web")
+            let r = serve_build(appdir, "web", false)
             if r.routes_changed {
                 chat("zeli: routes -> app_routes.loam")
             }
@@ -3049,7 +3143,7 @@ fn serve_native(appdir: string, target: string, stem: string) -> int {
         if batch.len > 0 {
             chat("zeli: {{batch.len}} source file(s) changed, rebuilding…")
             said_exited = false
-            let r = serve_build(appdir, target)
+            let r = serve_build(appdir, target, false)
             if r.routes_changed {
                 chat("zeli: routes -> app_routes.loam")
             }
@@ -3213,7 +3307,7 @@ fn serve_device(
     build_only: bool
 ) -> int {
     if build_only {
-        let r = serve_build(appdir, target)
+        let r = serve_build(appdir, target, true)
         if r.routes_changed {
             chat("zeli: routes -> app_routes.loam")
         }
@@ -4145,17 +4239,20 @@ fn fresh_target_dir(appdir: string, target: string) -> string {
 /// `zeli build <appdir> [--targets web,macos,...] [--base https://host] [--release]`
 ///
 /// Generates the route table when `routes/` exists, then compiles the app for
-/// each target into `<appdir>/build/<target>/`, which is removed first when a
-/// previous build left it. After a successful web build it
-/// emits one HTML shell per route plus `sitemap.xml` / `robots.txt`.
+/// each target. The compile is the typecheck: a diagnostic is reported once,
+/// prefixed with `failed the compiler check`, and a clean app is not checked
+/// again before that compile.
 ///
 /// Targets whose host toolchain is missing (iOS/Android SDKs) fail individually
 /// and the rest still build, so one missing SDK does not cost you the others.
 /// The exit code is 1 only when nothing built.
 ///
-/// A routed web build reuses `serve`'s cached units and a lighter `wasm-opt`, so a
-/// rebuild takes about a second or two. `--release` (`full`) is the smallest output
-/// instead: one whole-program compile and `-Oz`, several times slower.
+/// A routed web build keeps the linked wasm under `.zeus/out` and republishes
+/// `build/web` only when that wasm, the base URL, or the shell changed, and
+/// only when this command was the one that published the directory. An
+/// unchanged app finishes in well under a second. `--release` (`full`) is the
+/// smallest output instead: one whole-program compile and `-Oz`, several times
+/// slower, and it is cached the same way.
 fn build(appdir: string, targets: []string, base: string, full: bool) -> int {
     if sys.exists(loam_path()) == 0 {
         die("zeli: missing {{loam_path()}} — run `make` in {{repo_root()}} first")
@@ -4166,9 +4263,6 @@ fn build(appdir: string, targets: []string, base: string, full: bool) -> int {
         }
     }
     let entry = find_entry(appdir)
-    if !check_entry(entry) {
-        return 1
-    }
     let stem = drop_suffix(base_name(entry), ".loam")
     let routed = sys.exists(join(appdir, "routes")) == 1
     ui_open(platform_list(targets), false)
@@ -4185,12 +4279,13 @@ fn build(appdir: string, targets: []string, base: string, full: bool) -> int {
     let mut wants_web = false
     for i in 0..targets.len {
         let t = targets[i]
-        let dir = fresh_target_dir(appdir, t)
-        let out = join(dir, out_name(t, stem))
-        push(outs, out)
+        let dir = join(join(appdir, "build"), t)
+        let shown = join(dir, out_name(t, stem))
+        push(outs, shown)
         let mut flags = target_flags(t)
         let report = ui_report_file(appdir, t)
         if flags == "" && native >= 0 {
+            fresh_target_dir(appdir, t)
             let shared = job_of[native]
             push(job_of, shared)
             ui_add(t, native_report, shared, true, "Starting")
@@ -4200,15 +4295,24 @@ fn build(appdir: string, targets: []string, base: string, full: bool) -> int {
             native = i
             native_report = report
         }
+        let mut out = shown
         if t == "web" {
             wants_web = true
             flags = cat(flags, " --wasm-release")
             if routed {
                 flags = cat(flags, " --wasm-split-input")
+                out = wasm_object(appdir, if full { "release" } else { "build" }, stem)
+                if sys.exists(cat(out, ".c")) == 0 && sys.exists(out) == 1 {
+                    sys.remove_path(out)
+                }
+                sys.mkdir(dir)
             }
             if !has_tool("wasm-opt") || !has_tool("wasm-split") {
                 die("zeli: wasm-opt and wasm-split are needed for a web release: install binaryen.")
             }
+        }
+        if out == shown {
+            fresh_target_dir(appdir, t)
         }
         let mut args = cat(cat(shell_quote(entry), " -o "), shell_quote(out))
         if flags != "" {
@@ -4231,6 +4335,7 @@ fn build(appdir: string, targets: []string, base: string, full: bool) -> int {
     let jobs = run_jobs(join(appdir, ".zeus"), cmds)
 
     let mut built = 0
+    let mut said_check = false
     for i in 0..targets.len {
         let t = targets[i]
         let out = outs[i]
@@ -4240,21 +4345,37 @@ fn build(appdir: string, targets: []string, base: string, full: bool) -> int {
             ok = sys.exec_status() == 0
         }
         if ok {
-            say("zeli: {{t}} ok -> {{rel_to(repo_root(), out)}}")
-            built += 1
             if t == "web" && routed {
                 require_meta(jobs[meta_job])
+                let kind = if full { "release" } else { "build" }
                 let web = join(join(appdir, "build"), "web")
-                let web_assets = split_web(appdir, web, stem, release_opt(full))
-                emit_web_shell(appdir, web_assets, base)
-                compress_web(web, if full { BR_RELEASE } else { BR_DEV })
-                report_web_sizes(web, web_assets)
-                if !full {
-                    chat("zeli: for the smallest download, deploy a `zeli build --release`")
+                if web_is_current(appdir, kind, base, stem) {
+                    say("zeli: web up to date -> {{rel_to(repo_root(), web)}}")
+                } else {
+                    fresh_target_dir(appdir, "web")
+                    if !stage_wasm(wasm_object(appdir, kind, stem), web, stem) {
+                        say("zeli: web failed\n  could not stage the compiled wasm")
+                        ok = false
+                    } else {
+                        say("zeli: {{t}} ok -> {{rel_to(repo_root(), out)}}")
+                        let web_assets = split_web(appdir, web, stem, release_opt(full))
+                        emit_web_shell(appdir, web_assets, base)
+                        compress_web(web, if full { BR_RELEASE } else { BR_DEV })
+                        report_web_sizes(web, web_assets)
+                        write_site_stamp(appdir, kind, base, stem)
+                        if !full {
+                            chat("zeli: for the smallest download, deploy a `zeli build --release`")
+                        }
+                    }
                 }
-                ui_bar_end(ui_bundle, UI_OK)
+                ui_bar_end(ui_bundle, if ok { UI_OK } else { UI_FAILED })
+            } else {
+                say("zeli: {{t}} ok -> {{rel_to(repo_root(), out)}}")
             }
-            if t == "macos" && sys.target() == "native" && sys.exists("/usr/bin/codesign") == 1 {
+            if ok {
+                built += 1
+            }
+            if ok && t == "macos" && sys.target() == "native" && sys.exists("/usr/bin/codesign") == 1 {
                 let bundle = macos_bundle(appdir, out)
                 if bundle != "" {
                     say("zeli: macos app -> {{rel_to(repo_root(), bundle)}}")
@@ -4262,6 +4383,10 @@ fn build(appdir: string, targets: []string, base: string, full: bool) -> int {
             }
         } else {
             let body = trim(jobs[job_of[i]].log)
+            if !said_check && contains_str(body, ": error:") {
+                say("zeli: {{rel_to(repo_root(), entry)}} failed the compiler check")
+                said_check = true
+            }
             if body == "" {
                 say("zeli: {{t}} failed")
             } else {
@@ -4438,7 +4563,7 @@ fn meta_compile_cmd(appdir: string) -> string {
     let zdir = join(appdir, ".zeus")
     let src = join(zdir, "meta_dump.loam")
     sys.mkdir(zdir)
-    sys.write_file(src, meta_dump_source())
+    write_if_same(src, meta_dump_source())
     let bin = join(zdir, "meta_dump")
     /* The dump only *calls* meta()/paths(); a DCE edge case can drop a needed
        std:zeus helper while keeping its call, so compile it with DCE off. */
