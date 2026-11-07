@@ -2,8 +2,8 @@
 // non-lazy `Show` builds its children up front, and a live spin repaints the
 // whole window every frame.
 
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn must(ok: bool, msg: string) {
     if !ok {

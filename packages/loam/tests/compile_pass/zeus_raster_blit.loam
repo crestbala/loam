@@ -10,11 +10,11 @@
 
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zeusraster"
+import "zeus"
+import "zeus:zeusraster"
 // Reached directly (and relatively) so the C seam's length guard can be
 // exercised with a slice that is deliberately too short to be a frame.
-import "../../../zeus/std/zeuscore/platform.loam" as platform
+import "../../../zeus/src/zeuscore/platform.loam" as platform
 
 fn must(ok: bool, what: string) {
     if ok {

@@ -941,7 +941,8 @@ static const char *struct_cname_of(AstNode *st) {
     int home = module_of_decl(st);
     if (home < 0 || home >= Gn) return NULL;
     const char *path = Gmods[home].path;
-    if (path && strstr(path, "/std/")) return NULL;
+    /* Language std and package `src/` keep the struct names the runtime C uses. */
+    if (path && loam_is_std_path(path)) return NULL;
     int dup = 0;
     for (int m = 0; m < Gn; m++) {
         if (m == home) continue;

@@ -12,7 +12,7 @@
 //! which a client build does not import. Calling a `#[server] fn` from the UI
 //! traps; nothing in this file is one.
 
-import "std:http"
+import "http"
 
 #[proto]
 struct SyncReq {}

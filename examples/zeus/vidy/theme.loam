@@ -2,7 +2,7 @@
 //! player's red, used by the few zui widgets it borrows (the URL dialog).
 //! The palette consts are what vidy's own components paint with.
 
-import "std:zeus"
+import "zeus"
 
 const WHITE: string = "#FFFFFF"
 /// Secondary text: times, descriptions.

@@ -51,9 +51,9 @@ function wasmIsCurrent() {
   newestMtime(resolve(here, ".."), acc);
   newestMtime(resolve(repo, "packages/loam/std"), acc);
   newestMtime(resolve(repo, "packages/loam/runtime"), acc);
-  newestMtime(resolve(repo, "packages/zeus/std"), acc);
-  newestMtime(resolve(repo, "packages/http/std"), acc);
-  newestMtime(resolve(repo, "packages/maya/std"), acc);
+  newestMtime(resolve(repo, "packages/zeus/src"), acc);
+  newestMtime(resolve(repo, "packages/http/src"), acc);
+  newestMtime(resolve(repo, "packages/maya/src"), acc);
   newestMtime(resolve(repo, "packages/zeus/hosts/web"), acc);
   return acc.t <= wasmT;
 }
@@ -150,9 +150,9 @@ export default defineConfig({
           resolve(here, ".."),
           resolve(repo, "packages/loam/std"),
           resolve(repo, "packages/loam/runtime"),
-          resolve(repo, "packages/zeus/std"),
-          resolve(repo, "packages/http/std"),
-          resolve(repo, "packages/maya/std"),
+          resolve(repo, "packages/zeus/src"),
+          resolve(repo, "packages/http/src"),
+          resolve(repo, "packages/maya/src"),
           resolve(repo, "packages/zeus/hosts/web"),
         ];
         for (const p of watch) {

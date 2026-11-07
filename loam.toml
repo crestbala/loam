@@ -1,0 +1,10 @@
+[workspace]
+members = [
+    "packages/zeus",
+    "packages/zeus-components",
+    "packages/http",
+    "packages/maya",
+    "packages/raygui",
+    "packages/sqlite",
+    "packages/crypto",
+]

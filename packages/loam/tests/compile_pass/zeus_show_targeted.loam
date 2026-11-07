@@ -4,8 +4,8 @@
 // targeted frame's draw list is identical to a full repaint of the same state.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 import "zeus:zeuscore/arena"
 
 fn must(ok: bool, what: string) {

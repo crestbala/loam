@@ -3,8 +3,8 @@
 // changes and nothing else does. Keep this file free of prints: stdout is the
 // golden.
 
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn main() {
     zeus.snapshot(420, 200, fn() -> Node {

@@ -6,8 +6,8 @@
 import "std:fmt"
 import "std:str"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 struct Rec {
     name: string,

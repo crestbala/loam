@@ -2,11 +2,11 @@
 //! build a surface — a recipe (`zui.Card`) and a primitive (`zui.Comp`).
 //! Every color is a role token, so the whole page inverts with the appearance.
 
-import "std:zeus"
-import "std:colors"
-import "std:colors"
-import "std:spacing"
-import "std:zui"
+import "zeus"
+import "zui:colors"
+import "zui:colors"
+import "zui:spacing"
+import "zui"
 
 fn ProjectCard() -> Node {
     let ticks = zeus.signal(0)

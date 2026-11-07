@@ -3,8 +3,8 @@
 
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:res"
+import "zeus"
+import "zeus:res"
 
 fn load_ok(gen: int, settle: fn(int, string, int)) {
     settle(gen, "", 42)

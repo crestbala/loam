@@ -5,8 +5,8 @@
 
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn Row(i: int, s: string) -> Node {
     let c = zeus.signal(0)

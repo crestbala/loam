@@ -3,12 +3,12 @@
 // to report the same thing.
 
 import "std:async"
-import "std:crypto"
+import "crypto"
 import "std:fmt"
-import "std:http"
+import "http"
 import "std:net"
 import "std:result"
-import "std:sqlite"
+import "sqlite"
 import "std:str"
 import "std:sys"
 import "../../../../www/server/api.loam" as api

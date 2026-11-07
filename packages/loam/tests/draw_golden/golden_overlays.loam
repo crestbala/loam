@@ -3,10 +3,10 @@
 // Tooltips / hover cards are hover-triggered, so they are closed on this
 // settled first frame. Keep this file free of prints: stdout is the golden.
 
-import "std:zeus"
-import "std:colors"
-import "std:spacing"
-import "std:zui"
+import "zeus"
+import "zui:colors"
+import "zui:spacing"
+import "zui"
 
 fn main() {
     let open = zeus.signal(true)

@@ -5,7 +5,7 @@
 //! connection. Run `./run.sh` in the demo root, then open http://127.0.0.1:5173
 //! and watch the wasm page count ticks.
 
-import "std:http"
+import "http"
 import "std:net"
 import "std:async"
 import "std:fmt"

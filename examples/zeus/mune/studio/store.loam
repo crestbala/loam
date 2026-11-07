@@ -16,7 +16,7 @@
 import "std:async"
 import "std:str"
 import "std:sys"
-import "std:zeus"
+import "zeus"
 import "../core/arrange.loam" as arrange
 import "../core/graph.loam" as graph
 import "../core/jobs.loam" as jobs

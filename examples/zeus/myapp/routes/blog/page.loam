@@ -1,7 +1,7 @@
-import "std:zeus"
-import "std:zui"
-import "std:router"
-import "std:spacing"
+import "zeus"
+import "zui"
+import "zeus:router"
+import "zui:spacing"
 import "loader.loam" as blog_loader
 
 fn Page(p: Params) -> Node {

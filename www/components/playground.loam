@@ -1,9 +1,9 @@
 //! The playground: pick an example or write a program, run it in the page.
 
-import "std:zeus"
-import "std:spacing"
-import "std:colors"
-import "std:zui"
+import "zeus"
+import "zui:spacing"
+import "zui:colors"
+import "zui"
 import "std:str"
 import "runner.loam" as runner
 import "editor.loam" as editor

@@ -1,7 +1,7 @@
-import "std:router"
-import "std:spacing"
-import "std:zeus"
-import "std:zui"
+import "zeus:router"
+import "zui:spacing"
+import "zeus"
+import "zui"
 import "../components/book.loam" as book
 import "../components/ui.loam" as ui
 

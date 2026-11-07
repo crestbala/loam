@@ -1,6 +1,6 @@
 //! Full-bleed dark room. The page supplies the column.
 
-import "std:zeus"
+import "zeus"
 import "../theme.loam" as theme
 
 fn Layout(build: fn()) -> Node {

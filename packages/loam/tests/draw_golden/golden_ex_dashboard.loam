@@ -1,7 +1,7 @@
 // DRAW-list golden: the first frame of examples/zeus/dashboard at its own
 // window size. Keep this file free of prints: stdout is the golden.
 
-import "std:zeus"
+import "zeus"
 import "../../../../examples/zeus/dashboard/dashboard.loam" as dashboard
 
 fn main() {

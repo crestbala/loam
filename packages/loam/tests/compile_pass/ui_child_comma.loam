@@ -1,7 +1,7 @@
 // Trailing commas after UI children and after the last named Box prop.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
+import "zeus"
 
 fn Kids() -> Node {
     return zeus.Box(

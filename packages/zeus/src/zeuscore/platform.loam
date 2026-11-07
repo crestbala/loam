@@ -1,0 +1,169 @@
+//! platform — the host contract. Bodyless `fn`s are the link boundary
+//! (docs/boundary.md): the compiler emits `loam_platform_plat_*` declarations
+//! and the host provides them, through `zeus_plat.c`'s hooks. Everything here is
+//! an OS service (paint, text measure, window, clock, clipboard, media…). The
+//! engine's own runtime builtins live in `runtime.loam`. No widget or layout
+//! logic here.
+
+fn plat_run() {}
+fn plat_headless() -> int {}
+fn plat_measure(s: string, px: int, w: &mut int, h: &mut int) {}
+/// The frame: the whole draw list in one call, in the versioned format of
+/// `packages/zeus/docs/frame-format.md` (the op table lives there, once).
+/// `head` is `magic version stride n ns np`; `ops` holds `n` records of
+/// `stride` ints; `strs` the `ns` strings text and image ops index; `path` the
+/// `np` ints path ops index. The runtime either replays it into the host's
+/// `ZeusDraw` (`zeus_replay`) or hands it whole to a frame sink
+/// (`zeus_bind_frame`), which is how the web host decodes it in JS.
+fn plat_frame(head: []int, ops: []int, strs: []string, path: []int) {}
+/// Set the family every later measure and draw uses. One global family, not
+/// a per-node field: the text ABI carries a pixel size only, and every host
+/// (Cocoa / Canvas2D / Android) would have to change to thread a family
+/// through it. A design system uses one typeface, so the host holds it.
+fn plat_set_font_family(name: string) {}
+/// Register a font the host does not already have: `src` is a file path or,
+/// on the web, a URL. Returns 1 when the host accepted it. Call before
+/// `plat_set_font_family(name)`.
+fn plat_load_font(family: string, src: string) -> int {}
+fn plat_measure_int(v: int, px: int, w: &mut int, h: &mut int) {}
+fn plat_measure_wrap(s: string, px: int, max_w: int, w: &mut int, h: &mut int) {}
+/// Bytes of a font file for in-tree metrics (`std:font`): a path on desktop, a
+/// URL on the web. Empty when the host cannot provide them; the caller then
+/// keeps host measurement (`packages/zeus/src/zeuscore/metrics.loam`).
+fn plat_font_bytes(src: string) -> string {}
+fn plat_set_window(title: string, width: int, height: int) {}
+/// Update the host window title without reopening it (router `Meta.title`).
+fn plat_set_title(title: string) {}
+/// Update one piece of the page's metadata (`Meta`, by field name). "" removes
+/// it. Only a browser has a `<head>`; other hosts ignore this.
+fn plat_set_head(key: string, value: string) {}
+/// Window chrome: 0 the host's title bar, 1 drawn by the app (`TitleBar`).
+fn plat_set_chrome(mode: int) {}
+/// The host title bar's box under app-drawn chrome: [height, lead, trail] in
+/// points (window buttons' room on the left / right). Zero without one.
+fn plat_titlebar_get(out: &mut []int) {}
+/// Write the title-bar box (desktop hosts do; tests through `engine_set_titlebar`).
+fn plat_set_titlebar_box(height: int, lead: int, trail: int) {}
+/// Put `text` on the system clipboard (`CopyButton`). The runtime also keeps
+/// it, so `plat_clipboard_last` reads it back on a headless run.
+fn plat_clipboard_write(text: string) {}
+fn plat_clipboard_last() -> string {}
+/// 1 when shortcuts follow Apple conventions (⌘, ⌥, ⇧ glyphs): macOS, iOS,
+/// and a browser on an Apple platform.
+fn plat_apple_keys() -> int {}
+/// Host view size in points (browser canvas or native content view). On
+/// desktop hosts before the window exists this is the device screen's work
+/// area (window_size() → the default window is screen-filling); after the
+/// window opens it is the live view size.
+fn plat_view_width() -> int {}
+fn plat_view_height() -> int {}
+/// Intrinsic size of the decoded image at `src` in layout points: 0 while the
+/// host is still decoding it (remote loads) or cannot decode it at all.
+/// Layout reads it so an `Image` with no explicit `width` keeps the source
+/// aspect ratio and shrinks to the container (device) width instead of
+/// collapsing to zero height. Hosts answer from their decode cache; a remote
+/// image reports 0 for a frame or two, then the host's own redraw re-lays out.
+fn plat_image_size(src: string, w: &mut int, h: &mut int) {}
+/// Open a host image picker. Returns a path / blob URL immediately, or empty
+/// if the host completes later via `engine_picked_image`. `w`/`h` are the
+/// image's intrinsic size in layout points (0 if still loading).
+fn plat_pick_image(w: &mut int, h: &mut int) -> string {}
+/// Media playback (video and audio), decoded and played by the host: an
+/// HTMLVideoElement on the web, AVPlayer on macOS. `slot` (1..7) names one
+/// player. An `Image` whose src is `"media:<slot>"` paints that player's
+/// current frame, and hosts keep frames coming while one plays. Returns 1
+/// when the host accepted the source (it may still fail to load later:
+/// watch `plat_media_get(slot, MEDIA_STATE)`).
+fn plat_media_open(slot: int, src: string) -> int {}
+/// Play / pause / seek / rate / volume / mute / loop / close (`MEDIA_CMD_*`).
+fn plat_media_cmd(slot: int, cmd: int, value: int) {}
+/// Position, duration, state, video size, buffered end (`MEDIA_GET_*`).
+fn plat_media_get(slot: int, what: int) -> int {}
+/// Text about a player: 0 = last error, 1 = last picked file as
+/// `"name\nsrc"` (slot ignored; `MEDIA_GET_PICKED` counts picks).
+fn plat_media_text(slot: int, what: int) -> string {}
+/// Open the host's file picker (or accept a dropped file) for media. The
+/// result arrives later: `plat_media_get(0, MEDIA_GET_PICKED)` moves.
+fn plat_media_pick() {}
+/// Open a Finder-style panel limited to audio, several files at once.
+/// Hosts without one fall back to `plat_media_pick`.
+fn plat_media_pick_audio() {}
+/// One file arrived, the way a drop does. Several calls queue. The pick
+/// counter advances one file at a time, after the previous file's text has
+/// been read.
+fn plat_media_dropped(name: string, src: string) {}
+/// Voice tools, async. `what` 1 maps where a voice is in `src`, 2 writes
+/// `src` minus its voice. 1 when started; `out`, then `out.done` or
+/// `out.fail`, appear later. 0 when the host has no such tool.
+fn plat_media_voice(what: int, src: string, out: string) -> int {}
+/// Enter (1) or leave (0) full screen, or ask (-1). Returns 1 when full screen.
+fn plat_fullscreen(on: int) -> int {}
+/// The one blit of a finished frame, and the only place a host may touch our
+/// pixels: `buf` is the framebuffer Zeus rasterized itself (`physical_w *
+/// physical_h * 4`, BGRA8 premultiplied, sRGB), handed over as a byte slice
+/// rather than copied. `gen` is the buffer's generation — it changes ONLY when
+/// the buffer is reallocated (a size or backing-scale change), so a host wraps
+/// the pixels once and rebuilds its wrapper only when this number moves, which
+/// is what keeps a frame from churning a second full-size buffer. Returns 1 when
+/// the host presented, 0 when it has no display to present to.
+fn plat_blit(buf: []u8, w: int, h: int, gen: int, scale: int) -> int {}
+/// Host process memory in KB: Apple phys_footprint (Xcode's memory-gauge
+/// number), Linux/Android resident set, or the live wasm heap on the web
+/// host. 0 when the host reports nothing.
+fn plat_mem_kb() -> int {}
+/// Wall clock in ms (the async timer clock). For deadlines that must hold
+/// across an idle host sleep: the engine's own `now_ms` advances by a capped
+/// frame delta, so it lags wall time after a wake.
+fn plat_now_ms() -> int {}
+/// Move that clock forward: a test's way through a timeline without waiting.
+fn plat_clock_skip(ms: int) {}
+/// Router history: mirror a pushed / replaced entry into the host's own
+/// back stack (browser history, Cocoa/Android back button).
+fn plat_history_push(path: string) {}
+fn plat_history_replace(path: string) {}
+fn plat_history_back() {}
+/// 1 when route `index`'s code is loaded. Always 1 where code is not split.
+fn plat_chunks_ready(index: int) -> int {}
+/// Start loading route `index`'s code. The host answers through
+/// `router.engine_chunks_done`.
+fn plat_chunks_load(index: int) {}
+/// Fetch route `index`'s code ahead of a navigation that may not happen.
+fn plat_chunks_preload(index: int) {}
+/// The light / dark choice the user saved: 0 light, 1 dark, -1 none yet.
+fn plat_appearance_load() -> int {}
+/// Remember the user's light / dark choice across visits.
+fn plat_appearance_save(dark: int) {}
+/// Send analytics to `endpoint`. `local` also reports from a loopback host.
+/// Web only, like the two below: elsewhere these do nothing.
+fn plat_track_start(endpoint: string, local: int) {}
+/// Report one thing. `kind`: 0 page (`name` is the path), 1 click, 2 event.
+fn plat_track_send(kind: int, name: string, data: string) {}
+/// Opt this browser out of analytics (1) or back in (0).
+fn plat_track_opt_out(off: int) {}
+/// 1 when this browser is opted out.
+fn plat_track_opted_out() -> int {}
+/// 1 when `ZEUS_LAYOUT_VERIFY=1` asks layout to check its memo. Always 0 in a web
+/// release, which leaves the check's code out of the download.
+fn plat_layout_verify() -> int {}
+/// Open a URL outside the app. A no-op on hosts without a browser to hand it to.
+fn plat_open_external(url: string) {}
+/// The path a host wants the app to start on (the browser's URL), "" for none.
+/// Read before the first build, so a deep link never builds another page first.
+fn plat_boot_path() -> string {}
+/// 1 = overlay scroll hosts (iOS/Android): thumb drag is disabled in input
+/// and the track/thumb is not painted — panes scroll by touch only.
+fn plat_overlay_scroll() -> int {}
+/// Test / host override for `plat_overlay_scroll` (1 = iOS/Android-like).
+fn plat_set_overlay_scroll(on: int) {}
+/// Host safe-area insets in layout points (notch / home indicator / landscape
+/// inset), written together into `out[0..3]` as top, right, bottom, left.
+///
+/// One call, not four: the four edges are one box, and reading them separately
+/// let a host that updated them between two reads hand layout a torn rectangle.
+/// iOS and Android write these on every frame; tests set them through
+/// `zeus.engine_set_insets` so a layout pass sees a notched viewport.
+fn plat_inset_get(out: &mut []int) {}
+/// Host safe-area insets in layout points (notch / home indicator / landscape
+/// inset). iOS and Android write these every frame; tests set them through
+/// `zeus.engine_set_insets` so a layout pass sees a notched viewport.
+fn plat_set_insets(top: int, right: int, bottom: int, left: int) {}

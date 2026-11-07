@@ -6,8 +6,8 @@
 
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 import "zeus:zeuscore/scene"
 import "zeus:zeuscore/svgpath"
 

@@ -1,8 +1,8 @@
 // DRAW-list golden: one raster Image (data URI). Dump omits src so the
 // golden is stable; hosts decode PNG / JPEG / WebP / GIF themselves.
 
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn main() {
     zeus.snapshot(120, 48, fn() -> Node {

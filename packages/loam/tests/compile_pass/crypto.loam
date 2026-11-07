@@ -1,8 +1,8 @@
-// `std:crypto`: published vectors, hashes from the reference Argon2 library, and how
+// `crypto`: published vectors, hashes from the reference Argon2 library, and how
 // passwords and comparisons fail. Vectors are from RFC 7693 and RFC 9106. The rest
 // come from Python's hashlib and argon2-cffi 25.1.
 
-import "std:crypto"
+import "crypto"
 import "std:fmt"
 import "std:str"
 import "std:sys"

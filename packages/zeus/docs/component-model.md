@@ -67,8 +67,8 @@ What changes:
 
 ## 1. What is there today
 
-Numbers are over `packages/zeus-components/std/*.loam` plus
-`packages/zeus/std/zeusbase.loam`.
+Numbers are over `packages/zeus-components/src/*.loam` plus
+`packages/zeus/src/zeusbase.loam`.
 
 ### D1. Three ways to build one tree
 
@@ -544,7 +544,7 @@ So at a call site, the snake_case names are exactly the ones that run code:
 
 ### 4.3 `Style`: the CSS subset
 
-*Landed in phase 2:* `packages/zeus/std/zeuscore/style.loam`.
+*Landed in phase 2:* `packages/zeus/src/zeuscore/style.loam`.
 
 One struct, every key `Option<T>`. An absent key leaves the element's own value
 and a present key wins, so a negative margin or a zero radius is an ordinary
@@ -987,7 +987,7 @@ Match(search_state, fn(s) {
 })
 ```
 
-`std:res` already models `Loading | Ready | Error`. The point for the guide is
+`zeus:res` already models `Loading | Ready | Error`. The point for the guide is
 that a component reads signals, never module globals behind a bump counter.
 
 *Landed for the backtest screens.* `components/lab.loam` keeps each run's
@@ -1011,13 +1011,13 @@ for), which the screens never read. `book.loam`'s `load_gen` /
 | **Components**: everything else in `zeus-components`, and all app code | `atoms` / `molecules` / `organisms` / apps | **No.** State, controller, keys, view only |
 
 The rule can be checked mechanically: a lint that fails when a file under
-`zeus-components/std/` outside the element list, or any file under
+`zeus-components/src/` outside the element list, or any file under
 `examples/`, mentions `ui_push`, `ui_pop`, `slot(`, `arena.`, `intern_`,
 `prop_int`, `set_prop_` or `raw_`.
 
 *Landed:* `ig_arena_lint` in `nob.loam` is a `make test` host check.
 `examples/zeus` and `www` may not use any of these names (comment lines and
-`build/` are skipped). In `zeus-components/std/{atoms,molecules,organisms,colors}`,
+`build/` are skipped). In `zeus-components/src/{atoms,molecules,organisms,colors}`,
 a hit fails unless its enclosing top-level fn is on that file's element-layer
 allow-list: the list hosts, charts, native controls, `Icon`, `Image`,
 `Overlay`, `Scroll`, `Grid` and so on. A new component that reaches into the

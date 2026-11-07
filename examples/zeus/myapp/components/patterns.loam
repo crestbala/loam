@@ -1,11 +1,11 @@
 //! Patterns page: compositions rather than single widgets — growing lists,
 //! card grids, charts, loading placeholders, and modal overlays.
 
-import "std:zeus"
-import "std:colors"
-import "std:colors"
-import "std:zui"
-import "std:spacing"
+import "zeus"
+import "zui:colors"
+import "zui:colors"
+import "zui"
+import "zui:spacing"
 
 let mut chart_labs: []string = []string {}
 let mut chart_series: []string = []string {}

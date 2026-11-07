@@ -4,8 +4,8 @@
 // `delay = 0`, so they open on the next frame with no wall-clock timer.
 // Keep this file free of prints: stdout is the golden.
 
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn settle() {
     let mut i = 0

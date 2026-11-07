@@ -1,6 +1,6 @@
 # crypto
 
-`std:crypto`: password hashing, keyed hashing, constant-time comparison, and OS
+`crypto`: password hashing, keyed hashing, constant-time comparison, and OS
 random bytes for native Loam programs, through `#[c]`. No cryptography is written
 in Loam. The base64 here only formats stored hashes.
 

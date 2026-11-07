@@ -1,11 +1,11 @@
 // Catalog screens. Components cover the standard widget catalogue (ink
-// theme): every row here demos one `std:zeus` component with its SVG icons.
+// theme): every row here demos one `zeus` component with its SVG icons.
 // Dark restyles the whole palette via `zeus.appearance()`.
 import "std:async"
-import "std:zeus"
-import "std:colors"
-import "std:spacing"
-import "std:zui"
+import "zeus"
+import "zui:colors"
+import "zui:spacing"
+import "zui"
 import "std:kv"
 
 let mut ram_armed: int = 0

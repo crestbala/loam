@@ -2,8 +2,8 @@
 // value is negative (indeterminate), keeping the frame loop alive only then.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn must(ok: bool, what: string) {
     if !ok {

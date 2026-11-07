@@ -1,0 +1,5 @@
+[package]
+name = "raygui"
+version = "0.1.0"
+description = "raygui bindings"
+entry = "src/raygui.loam"

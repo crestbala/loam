@@ -5,7 +5,7 @@
 //! jobs or formats travels as parallel lists indexed together. Byte counts are
 //! KiB: `int` is i32 and a video outgrows 2 GB.
 
-import "std:http"
+import "http"
 
 #[proto]
 struct ProbeReq {
@@ -162,7 +162,7 @@ fn remove_rpc() -> string {
     return "Vidget.Remove"
 }
 
-/// Keeps `std:http` imported here so the codecs it injects resolve.
+/// Keeps `http` imported here so the codecs it injects resolve.
 fn ping() -> string {
     return http.concat_str("vid", "get")
 }

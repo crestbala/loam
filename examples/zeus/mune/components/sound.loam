@@ -3,8 +3,8 @@
 //! `studio/controls.loam`; the next Generate hears them. Each choice is a
 //! dropdown and each instrument or effect one line, so the panel stays short.
 
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 import "../core/sound.loam" as sound
 import "../core/styles.loam" as styles
 import "../core/synth.loam" as synth

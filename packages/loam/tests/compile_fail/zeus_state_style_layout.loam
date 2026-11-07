@@ -1,5 +1,5 @@
 // A state style is paint-only: `height` in `hoverStyle` would reflow on hover.
-import "std:zeus"
+import "zeus"
 
 fn main() {
     zeus.snapshot(100, 60, fn() -> Node {

@@ -5,8 +5,8 @@
 
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 let mut builds: int = 0
 let mut arm_builds: int = 0

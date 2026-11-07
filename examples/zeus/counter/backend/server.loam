@@ -6,7 +6,7 @@
 //! Handlers take protobuf bytes (`body`) and return protobuf bytes. Request
 //! structs are empty; the interesting numbers are in the responses.
 
-import "std:http"
+import "http"
 import "api.loam"
 import "std:fmt"
 

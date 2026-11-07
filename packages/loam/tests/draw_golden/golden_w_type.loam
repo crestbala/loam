@@ -3,8 +3,8 @@
 // Kbd, KbdCombo, the separators, Pip, Icon and Svg, inside Row / RowWrap /
 // Column / Grow. Keep this file free of prints: stdout is the golden.
 
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn main() {
     zeus.snapshot(560, 740, fn() -> Node {

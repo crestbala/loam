@@ -1,7 +1,7 @@
 //! Keyboard: every shortcut, and the rows the help sheet shows for them.
 //! Bindings call into the store; nothing here holds state.
 
-import "std:zeus"
+import "zeus"
 import "store.loam" as player
 
 const K_LEFT: int = 1000

@@ -1,4 +1,4 @@
-import "std:zeus"
+import "zeus"
 
 fn main() {
     let n = zeus.signal(0)

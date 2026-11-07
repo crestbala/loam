@@ -5,10 +5,10 @@
 // with no effect attached to the node.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:colors"
-import "std:colors"
-import "std:zui"
+import "zeus"
+import "zui:colors"
+import "zui:colors"
+import "zui"
 
 let mut reads: int = 0
 

@@ -5,9 +5,9 @@
 // Everything else on the page is the gallery's own code, in its order. Keep
 // this file free of prints: stdout is the golden.
 
-import "std:zeus"
-import "std:spacing"
-import "std:zui"
+import "zeus"
+import "zui:spacing"
+import "zui"
 import "../../../../examples/zeus/gallery/screen.loam" as screen
 
 fn main() {

@@ -7,8 +7,8 @@
 > kit looked like before the upgrade stays readable.
 
 Baseline for the design-system upgrade. Everything below is read off the tree at
-`feat/zeus-ui-upgrade` (`8a61fc3`): `packages/zeus/std/zeus.loam` (6592 lines),
-`packages/zeus/std/zeuscore/{arena,layout,scene,input,track,metrics,geometry,platform}.loam`,
+`feat/zeus-ui-upgrade` (`8a61fc3`): `packages/zeus/src/zeus.loam` (6592 lines),
+`packages/zeus/src/zeuscore/{arena,layout,scene,input,track,metrics,geometry,platform}.loam`,
 the four hosts, `examples/zeus/{gallery,dashboard}`, and the eight
 `packages/loam/tests/draw_golden` fixtures.
 

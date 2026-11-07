@@ -36,11 +36,11 @@ still runs, without that feature.
 | Image picker | `zeus_set_pick_image` | the picker does nothing |
 | Media playback, pickers, voice tools, full screen | `zeus_set_media(ZeusMedia)` (any field may be NULL) | a null player: state changes, the clock stays at 0 |
 | Fonts | `zeus_set_font_hooks`, `zeus_set_font_bytes_hook` | the system font; files are read from disk |
-| Software-rasterized frames | `zeus_set_blit` | not used unless the app opts in to `std:zeusraster` |
+| Software-rasterized frames | `zeus_set_blit` | not used unless the app opts in to `zeus:zeusraster` |
 | Safe area, overlay scrollbars | `zeus_set_insets`, `zeus_set_overlay_scroll` | no insets; classic scrollbars |
 | Initial window size | `zeus_set_initial_view` | 640 × 480 until the window opens |
 
-The web host also implements `std:analytics` (`track_start`, `track_send`,
+The web host also implements `zeus:analytics` (`track_start`, `track_send`,
 `track_opt_out`, `track_opted_out`). Other hosts need nothing: those calls do
 nothing there.
 

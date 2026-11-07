@@ -9,8 +9,8 @@
 // label write visits its path and the boxes that actually moved.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn must(ok: bool, what: string) {
     if !ok {

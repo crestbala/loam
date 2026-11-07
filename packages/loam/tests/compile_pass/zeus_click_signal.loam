@@ -1,7 +1,7 @@
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 /// A capturing `on_press` lives in a struct field, is interned by
 /// `Button(on_click = ...)`, then the struct is dropped. The click must still

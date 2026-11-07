@@ -3,8 +3,8 @@
 // repaints a bound attribute without re-running the component.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 let mut runs: int = 0
 let mut calcs: int = 0

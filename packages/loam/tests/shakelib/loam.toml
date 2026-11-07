@@ -1,0 +1,5 @@
+[package]
+name = "wide"
+version = "0.1.0"
+description = "Tree-shake fixture"
+entry = "wide.loam"

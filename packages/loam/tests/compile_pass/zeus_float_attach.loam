@@ -6,8 +6,8 @@
 // / between-children borders and single-line `textAlign`.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn must(ok: bool, what: string) {
     if !ok {

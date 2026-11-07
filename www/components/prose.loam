@@ -1,7 +1,7 @@
 //! Shared reading layout: a code block and a section stack.
 
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 import "highlight.loam" as highlight
 
 /// Space between the sections of a page.

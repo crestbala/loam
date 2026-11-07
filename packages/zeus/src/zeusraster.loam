@@ -1,0 +1,794 @@
+//! zeusraster — Zeus's software rasterizer, opt-in.
+//!
+//! The core (`zeus`) records a draw list and hands it to the host's 2D API.
+//! This module is a second consumer of the same list: it rasterizes it in Loam
+//! into one framebuffer it owns (geometry, glyph atlas, image decode, SVG), and
+//! hands the pixels to a host through `plat_blit`. A host that can only blit —
+//! or a headless test that wants pixels — imports this; nothing in the core
+//! does, so an app that does not import it does not compile it.
+//!
+//!     zeus.engine_layout(w, h)
+//!     zeus.engine_paint()
+//!     zeusraster.raster_ensure(w, h, 2)
+//!     zeusraster.scene_rasterize(2, 255, 255, 255)
+//!     zeusraster.raster_blit()
+
+import "zeuscore/arena.loam"
+import "zeusraster/atlas.loam"
+import "zeusraster/image.loam"
+import "zeusraster/pass.loam"
+import "zeusraster/raster.loam"
+import "std:fmt"
+import "std:sys"
+
+// Thin wrappers so tests and probes can drive the framebuffer and the color
+// tables without reaching into the module's globals.
+
+fn raster_ensure(lw: int, lh: int, scale: int) {
+    raster.raster_ensure(lw, lh, scale)
+}
+
+fn raster_width() -> int {
+    return raster.raster_width()
+}
+
+fn raster_height() -> int {
+    return raster.raster_height()
+}
+
+fn raster_scale() -> int {
+    return raster.raster_scale()
+}
+
+fn raster_bytes() -> int {
+    return raster.raster_bytes()
+}
+
+fn raster_generation() -> int {
+    return raster.raster_generation()
+}
+
+fn raster_realloc_count() -> int {
+    return raster.raster_realloc_count()
+}
+
+fn raster_get(x: int, y: int, c: int) -> int {
+    return raster.raster_get(x, y, c)
+}
+
+fn raster_set(x: int, y: int, r: int, g: int, b: int) {
+    raster.raster_set(x, y, r, g, b)
+}
+
+fn raster_blend(x: int, y: int, r: int, g: int, b: int, a: int) {
+    raster.raster_blend(x, y, r, g, b, a)
+}
+
+fn raster_dither(x: int, y: int) -> int {
+    return raster.raster_dither(x, y)
+}
+
+fn raster_srgb_to_lin(b: int) -> int {
+    return raster.raster_srgb_to_lin(b)
+}
+
+fn raster_lin_to_srgb(b: int) -> int {
+    return raster.raster_lin_to_srgb(b)
+}
+
+fn raster_clear(r: int, g: int, b: int) {
+    raster.raster_clear(r, g, b)
+}
+
+fn raster_checksum() -> int {
+    return raster.raster_checksum()
+}
+
+/// Fill a rounded rectangle as one region (whole surface).
+fn raster_fill_round_rect_whole(
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    rad: int,
+    cr: int,
+    cg: int,
+    cb: int,
+    alpha: int
+) {
+    raster.raster_round_rect(float(x), float(y), float(w), float(h), float(rad))
+    raster.raster_fill_whole(cr, cg, cb, alpha)
+}
+
+/// Fill the same rounded rectangle in 256x256 tiles. Byte-identical to
+/// `_whole` is the seam guarantee.
+fn raster_fill_round_rect_tiled(
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    rad: int,
+    cr: int,
+    cg: int,
+    cb: int,
+    alpha: int
+) {
+    raster.raster_round_rect(float(x), float(y), float(w), float(h), float(rad))
+    raster.raster_fill_tiled(cr, cg, cb, alpha)
+}
+
+/// Fill a rounded rectangle with a linear gradient from `c0` to `c1`.
+/// `axis` 0 is top-to-bottom, 1 is left-to-right.
+fn raster_fill_round_rect_gradient(
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    rad: int,
+    c0: int,
+    c1: int,
+    axis: int,
+    alpha: int
+) {
+    raster.raster_round_rect(float(x), float(y), float(w), float(h), float(rad))
+    raster.raster_fill_gradient_tiled(c0, c1, axis, alpha, x, y, x + w, y + h)
+}
+
+/// Draw a rounded-rect border. `bw` is the device-pixel thickness; a hairline
+/// (<= 1px) snaps to the pixel grid.
+fn raster_stroke_round_rect(
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    rad: int,
+    bw: int,
+    cr: int,
+    cg: int,
+    cb: int,
+    alpha: int
+) {
+    raster.raster_stroke_round_rect(
+        float(x),
+        float(y),
+        float(w),
+        float(h),
+        float(rad),
+        float(bw),
+        cr,
+        cg,
+        cb,
+        alpha,
+    )
+}
+
+/// The same border in DEVICE coordinates (float) for callers that compute
+/// `logical * scale`, where edges are fractional. This is the path the renderer
+/// uses, and the one hairline snapping exists for.
+fn raster_stroke_round_rect_dev(
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    rad: float,
+    bw: float,
+    cr: int,
+    cg: int,
+    cb: int,
+    alpha: int
+) {
+    raster.raster_stroke_round_rect(x, y, w, h, rad, bw, cr, cg, cb, alpha)
+}
+
+/// Draw a drop shadow for a rounded rect, under whatever is drawn next.
+/// `dx`/`dy` are the device offset, `blur` the device blur radius, `alpha` the
+/// peak opacity (0..255).
+fn raster_shadow_rect(
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    rad: int,
+    dx: int,
+    dy: int,
+    blur: int,
+    cr: int,
+    cg: int,
+    cb: int,
+    alpha: int
+) {
+    raster.raster_shadow_rect(
+        float(x),
+        float(y),
+        float(w),
+        float(h),
+        float(rad),
+        float(dx),
+        float(dy),
+        float(blur),
+        alpha,
+        cr,
+        cg,
+        cb,
+    )
+}
+
+/// Clear the damage clip: the next tiled draws cover the whole surface again.
+fn raster_clip_reset() {
+    raster.raster_clip_reset()
+}
+
+/// Restrict the next tiled draws to a device-space box.
+fn raster_clip_box(x0: int, y0: int, x1: int, y1: int) {
+    raster.raster_clip_box(x0, y0, x1, y1)
+}
+
+/// Curve flattening tolerance in device pixels (0.25): the one source of truth
+/// for every arc and rounded corner.
+fn raster_flat_tol() -> float {
+    return raster.raster_flat_tol()
+}
+
+// --- the raster scene pass (Phase 4) ---------------------------------------
+
+/// Rasterize the current draw list into the framebuffer we own, at `scale`,
+/// on a background colour. Returns how many ops were rasterized.
+fn scene_rasterize(scale: int, br: int, bg: int, bb: int) -> int {
+    return pass.rasterize(scale, br, bg, bb)
+}
+
+/// Ops of `kind` the raster pass could not rasterize yet. Counted, never
+/// silent, so a gap is a number rather than something to notice in a picture.
+fn scene_raster_unhandled(kind: int) -> int {
+    return pass.raster_unhandled(kind)
+}
+
+fn scene_raster_unhandled_total() -> int {
+    return pass.raster_unhandled_total()
+}
+
+/// Clips with a radius that the raster pass currently treats as square.
+fn scene_raster_rounded_clips() -> int {
+    return pass.raster_rounded_clip_count()
+}
+
+/// Register a decoded image slot under the `src` string draw ops carry, so the
+/// raster pass blits from our own cache instead of the host.
+fn scene_register_image(src: string, slot: int) -> int {
+    return pass.raster_register_image(src, slot)
+}
+
+/// Load the font the raster pass draws text with (a file path). Until this is
+/// called, text ops are counted as unhandled rather than dropped silently.
+fn scene_load_font(src: string) -> int {
+    return pass.raster_load_font(src)
+}
+
+fn scene_font_is_ready() -> int {
+    return pass.raster_font_is_ready()
+}
+
+/// Glyphs the pass has composited from the atlas, and glyphs it wanted but
+/// could not get.
+fn scene_glyphs_drawn() -> int {
+    return pass.raster_glyphs_drawn_count()
+}
+
+fn scene_glyphs_missing() -> int {
+    return pass.raster_glyphs_missing_count()
+}
+
+// --- multi-contour fills (holes / winding) --------------------------------
+
+fn raster_multi_begin() {
+    raster.raster_multi_begin()
+}
+
+fn raster_multi_add_circle(cx: int, cy: int, r: int, sign: int) {
+    raster.raster_multi_add_circle(float(cx), float(cy), float(r), sign)
+}
+
+fn raster_multi_add_poly(xs: []float, ys: []float, sign: int) {
+    raster.raster_multi_add_poly(xs, ys, sign)
+}
+
+fn raster_multi_count() -> int {
+    return raster.raster_multi_count()
+}
+
+fn raster_fill_multi(cr: int, cg: int, cb: int, alpha: int) {
+    raster.raster_fill_multi(cr, cg, cb, alpha)
+}
+
+/// Add a glyph's contours to the multi-contour set. Points are in FONT UNITS;
+/// `sc` is px/unitsPerEm and `(pen_x, pen_y)` the device-space baseline origin.
+/// Winding signs are derived from contour orientation, so no sign is passed.
+fn raster_multi_add_glyph(
+    xs: []int,
+    ys: []int,
+    on: []int,
+    ends: []int,
+    pen_x: float,
+    pen_y: float,
+    sc: float
+) {
+    raster.raster_multi_add_glyph(xs, ys, on, ends, pen_x, pen_y, sc)
+}
+
+/// Rasterize the multi-contour set into an offscreen single-channel (R8) mask
+/// over the device box [x0,x1) x [y0,y1). One tile a side at most. Returns 1 on
+/// success. The mask is scratch for the caller: read it with the accessors
+/// below, it is reused by the next call.
+fn raster_multi_to_mask(x0: int, y0: int, x1: int, y1: int) -> int {
+    return raster.raster_multi_to_mask(x0, y0, x1, y1)
+}
+
+fn raster_mask_w() -> int {
+    return raster.raster_mask_w()
+}
+
+fn raster_mask_h() -> int {
+    return raster.raster_mask_h()
+}
+
+/// Mask coverage 0..255 at a point in the mask's own space.
+fn raster_mask_get(x: int, y: int) -> int {
+    return raster.raster_mask_get(x, y)
+}
+
+// --- glyph atlas (Phase 4) --------------------------------------------------
+
+/// Gamma-corrected coverage 0..255 for a raw coverage 0..255. Glyph coverage
+/// goes through this on insert, so text weight is one documented constant.
+fn atlas_gamma(c: int) -> int {
+    return atlas.atlas_gamma(c)
+}
+
+/// Subpixel-x bucket: 1/4-px phase at sizes <= 16 LOGICAL px, 0 above.
+fn atlas_subx_bucket(size_logical: int, frac_x: float) -> int {
+    return atlas.atlas_subx_bucket(size_logical, frac_x)
+}
+
+/// Device offset (0, 0.25, 0.5, 0.75) baked in for a subpixel bucket.
+fn atlas_subx_offset(bucket: int) -> float {
+    return atlas.atlas_subx_offset(bucket)
+}
+
+/// Atlas slot for a key, or -1. A hit is promoted to most-recently-used.
+fn atlas_lookup(font: int, gid: int, size: int, subx: int) -> int {
+    return atlas.atlas_lookup(font, gid, size, subx)
+}
+
+/// Ensure a glyph is in the atlas (rasterizing on a miss) and return its slot,
+/// or -1 when it cannot be atlased. `size` is the DEVICE pixel size; `subx` a
+/// bucket from `atlas_subx_bucket`. The mask is stored relative to the pen, so
+/// blit it at the integer pen position.
+fn atlas_intern(
+    font: int,
+    gid: int,
+    size: int,
+    subx: int,
+    xs: []int,
+    ys: []int,
+    on: []int,
+    ends: []int,
+    upm: int
+) -> int {
+    return atlas.atlas_intern(font, gid, size, subx, xs, ys, on, ends, upm)
+}
+
+/// Composite an atlased glyph onto the framebuffer at an integer pen position.
+fn atlas_blit(s: int, pen_x: int, pen_y: int, r: int, g: int, b: int, alpha: int) {
+    atlas.atlas_blit(s, pen_x, pen_y, r, g, b, alpha)
+}
+
+fn atlas_cov(s: int, x: int, y: int) -> int {
+    return atlas.atlas_cov(s, x, y)
+}
+
+fn atlas_glyph_w(s: int) -> int {
+    return atlas.atlas_glyph_w(s)
+}
+
+fn atlas_glyph_h(s: int) -> int {
+    return atlas.atlas_glyph_h(s)
+}
+
+fn atlas_glyph_origin_x(s: int) -> int {
+    return atlas.atlas_glyph_origin_x(s)
+}
+
+fn atlas_glyph_origin_y(s: int) -> int {
+    return atlas.atlas_glyph_origin_y(s)
+}
+
+/// Reset the atlas to a given square dimension. Test hook.
+fn atlas_reset(dim: int) {
+    atlas.atlas_reset(dim)
+}
+
+fn atlas_reset_default() {
+    atlas.atlas_reset_default()
+}
+
+fn atlas_dim() -> int {
+    return atlas.atlas_dim()
+}
+
+fn atlas_entry_count() -> int {
+    return atlas.atlas_entry_count()
+}
+
+fn atlas_max_entries() -> int {
+    return atlas.atlas_max_entries()
+}
+
+fn atlas_bytes() -> int {
+    return atlas.atlas_bytes()
+}
+
+fn atlas_raster_count() -> int {
+    return atlas.atlas_raster_count()
+}
+
+fn atlas_eviction_count() -> int {
+    return atlas.atlas_eviction_count()
+}
+
+fn atlas_repack_count() -> int {
+    return atlas.atlas_repack_count()
+}
+
+fn atlas_grow_count() -> int {
+    return atlas.atlas_grow_count()
+}
+
+fn atlas_failure_count() -> int {
+    return atlas.atlas_failure_count()
+}
+
+fn atlas_mem_bytes() -> i64 {
+    return atlas.atlas_mem_bytes()
+}
+
+// --- string interning + measurement cache (Phase 4) ------------------------
+
+/// Intern a string, returning a stable id, or -1 when the fixed table is full
+/// (a counted, non-fatal condition: the measurement simply is not cached).
+fn string_intern(s: string) -> int {
+    return atlas.str_intern(s)
+}
+
+fn string_intern_count() -> int {
+    return atlas.str_count()
+}
+
+fn string_intern_overflow_count() -> int {
+    return atlas.str_overflow_count()
+}
+
+/// Cached text measurement for (string id, font id, size px): 1 on hit.
+fn measure_cached(signal_id: int, font: int, size: int, w: &mut int, h: &mut int) -> int {
+    return atlas.meas_get(signal_id, font, size, w, h)
+}
+
+fn measure_store(signal_id: int, font: int, size: int, w: int, h: int) {
+    atlas.meas_put(signal_id, font, size, w, h)
+}
+
+fn measure_cache_count() -> int {
+    return atlas.meas_count()
+}
+
+fn measure_cache_capacity() -> int {
+    return atlas.meas_capacity()
+}
+
+fn measure_cache_eviction_count() -> int {
+    return atlas.meas_eviction_count()
+}
+
+fn measure_cache_clear() {
+    atlas.meas_clear()
+}
+
+// --- images: decode (Phase 4) ---------------------------------------------
+
+/// Decode a PNG into the reusable source buffers (RGBA8, premultiplied).
+/// Returns 1 on success. See `image.loam` for exactly what is supported.
+fn image_decode_png(src: string) -> int {
+    return image.png_decode(src)
+}
+
+/// Decode a baseline JPEG into the reusable source buffers (RGBA8,
+/// premultiplied — JPEG is opaque). Returns 1 on success; a recognised variant
+/// this decoder does not cover (progressive, CMYK) sets the status to
+/// UNSUPPORTED instead, so the platform image path keeps loading it.
+fn image_decode_jpeg(src: string) -> int {
+    return image.jpg_decode(src)
+}
+
+/// Decode any format the in-Loam decoders cover, choosing by magic bytes. When
+/// it returns 0, `image_last_status()` says whether the file was malformed or
+/// simply a format that the platform image path (`plat_image`) should load.
+fn image_decode_any(src: string) -> int {
+    return image.src_decode_any(src)
+}
+
+/// FMT_PNG / FMT_BMP / FMT_JPEG / ... for the given encoded bytes; 0 for
+/// unknown. Decided by magic bytes, because a file extension lies.
+fn image_format_of(src: string) -> int {
+    return image.src_format_of(src)
+}
+
+fn image_format_name(f: int) -> string {
+    return image.src_format_name(f)
+}
+
+/// 1 when the in-Loam decoders cover this format today, 0 when the platform
+/// loader is what handles it.
+fn image_format_is_decodable(f: int) -> int {
+    return image.src_format_is_decodable(f)
+}
+
+/// 1 = decoded, -1 = malformed, -2 = a real format the platform should load.
+fn image_last_status() -> int {
+    return image.src_last_status()
+}
+
+fn image_status_ok() -> int {
+    return 1
+}
+
+fn image_status_malformed() -> int {
+    return -1
+}
+
+fn image_status_unsupported() -> int {
+    return -2
+}
+
+/// How many decodes have seen a non-sRGB gAMA (composited as sRGB anyway, since
+/// the whole pipeline is sRGB).
+fn image_gamma_assumed_count() -> int {
+    return image.src_gamma_assumed_count()
+}
+
+fn image_src_width() -> int {
+    return image.src_width()
+}
+
+fn image_src_height() -> int {
+    return image.src_height()
+}
+
+/// Channel `c` (0 R, 1 G, 2 B, 3 A) of the decoded source at (x, y).
+fn image_src_get(x: int, y: int, c: int) -> int {
+    return image.src_get(x, y, c)
+}
+
+/// Bytes held by the decode scratch. Bounded by the largest image decoded, not
+/// by how many have been decoded.
+fn image_scratch_bytes() -> int {
+    return image.src_scratch_bytes()
+}
+
+fn image_decode_count() -> int {
+    return image.src_decode_count()
+}
+
+fn image_decode_failure_count() -> int {
+    return image.src_failure_count()
+}
+
+fn image_decode_failure_reason() -> string {
+    return image.src_failure_reason()
+}
+
+// --- images: resized cache (Phase 4) ---------------------------------------
+
+/// Resized image for (id, display pixels), decoding and resampling on a miss.
+/// Returns the slot, or -1 when the image cannot be decoded or does not fit the
+/// fixed byte budget. Repeated calls for the same key are cache hits.
+fn image_get(id: int, encoded: string, dw: int, dh: int) -> int {
+    return image.img_get(id, encoded, dw, dh)
+}
+
+/// Composite a cached image at (x, y) with `alpha` as a multiplier 0..255.
+fn image_blit(s: int, x: int, y: int, alpha: int) {
+    image.img_blit(s, x, y, alpha)
+}
+
+fn image_w(s: int) -> int {
+    return image.img_w(s)
+}
+
+fn image_h(s: int) -> int {
+    return image.img_h(s)
+}
+
+/// Channel `c` (0 R, 1 G, 2 B, 3 A) of a cached image at (x, y).
+fn image_get_px(s: int, x: int, y: int, c: int) -> int {
+    return image.img_get_px(s, x, y, c)
+}
+
+fn image_cache_count() -> int {
+    return image.img_cache_count()
+}
+
+fn image_cache_bytes() -> int {
+    return image.img_cache_bytes()
+}
+
+fn image_cache_budget() -> int {
+    return image.img_cache_budget()
+}
+
+fn image_cache_capacity() -> int {
+    return image.img_cache_capacity()
+}
+
+fn image_cache_hit_count() -> int {
+    return image.img_hit_count()
+}
+
+fn image_cache_miss_count() -> int {
+    return image.img_miss_count()
+}
+
+fn image_cache_eviction_count() -> int {
+    return image.img_eviction_count()
+}
+
+fn image_cache_refusal_count() -> int {
+    return image.img_refusal_count()
+}
+
+/// Set the cache's byte budget (a knob, and a test hook: the invariant
+/// `image_cache_bytes() <= image_cache_budget()` is what the budget means).
+fn image_set_budget(b: int) {
+    image.img_set_budget(b)
+}
+
+fn image_cache_clear() {
+    image.img_cache_clear()
+}
+
+fn image_resize_count() -> int {
+    return image.mitchell_resize_count()
+}
+
+fn image_mem_bytes() -> i64 {
+    return image.img_mem_bytes()
+}
+
+fn raster_push_str(b: &mut []int, s: string) {
+    let mut i = 0
+    while i < s.len {
+        b.push(s[i])
+        i = i + 1
+    }
+}
+
+/// The zero-copy blit contract, Loam side: the framebuffer's generation. A host
+/// wraps the buffer once with a no-copy data provider (CGImage on native, a
+/// typed-array view on web) and rebuilds that wrapper ONLY when this number
+/// changes — which is reallocation, on a size or backing-scale change, not per
+/// frame. Between changes the same bytes are handed over untouched, so there is
+/// no per-frame full-buffer copy.
+fn raster_blit_generation() -> int {
+    return raster.raster_generation()
+}
+
+/// Blit the framebuffer we rasterized into to the host: the one place our
+/// pixels leave the engine, and the only host call that is not a draw op.
+/// Returns 1 when a host presented, 0 when none is listening (headless, or a
+/// host without a blit path). Pair it with `scene_rasterize` to drive a frame
+/// with our own rasterizer instead of the host's 2D API.
+fn raster_blit() -> int {
+    return pass.raster_blit()
+}
+
+/// Write the framebuffer as a binary PPM (P6). This is the headless capture
+/// path: no graphics API, just the bytes we own, which is what lets a pixel
+/// golden exist without a display. Returns 0 on success.
+fn raster_dump_ppm(path: string) -> int {
+    let w = raster.raster_width()
+    let h = raster.raster_height()
+    let mut b: []int = []int {}
+    raster_push_str(&mut b, "P6\n{{w}} {{h}}\n255\n")
+    let mut y = 0
+    while y < h {
+        let mut x = 0
+        while x < w {
+            b.push(raster.raster_get(x, y, 2))
+            b.push(raster.raster_get(x, y, 1))
+            b.push(raster.raster_get(x, y, 0))
+            x = x + 1
+        }
+        y = y + 1
+    }
+    return sys.write_file(path, string_from_bytes(b))
+}
+
+/// Set the damage clip from this frame's damage list: the bounding box of the
+/// damage rects. A bounding box is a superset of the union, so it can only
+/// damage MORE than needed, never less — the safe direction. A full-damage
+/// frame (or no damage) clears the clip.
+fn raster_clip_from_damage() {
+    raster.raster_clip_reset()
+    if arena.damage_full != 0 {
+        return
+    }
+    let n = arena.damage.len
+    if n == 0 {
+        return
+    }
+    let mut x0 = arena.damage[0].x
+    let mut y0 = arena.damage[0].y
+    let mut x1 = arena.damage[0].x + arena.damage[0].w
+    let mut y1 = arena.damage[0].y + arena.damage[0].h
+    let mut i = 1
+    while i < n {
+        let d = arena.damage[i]
+        if d.x < x0 {
+            x0 = d.x
+        }
+        if d.y < y0 {
+            y0 = d.y
+        }
+        if d.x + d.w > x1 {
+            x1 = d.x + d.w
+        }
+        if d.y + d.h > y1 {
+            y1 = d.y + d.h
+        }
+        i = i + 1
+    }
+    if x1 > x0 {
+        if y1 > y0 {
+            raster.raster_clip_box(x0, y0, x1, y1)
+        }
+    }
+}
+
+/// Phase 4 diagnostics: build the frame's raster tile list from the damage list
+/// (Phase 1) and return how many tiles it touches. Additive.
+fn damage_tiles_build() -> int {
+    return pass.damage_tiles_build()
+}
+
+fn damage_tiles_count() -> int {
+    return pass.damage_tiles_count()
+}
+
+fn damage_tiles_x(i: int) -> int {
+    return pass.damage_tiles_x(i)
+}
+
+fn damage_tiles_y(i: int) -> int {
+    return pass.damage_tiles_y(i)
+}
+
+
+/// The rasterizer's side of the `ZEUS_MEM` report: glyph atlas and image cache.
+/// The core's `mem_report` covers the arena; call this after it when the
+/// software path is in use.
+fn mem_report() {
+    fmt.println(
+        "ZEUS_MEM bytes glyphs=",
+        atlas.atlas_mem_bytes(),
+        " atlas_entries=",
+        atlas.atlas_entry_count(),
+        " glyph_rasters=",
+        atlas.atlas_raster_count(),
+    )
+    fmt.println(
+        "ZEUS_MEM bytes images=",
+        image.img_mem_bytes(),
+        " image_entries=",
+        image.img_cache_count(),
+        " image_decodes=",
+        image.src_decode_count(),
+    )
+}

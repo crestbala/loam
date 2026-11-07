@@ -1,9 +1,9 @@
 // Phase 3: multiline Input / zui.TextArea — type, newline, caret, bind.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:colors"
-import "std:zui"
+import "zeus"
+import "zui:colors"
+import "zui"
 
 fn fail(what: string) {
     fmt.println("FAIL", what)

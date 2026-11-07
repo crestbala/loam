@@ -9,8 +9,8 @@
 //   rows), and releases exactly the records the rows owned.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 import "zeus:zeuscore/arena"
 import "zeus:zeuscore/track"
 

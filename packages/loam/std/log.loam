@@ -10,7 +10,7 @@
 //!
 //! The time is milliseconds since the first record (the hosts only expose a
 //! monotonic clock). `scope` names where the line comes from: `http.server`
-//! and `http.client` are written by `std:http` for every RPC; apps pick
+//! and `http.client` are written by `http` for every RPC; apps pick
 //! their own (`"engine"`, `"store"`).
 //!
 //! ```

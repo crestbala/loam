@@ -16,7 +16,7 @@
 //! None of the secrets go in the repo.
 
 import "std:fmt"
-import "std:http"
+import "http"
 import "std:result"
 import "std:sys"
 import "app.loam" as server

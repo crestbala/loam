@@ -1,9 +1,9 @@
 //! The seek bar: buffered range, played range and thumb over a tall hit area.
 
-import "std:zeus"
+import "zeus"
 import "../player/store.loam" as player
 import "../lib/timecode.loam" as timecode
-import { WHITE, ACCENT, TRACK } from "../theme.loam"
+import { WHITE, ACCENT, TRACK } "../theme.loam"
 
 /// Buffered range, played range and thumb, over a tall hit area. Press or drag
 /// anywhere on it to seek; hovering shows the time under the pointer.

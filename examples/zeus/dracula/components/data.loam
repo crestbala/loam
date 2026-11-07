@@ -6,8 +6,8 @@
 //! server, and the page says so instead of loading forever.
 
 import "std:date"
-import "std:http"
-import "std:zeus"
+import "http"
+import "zeus"
 import "../server/api.loam"
 import "present.loam" as present
 

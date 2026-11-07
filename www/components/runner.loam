@@ -953,11 +953,10 @@ fn parse_import(p: &mut Runner) {
             }
         }
         want_op(p, "}")
-        if !at_word(p, "from") {
-            perr(p, "expected from after the import list")
+        if at_word(p, "from") {
+            perr(p, "selective import has no 'from'; write import { Name } \"path\"")
             return
         }
-        adv(p)
     }
     let t = tk(p)
     if t.kind != T_STR {

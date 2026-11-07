@@ -1,4 +1,4 @@
-import "std:maya"
+import "maya"
 
 fn main() {
     maya.init()

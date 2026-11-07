@@ -1,12 +1,12 @@
-// `std:analytics`: what it reports is decided in Loam and checked here. The web
+// `zeus:analytics`: what it reports is decided in Loam and checked here. The web
 // side (ids, timing, batches) runs in `hosts/web/wasm_smoke.ts`.
 
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
-import "std:analytics"
-import "std:router"
+import "zeus"
+import "zui"
+import "zeus:analytics"
+import "zeus:router"
 
 fn fail(what: string) {
     fmt.println("FAIL", what)

@@ -1,7 +1,7 @@
 //! The one screen: the player.
 
-import "std:zeus"
-import "std:router"
+import "zeus"
+import "zeus:router"
 import "../components/screen.loam" as screen
 
 fn Page(p: Params) -> Node {

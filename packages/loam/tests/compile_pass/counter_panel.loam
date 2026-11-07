@@ -1,5 +1,5 @@
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn Readout(n: int) -> Node {
     return zeus.Text("{{n}}")

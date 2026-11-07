@@ -9,7 +9,7 @@
 //!   `MUNE_PORT` moves it off 8080 (tests next to a running engine; the UI
 //!   then needs `LOAM_RPC_ADDR=127.0.0.1:<port>`).
 
-import "std:http"
+import "http"
 import "std:str"
 import "std:sys"
 import "api.loam"

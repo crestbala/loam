@@ -1,11 +1,11 @@
 //! Top bar. Each entry is a URL. The bar reads `router.path_signal()` so the
 //! highlight follows navigation while the shell stays mounted.
 
-import "std:colors"
-import "std:router"
-import "std:spacing"
-import "std:zeus"
-import "std:zui"
+import "zui:colors"
+import "zeus:router"
+import "zui:spacing"
+import "zeus"
+import "zui"
 
 /// `deep` 1 also lights the link on any path under `href`.
 fn NavLink(label: string, href: string, deep: int = 0) -> Node {

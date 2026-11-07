@@ -1,7 +1,7 @@
 /* zeus_rt.h — platform seam and handle types for `import "std:zeus"`.
  *
  * Node and Signal are typed handles (id + struct). The retained tree,
- * layout, paint, and hit-test live in packages/zeus/std/zeus.loam. Empty fns in that
+ * layout, paint, and hit-test live in packages/zeus/src/zeus.loam. Empty fns in that
  * file (plat_*, keyboard) map to the hooks below. Cocoa talks to the
  * engine through zeus_layout / zeus_paint / zeus_handle_*.
  */
@@ -226,7 +226,7 @@ typedef int64_t (*ZeusBlit)(void *ctx, const uint8_t *px, int64_t w, int64_t h,
                             int64_t gen, int64_t scale);
 void zeus_set_blit(void *ctx, ZeusBlit fn);
 
-/* Empty packages/zeus/std/zeus.loam fns → these C symbols. */
+/* Empty packages/zeus/src/zeus.loam fns → these C symbols. */
 void loam_zeus_plat_run(void);
 int64_t loam_zeus_plat_headless(void);
 /* Current global font family ("" = host default) and the hook a host
@@ -259,7 +259,7 @@ void zeus_set_overlay_scroll(int64_t on);
 int64_t loam_zeus_plat_overlay_scroll(void);
 void loam_zeus_plat_inset_get(loam_vec *out);
 
-/* packages/zeus/std/zeuscore/platform.loam FFI (aliases of loam_zeus_plat_*). */
+/* packages/zeus/src/zeuscore/platform.loam FFI (aliases of loam_zeus_plat_*). */
 void loam_platform_plat_run(void);
 int64_t loam_platform_plat_headless(void);
 void loam_platform_plat_measure(loam_str s, int32_t px, int32_t *w, int32_t *h);
@@ -372,7 +372,7 @@ int64_t loam_runtime_alloc_count(void);
 void loam_platform_plat_set_insets(int64_t top, int64_t right, int64_t bottom,
                                   int64_t left);
 
-/* Loam engine entry points (packages/zeus/std/zeus.loam). Cocoa trampolines through these. */
+/* Loam engine entry points (packages/zeus/src/zeus.loam). Cocoa trampolines through these. */
 void loam_zeus_engine_layout(int32_t width, int32_t height);
 void loam_zeus_engine_paint(void);
 int32_t loam_zeus_engine_step(void);

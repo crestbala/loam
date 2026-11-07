@@ -17,8 +17,8 @@
 //! Usage: `raster_scene <out.ppm>` (capture.sh passes the path).
 
 import "std:sys"
-import "std:zeus"
-import "std:zeusraster"
+import "zeus"
+import "zeus:zeusraster"
 
 fn main() {
     let argv = sys.args()

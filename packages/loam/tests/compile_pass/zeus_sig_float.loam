@@ -6,7 +6,7 @@
 import "std:async"
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
+import "zeus"
 
 fn fail() {
     sys.exit(1)

@@ -1,14 +1,14 @@
 //! The keyboard and gestures sheet: sections of shortcuts, each key drawn as
 //! a keycap. Two columns when the window has room, one (scrolling) when not.
 
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 import "std:str"
 import "../player/store.loam" as player
 import "../player/keys.loam" as shortcuts
 import "icons.loam"
-import { WHITE, SOFT, FAINT, GLASS, ACCENT } from "../theme.loam"
-import { Round } from "kit.loam"
+import { WHITE, SOFT, FAINT, GLASS, ACCENT } "../theme.loam"
+import { Round } "kit.loam"
 
 /// Two columns from this stage width up.
 const TWO_COLUMNS: int = 780

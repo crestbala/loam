@@ -4,9 +4,9 @@
 // its signal with `sort_cells`.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:colors"
-import "std:zui"
+import "zeus"
+import "zui:colors"
+import "zui"
 
 struct Job {
     name: string,

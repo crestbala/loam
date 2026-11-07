@@ -1,6 +1,6 @@
-import "std:zeus"
-import "std:spacing"
-import "std:zui"
+import "zeus"
+import "zui:spacing"
+import "zui"
 
 fn NotFound() -> Node {
     return zui.Column(spacing.SECTION) {

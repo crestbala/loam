@@ -2,8 +2,8 @@
 // assertions — under stubbed host imports the draw/measure calls are no-ops,
 // so the point is only that the host entry points link and run.
 
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn main() {
     let count = zeus.signal(5)

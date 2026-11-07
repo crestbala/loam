@@ -1,6 +1,6 @@
 /* zeus_plat.c — Cocoa/headless seam for the Loam zeus library.
  *
- * packages/zeus/std/zeus.loam owns the node arena, layout, paint, and hit-test. This file
+ * packages/zeus/src/zeus.loam owns the node arena, layout, paint, and hit-test. This file
  * is the other side of that seam: window title/size, text measure, present,
  * and the zeus_* entry points the Cocoa/iOS/web hosts already call. Keyboard chords live
  * in zeus_key.c; focus chain and Tab walk the Loam node tree.
@@ -786,7 +786,7 @@ int64_t loam_platform_plat_load_font(loam_str family, loam_str src) {
     return ok ? 1 : 0;
 }
 
-/* In-tree metrics (`packages/zeus/std/zeuscore/metrics.loam`) parse the font's tables, so
+/* In-tree metrics (`packages/zeus/src/zeuscore/metrics.loam`) parse the font's tables, so
    they need its bytes. The default reads `src` as a path — desktop, iOS, and
    Android all have a filesystem. The web host has none and installs a hook
    that fetches the URL and pushes the bytes back (packages/zeus/hosts/web). */
@@ -1030,7 +1030,7 @@ int64_t loam_zeus_plat_overlay_scroll(void) {
    box in one call. Kept as a comment rather than deleted silently because the
    old names are referenced from `zeus_rt.h`'s history and from older hosts. */
 
-/* packages/zeus/std/zeuscore/platform.loam is the GPUI-style platform leaf. Empty Loam stubs
+/* packages/zeus/src/zeuscore/platform.loam is the GPUI-style platform leaf. Empty Loam stubs
    compile to loam_platform_plat_*; the Cocoa implementations stay as
    loam_zeus_plat_* so existing callers do not change. */
 void loam_platform_plat_run(void) { loam_zeus_plat_run(); }

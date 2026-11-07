@@ -5,8 +5,8 @@
 //! directory. Analytics post to `/api/track`, on the server in `server/`, which is
 //! not deployed yet: see docs/site-analytics.md before publishing.
 
-import "std:zeus"
-import "std:analytics"
+import "zeus"
+import "zeus:analytics"
 import "app_routes.loam" as approutes
 import "tests/smoke.loam" as smoketest
 

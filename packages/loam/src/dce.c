@@ -3,6 +3,9 @@
  *
  * Roots (everything else is pruned unless reachable):
  *   - module 0 (the entry program) is emitted whole: every fn decl.
+ *   - a non-std package the entry fully imports (`import "wide"`) is also
+ *     emitted whole, so a selective import of that package can drop the rest.
+ *     Language and framework modules stay on reachability plus the C roots.
  *   - module-level `let mut` initializers are compiled into per-module
  *     `__init` functions that codegen emits unconditionally, so every
  *     init expression in every module is a root.
@@ -22,6 +25,7 @@
  * answers loam_dce_keep() for regular fn decls.
  */
 #include "dce.h"
+#include "compile.h"
 #include "sema/typecheck.h"
 #include <stdlib.h>
 #include <string.h>
@@ -95,7 +99,7 @@ static const char *const c_roots_maya[] = {
     NULL,
 };
 
-/* `packages/zeus/std/zeuscore/metrics.loam` is not named `zeus`, but the web host calls its
+/* `packages/zeus/src/zeuscore/metrics.loam` is not named `zeus`, but the web host calls its
    `bind` from C (`zeus_font_set` → `loam_metrics_bind`), so it must survive DCE
    even when no app call to `zeus.use_font` reaches it. */
 static const char *const c_roots_metrics[] = {
@@ -307,6 +311,46 @@ static int has_mono_instance(AstNode *decl) {
 
 void loam_dce_set_server_split(int on) { server_split = on; }
 
+/** Bare package spec: `wide`, not `wide.loam`, `./wide`, or `zeus:router`. */
+static int entry_full_package(const char *spec) {
+    size_t n;
+    if (!spec || !spec[0]) return 0;
+    if (strchr(spec, '/') || strchr(spec, '\\') || strchr(spec, ':')) return 0;
+    n = strlen(spec);
+    if (n >= 5 && strcmp(spec + n - 5, ".loam") == 0) return 0;
+    if (n >= 4 && strcmp(spec + n - 4, ".loa") == 0) return 0;
+    return 1;
+}
+
+/** Keep every fn of a user package the entry imported in full. */
+static void root_full_package_imports(LoamModule *mods, int nmods) {
+    AstNode *entry;
+    size_t i;
+    if (nmods <= 0 || !mods[0].ast) return;
+    entry = mods[0].ast;
+    for (i = 0; i < entry->as.program.import_count; i++) {
+        AstNode *im = entry->as.program.imports[i];
+        const char *resolved;
+        int m;
+        if (!im || im->as.import.name_count != 0) continue;
+        if (!entry_full_package(im->as.import.path)) continue;
+        resolved = im->as.import.resolved;
+        if (!resolved || loam_is_std_path(resolved)) continue;
+        for (m = 1; m < nmods; m++) {
+            AstNode *p;
+            size_t d;
+            if (!mods[m].path || strcmp(mods[m].path, resolved) != 0) continue;
+            p = mods[m].ast;
+            if (!p) break;
+            for (d = 0; d < p->as.program.decl_count; d++) {
+                AstNode *fn = p->as.program.decls[d];
+                if (fn->kind == AST_FN_DECL) mark_fn(fn);
+            }
+            break;
+        }
+    }
+}
+
 void loam_dce_run(LoamModule *mods, int nmods) {
     kept.n = todo.n = done.n = 0;
     ran = 1;
@@ -363,6 +407,8 @@ void loam_dce_run(LoamModule *mods, int nmods) {
             }
         }
     }
+
+    root_full_package_imports(mods, nmods);
 
     /* Generic decls pruned but instantiated: their substituted bodies are
      * emitted from the IR, not walked above (a generic call resolves to the

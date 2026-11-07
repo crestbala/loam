@@ -4,9 +4,9 @@
 // per-frame `view` (zoom reacts live there). Phase 7 exit test.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:colors"
-import "std:zui"
+import "zeus"
+import "zui:colors"
+import "zui"
 
 fn expect(ok: bool, what: string) {
     if ok {

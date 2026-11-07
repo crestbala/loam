@@ -1,8 +1,8 @@
 //! Root shell: theme + top bar. Retained across navigation, so the nav state
 //! and the light/dark switch survive — only the page slot rebuilds.
 
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 import "../theme.loam" as theme
 import "../components/nav.loam" as nav
 

@@ -1,11 +1,11 @@
 //! Site chrome: the top bar, the section sidebar, and the footer. Every entry
 //! is a real URL.
 
-import "std:zeus"
-import "std:colors"
-import "std:spacing"
-import "std:zui"
-import "std:router"
+import "zeus"
+import "zui:colors"
+import "zui:spacing"
+import "zui"
+import "zeus:router"
 
 /// Below this content width the sidebar folds away and the top bar wraps.
 const WIDE: int = 920

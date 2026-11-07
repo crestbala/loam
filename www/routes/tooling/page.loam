@@ -1,6 +1,6 @@
-import "std:zeus"
-import "std:zui"
-import "std:router"
+import "zeus"
+import "zui"
+import "zeus:router"
 import "../../components/tooling.loam" as tooling
 
 fn Page(p: Params) -> Node {

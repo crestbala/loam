@@ -2,8 +2,8 @@
 // writing the edit buffer back into a `Signal<string>` on every edit.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 struct FormConfig {
     placeholder: string = "",

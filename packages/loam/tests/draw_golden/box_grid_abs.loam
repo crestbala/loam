@@ -2,8 +2,8 @@
 // an auto-columns grid, absolute children pinned by inset on each side, and a
 // z-indexed overlap. Keep this file free of prints: stdout is the golden.
 
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn main() {
     zeus.window("box", 480, 520)

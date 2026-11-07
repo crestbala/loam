@@ -18,8 +18,8 @@ Measured, not asserted.
 
 | Layer | Where | State |
 |---|---|---|
-| Tree, arena, layout, paint, hit-test, focus, scroll, input, rasterizer, glyph atlas, SVG, images, virtual lists | `packages/zeus/std/zeuscore/*.loam` (~22k lines) | Loam (as before) |
-| Design system (~50 widgets) | `packages/zeus-components/std/*.loam` (~6k lines) | Loam (as before) |
+| Tree, arena, layout, paint, hit-test, focus, scroll, input, rasterizer, glyph atlas, SVG, images, virtual lists | `packages/zeus/src/zeuscore/*.loam` (~22k lines) | Loam (as before) |
+| Design system (~50 widgets) | `packages/zeus-components/src/*.loam` (~6k lines) | Loam (as before) |
 | Reactive core (`signal`/`effect`/`computed`/`scope`/`batch`/context) | `zeusbase.loam` + `zeuscore/track.loam` | Loam (as before) |
 | **Signal payload store, six kinds, lifetime, change detection** | `zeuscore/memory.loam` | ✅ **landed this branch** |
 | **Runtime verbs (trap guard, clock, heap, env, alloc counter)** | `loam_rt.h` | ✅ **landed this branch** |

@@ -1,7 +1,7 @@
-// Selective imports: `import { A, B as C } from "path"` binds exactly the named
-// declarations (renaming with `as`), instead of the whole module.
+// Selective imports: `import { A, B as C } "path"` binds exactly the named
+// declarations (renaming with `as`). There is no `export` and no `from`.
 import "std:fmt"
-import { Shade, LIMIT, twice as double, Box as Crate } from "../mod/named.loam"
+import { Shade, LIMIT, twice as double, Box as Crate } "../mod/named.loam"
 
 fn main() {
     let shade: Shade = Shade.Blue

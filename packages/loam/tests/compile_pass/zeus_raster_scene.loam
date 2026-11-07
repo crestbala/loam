@@ -13,9 +13,9 @@
 
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zeusraster"
-import "std:zui"
+import "zeus"
+import "zeus:zeusraster"
+import "zui"
 
 fn must(ok: bool, what: string) {
     if ok {

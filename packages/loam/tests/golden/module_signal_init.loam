@@ -5,7 +5,7 @@
 //! The suite only checks the exit code, so every mismatch panics.
 
 import "std:fmt"
-import "std:zeus"
+import "zeus"
 import "../mod/initorder_ui.loam"
 import "../mod/initorder_store.loam"
 

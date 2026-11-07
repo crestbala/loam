@@ -4,8 +4,8 @@
 // share one handler, and `key_bind_global` fires wherever focus is.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 let mut saves: int = 0
 let mut opens: int = 0

@@ -764,7 +764,7 @@ typedef struct {
     int n, cap;
 } Completions;
 
-static void add_std_import_comps(Completions *c, const char *prefix);
+static void add_std_import_comps(Completions *c, const char *prefix, const char *anchor);
 
 static void completions_free(Completions *c) {
     for (int i = 0; i < c->n; i++) {
@@ -1032,8 +1032,10 @@ static void handle_completion(const char *msg, const char *id) {
     LoamModule *cur = mod_for_uri(uri);
     if (in_import_str(src, off)) {
         char ipre[128];
+        char *path = uri_to_path(uri);
         import_str_prefix(src, off, ipre, sizeof ipre);
-        add_std_import_comps(&c, ipre);
+        add_std_import_comps(&c, ipre, path);
+        free(path);
         send_completions(id, &c);
         completions_free(&c);
         free(uri);
@@ -1619,8 +1621,7 @@ static void load_std_names(void) {
         closedir(d);
     }
     if (!nstd_names) {
-        const char *fb[] = {"fmt", "async", "zeus", "http", "sys", "net",
-                            "maya", "kv", NULL};
+        const char *fb[] = {"fmt", "async", "sys", "net", "str", "math", "kv", NULL};
         for (int i = 0; fb[i] && nstd_names < 32; i++)
             add_std_name(fb[i], strlen(fb[i]));
     }
@@ -1649,42 +1650,70 @@ static void import_str_prefix(const char *src, int off, char *pre, size_t cap) {
     }
 }
 
-/** Basename of the root owning a `loam_std_dirs` entry: `<root>/std` -> `<root>`'s
- *  last segment, which is the name the `package:module` form matches on. Returns
- *  0 for an entry that is not `<something>/std`, so the bare language std dir is
- *  skipped unless a LOAM_PATH root happens to sit beside it. */
-static int pkg_of_std_dir(const char *dir, char *out, size_t cap) {
-    size_t n = dir ? strlen(dir) : 0;
-    if (n < 5 || strcmp(dir + n - 4, "/std") != 0) return 0;
-    n -= 4;
-    size_t b = n;
-    while (b > 0 && dir[b - 1] != '/') b--;
-    size_t len = n - b;
-    if (len == 0 || len >= cap) return 0;
-    memcpy(out, dir + b, len);
-    out[len] = 0;
-    return 1;
+/** `pkg:rel` for each `.loam` under `base` (`<dir>/src`), a few directories deep. */
+static void add_pkg_mod_comps(Completions *c, const char *prefix, const char *pkg,
+                              const char *base, const char *rel, int depth) {
+    char full[1200];
+    DIR *d;
+    struct dirent *ent;
+    if (depth > 3 || !pkg || !base) return;
+    if (rel && rel[0]) snprintf(full, sizeof full, "%s/%s", base, rel);
+    else snprintf(full, sizeof full, "%s", base);
+    d = opendir(full);
+    if (!d) return;
+    while ((ent = readdir(d))) {
+        char lab[192];
+        char child[256];
+        size_t n, e;
+        if (ent->d_name[0] == '.') continue;
+        n = strlen(ent->d_name);
+        e = loam_ext_at(ent->d_name, n);
+        if (e) {
+            size_t stem = n - e;
+            if (rel && rel[0])
+                snprintf(lab, sizeof lab, "%s:%s/%.*s", pkg, rel, (int)stem, ent->d_name);
+            else
+                snprintf(lab, sizeof lab, "%s:%.*s", pkg, (int)stem, ent->d_name);
+            add_comp(c, lab, "module", 9, prefix);
+            continue;
+        }
+        if (rel && rel[0]) snprintf(child, sizeof child, "%s/%s", rel, ent->d_name);
+        else snprintf(child, sizeof child, "%s", ent->d_name);
+        add_pkg_mod_comps(c, prefix, pkg, base, child, depth + 1);
+    }
+    closedir(d);
 }
 
-/** Import completion: `std:name` for every std-dir module, plus `pkg:name` for
- *  each LOAM_PATH root that actually resolves that module. Packages below `std`
- *  now name each other (`zeus:zeusbase`, `zeus-components:atoms`), so completing
- *  only the `std:` spelling would hide the form those packages use. */
-static void add_std_import_comps(Completions *c, const char *prefix) {
-    char lab[96], pkg[64], hit[1024];
-    const char *dirs[LOAM_MAX_STD_DIRS];
+/** Import completion: `std:name` for the language library, plus bare package
+ *  names and `package:module` from the workspace, vendor tree, and LOAM_PATH. */
+static void add_std_import_comps(Completions *c, const char *prefix, const char *anchor) {
+    char lab[96];
+    int i, n;
     load_std_names();
-    for (int i = 0; i < nstd_names; i++) {
+    for (i = 0; i < nstd_names; i++) {
         snprintf(lab, sizeof lab, "std:%s", std_names[i]);
         add_comp(c, lab, "module", 9, prefix);
     }
-    int nd = loam_std_dirs(dirs, LOAM_MAX_STD_DIRS);
-    for (int d = 0; d < nd; d++) {
-        if (!pkg_of_std_dir(dirs[d], pkg, sizeof pkg)) continue;
-        for (int i = 0; i < nstd_names; i++) {
-            if (!loam_package_module(pkg, std_names[i], hit, sizeof hit)) continue;
-            snprintf(lab, sizeof lab, "%s:%s", pkg, std_names[i]);
-            add_comp(c, lab, "module", 9, prefix);
+    loam_packages_discover(anchor);
+    n = loam_package_count();
+    for (i = 0; i < n; i++) {
+        const char *name = loam_package_name(i);
+        const char *dir = loam_package_dir(i);
+        if (!name) continue;
+        add_comp(c, name, "package", 9, prefix);
+        if (dir) {
+            char base[1200];
+            DIR *d;
+            snprintf(base, sizeof base, "%s/src", dir);
+            d = opendir(base);
+            if (!d) {
+                snprintf(base, sizeof base, "%s/std", dir);
+                d = opendir(base);
+            }
+            if (d) {
+                closedir(d);
+                add_pkg_mod_comps(c, prefix, name, base, "", 0);
+            }
         }
     }
 }

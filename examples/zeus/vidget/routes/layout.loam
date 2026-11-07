@@ -1,6 +1,6 @@
 //! Root shell: theme, header, and a centred column for the page.
 
-import "std:zeus"
+import "zeus"
 import "../theme.loam" as theme
 import "../components/views.loam" as views
 

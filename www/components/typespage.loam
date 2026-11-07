@@ -1,8 +1,8 @@
 //! Data types. Widths, aggregates, and the library containers.
 
-import "std:zeus"
-import "std:spacing"
-import "std:zui"
+import "zeus"
+import "zui:spacing"
+import "zui"
 import "prose.loam" as prose
 
 fn Types() -> Node {

@@ -1327,7 +1327,8 @@ static void usage(void) {
             "  --int64-compat  `int` = i64 and `float` = f64 (pre-Phase-10 behavior)\n"
             "  --string-owns   `string` is owned and refcounted (default)\n"
             "  --no-string-owns  restore never-freed strings (bisecting a bug)\n"
-            "  --cost      print a cost report (fns, allocs, copies, traps, C bytes) and stop\n"
+            "  --cost      print a cost report (fns, allocs, copies, traps, C bytes,\n"
+            "              bytes per imported package) and stop\n"
             "Default output: <source-dir>/build/<name> (.app on ios; Gradle tree on android)\n");
 }
 
@@ -1389,11 +1390,77 @@ static void cost_tally_fn(const IrFn *fn, CostTally *c) {
     }
 }
 
-static void cost_report(const IrModule *m, long c_bytes) {
+static long fn_inst_count(const IrFn *fn) {
+    long n = 0;
+    for (int b = 0; b < fn->nblocks; b++) n += fn->blocks[b].ninsts;
+    return n;
+}
+
+/** Module index encoded in `loam_<mod>_<fn>`, or -1 for an entry fn. */
+static int cname_mod_index(const char *cname, LoamModule *mods, int nmods) {
+    const char *rest;
+    int best = -1;
+    size_t bestlen = 0;
+    if (!cname || strncmp(cname, "loam_", 5) != 0) return -1;
+    rest = cname + 5;
+    for (int i = 0; i < nmods; i++) {
+        const char *name = mods[i].name;
+        size_t n;
+        if (!name || !name[0]) continue;
+        n = strlen(name);
+        if (n > bestlen && strncmp(rest, name, n) == 0 && rest[n] == '_') {
+            best = i;
+            bestlen = n;
+        }
+    }
+    return best;
+}
+
+static const char *cost_bucket(const IrFn *fn, LoamModule *mods, int nmods) {
+    int idx;
+    const char *lab;
+    if (fn->name && strcmp(fn->name, "__init") == 0) {
+        idx = fn->init_mod;
+        if (idx < 0 || idx >= nmods) return "(entry)";
+    } else {
+        idx = cname_mod_index(fn->cname, mods, nmods);
+        if (idx < 0) return "(entry)";
+    }
+    if (idx == 0) return "(entry)";
+    lab = loam_package_label(mods[idx].path);
+    if (lab && lab[0]) return lab;
+    return "(entry)";
+}
+
+static void cost_report(const IrModule *m, long c_bytes, LoamModule *mods, int nmods) {
     CostTally c;
+    typedef struct {
+        const char *name;
+        long insts;
+    } CostPkg;
+    CostPkg pkgs[72];
+    int npkgs = 0;
+    long total = 0;
     memset(&c, 0, sizeof c);
-    for (int i = 0; i < m->nfns; i++)
-        cost_tally_fn(&m->fns[i], &c);
+    for (int i = 0; i < m->nfns; i++) {
+        const IrFn *fn = &m->fns[i];
+        const char *bucket = cost_bucket(fn, mods, nmods);
+        long insts = fn_inst_count(fn);
+        int k;
+        cost_tally_fn(fn, &c);
+        total += insts;
+        for (k = 0; k < npkgs; k++)
+            if (strcmp(pkgs[k].name, bucket) == 0) break;
+        if (k == npkgs) {
+            if (npkgs < (int)(sizeof pkgs / sizeof pkgs[0])) {
+                pkgs[npkgs].name = bucket;
+                pkgs[npkgs].insts = insts;
+                npkgs++;
+            }
+        } else {
+            pkgs[k].insts += insts;
+        }
+    }
     printf("loam: cost report\n");
     printf("  functions      %8ld\n", c.fns);
     printf("  blocks         %8ld\n", c.blocks);
@@ -1407,6 +1474,12 @@ static void cost_report(const IrModule *m, long c_bytes) {
     printf("  closures       %8ld\n", c.closures);
     printf("  string literals%8ld\n", c.strings);
     printf("  C bytes        %8ld\n", c_bytes);
+    for (int i = 0; i < npkgs; i++) {
+        long bytes = 0;
+        if (total > 0)
+            bytes = (long)(((long long)c_bytes * pkgs[i].insts) / total);
+        printf("  package %-14s %8ld bytes\n", pkgs[i].name, bytes);
+    }
     printf("  largest fn     %s (%ld IR insts)\n",
            c.width_name ? c.width_name : "-", c.width);
 }
@@ -1536,6 +1609,7 @@ int main(int argc, char **argv) {
     LoamSession sess;
     loam_session_init(&sess);
     progress("check\n");
+    loam_set_release_imports(wasm_release);
     int check_rc = loam_session_check(&sess, in_path, NULL);
     print_warns(&sess);
     if (check_rc != 0) {
@@ -1564,7 +1638,7 @@ int main(int argc, char **argv) {
             if (fseek(sink, 0, SEEK_END) == 0) c_bytes = ftell(sink);
             fclose(sink);
         }
-        cost_report(ir, c_bytes);
+        cost_report(ir, c_bytes, sess.mods, sess.nmods);
         ir_free(ir);
         loam_session_free(&sess);
         return 0;

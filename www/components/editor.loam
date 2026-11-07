@@ -12,9 +12,9 @@
 //! - Cmd/Ctrl + A, C, X, V, Z, Shift+Z, Y, / (toggle `//`), Enter (run)
 //! - Esc leaves the editor, so Tab moves focus again
 
-import "std:zeus"
-import "std:colors"
-import "std:zui"
+import "zeus"
+import "zui:colors"
+import "zui"
 import "std:str"
 import "highlight.loam" as highlight
 

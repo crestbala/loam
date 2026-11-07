@@ -3,8 +3,8 @@
 
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:router"
+import "zeus"
+import "zeus:router"
 
 fn eq(a: string, b: string) -> bool {
     if a.len != b.len {

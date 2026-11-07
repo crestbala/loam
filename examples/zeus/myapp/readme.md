@@ -74,7 +74,7 @@ Three things to know before adding a method:
   `repeated`, sent as one key per element and decoded back into a `[]T`. Nested
   messages are not supported yet, so a list of structs has nowhere to go. Hence
   `Blog.Posts` returns `titles: []string` directly.
-- **`res.resource` does not compile for a list `T`.** `std:res` is the intended
+- **`res.resource` does not compile for a list `T`.** `zeus:res` is the intended
   abstraction for async data and its loader signature matches `call_async`, but a
   non-scalar `T` fails inside its own body (`assigning to 'Resource__string' from
   incompatible type 'Resource__int'`); `T = int` and `T = string` are fine. The
@@ -226,7 +226,7 @@ ZEUS_MEM_DEBUG=1 ./run.sh myapp
 
 `phys` is Apple's `phys_footprint` — the same number Activity Monitor shows and
 what a canvas app's cost really is here. `malloc` is the engine's own heap
-(`std:zeus` nodes, signals, layout): it stays ~1–2 MB and is the number to watch
+(`zeus` nodes, signals, layout): it stays ~1–2 MB and is the number to watch
 for a *leak*.
 
 ```sh

@@ -4,8 +4,8 @@
 
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 let mut kept_builds = 0
 let mut lazy_builds = 0

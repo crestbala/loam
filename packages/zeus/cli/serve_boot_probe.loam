@@ -11,7 +11,7 @@
 //
 // Exit: 0 when every check passed, 1 when one did not.
 import "std:fmt"
-import "std:http"
+import "http"
 import "std:net"
 import "std:sys"
 import "zeli.loam" as zeli

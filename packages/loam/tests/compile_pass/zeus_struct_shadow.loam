@@ -1,10 +1,10 @@
 // C17: an app struct named like a library struct (`ChipProps`, also in
-// std:zui) is its own type with its own C name. Both are used in one program:
+// zui) is its own type with its own C name. Both are used in one program:
 // the app's in its own fn, the library's through `zui.Chip`.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 struct ChipProps {
     who: string = "app",

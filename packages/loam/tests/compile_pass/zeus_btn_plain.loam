@@ -1,6 +1,6 @@
 // look = -1 is a plain clickable label (default look is Look.Solid / Primary).
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 import "std:sys"
 
 fn main() {

@@ -5,7 +5,7 @@
 //! Protobuf here has no nested messages, so each report table is parallel lists:
 //! row `i` is `page_paths[i]`, `page_views[i]`, and so on.
 
-import "std:http"
+import "http"
 
 /// `status` in a reply. An empty reply decodes to zeros, so 0 has to mean that no
 /// answer came, and never success.

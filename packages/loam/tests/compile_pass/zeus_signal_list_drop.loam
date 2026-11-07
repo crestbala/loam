@@ -5,7 +5,7 @@
 import "std:fmt"
 import "std:str"
 import "std:sys"
-import "std:zeus"
+import "zeus"
 
 let rows = zeus.signal([]int {})
 let names = zeus.signal([]string {})

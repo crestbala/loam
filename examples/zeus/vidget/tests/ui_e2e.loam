@@ -8,7 +8,7 @@
 import "std:async"
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
+import "zeus"
 import "../app_routes.loam" as approutes
 import "../components/store.loam" as store
 

@@ -1,9 +1,9 @@
 //! Small building blocks every vidy panel uses. Theme colours only: none of
 //! these read the player, so they carry over to any dark media UI.
 
-import "std:zeus"
-import "std:zui"
-import { WHITE, GLASS, ACCENT } from "../theme.loam"
+import "zeus"
+import "zui"
+import { WHITE, GLASS, ACCENT } "../theme.loam"
 
 /// Centre `build`'s content horizontally. Column children stretch to the
 /// column's width, so `align = Center` has nothing to centre; a row sizes its

@@ -3,9 +3,9 @@
 // that sits far from that pair keeps its own place.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:spacing"
-import "std:zui"
+import "zeus"
+import "zui:spacing"
+import "zui"
 
 fn must(ok: bool, what: string) {
     if !ok {

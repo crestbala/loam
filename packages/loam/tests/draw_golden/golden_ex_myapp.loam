@@ -4,9 +4,9 @@
 // process memory, which is not the same on every machine. Keep this file free
 // of prints: stdout is the golden.
 
-import "std:zeus"
-import "std:router"
-import "std:zui"
+import "zeus"
+import "zeus:router"
+import "zui"
 import "../../../../examples/zeus/myapp/app_routes.loam" as approutes
 import "../../../../examples/zeus/myapp/theme.loam" as theme
 

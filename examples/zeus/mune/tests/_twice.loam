@@ -11,7 +11,7 @@
 import "std:async"
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
+import "zeus"
 import "../components/screen.loam" as screen
 import "../core/jobs.loam" as jobs
 import "../core/num.loam" as num

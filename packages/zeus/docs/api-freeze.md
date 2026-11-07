@@ -619,7 +619,7 @@ heading; keep one entry per line.
 
 ## `zeusraster.*` functions (119)
 
-The software rasterizer moved out of the core into `std:zeusraster`; these
+The software rasterizer moved out of the core into `zeus:zeusraster`; these
 were `zeus.*` before.
 
 - `zeusraster.atlas_blit`

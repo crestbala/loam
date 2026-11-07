@@ -4,8 +4,8 @@
 // the untokenized constants did (byte-exact on deterministic metrics).
 // Keep stdout as the golden; no extra prints.
 
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn main() {
     let on = zeus.signal(true)

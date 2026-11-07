@@ -9,7 +9,7 @@
 //     comes back empty.
 
 import "std:fmt"
-import "std:http"
+import "http"
 import "std:sys"
 
 #[proto]

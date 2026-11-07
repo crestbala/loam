@@ -3,8 +3,8 @@ import "std:fmt"
 import "std:sys"
 import "std:async"
 import "std:log"
-import "std:zeus"
-import "std:devtools"
+import "zeus"
+import "zeus:devtools"
 
 fn main() {
     log.set_print(false)

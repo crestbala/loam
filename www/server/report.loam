@@ -4,7 +4,7 @@
 //! after another and block other requests, so keep an eye on `Stats` in the logs.
 
 import "std:result"
-import "std:sqlite"
+import "sqlite"
 import "api.loam" as api
 
 const DAY_MS: i64 = 86400000

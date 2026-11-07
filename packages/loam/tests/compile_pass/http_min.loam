@@ -1,4 +1,4 @@
-import "std:http"
+import "http"
 
 fn main() {
     let app = http.app()

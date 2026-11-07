@@ -3,7 +3,7 @@
 //! arranger; `pick_style` loads a style's preset and keeps the listener's
 //! own choices (length, tempo, pitch, voices).
 
-import "std:zeus"
+import "zeus"
 import "../core/sound.loam" as sound
 import "../core/styles.loam" as styles
 

@@ -3,11 +3,11 @@
 //! route, so navigation repaints the marker without rebuilding the shell.
 
 import "std:async"
-import "std:zeus"
-import "std:colors"
-import "std:spacing"
-import "std:zui"
-import "std:router"
+import "zeus"
+import "zui:colors"
+import "zui:spacing"
+import "zui"
+import "zeus:router"
 
 let mut ram_armed: int = 0
 

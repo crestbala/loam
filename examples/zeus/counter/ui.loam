@@ -2,8 +2,8 @@
 //! `--target` picks the RPC address (`http.client()`) and the chip label.
 
 import "std:async"
-import "std:zeus"
-import "std:http"
+import "zeus"
+import "http"
 import "std:sys"
 import "backend/api.loam"
 import "screen.loam"

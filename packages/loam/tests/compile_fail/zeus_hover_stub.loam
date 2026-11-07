@@ -1,5 +1,5 @@
 // hover_delay / hover_leave / dismiss were silent no-ops; they are gone.
-import "std:zeus"
+import "zeus"
 
 fn main() {
     zeus.Box(style = Style(padding = 8)).hover_delay(200)

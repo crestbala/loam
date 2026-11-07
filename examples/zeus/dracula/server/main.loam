@@ -4,7 +4,7 @@
 //! cache out of the UI binary. `loam test` on this file runs the fetch seam
 //! and the ingest pipeline; `main` itself is the process that listens.
 
-import "std:http"
+import "http"
 import "std:test"
 import "api.loam"
 import "ingest.loam"

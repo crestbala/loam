@@ -14,7 +14,7 @@
 //! the instrument cards, the recording rows, and the waveform. The light
 //! values are deeper so they hold contrast on a pale card.
 
-import "std:zeus"
+import "zeus"
 
 const BASE: int = 120
 

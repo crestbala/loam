@@ -1,8 +1,8 @@
 //! The recordings: a drop zone, one row per file (what was heard in it and
 //! its role), and a path field for a file that cannot be dropped.
 
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 import "../studio/store.loam" as store
 import "../theme.loam" as theme
 import "kit.loam" as kit

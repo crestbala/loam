@@ -1,4 +1,4 @@
-// Fixture for `zeus pkg sync` + `import "pkg:name"` (§1.8): the vendored
+// Fixture for `zeli pkg sync` + `import "pkg:name"` (§1.8): the vendored
 // package is a local path, so sync needs no network.
 
 import "std:fmt"

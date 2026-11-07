@@ -126,7 +126,8 @@ struct AstNode {
                module registered the same name — e.g. a file `raygui.loam`
                importing `std:raygui` would otherwise shadow it. */
             const char *resolved;
-            /* Selective import: `import { A, B as C } from "path"`. `names[k]`
+            /* Selective import: `import { A, B as C } "path"`. No `from`, no
+               `export`: every top-level declaration can be named. `names[k]`
                is the name to find in the imported module, `locals[k]` the local
                name it binds (equal when there is no `as`). Empty for a full
                import, which brings in the module under its alias as before. */

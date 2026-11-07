@@ -10,8 +10,8 @@
 
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zeusraster"
+import "zeus"
+import "zeus:zeusraster"
 
 fn must(ok: bool, what: string) {
     if ok {

@@ -6,8 +6,8 @@
 
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:router"
+import "zeus"
+import "zeus:router"
 
 fn Home(p: Params) -> Node {
     return zeus.Text("home")

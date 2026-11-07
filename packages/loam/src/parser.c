@@ -1543,7 +1543,7 @@ static char *alias_from_path(Parser *p, const char *path) {
     return alias;
 }
 
-/** `import { A, B as C } from "path"` — the `{` has been consumed. */
+/** `import { A, B as C } "path"` — the `{` has been consumed. No `from`. */
 static AstNode *parse_named_import(Parser *p, SourceLoc loc) {
     const char **names = NULL;
     const char **locals = NULL;
@@ -1572,13 +1572,15 @@ static AstNode *parse_named_import(Parser *p, SourceLoc loc) {
         } while (match(p, TOK_COMMA));
     }
     consume(p, TOK_RBRACE, "expected } to close the import list");
-    if (!check(p, TOK_IDENT) || p->current.len != 4 || strncmp(p->current.start, "from", 4) != 0) {
-        error(p, "expected 'from' before the import path");
-    } else {
+    /* No `from`. `import { A } "path"` is the whole form. `from` is rejected
+       so it cannot become a keyword later by accident. */
+    if (check(p, TOK_IDENT) && p->current.len == 4 &&
+        strncmp(p->current.start, "from", 4) == 0) {
+        error(p, "selective import has no 'from'; write import { Name } \"path\"");
         advance(p);
     }
     if (!match(p, TOK_STRING)) {
-        error(p, "expected import path string after 'from'");
+        error(p, "expected import path string");
         for (size_t i = 0; i < n; i++) {
             free((void *)names[i]);
             free((void *)locals[i]);
@@ -1604,13 +1606,13 @@ static AstNode *parse_named_import(Parser *p, SourceLoc loc) {
     return ast_import_names(alias, path, names, locals, n, loc);
 }
 
-/** `import "std:foo"` / `import "rel/path.loam"` (either with `as name`), or a
-    selective `import { A, B as C } from "path"`. */
+/** `import "std:foo"` / `import "rel/path.loam"` / `import "pkg"` (either with
+    `as name`), or a selective `import { A, B as C } "path"`. */
 static AstNode *parse_import(Parser *p) {
     SourceLoc loc = p->previous.loc;
     if (match(p, TOK_LBRACE)) return parse_named_import(p, loc);
     if (match(p, TOK_IDENT)) {
-        error(p, "import requires a quoted path, e.g. import \"std:zeus\" or import \"foo.loam\"");
+        error(p, "import requires a quoted path, e.g. import \"std:fmt\" or import \"zeus\"");
         return NULL;
     }
     if (!match(p, TOK_STRING)) {

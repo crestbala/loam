@@ -3,10 +3,10 @@
 // off screen with it rather than pinning itself to a window edge.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:colors"
-import "std:colors"
-import "std:zui"
+import "zeus"
+import "zui:colors"
+import "zui:colors"
+import "zui"
 
 fn must(ok: bool, what: string) {
     if !ok {

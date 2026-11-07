@@ -3,8 +3,8 @@
 // keep the width from before the change until something else forces a layout.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn expect(ok: bool, what: string) {
     if ok {

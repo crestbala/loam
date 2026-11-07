@@ -6,8 +6,8 @@
 //! page reconnects every second.
 
 import "std:async"
-import "std:zeus"
-import "std:http"
+import "zeus"
+import "http"
 
 fn Panel(n: Signal<int>, last: Signal<string>, state: Signal<string>) -> Node {
     return zeus.Box(style = Style(width = px(280), direction = Direction.Column, padding = 20)) {

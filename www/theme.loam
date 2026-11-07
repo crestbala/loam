@@ -1,6 +1,6 @@
 //! Theme tokens. Widgets resolve each role per appearance at paint time.
 
-import "std:zeus"
+import "zeus"
 
 fn install() {
     zeus.theme(ROLE.Accent, 0x1F4B3A, 0x8FBF9F)

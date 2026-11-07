@@ -4,14 +4,14 @@
 //! downloads to every visitor who opens the page, so it holds no secret and shows
 //! only what `Vault.Stats` agrees to return.
 
-import "std:analytics"
-import "std:colors"
+import "zeus:analytics"
+import "zui:colors"
 import "std:fmt"
-import "std:http"
-import "std:spacing"
+import "http"
+import "zui:spacing"
 import "std:str"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 import "../server/api.loam" as api
 import "shell.loam" as shell
 

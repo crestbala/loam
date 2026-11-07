@@ -3,7 +3,7 @@
 // undefined `loam_zeus_hook_signal` and fail to link.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
+import "zeus"
 
 fn Counter() -> Node {
     let mut clicks = 0

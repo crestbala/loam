@@ -3,7 +3,7 @@
 
 import "std:date"
 import "std:test"
-import "std:zui"
+import "zui"
 import "../components/present.loam" as present
 import "../core/backtest.loam"
 import "../core/series.loam"

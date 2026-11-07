@@ -2,7 +2,7 @@
 // size, its route table at the root path, without the store's start-up (no
 // poller, no picker). Keep this file free of prints: stdout is the golden.
 
-import "std:zeus"
+import "zeus"
 import "../../../../examples/zeus/mune/app_routes.loam" as approutes
 
 fn main() {

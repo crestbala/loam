@@ -2,8 +2,8 @@
 // with `align_direction`, and `Grid` taking a `GridConfig` struct.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn DashboardLayout() -> Node {
     return Column(0) {

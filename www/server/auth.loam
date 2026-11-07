@@ -1,7 +1,7 @@
 //! The vault's sign in: the only place the password is checked. Native only.
 
-import "std:crypto"
-import "std:http"
+import "crypto"
+import "http"
 import "std:log"
 import "std:str"
 import "api.loam" as api

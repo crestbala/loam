@@ -4,9 +4,9 @@
 // a scrolled page hits only where it is drawn — never at its unscrolled spot.
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
-import "std:colors"
-import "std:zui"
+import "zeus"
+import "zui:colors"
+import "zui"
 
 fn must(ok: bool, what: string) {
     if !ok {

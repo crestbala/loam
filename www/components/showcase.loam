@@ -2,10 +2,10 @@
 //! dashboards, data display, navigation, and overlays. Every demo is live and
 //! sits above the calls that build it.
 
-import "std:zeus"
-import "std:spacing"
-import "std:colors"
-import "std:zui"
+import "zeus"
+import "zui:spacing"
+import "zui:colors"
+import "zui"
 import "prose.loam" as prose
 import "widgets.loam" as widgets
 

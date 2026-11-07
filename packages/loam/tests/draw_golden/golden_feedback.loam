@@ -3,9 +3,9 @@
 // (a scaled box emits save / xform / restore). Keep this file free of prints:
 // stdout is the golden.
 
-import "std:zeus"
-import "std:colors"
-import "std:zui"
+import "zeus"
+import "zui:colors"
+import "zui"
 
 fn main() {
     zeus.snapshot(420, 240, fn() -> Node {

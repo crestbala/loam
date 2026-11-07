@@ -4,7 +4,7 @@
 
 import "std:fmt"
 import "std:sys"
-import "std:zeus"
+import "zeus"
 import "../components/screen.loam" as screen
 import "../core/sound.loam" as sound
 import "../core/styles.loam" as styles

@@ -11,15 +11,15 @@ Everything in this file was produced by commands in
 
 | Piece | Where |
 |---|---|
-| Arena counters: `live_nodes`, `bytes_used` per bucket, `high_water_mark` | `packages/zeus/std/zeuscore/arena.loam` |
-| On-exit report (arena + draw list + process footprint) | `packages/zeus/std/zeus.loam` (`mem_stats_report`, called from `raw_run`) |
+| Arena counters: `live_nodes`, `bytes_used` per bucket, `high_water_mark` | `packages/zeus/src/zeuscore/arena.loam` |
+| On-exit report (arena + draw list + process footprint) | `packages/zeus/src/zeus.loam` (`mem_stats_report`, called from `raw_run`) |
 | `ZEUS_MEM_STATS` gate | `runtime.mem_stats` — build flag `-DZEUS_MEM_STATS` (via `driver.c`) **or** `ZEUS_MEM_STATS=1` at runtime |
 | `membench` app, three modes | `examples/zeus/membench/membench.loam` |
 | Structural golden scene | `tests/golden/ref_scene.loam` |
-| Frame damage list (Phase 1) | `packages/zeus/std/zeuscore/arena.loam`, `scene.loam` |
-| Node-arena ceiling (Phase 2) | `packages/zeus/std/zeuscore/arena.loam` (`node_cap`) |
-| `UiNode` field ordering (Phase 3) | `packages/zeus/std/zeuscore/arena.loam` |
-| Framebuffer + color pipeline (Phase 4) | `packages/zeus/std/zeusraster/raster.loam` |
+| Frame damage list (Phase 1) | `packages/zeus/src/zeuscore/arena.loam`, `scene.loam` |
+| Node-arena ceiling (Phase 2) | `packages/zeus/src/zeuscore/arena.loam` (`node_cap`) |
+| `UiNode` field ordering (Phase 3) | `packages/zeus/src/zeuscore/arena.loam` |
+| Framebuffer + color pipeline (Phase 4) | `packages/zeus/src/zeusraster/raster.loam` |
 
 The gate is a no-op when off: `mem_stats_report` calls one host function that
 returns 0, and `mem_sample()` (the only per-frame cost) is skipped entirely.
@@ -416,7 +416,7 @@ Net: Phase 3's free/ordering step is done and measured; its structural items
 ### Phase 4 — software rasterizer (framebuffer, color, coverage, borders, shadows, tiles, damage clip, blit contract, multi-contour, glyph outlines, glyph bitmaps, glyph atlas)
 
 - bytes/node: **476.0 — unchanged.** No tree/geometry code was touched.
-- New module `packages/zeus/std/zeusraster/raster.loam`:
+- New module `packages/zeus/src/zeusraster/raster.loam`:
   - **One owned framebuffer**, `physical_w * physical_h * 4`, BGRA8,
     premultiplied. Enabled by a fact worth recording: Loam has `[]u8` with a
     1-byte element, so the buffer is 20 MB — not the 83 MB a `[]int` buffer at

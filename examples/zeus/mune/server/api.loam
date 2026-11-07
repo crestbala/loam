@@ -12,7 +12,7 @@
 //! numbers or labels travels as parallel lists indexed together. Byte counts
 //! travel as KiB: `int` is i32.
 
-import "std:http"
+import "http"
 
 /// How many recordings the running session holds, and whether ffmpeg and the
 /// voice tools are present. `scan` moves when the recordings change.
@@ -218,7 +218,7 @@ fn cancel_rpc() -> string {
     return "Mune.Cancel"
 }
 
-/// Keeps `std:http` imported here so the codecs it injects resolve.
+/// Keeps `http` imported here so the codecs it injects resolve.
 fn ping() -> string {
     return http.concat_str("mu", "ne")
 }

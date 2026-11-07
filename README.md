@@ -33,7 +33,7 @@ package manager (Linux: apt / dnf / pacman) can. See [Setup](#setup).
   / base-devel on Linux)
 - macOS for the native desktop GUI (Cocoa); Linux uses the X11 host
   (`packages/zeus/hosts/desktop/linux.c`, needs `libx11-dev`). Maya is macOS-only
-- [raylib](https://www.raylib.com) (`brew install raylib`) for the `std:raygui`
+- [raylib](https://www.raylib.com) (`brew install raylib`) for the `raygui`
   example (`examples/language/raygui.loam`); nothing else needs it
 - [Xcode](https://developer.apple.com/xcode/) for the iOS Simulator target
 - A `wasm32` clang (Homebrew LLVM, not Apple `/usr/bin/clang`) for web builds;
@@ -122,10 +122,10 @@ Call imported items as `foo.bar(...)`.
 | Import | What it is |
 |---|---|
 | `std:fmt` | Stdout. `fmt.println` is compile-time lowering to length-based writes, not `printf`. |
-| `std:zeus` | UI toolkit + design system in one module: one `Node` tree, signals, `Box` / `Text` / `Button` / `App`, themed chrome (`Card`, `Button` with `Look` / `Size`, `Dialog`, `Tabs`, `Navbar`, charts, `DatePicker`). Same source on Cocoa, iOS, Android, and wasm Canvas2D (no HTML DOM). |
-| `std:http` | Unary RPC over gRPC-Web (HTTP/1.1) and h2c. `#[proto]` structs, no REST routes. |
-| `std:maya` | Tiny 3D/2D engine. Scene and tracer in Loam; C is the event loop and present. |
-| `std:raygui` | Immediate-mode GUI: [raygui](https://github.com/raysan5/raygui) controls on [raylib](https://www.raylib.com). No retained tree; the frame loop lives in Loam. Host seam: `raygui_plat.c`; RAM probe included. |
+| `zeus` | UI toolkit + design system in one module: one `Node` tree, signals, `Box` / `Text` / `Button` / `App`, themed chrome (`Card`, `Button` with `Look` / `Size`, `Dialog`, `Tabs`, `Navbar`, charts, `DatePicker`). Same source on Cocoa, iOS, Android, and wasm Canvas2D (no HTML DOM). |
+| `http` | Unary RPC over gRPC-Web (HTTP/1.1) and h2c. `#[proto]` structs, no REST routes. |
+| `maya` | Tiny 3D/2D engine. Scene and tracer in Loam; C is the event loop and present. |
+| `raygui` | Immediate-mode GUI: [raygui](https://github.com/raysan5/raygui) controls on [raylib](https://www.raylib.com). No retained tree; the frame loop lives in Loam. Host seam: `raygui_plat.c`; RAM probe included. |
 | `std:thread` | Detached OS threads for CPU-bound work, plus Send-disciplined `channel<T>` between workers and the UI loop. `spawn` callbacks must be Send (plain data) and are checked to never touch module state or the C seam. Native/iOS/Android; wasm `spawn` is a no-op. |
 | `std:net` | TCP connect / listen / read / write. Used by `http`; not an app-level import. |
 | `std:sys` | `env_set` / `exit`. Language-level seam into `loam_rt`. |
@@ -140,8 +140,8 @@ trailing block. No `View` trait, no HTML DOM. Backend is a `--target`
 flag, not an import. Web is Canvas2D wasm.
 
 ```loam
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn main() {
     let n = zeus.signal(0)
@@ -159,7 +159,7 @@ fn main() {
 ```
 
 The themed look (zinc palette, `Card`, `Button` with `Look` / `Size`, dialogs,
-charts, `DatePicker`) ships inside [`std:zeus`](packages/zeus/std/zeus.loam).
+charts, `DatePicker`) ships inside [`zeus`](packages/zeus/src/zeus.loam).
 The catalog is [`examples/zeus/gallery`](examples/zeus/gallery). Zeus paints
 its own theme on every host; Cocoa / UIKit / Android widgets are not used.
 Map: [packages/zeus/README.md](packages/zeus/README.md). Architecture:
@@ -181,7 +181,7 @@ _Open the recording in a new tab: [docs/media/gallery-demo.mp4](docs/media/galle
 | iOS | `--target=ios` | UIKit Simulator | Window and touch only. Needs Xcode. Device signing is out of scope. |
 | Android | `--target=android` | JNI Canvas | Writes a Gradle project. Layout is density-independent pixels. |
 
-CLI and `std:http` servers are ordinary native binaries. Maya present is
+CLI and `http` servers are ordinary native binaries. Maya present is
 Cocoa 2D on macOS (`MAYA_HEADLESS=1` updates once and exits). raygui opens a
 raylib window (`RAYGUI_HEADLESS=1` draws a few frames and exits).
 
@@ -218,7 +218,7 @@ language demo is `./run.sh language/counter`. `zeus/counter` is an alias.
 |---|---|
 | `minimal` | Smallest `fn main()`. |
 | `counter` | A struct and a `let mut` binding. |
-| `http_server` | `std:http` unary RPC on `:8080`. |
+| `http_server` | `http` unary RPC on `:8080`. |
 | `solar` | Maya solar-system scene (orbit camera). |
 | `studio` | Maya 3D toy with orbiting bodies. |
 | `raygui` | raygui immediate-mode controls (buttons, slider, combo, list) with a live process-RAM panel; prints a RAM summary on exit. Needs raylib. |
@@ -300,7 +300,7 @@ nob.loam               the build and test tool (run as `bin/nob`; `make` forward
 zeus/                  the framework
   hosts/               desktop/ Cocoa, ios/ UIKit, android/ JNI, web/ Canvas2D
   docs/                spec.md = zeus backends and paint model
-raygui/                immediate-mode GUI package (std:raygui)
+raygui/                immediate-mode GUI package (raygui)
   std/raygui.loam      the Loam API + frame loop
   vendor/raygui.h      vendored raygui (raysan5/raygui)
 packages/tooling/tree-sitter-loam/  grammar

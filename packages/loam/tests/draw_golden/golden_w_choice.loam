@@ -4,8 +4,8 @@
 // Segmented, Tabs and ListBox. Keep this file free of prints: stdout is the
 // golden.
 
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn main() {
     let on = zeus.signal(true)

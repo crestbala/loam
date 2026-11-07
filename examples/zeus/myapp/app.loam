@@ -3,7 +3,7 @@
 //! `zeus routes` generates app_routes.loam from routes/; this file
 //! mounts it. `zeus build` emits all five targets from here.
 
-import "std:zeus"
+import "zeus"
 import "app_routes.loam" as approutes
 // The one piece of data myapp fetches: `Blog.Posts` from the backend in
 // `server/main.loam`. Started here, before `zeus.App`, so the connection's state

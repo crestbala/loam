@@ -1,8 +1,8 @@
 //! Shared component, no routing knowledge: a fn that builds into the
 //! current host.
 
-import "std:zeus"
-import "std:zui"
+import "zeus"
+import "zui"
 
 fn Card(text: string) -> Node {
     return zeus.Box(style = Style(gap = 4, padding = 12, background = "#FFFFFF")) {

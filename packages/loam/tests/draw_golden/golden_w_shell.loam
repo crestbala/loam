@@ -3,10 +3,10 @@
 // second dump collapses the sidebar to its rail. Keep this file free of
 // prints: stdout is the golden.
 
-import "std:zeus"
-import "std:colors"
-import "std:spacing"
-import "std:zui"
+import "zeus"
+import "zui:colors"
+import "zui:spacing"
+import "zui"
 
 fn main() {
     let collapsed = zeus.signal(false)
