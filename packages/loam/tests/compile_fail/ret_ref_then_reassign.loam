@@ -1,0 +1,13 @@
+import "std:fmt"
+
+fn first(xs: &[]int) -> &int {
+    return &xs[0]
+}
+
+fn main() {
+    let mut v = []int {}
+    v.push(1)
+    let p = first(&v)
+    v = []int {}
+    fmt.println(*p)
+}

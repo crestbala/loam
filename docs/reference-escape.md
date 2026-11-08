@@ -132,33 +132,49 @@ scope ends.
 - Gap: a generic body that builds `[]T` locally, with `T` a reference, and
   never returns it is not checked (only the instantiated return type is).
 
-### Phase 4: A returned reference borrows its arguments (cases c, f)
+### Phase 4: A reference keeps what it borrows borrowed (cases c, f) — done
 
-Case a is already caught by phase 3, which treats a call's result as pointing
-into its reference arguments. What is left is keeping those arguments
-*borrowed* while the result is live.
+Decision: **tie to arguments**. `-> &T` stays legal (accessors like
+`first(xs)`), and the result borrows what its reference arguments borrow.
 
-Open decision: **tie to arguments** (default, below) vs **ban `-> &T`
-outright**. Banning is simpler but removes accessors like `first(xs)` /
-`get(map, k)`. Settle before starting.
-
-- [ ] For a call `f(args…)` whose return type is `TY_PTR`, collect the places
-      of every argument passed to a `&T` / `&mut T` parameter (explicit or
-      auto-borrowed). The result binding gets those as its borrows: extend
-      `Binding.borrow_of` from one place to a list.
-- [ ] While the binding is live (NLL last use), those places are borrowed:
-      `v.push`, `v = …`, `&mut v`, and moves of `v` are rejected.
-- [ ] A `&mut T` result borrows exclusively; a `&T` result from `&mut`
-      arguments borrows them shared unless the function returns `&mut`.
-- [ ] Combine with phase 3: `p = pick(&x, &y)` into an outer `p` is rejected
-      if either `x` or `y` is deeper than `p`.
-- [ ] Method calls / UFCS (`v.first()`) go through the same path.
-- [ ] `compile_fail`: `ret_ref_then_push.loam` (probe c),
-      `ret_ref_then_reassign.loam` (probe f), `ret_ref_escapes_scope.loam`
-      (probe a).
-- [ ] `compile_pass`: `p = first(&v); fmt.println(*p); v.push(2)`, which is
-      legal because `p` is dead before the push.
-- **Exit:** probes a, c, f are rejected; the compile_pass case runs.
+- [x] Loans replace the single `Binding.borrow_of` path. Each stored
+      `Borrow` records its `owner` (the binding holding it) and `target` (the
+      binding the place roots in), so two references to `v` end
+      independently, and a binding's loans end with it or at its last use.
+- [x] `gather_loans` collects what a reference holds: the place of `&place`;
+      for a copy `let b = a`, `a`'s loans plus a reborrow of `a`; for a call
+      returning a reference, the same for every reference argument
+      (recursively). A `&T` result keeps only shared loans, even from `&mut`
+      arguments.
+- [x] Used for `let`, for rebinding a reference (`p = …` replaces `p`'s
+      loans, and an assignment now holds them like a `let`), for
+      `aim(&mut p, &v)` (p also holds `v`), and for `*pp = &x` with `pp`
+      aimed at a local reference.
+- [x] Assigning or `++`-ing a place a live loan covers is an error:
+      `cannot assign to 'v' while it is borrowed`.
+- [x] A `&mut` reference passed to a `&mut` parameter is reborrowed mutably
+      *at the call*, after all arguments are read (`grow(s, s.n)` is fine),
+      and only for the call. `two(m, m)` and `first(xs)` followed by
+      `xs.push()` while the result lives are rejected.
+- [x] `if` / `switch` arms each start from the loans before the branch and
+      join by union, so `if c { r = &x } else { x = 2 }` is legal.
+- [x] `compile_fail`: `ret_ref_then_push` (probe c), `ret_ref_then_reassign`
+      (probe f), `assign_while_borrowed`, `incdec_while_borrowed`,
+      `reassigned_ref_keeps_loan`, `copied_ref_keeps_loan`,
+      `shared_loans_independent`, `ret_ref_through_param`, `aim_keeps_loan`,
+      `mut_ref_passed_twice`.
+- [x] `compile_pass`: `ret_ref_loans` (NLL release after last use, rebinding
+      releases, `if`/`switch` arms, copied reference, `grow(s, s.n)`). The
+      previous build rejected it: a `let` loan outlived rebinding.
+- **Exit:** all six original probes plus three found on the way (assign
+  while borrowed, assignment-held loan, two shared borrows of one place) are
+  rejected; `nob test compile_` (734) and `nob test examples` green; all 502
+  entry programs give the same result as the phase 3 build. **Green.**
+- Conservative, not unsound: liveness is per block statement, so a
+  reference mentioned anywhere later (even overwritten before it is read)
+  keeps its loans. An explicit `&mut x` argument is still a temp that lasts
+  to the end of the statement, as before this work, so
+  `f(&mut x) + g(&mut x)` is rejected.
 
 ### Phase 5: Docs and cleanup
 

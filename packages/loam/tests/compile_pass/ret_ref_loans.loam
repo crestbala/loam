@@ -1,0 +1,66 @@
+import "std:fmt"
+
+struct S {
+    n: int,
+    total: int,
+}
+
+fn first(xs: &[]int) -> &int {
+    return &xs[0]
+}
+
+fn grow(s: &mut S, by: int) {
+    s.total += by
+}
+
+fn bump(s: &mut S) {
+    // Reading `s.n` as an argument, then reborrowing `s` for the call.
+    grow(s, s.n)
+}
+
+fn main() {
+    let mut v = []int {}
+    v.push(1)
+    // The loan ends at `p`'s last use.
+    let p = first(&v)
+    fmt.println(*p)
+    v.push(2)
+    // Rebinding `q` releases its loan on `v`.
+    let w = 7
+    let mut q = &v[0]
+    fmt.println(*q)
+    q = &w
+    v.push(3)
+    fmt.println(*q)
+    // Each arm starts from the loans before the `if`.
+    let mut x = 1
+    let y = 5
+    let mut r = &y
+    if v.len > 10 {
+        r = &x
+        fmt.println(*r)
+    } else {
+        x = 2
+    }
+    fmt.println(x)
+    // Same for switch cases.
+    let mut r2 = &y
+    switch v.len {
+    case 3:
+        r2 = &x
+        fmt.println(*r2)
+        break
+    case 4:
+        x = 9
+        break
+    }
+    // A copy of a reference, used after the original.
+    let a = &v[1]
+    let b = a
+    fmt.println(*b)
+    v.push(4)
+    let mut s = S { n: 3, total: 0 }
+    bump(&mut s)
+    fmt.println(s.total)
+    fmt.println(v.len)
+}

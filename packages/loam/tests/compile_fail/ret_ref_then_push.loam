@@ -1,0 +1,14 @@
+import "std:fmt"
+
+fn first(xs: &[]int) -> &int {
+    return &xs[0]
+}
+
+// `p` borrows `v`; growing `v` would move the buffer under it.
+fn main() {
+    let mut v = []int {}
+    v.push(1)
+    let p = first(&v)
+    v.push(2)
+    fmt.println(*p)
+}
