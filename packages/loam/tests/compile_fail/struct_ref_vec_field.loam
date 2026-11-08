@@ -1,0 +1,6 @@
+struct Many {
+    rs: []&int,
+}
+
+fn main() {
+}

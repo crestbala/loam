@@ -1,0 +1,7 @@
+// A struct holding a reference could outlive the place it points at.
+struct Holder {
+    r: &int,
+}
+
+fn main() {
+}

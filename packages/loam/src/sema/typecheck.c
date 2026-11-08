@@ -171,7 +171,7 @@ static int ngvars;
 
 static AstNode *find_struct(const char *name);
 static Type *struct_type_of(AstNode *st);
-static Type *make_struct_inst(AstNode *st, Type **args, size_t n);
+static Type *make_struct_inst(AstNode *st, Type **args, size_t n, const SourceLoc *at);
 
 static int scope_is_inside(Scope *s, Scope *outer) {
     for (; s; s = s->parent)
@@ -283,7 +283,7 @@ static Type *subst_type(Type *t, const char **names, Type **args, size_t n) {
             return t;
         }
         AstNode *st = find_struct(t->name);
-        Type *r = st ? make_struct_inst(st, ps, t->param_count) : t;
+        Type *r = st ? make_struct_inst(st, ps, t->param_count, NULL) : t;
         free(ps);
         return r;
     }
@@ -970,6 +970,35 @@ static int type_same_decl(const Type *a, const Type *b) {
     return x && y && strcmp(x, y) == 0;
 }
 
+/**
+ * 1 if a value of type `t` holds a reference directly or through a container
+ * it owns (`&T`, `[]&T`, `[N]&T`, `Box<&T>`). A nested struct is checked at
+ * its own declaration; a `fn(&T)` field only takes references as arguments.
+ */
+static int type_holds_ref(const Type *t) {
+    if (!t) return 0;
+    switch (t->kind) {
+        case TY_PTR:
+            return 1;
+        case TY_BOX:
+        case TY_ARRAY:
+        case TY_VEC:
+            return type_holds_ref(t->elem);
+        default:
+            return 0;
+    }
+}
+
+/** References are second-class: a struct may not store one, or it could
+ *  outlive the place it points at. See docs/reference-escape.md. */
+static void reject_ref_field(SourceLoc loc, const char *sname, const char *fname,
+                             const Type *ft) {
+    err(loc,
+        "struct field '%s.%s' cannot hold a reference (%s) — store an owned value, "
+        "a Box, or an index",
+        sname, fname, type_name((Type *)ft));
+}
+
 static Type *struct_type_of(AstNode *st) {
     if (st->ty) return st->ty;
     /* As in `fn_type_of`: field types mean what they mean where they are
@@ -1002,6 +1031,11 @@ static Type *struct_type_of(AstNode *st) {
     for (size_t i = 0; i < t->field_count; i++) {
         t->field_names[i] = loam_dup(st->as.strct.fields[i].name);
         t->field_types[i] = resolve_type(st->as.strct.fields[i].type);
+        if (type_holds_ref(t->field_types[i])) {
+            AstNode *tn = st->as.strct.fields[i].type;
+            reject_ref_field(tn ? tn->loc : st->loc, t->name, t->field_names[i],
+                             t->field_types[i]);
+        }
     }
     st->ty = t;
     cur_tparams = save_tp;
@@ -1016,7 +1050,7 @@ Type *typecheck_signal_type(void) {
     if (!st) return NULL;
     if (!st->as.strct.tparam_count) return struct_type_of(st);
     Type *args[1] = { ty_int() };
-    return make_struct_inst(st, args, 1);
+    return make_struct_inst(st, args, 1, NULL);
 }
 
 /** Captured `let mut int` is component state: keep the Loam type as int (props
@@ -1032,7 +1066,8 @@ static Type *cap_type_for(AstNode *dnode, Type *ty) {
     return sig;
 }
 
-static Type *make_struct_inst(AstNode *st, Type **args, size_t n) {
+/** `at`: where the instantiation is written, for errors; NULL = the decl. */
+static Type *make_struct_inst(AstNode *st, Type **args, size_t n, const SourceLoc *at) {
     if (!st) return ty_void();
     Type *tmpl = struct_type_of(st);
     for (int i = 0; i < nstruct_insts; i++) {
@@ -1060,6 +1095,10 @@ static Type *make_struct_inst(AstNode *st, Type **args, size_t n) {
     for (size_t i = 0; i < t->field_count; i++) {
         t->field_names[i] = loam_dup(tmpl->field_names[i]);
         t->field_types[i] = subst_type(tmpl->field_types[i], st->as.strct.tparams, args, n);
+        /* `Holder<&int>`: the template was fine, the argument makes a field a
+           reference. A field already rejected at the decl is not reported twice. */
+        if (type_holds_ref(t->field_types[i]) && !type_holds_ref(tmpl->field_types[i]))
+            reject_ref_field(at ? *at : st->loc, t->name, t->field_names[i], t->field_types[i]);
     }
     if (nstruct_insts >= LOAM_MAX_STRUCT_INSTS) {
         err(st->loc, "too many generic struct instantiations (max %d)", LOAM_MAX_STRUCT_INSTS);
@@ -1142,7 +1181,7 @@ static Type *resolve_type(AstNode *tn) {
         }
         Type **args = calloc(got, sizeof(Type *));
         for (size_t i = 0; i < got; i++) args[i] = resolve_type(tn->as.type.targs[i]);
-        Type *inst = make_struct_inst(st, args, got);
+        Type *inst = make_struct_inst(st, args, got, &tn->loc);
         free(args);
         return inst;
     }
@@ -3653,7 +3692,7 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
                         bound[i] = ty_void();
                     }
                 }
-                n->ty = make_struct_inst(st, bound, nt);
+                n->ty = make_struct_inst(st, bound, nt, &n->loc);
                 free(bound);
             } else {
                 n->ty = tmpl;

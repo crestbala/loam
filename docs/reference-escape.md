@@ -72,19 +72,26 @@ reject too much.
 - Not followed yet: `return if c { &x } else { a }` and a reference read out
   of `*pp` (`&&T`). Both are treated as safe until a program needs them.
 
-### Phase 2: No reference-typed struct fields (case b)
+### Phase 2: No reference-typed struct fields (case b) — done
 
-- [ ] In typecheck struct declaration, reject a field whose type is `TY_PTR`.
-      Error: `struct field 'r' cannot be a reference — store an owned value,
-      Box, or index`.
-- [ ] Reject struct instantiation with a `TY_PTR` type argument when the
-      parameter is used as a field type (`Holder<&int>`).
-- [ ] Check the C seam: FFI structs that mirror C pointers must keep working.
-      If any use `&T` fields, give them a separate path (raw pointer type or
-      `#[c]` exemption) rather than weakening the rule.
-- [ ] `compile_fail`: `struct_ref_field.loam`, `struct_ref_generic_arg.loam`.
-- **Exit:** probe b is rejected; the full set of std / zeus / packages still
-  typechecks (`loamc check` on each package entry).
+- [x] `struct_type_of` rejects a field whose type holds a reference:
+      `&T`, `[]&T`, `[N]&T`, `Box<&T>` (`type_holds_ref`). A `fn(&T)` field
+      is fine because it only takes references as arguments. Error:
+      `struct field 'Holder.r' cannot hold a reference (&int) — store an
+      owned value, a Box, or an index`.
+- [x] `make_struct_inst` rejects an instantiation that makes a generic field
+      a reference, whether written (`Holder<&int>`) or inferred from a literal
+      (`Holder { v: &x }`). It takes the use site's location for the error;
+      instantiations reached through `subst_type` report at the decl.
+- [x] C seam: no FFI or `#[c]` struct in the repo has a reference field, so
+      no exemption was needed.
+- [x] `compile_fail`: `struct_ref_field`, `struct_ref_vec_field`,
+      `struct_ref_generic_arg`, `struct_ref_generic_inferred`.
+- [x] `compile_pass`: `struct_no_ref_fields` (generic over a value, an index
+      cursor, a `Box` field, a `fn(&int)` field).
+- **Exit:** probe b is rejected; `nob test compile_` (711) and
+  `nob test examples` green; `loamc check` on all 500 entry programs gives no
+  new rejection. **Green.**
 
 ### Phase 3: No borrow stored into an outer-scope binding (case e)
 
@@ -92,9 +99,10 @@ reject too much.
       binding `h` (`h = &x`, or `h = <expr yielding a borrow of x>`), reject
       if `h->depth < depth_of(root(P))`. `let` at the same depth stays legal.
 - [ ] Same check for a borrow written through a field or index of an
-      outer binding, once phase 2 makes this reachable only through `[]&T`.
-      Decide here: reject `[]&T` element types like struct fields (preferred,
-      for consistency) or depth-check the push.
+      outer binding, now reachable only through a local `[]&T` / `[N]&T`
+      (phase 2 already bans them as struct fields). Decide here: ban those
+      element types everywhere (preferred, for consistency) or depth-check
+      the push.
 - [ ] `compile_fail`: `borrow_escapes_scope.loam` (probe e),
       `borrow_escapes_loop.loam` (assignment inside `for`).
 - [ ] `compile_pass`: reassigning an outer reference to another outer place
