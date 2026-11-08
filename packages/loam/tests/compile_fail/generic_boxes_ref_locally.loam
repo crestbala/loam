@@ -1,0 +1,12 @@
+// `hold` keeps its `T` in a list, so `T` cannot be a reference, even though
+// the list never leaves the body.
+fn hold<T>(x: T) -> int {
+    let mut v = []T {}
+    v.push(x)
+    return v.len
+}
+
+fn main() {
+    let x = 1
+    let n = hold(&x)
+}

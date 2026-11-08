@@ -1,0 +1,8 @@
+fn two(a: &mut int, b: &mut int) {
+}
+
+// Releasing argument borrows after a call must not hide a clash inside it.
+fn main() {
+    let mut x = 1
+    two(&mut x, &mut x)
+}

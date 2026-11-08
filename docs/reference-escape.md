@@ -133,8 +133,8 @@ scope ends.
 - **Exit:** probes a and e are rejected; `nob test compile_` (722) and
   `nob test examples` green; `loamc check` on all 501 entry programs gives no
   new rejection. **Green.**
-- Gap: a generic body that builds `[]T` locally, with `T` a reference, and
-  never returns it is not checked (only the instantiated return type is).
+- Gap closed in phase 6: a generic body that builds `[]T` with `T` a
+  reference.
 
 ### Phase 4: A reference keeps what it borrows borrowed (cases c, f) — done
 
@@ -176,9 +176,8 @@ Decision: **tie to arguments**. `-> &T` stays legal (accessors like
   entry programs give the same result as the phase 3 build. **Green.**
 - Conservative, not unsound: liveness is per block statement, so a
   reference mentioned anywhere later (even overwritten before it is read)
-  keeps its loans. An explicit `&mut x` argument is still a temp that lasts
-  to the end of the statement, as before this work, so
-  `f(&mut x) + g(&mut x)` is rejected.
+  keeps its loans. (The explicit `&mut x` argument case was fixed in
+  phase 6.)
 
 ### Phase 5: Docs and cleanup — done
 
@@ -190,6 +189,67 @@ Decision: **tie to arguments**. `-> &T` stays legal (accessors like
 - [x] `borrowck.c` header comment lists the escape and loan rules.
 - [x] The probe programs, one last time: all rejected.
 - **Exit:** full `./nob.sh test` green (run once, at the end).
+
+### Phase 6: Remaining gaps after the first pass — done
+
+- [x] **Generic body boxing a reference.** A generic body is checked once,
+      with `T` unknown, so `let v = []T {}` slipped through when a call bound
+      `T = &int`. Typecheck now records, per generic fn, which type
+      parameters it puts in a container (`[]T`, `[N]T`, `Box<T>`, a generic
+      struct's container field), including in its signature. A generic call
+      passing its own `T` on to a boxing parameter marks `T` too (fixed point
+      after all bodies). Then any call binding a boxing parameter to a type
+      holding a reference is an error: `'hold' stores its type parameter 'T'
+      in a container, so it cannot be a reference (&int)`. This replaces
+      phase 3's return-type-only check. Generics that never box `T` still
+      take references (`id(&x)`).
+- [x] **C hooks returning a reference.** An empty-bodied fn in a seam module
+      is a C hook; nothing can check what a reference it returns points at.
+      It is now an error (`C hook 'c_lookup' cannot return a reference`).
+      `#[c]` fns were already limited to scalars. No hook in the repo
+      returned one.
+- [x] **`&mut x` arguments lasted to the end of the statement.** A call's own
+      `&x` / `&mut x` argument borrows now end with the call (unless it
+      returns a reference, whose binding takes them as loans), so
+      `bump(&mut n) + bump(&mut n)` compiles. Clashes inside one call are
+      still caught as each argument is borrowed.
+- [x] `compile_fail`: `generic_boxes_ref_locally`,
+      `generic_boxes_ref_transitive`, `bodyless_returns_ref`,
+      `mut_addr_twice_one_call`.
+- [x] `compile_pass`: `generic_ref_args`, `mut_arg_per_call` (the phase 5
+      build rejected it).
+- **Exit:** `nob test compile_` (750) and `nob test examples` green; all 505
+  entry programs give the same result as the phase 3 build apart from the
+  new pass tests. **Green.**
+
+### Phase 7: Find holes automatically (planned)
+
+There is no proof that the rules are sound, and every manual search so far
+found more holes. Loam emits C, so a cheap search is available.
+
+- [ ] A generator for small programs mixing references, scopes, branches,
+      loops, `if` expressions, calls returning references, `&mut` out
+      parameters, and pushes or reassignments of the borrowed value.
+- [ ] Compile every program `loamc` accepts with `-fsanitize=address` and run
+      it. An ASan use-after-free or stack-use-after-scope report is a checker
+      hole: shrink it into a `compile_fail` test and fix the rule.
+- [ ] A `nob` target (e.g. `nob fuzz-borrow N`), off the default suite.
+- **Exit:** a long run finds nothing new; every hole found has a test.
+
+### Phase 8: Real liveness (planned)
+
+A loan lasts while its holder is mentioned anywhere later in the block
+(`end_dead_borrows`), even when the holder is overwritten before it is read.
+That is safe but rejects valid code, the thing people dislike most in Rust.
+
+- [ ] A loan ends at the holder's last *read* along the control flow: a
+      backwards liveness pass over each body, where an assignment kills the
+      holder and a read makes it live (loops iterate to a fixed point).
+- [ ] Replace the per-statement `stmt_uses` scan with that result.
+- [ ] `compile_pass`: `let mut r = &x; …; r = &y; x = 2; use(r)`, and a branch
+      that reassigns before reading.
+- **Exit:** no rejection the phase 7 fuzzer shows to be safe at runtime;
+  nothing it shows to be unsafe accepted.
 
 ## Later, only if a program needs it
 

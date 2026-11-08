@@ -1,0 +1,14 @@
+fn hold<T>(x: T) -> int {
+    let b = Box::new(x)
+    return 1
+}
+
+// `outer` passes its `T` to `hold`, which boxes it.
+fn outer<U>(x: U) -> int {
+    return hold(x)
+}
+
+fn main() {
+    let x = 1
+    let n = outer(&x)
+}
