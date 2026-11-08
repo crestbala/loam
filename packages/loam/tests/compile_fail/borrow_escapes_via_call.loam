@@ -1,0 +1,16 @@
+import "std:fmt"
+
+fn pick(a: &int, b: &int) -> &int {
+    return a
+}
+
+fn main() {
+    let r = 0
+    let mut p = &r
+    if true {
+        let x = 5
+        let y = 6
+        p = pick(&x, &y)
+    }
+    fmt.println(*p)
+}

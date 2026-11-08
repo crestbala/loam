@@ -989,6 +989,26 @@ static int type_holds_ref(const Type *t) {
     }
 }
 
+/** 1 if `t` is, or points to, a container whose elements hold a reference. */
+static int container_of_ref(const Type *t) {
+    if (!t) return 0;
+    if (t->kind == TY_PTR) return container_of_ref(t->elem);
+    if (t->kind == TY_BOX || t->kind == TY_ARRAY || t->kind == TY_VEC)
+        return type_holds_ref(t->elem);
+    return 0;
+}
+
+/** A list, array, or Box may not hold a reference: storing one there would
+ *  let it outlive its source unchecked. Reported at the innermost container
+ *  (`[][]&T` once, at `[]&T`). See docs/reference-escape.md. */
+static void reject_ref_elem(SourceLoc loc, const Type *container) {
+    err(loc,
+        "%s cannot hold a reference (%s) — store owned values or indices",
+        container->kind == TY_BOX ? "a Box" : container->kind == TY_ARRAY ? "an array"
+                                                                           : "a list",
+        type_name(container));
+}
+
 /** References are second-class: a struct may not store one, or it could
  *  outlive the place it points at. See docs/reference-escape.md. */
 static void reject_ref_field(SourceLoc loc, const char *sname, const char *fname,
@@ -1031,7 +1051,8 @@ static Type *struct_type_of(AstNode *st) {
     for (size_t i = 0; i < t->field_count; i++) {
         t->field_names[i] = loam_dup(st->as.strct.fields[i].name);
         t->field_types[i] = resolve_type(st->as.strct.fields[i].type);
-        if (type_holds_ref(t->field_types[i])) {
+        /* `[]&T` / `Box<&T>` fields are already reported by resolve_type. */
+        if (t->field_types[i] && t->field_types[i]->kind == TY_PTR) {
             AstNode *tn = st->as.strct.fields[i].type;
             reject_ref_field(tn ? tn->loc : st->loc, t->name, t->field_names[i],
                              t->field_types[i]);
@@ -1134,11 +1155,16 @@ static Type *resolve_type(AstNode *tn) {
         return type_ptr(resolve_type(tn->as.type.elem), tn->as.type.tag == 1);
     if (tn->as.type.tag == 3) {
         Type *et = resolve_type(tn->as.type.elem);
-        if (tn->as.type.array_len < 0) return type_vec(et);
-        return type_array(et, tn->as.type.array_len);
+        Type *ct = tn->as.type.array_len < 0 ? type_vec(et) : type_array(et, tn->as.type.array_len);
+        if (et && et->kind == TY_PTR) reject_ref_elem(tn->loc, ct);
+        return ct;
     }
-    if (tn->as.type.tag == 4)
-        return type_box(resolve_type(tn->as.type.elem));
+    if (tn->as.type.tag == 4) {
+        Type *et = resolve_type(tn->as.type.elem);
+        Type *bt = type_box(et);
+        if (et && et->kind == TY_PTR) reject_ref_elem(tn->loc, bt);
+        return bt;
+    }
     if (tn->as.type.tag == 5) {
         size_t n = tn->as.type.fn_param_count;
         Type **ps = NULL;
@@ -1999,7 +2025,12 @@ static Type *finish_proc_call(AstNode *n, Type *ft, AstNode *named) {
                 return ret;
             }
         }
+        Type *tmpl_ret = ret;
         ret = subst_type(ret, named->as.fn.tparams, bound, nt);
+        /* `fn wrap<T>(x: T) -> []T` called with a reference. */
+        if (container_of_ref(ret) && !container_of_ref(tmpl_ret))
+            err(n->loc, "'%s' would return %s — a container cannot hold a reference",
+                named->as.fn.name, type_name(ret));
         int concrete = 1;
         for (size_t i = 0; i < nt; i++)
             if (bound[i]->kind == TY_PARAM) concrete = 0;
@@ -2331,6 +2362,7 @@ static Type *check_call(AstNode *n, Type *expect) {
         Type *et = check_expr(n->as.call.args[0]);
         n->as.call.is_box_new = 1;
         n->ty = type_box(et);
+        if (et && et->kind == TY_PTR) reject_ref_elem(n->loc, n->ty);
         n->place_mut = 0;
         return n->ty;
     }
@@ -3712,6 +3744,7 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
                     err(n->as.array_lit.elems[i]->loc, "array element type mismatch");
             }
             n->ty = n->as.array_lit.len < 0 ? type_vec(et) : type_array(et, n->as.array_lit.len);
+            if (et && et->kind == TY_PTR) reject_ref_elem(n->loc, n->ty);
             return n->ty;
         }
         case AST_TUPLE:

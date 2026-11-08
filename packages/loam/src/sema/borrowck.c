@@ -1,7 +1,15 @@
 /**
- * borrowck.c — moves, shared vs exclusive borrows, and reference escape:
- * a returned reference may not point into the function's own frame (a local,
- * a by-value parameter, a local Box, or a temporary), by any path.
+ * borrowck.c — moves, shared vs exclusive borrows, and reference escape.
+ *
+ * Every reference binding records the deepest frame binding it may point
+ * into (`ref_depth`, 0 = caller or global data). Then:
+ *   - a returned reference may not point into the frame (depth > 0);
+ *   - when a block ends, a surviving reference into it becomes dangling, and
+ *     reading it afterwards is an error (assigning it again revives it);
+ *   - a reference written through `*pp` or into a global may not point at
+ *     anything shallower-lived than that place.
+ * Assignment replaces what a reference points at; branches and loops join
+ * by taking the deepest. See docs/reference-escape.md.
  *
  * Bindings are a stack. Temps from `&x` in a statement are cleared at
  * statement end unless stored in a `let`.
@@ -31,10 +39,12 @@ typedef struct Binding {
     char *borrow_of; /* place this binding holds a stored borrow of, or NULL */
     int borrow_mut;
     BindKind kind;
-    /* Reference binding: a frame-owned binding it may point into, or NULL
-       when it only points at caller or global data. Sticky across
-       reassignment, so any branch that aimed it at a local counts. */
-    char *ref_root;
+    /* Reference binding: depth of the deepest frame binding it may point
+       into (0 = caller or global data), and that binding's name (AST-owned,
+       for messages). `dangling`: that binding's scope has ended. */
+    int ref_depth;
+    const char *ref_root;
+    int dangling;
     /* `#[must_check]`: a value dropped without being read is an error. */
     int must_check;
     int checked;
@@ -146,11 +156,14 @@ static void pop_to_depth(int d) {
         }
         free(b->name);
         free(b->borrow_of);
-        free(b->ref_root);
         for (int i = 0; i < b->nmoved; i++) free(b->moved_paths[i]);
         free(b->moved_paths);
         free(b);
     }
+    /* A reference that outlives the binding it points at is dangling until
+       it is assigned again. */
+    for (Binding *b = binds; b; b = b->next)
+        if (b->ref_depth > d) b->dangling = 1;
 }
 
 /** Root variable of a place, for the move/ownership checks. */
@@ -384,77 +397,102 @@ static const char *TEMP_ROOT = "<temporary>";
 
 static int is_ref_ty(const Type *t) { return t && t->kind == TY_PTR; }
 
-static const char *ref_frame_root(AstNode *e);
+/** The deepest frame binding a place or reference may live in or point at.
+ *  depth 0 = caller or global data; `name` is AST-owned or TEMP_ROOT. */
+typedef struct {
+    int depth;
+    const char *name;
+} Root;
+
+static const Root NO_ROOT = { 0, NULL };
+
+static Root deeper(Root a, Root b) { return b.depth > a.depth ? b : a; }
+
+static Root ref_root(AstNode *e);
 
 /**
- * The frame-owned binding that place `n` lives in, or NULL when the place is
- * global or reached through a reference into the caller. A place that is not
- * a binding at all (`f().x`, a struct literal) is a temporary.
+ * Where place `n` lives. A place reached through a reference lives wherever
+ * that reference points; a place that is not a binding at all (`f().x`, a
+ * struct literal) is a temporary of the current scope.
  */
-static const char *place_frame_root(AstNode *n) {
-    if (!n) return NULL;
+static Root place_root(AstNode *n) {
+    if (!n) return NO_ROOT;
     switch (n->kind) {
         case AST_IDENT: {
             Binding *b = find_b(n->as.ident.name);
-            if (!b || b->kind == BK_GLOBAL) return NULL;
-            return b->name;
+            if (!b || b->kind == BK_GLOBAL) return NO_ROOT;
+            Root r = { b->depth, n->as.ident.name };
+            return r;
         }
         case AST_FIELD:
         case AST_INDEX: {
             AstNode *t = n->as.access.target;
-            /* `p.f` / `xs[i]` through a reference auto-derefs: the place is
-               wherever that reference points. */
-            if (t && is_ref_ty(t->ty)) return ref_frame_root(t);
+            /* `p.f` / `xs[i]` through a reference auto-derefs. */
+            if (t && is_ref_ty(t->ty)) return ref_root(t);
             /* `mod.g`: a module-qualified global, never a binding. */
             if (n->kind == AST_FIELD && t && t->kind == AST_IDENT && !find_b(t->as.ident.name))
-                return NULL;
-            return place_frame_root(t);
+                return NO_ROOT;
+            return place_root(t);
         }
         case AST_DEREF: {
             AstNode *t = n->as.access.target;
-            if (t && is_ref_ty(t->ty)) return ref_frame_root(t);
+            if (t && is_ref_ty(t->ty)) return ref_root(t);
             /* `*b` of a Box: the heap value dies with b's owner. */
-            return place_frame_root(t);
+            return place_root(t);
         }
-        default:
-            return TEMP_ROOT;
+        default: {
+            Root r = { depth, TEMP_ROOT };
+            return r;
+        }
     }
 }
 
 /**
- * For an expression of reference type: a frame-owned binding it may point
- * into, or NULL. A call returning a reference is taken to borrow from every
- * reference argument, so `first(&local)` points into `local`.
+ * What an expression of reference type points into. A call returning a
+ * reference borrows from every reference argument, so `first(&local)` points
+ * into `local`.
  */
-static const char *ref_frame_root(AstNode *e) {
-    if (!e) return NULL;
+static Root ref_root(AstNode *e) {
+    if (!e) return NO_ROOT;
     switch (e->kind) {
         case AST_ADDR:
-            return place_frame_root(e->as.access.target);
+            return place_root(e->as.access.target);
         case AST_IDENT: {
             Binding *b = find_b(e->as.ident.name);
-            if (!b || b->kind != BK_LOCAL) return NULL;
-            return b->ref_root;
+            if (!b || b->kind == BK_GLOBAL || !b->ref_depth) return NO_ROOT;
+            Root r = { b->ref_depth, b->ref_root };
+            return r;
         }
-        case AST_CALL:
+        case AST_CALL: {
+            Root r = NO_ROOT;
             for (size_t i = 0; i < e->as.call.arg_count; i++) {
                 AstNode *a = e->as.call.args[i];
-                if (!a || !is_ref_ty(a->ty)) continue;
-                const char *r = ref_frame_root(a);
-                if (r) return r;
+                if (a && is_ref_ty(a->ty)) r = deeper(r, ref_root(a));
             }
-            return NULL;
+            return r;
+        }
         default:
-            return NULL;
+            return NO_ROOT;
     }
 }
 
-/** Record that reference binding `b` may point at `root` (sticky). */
-static void note_ref_root(Binding *b, const char *root) {
-    if (!b || !root || b->ref_root) return;
-    b->ref_root = loam_dup(root);
+static void set_ref(Binding *b, Root r) {
+    b->ref_depth = r.depth;
+    b->ref_root = r.name;
+    b->dangling = 0;
 }
 
+/** Reading a reference whose target's scope has ended. */
+static int check_dangling(Binding *b, SourceLoc loc) {
+    if (!b || !b->dangling) return 0;
+    if (b->ref_root == TEMP_ROOT)
+        loam_error(loc, "'%s' is used after the temporary it borrows was dropped", b->name);
+    else
+        loam_error(loc, "'%s' is used after '%s', which it borrows, went out of scope", b->name,
+                   b->ref_root ? b->ref_root : "?");
+    errn = 1;
+    return 1;
+}
 
 /**
  * Ownership state of every live binding, so a branch can be checked from the
@@ -469,6 +507,9 @@ typedef struct {
     Own own;
     int shared;
     int mutb;
+    int ref_depth;
+    const char *ref_root;
+    int dangling;
 } BSnap;
 
 static int snapshot(BSnap **out) {
@@ -481,6 +522,9 @@ static int snapshot(BSnap **out) {
         s[i].own = b->own;
         s[i].shared = b->shared;
         s[i].mutb = b->mutb;
+        s[i].ref_depth = b->ref_depth;
+        s[i].ref_root = b->ref_root;
+        s[i].dangling = b->dangling;
         i++;
     }
     *out = s;
@@ -492,6 +536,21 @@ static void restore(BSnap *s, int n) {
         s[i].b->own = s[i].own;
         s[i].b->shared = s[i].shared;
         s[i].b->mutb = s[i].mutb;
+        s[i].b->ref_depth = s[i].ref_depth;
+        s[i].b->ref_root = s[i].ref_root;
+        s[i].b->dangling = s[i].dangling;
+    }
+}
+
+/** A reference may point at what it pointed at on either path. */
+static void join_refs(BSnap *s, int n) {
+    for (int i = 0; i < n; i++) {
+        Binding *b = s[i].b;
+        if (s[i].ref_depth > b->ref_depth) {
+            b->ref_depth = s[i].ref_depth;
+            b->ref_root = s[i].ref_root;
+        }
+        if (s[i].dangling) b->dangling = 1;
     }
 }
 
@@ -534,6 +593,7 @@ static int check_expr(AstNode *n, int as_move) {
         case AST_IDENT: {
             Binding *v = find_b(n->as.ident.name);
             if (!v) return 0;
+            if (check_dangling(v, n->loc)) return 1;
             if (v->must_check) v->checked = 1;
             if (v->own == ST_MOVED) {
                 loam_error(n->loc, "use of moved value '%s'", n->as.ident.name);
@@ -555,6 +615,11 @@ static int check_expr(AstNode *n, int as_move) {
         case AST_ADDR: {
             char *p = path_of(n->as.access.target);
             if (p) {
+                char rb[256];
+                if (check_dangling(find_b(root_of_path(p, rb, sizeof rb)), n->loc)) {
+                    free(p);
+                    return 1;
+                }
                 int rc = take_borrow_path(p, n->as.access.is_mut, n->loc);
                 free(p);
                 return rc;
@@ -572,7 +637,9 @@ static int check_expr(AstNode *n, int as_move) {
             Binding *v = find_b(root_of_path(p, rbuf, sizeof rbuf));
             if (v && v->must_check) v->checked = 1;
             int rc = 0;
-            if (v && v->own == ST_MOVED) {
+            if (check_dangling(v, n->loc)) {
+                rc = 1;
+            } else if (v && v->own == ST_MOVED) {
                 loam_error(n->loc, "use of moved value '%s'", rbuf);
                 errn = 1;
                 rc = 1;
@@ -670,6 +737,23 @@ static int check_expr(AstNode *n, int as_move) {
             }
             if (n->as.call.callee && n->as.call.callee->kind != AST_FIELD)
                 check_expr(n->as.call.callee, 0);
+            /* `aim(&mut p, &v)` with `p` a reference: the callee may store any
+               of its other reference arguments in `p`. */
+            for (size_t i = 0; i < n->as.call.arg_count; i++) {
+                AstNode *a = n->as.call.args[i];
+                if (!a || a->kind != AST_ADDR || !a->as.access.is_mut) continue;
+                AstNode *t = a->as.access.target;
+                if (!t || t->kind != AST_IDENT || !is_ref_ty(t->ty)) continue;
+                Binding *b = find_b(t->as.ident.name);
+                if (!b || b->kind == BK_GLOBAL) continue;
+                Root r = { b->ref_depth, b->ref_root };
+                for (size_t k = 0; k < n->as.call.arg_count; k++) {
+                    AstNode *o = n->as.call.args[k];
+                    if (k != i && o && is_ref_ty(o->ty)) r = deeper(r, ref_root(o));
+                }
+                b->ref_depth = r.depth;
+                b->ref_root = r.name;
+            }
             return 0;
         }
         case AST_STRUCT_LIT:
@@ -706,11 +790,9 @@ static int check_stmt(AstNode *n) {
             if (n->as.var.init && n->as.var.init->kind == AST_CLOSURE) mv = 0;
             if (n->as.var.init && check_expr(n->as.var.init, mv)) return 1;
             /* Resolved before the push, so `let x = &x` sees the outer x. */
-            const char *rroot =
-                is_ref_ty(n->ty) && n->as.var.init ? ref_frame_root(n->as.var.init) : NULL;
-            char *rroot_dup = rroot ? loam_dup(rroot) : NULL;
+            Root rr = is_ref_ty(n->ty) && n->as.var.init ? ref_root(n->as.var.init) : NO_ROOT;
             push_b(n->as.var.name, n->ty);
-            binds->ref_root = rroot_dup;
+            set_ref(binds, rr);
             if (n->ty && n->ty->kind == TY_STRUCT && n->ty->must_check) {
                 binds->must_check = 1;
                 binds->loc = n->loc;
@@ -730,18 +812,39 @@ static int check_stmt(AstNode *n) {
             release_temps();
             return 0;
         }
-        case AST_ASSIGN:
+        case AST_ASSIGN: {
             if (check_expr(n->as.assign.right,
                            n->as.assign.right->ty && !type_is_copy(n->as.assign.right->ty) &&
                                n->as.assign.right->kind != AST_ADDR))
                 return 1;
-            if (check_expr(n->as.assign.left, 0)) return 1;
-            if (n->as.assign.left && n->as.assign.left->kind == AST_IDENT &&
-                is_ref_ty(n->as.assign.left->ty))
-                note_ref_root(find_b(n->as.assign.left->as.ident.name),
-                              ref_frame_root(n->as.assign.right));
+            AstNode *L = n->as.assign.left;
+            int stores_ref = L && is_ref_ty(L->ty);
+            Root rr = stores_ref ? ref_root(n->as.assign.right) : NO_ROOT;
+            Binding *lb = L && L->kind == AST_IDENT ? find_b(L->as.ident.name) : NULL;
+            /* Rebinding a local reference: its old target no longer matters. */
+            int rebind = stores_ref && lb && lb->kind != BK_GLOBAL;
+            if (rebind) lb->dangling = 0;
+            if (check_expr(L, 0)) return 1;
+            if (rebind) {
+                set_ref(lb, rr);
+            } else if (stores_ref) {
+                /* `*pp = &x`, or a global: the place is not tracked, so what
+                   it receives must outlive it now. */
+                Root holder = place_root(L);
+                if (rr.depth > holder.depth) {
+                    if (rr.name == TEMP_ROOT)
+                        loam_error(n->loc, "a borrow of a temporary cannot be stored here");
+                    else
+                        loam_error(n->loc,
+                                   "'%s' does not live long enough to be stored here",
+                                   rr.name ? rr.name : "?");
+                    errn = 1;
+                    return 1;
+                }
+            }
             release_temps();
             return 0;
+        }
         case AST_EXPR_STMT:
             if (n->as.expr_stmt.expr) {
                 Type *et = n->as.expr_stmt.expr->ty;
@@ -762,14 +865,15 @@ static int check_stmt(AstNode *n) {
                     n->as.ret.expr->kind != AST_ADDR))
                 return 1;
             if (n->as.ret.expr && is_ref_ty(n->as.ret.expr->ty)) {
-                const char *r = ref_frame_root(n->as.ret.expr);
-                if (r == TEMP_ROOT) {
+                Root r = ref_root(n->as.ret.expr);
+                if (r.depth > 0 && r.name == TEMP_ROOT) {
                     loam_error(n->loc, "cannot return borrow of a temporary");
                     errn = 1;
                     return 1;
                 }
-                if (r) {
-                    loam_error(n->loc, "cannot return borrow of local '%s'", r);
+                if (r.depth > 0) {
+                    loam_error(n->loc, "cannot return borrow of local '%s'",
+                               r.name ? r.name : "?");
                     errn = 1;
                     return 1;
                 }
@@ -802,7 +906,10 @@ static int check_stmt(AstNode *n) {
                 nthen = snapshot(&post_then);
                 restore(pre, npre);
                 if (n->as.if_stmt.else_block) rc = check_stmt(n->as.if_stmt.else_block);
-                if (!rc) join_moved(post_then, nthen);
+                if (!rc) {
+                    join_moved(post_then, nthen);
+                    join_refs(post_then, nthen);
+                }
             }
             free(pre);
             free(post_then);
@@ -817,8 +924,17 @@ static int check_stmt(AstNode *n) {
                in the body is caught as a use-after-move on the next iteration.
                Two passes suffice — Own is a two-state monotone lattice, so a
                third could not change anything. */
+            /* The body may run zero times: references join with the state
+               before the loop, before the second pass and after it. */
+            BSnap *pre = NULL;
+            int npre = snapshot(&pre);
             int rc = check_stmt(n->as.for_stmt.body);
-            if (!rc) rc = check_stmt(n->as.for_stmt.body);
+            if (!rc) {
+                join_refs(pre, npre);
+                rc = check_stmt(n->as.for_stmt.body);
+            }
+            if (!rc) join_refs(pre, npre);
+            free(pre);
             pop_to_depth(depth - 1);
             depth--;
             return rc;
@@ -826,8 +942,15 @@ static int check_stmt(AstNode *n) {
         case AST_WHILE: {
             if (check_expr(n->as.if_stmt.cond, 0)) return 1;
             release_temps();
+            BSnap *pre = NULL;
+            int npre = snapshot(&pre);
             int rc = check_stmt(n->as.if_stmt.then_block);
-            if (!rc) rc = check_stmt(n->as.if_stmt.then_block);
+            if (!rc) {
+                join_refs(pre, npre);
+                rc = check_stmt(n->as.if_stmt.then_block);
+            }
+            if (!rc) join_refs(pre, npre);
+            free(pre);
             return rc;
         }
         case AST_SWITCH: {
@@ -847,16 +970,24 @@ static int check_stmt(AstNode *n) {
                 /* A case is entered from the dispatch, and by falling out of
                    the case above: what that one moved is moved here too. */
                 restore(pre, npre);
-                if (i && case_falls_through(n->as.switch_stmt.cases[i - 1]))
+                if (i && case_falls_through(n->as.switch_stmt.cases[i - 1])) {
                     join_moved(snaps[i - 1], nsn[i - 1]);
+                    join_refs(snaps[i - 1], nsn[i - 1]);
+                }
                 AstNode *cs = n->as.switch_stmt.cases[i];
                 if (cs && cs->kind == AST_CASE)
                     rc = check_stmt(cs->as.switch_case.body);
                 if (rc) break;
                 nsn[i] = snapshot(&snaps[i]);
             }
-            if (!rc)
-                for (size_t i = 0; i < na; i++) join_moved(snaps[i], nsn[i]);
+            if (!rc) {
+                for (size_t i = 0; i < na; i++) {
+                    join_moved(snaps[i], nsn[i]);
+                    join_refs(snaps[i], nsn[i]);
+                }
+                /* No case may match. */
+                join_refs(pre, npre);
+            }
             for (size_t i = 0; i < na; i++)
                 if (snaps) free(snaps[i]);
             free(snaps);

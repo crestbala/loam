@@ -1,0 +1,8 @@
+// `*pp` lives in the caller; a local cannot be stored there.
+fn set(pp: &mut &int) {
+    let x = 1
+    *pp = &x
+}
+
+fn main() {
+}

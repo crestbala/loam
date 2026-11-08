@@ -93,23 +93,50 @@ reject too much.
   `nob test examples` green; `loamc check` on all 500 entry programs gives no
   new rejection. **Green.**
 
-### Phase 3: No borrow stored into an outer-scope binding (case e)
+### Phase 3: No borrow outliving its source in the frame (cases a, e) — done
 
-- [ ] In borrowck, when assigning a borrow of place `P` to an existing
-      binding `h` (`h = &x`, or `h = <expr yielding a borrow of x>`), reject
-      if `h->depth < depth_of(root(P))`. `let` at the same depth stays legal.
-- [ ] Same check for a borrow written through a field or index of an
-      outer binding, now reachable only through a local `[]&T` / `[N]&T`
-      (phase 2 already bans them as struct fields). Decide here: ban those
-      element types everywhere (preferred, for consistency) or depth-check
-      the push.
-- [ ] `compile_fail`: `borrow_escapes_scope.loam` (probe e),
-      `borrow_escapes_loop.loam` (assignment inside `for`).
-- [ ] `compile_pass`: reassigning an outer reference to another outer place
-      inside a block (`p = &z2` where `z2` is at `p`'s depth).
-- **Exit:** probe e is rejected; NLL tests in `compile_pass` stay green.
+Checked at the **use**, NLL-style, not at the assignment: aiming an outer
+reference into an inner scope is legal as long as it is not read after that
+scope ends.
 
-### Phase 4: A returned reference borrows its arguments (cases a, c, f)
+- [x] Each binding records the deepest frame binding it may point into
+      (`ref_depth`, 0 = caller or global data) and its name. This replaces
+      phase 1's single root name. Assignment replaces what a reference points
+      at; `if` / `switch` (including the no-match path) / `for` / `while`
+      (zero or more iterations) join by taking the deepest.
+- [x] When a block ends (`pop_to_depth`), a surviving reference into it is
+      marked dangling. Reading it, through `p`, `*p`, `p.f`, or `&p`, is an
+      error: `'p' is used after 'x', which it borrows, went out of scope`.
+      Assigning it again clears the mark.
+- [x] A reference written to an untracked place (`*pp = &x`, or a global)
+      must outlive that place right away: `'x' does not live long enough to
+      be stored here`.
+- [x] A call given `&mut p`, with `p` a reference, may aim `p` at any of its
+      other reference arguments (`aim(&mut p, &v)`): the signature carries no
+      lifetimes, so the caller assumes the worst.
+- [x] `[]&T`, `[N]&T`, and `Box<&T>` are banned everywhere: written types,
+      `Box::new(&x)`, array literals of references, and a generic call whose
+      return type becomes a container of references (`wrap(&x)` with
+      `-> []T`). Phase 2's struct check now reports only direct `&T` fields;
+      containers are reported where the type is written.
+- [x] `compile_fail`: `borrow_escapes_scope` (probe e), `borrow_escapes_loop`,
+      `borrow_dangles_next_iter`, `borrow_escapes_via_call` (probe a),
+      `borrow_stored_through_deref`, `borrow_stored_via_out_param`,
+      `vec_of_refs`, `box_of_ref`, `generic_returns_ref_list`.
+- [x] `compile_pass`: `borrow_scoped_refs` (inner-scope use, reassignment
+      after the scope, per-iteration reassignment, `aim(&mut p, &v)` with
+      `v` outliving `p`).
+- **Exit:** probes a and e are rejected; `nob test compile_` (722) and
+  `nob test examples` green; `loamc check` on all 501 entry programs gives no
+  new rejection. **Green.**
+- Gap: a generic body that builds `[]T` locally, with `T` a reference, and
+  never returns it is not checked (only the instantiated return type is).
+
+### Phase 4: A returned reference borrows its arguments (cases c, f)
+
+Case a is already caught by phase 3, which treats a call's result as pointing
+into its reference arguments. What is left is keeping those arguments
+*borrowed* while the result is live.
 
 Open decision: **tie to arguments** (default, below) vs **ban `-> &T`
 outright**. Banning is simpler but removes accessors like `first(xs)` /

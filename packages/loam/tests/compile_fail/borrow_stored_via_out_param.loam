@@ -1,0 +1,16 @@
+import "std:fmt"
+
+fn aim(pp: &mut &int, src: &int) {
+    *pp = src
+}
+
+// `aim` may aim `p` at `v`, which ends with the block.
+fn main() {
+    let z = 0
+    let mut p = &z
+    if true {
+        let v = 4
+        aim(&mut p, &v)
+    }
+    fmt.println(*p)
+}

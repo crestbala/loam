@@ -1,0 +1,10 @@
+fn wrap<T>(x: T) -> []T {
+    let mut v = []T {}
+    v.push(x)
+    return v
+}
+
+fn main() {
+    let x = 1
+    let v = wrap(&x)
+}
