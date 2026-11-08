@@ -1023,8 +1023,7 @@ static int check_expr(AstNode *n, int as_move) {
             return 0;
         }
         case AST_CALL: {
-            int mv = n->as.call.is_box_new ? 0 : 0;
-            (void)mv;
+            Borrow *call_mark = borrows;
             for (size_t i = 0; i < n->as.call.arg_count; i++) {
                 AstNode *a = n->as.call.args[i];
                 int move_arg = 0;
@@ -1089,6 +1088,23 @@ static int check_expr(AstNode *n, int as_move) {
                 b->ref_root = r.name;
                 /* What `p` may now point at stays borrowed while `p` lives. */
                 attach_loans(b, &ls, 0);
+            }
+            /* The call's own `&x` / `&mut x` arguments end with it, so
+               `f(&mut x) + g(&mut x)` is fine. Clashes between arguments were
+               caught as each was taken. A reference result keeps them: the
+               binding it lands in takes them as loans. */
+            if (!is_ref_ty(n->ty)) {
+                Borrow **pp = &borrows;
+                while (*pp && *pp != call_mark) {
+                    Borrow *b = *pp;
+                    if (!b->stored) {
+                        *pp = b->next;
+                        free(b->path);
+                        free(b);
+                    } else {
+                        pp = &b->next;
+                    }
+                }
             }
             return 0;
         }

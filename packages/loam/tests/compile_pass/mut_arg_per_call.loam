@@ -1,0 +1,14 @@
+import "std:fmt"
+
+fn bump(x: &mut int) -> int {
+    *x += 1
+    return *x
+}
+
+// Each `&mut n` ends with its call, so both fit in one statement.
+fn main() {
+    let mut n = 0
+    let s = bump(&mut n) + bump(&mut n)
+    fmt.println(s)
+    fmt.println(n)
+}

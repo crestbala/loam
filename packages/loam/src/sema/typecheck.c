@@ -989,13 +989,115 @@ static int type_holds_ref(const Type *t) {
     }
 }
 
-/** 1 if `t` is, or points to, a container whose elements hold a reference. */
-static int container_of_ref(const Type *t) {
-    if (!t) return 0;
-    if (t->kind == TY_PTR) return container_of_ref(t->elem);
-    if (t->kind == TY_BOX || t->kind == TY_ARRAY || t->kind == TY_VEC)
-        return type_holds_ref(t->elem);
-    return 0;
+/* --- Generic functions that box a type parameter ---
+ *
+ * A generic body is checked once, with `T` unknown, so `[]T` inside it is
+ * fine until a call binds `T` to a reference. Each generic fn records which
+ * of its type parameters it puts in a container (`[]T`, `[N]T`, `Box<T>`,
+ * or a generic struct field doing so); a generic call passing its own `T`
+ * on to a boxing parameter boxes `T` too (fixed point at the end); then a
+ * call binding a boxing parameter to a reference type is an error. */
+
+static AstNode *cur_gfn; /* generic fn whose signature or body is being checked */
+
+typedef struct {
+    AstNode *fn;
+    unsigned long long mask; /* bit i: tparams[i] is boxed */
+} BoxMask;
+static BoxMask *box_masks;
+static int n_box_masks, cap_box_masks;
+
+typedef struct {
+    AstNode *caller; /* generic fn the call is in, or NULL */
+    AstNode *callee;
+    Type **bound;
+    size_t n;
+    SourceLoc loc;
+} GenCall;
+static GenCall *gen_calls;
+static int n_gen_calls, cap_gen_calls;
+
+static unsigned long long *box_mask_of(AstNode *fn, int create) {
+    for (int i = 0; i < n_box_masks; i++)
+        if (box_masks[i].fn == fn) return &box_masks[i].mask;
+    if (!create) return NULL;
+    if (n_box_masks == cap_box_masks) {
+        cap_box_masks = cap_box_masks ? cap_box_masks * 2 : 32;
+        box_masks = (BoxMask *)realloc(box_masks, (size_t)cap_box_masks * sizeof(BoxMask));
+        if (!box_masks) loam_fatal("out of memory");
+    }
+    box_masks[n_box_masks].fn = fn;
+    box_masks[n_box_masks].mask = 0;
+    return &box_masks[n_box_masks++].mask;
+}
+
+/** The type parameter `t` is, or holds as a container element, or NULL. */
+static const char *param_held(const Type *t) {
+    if (!t) return NULL;
+    if (t->kind == TY_PARAM) return t->name;
+    if (t->kind == TY_BOX || t->kind == TY_ARRAY || t->kind == TY_VEC) return param_held(t->elem);
+    return NULL;
+}
+
+static int tparam_index(AstNode *fn, const char *name) {
+    if (!fn || !name) return -1;
+    for (size_t i = 0; i < fn->as.fn.tparam_count && i < 64; i++)
+        if (fn->as.fn.tparams[i] && strcmp(fn->as.fn.tparams[i], name) == 0) return (int)i;
+    return -1;
+}
+
+/** A container with element type `elem` is being built in the current fn. */
+static void note_boxed(const Type *elem) {
+    if (!cur_gfn) return;
+    int i = tparam_index(cur_gfn, param_held(elem));
+    if (i >= 0) *box_mask_of(cur_gfn, 1) |= 1ull << i;
+}
+
+static void record_gen_call(AstNode *callee, Type **bound, size_t n, SourceLoc loc) {
+    if (n_gen_calls == cap_gen_calls) {
+        cap_gen_calls = cap_gen_calls ? cap_gen_calls * 2 : 64;
+        gen_calls = (GenCall *)realloc(gen_calls, (size_t)cap_gen_calls * sizeof(GenCall));
+        if (!gen_calls) loam_fatal("out of memory");
+    }
+    Type **copy = n ? (Type **)calloc(n, sizeof(Type *)) : NULL;
+    if (n) memcpy(copy, bound, n * sizeof(Type *));
+    GenCall c = { cur_gfn, callee, copy, n, loc };
+    gen_calls[n_gen_calls++] = c;
+}
+
+/** Propagate box marks through generic calls, then reject boxing a reference. */
+static void check_boxed_tparams(void) {
+    int changed = 1;
+    while (changed) {
+        changed = 0;
+        for (int c = 0; c < n_gen_calls; c++) {
+            GenCall *g = &gen_calls[c];
+            unsigned long long *cm = box_mask_of(g->callee, 0);
+            if (!cm || !*cm || !g->caller) continue;
+            for (size_t j = 0; j < g->n && j < 64; j++) {
+                if (!(*cm & (1ull << j))) continue;
+                int i = tparam_index(g->caller, param_held(g->bound[j]));
+                if (i < 0) continue;
+                unsigned long long *mm = box_mask_of(g->caller, 1);
+                if (!(*mm & (1ull << i))) {
+                    *mm |= 1ull << i;
+                    changed = 1;
+                }
+            }
+        }
+    }
+    for (int c = 0; c < n_gen_calls; c++) {
+        GenCall *g = &gen_calls[c];
+        unsigned long long *cm = box_mask_of(g->callee, 0);
+        if (!cm || !*cm) continue;
+        for (size_t j = 0; j < g->n && j < 64; j++) {
+            if (!(*cm & (1ull << j)) || !type_holds_ref(g->bound[j])) continue;
+            err(g->loc,
+                "'%s' stores its type parameter '%s' in a container, so it cannot be a "
+                "reference (%s)",
+                g->callee->as.fn.name, g->callee->as.fn.tparams[j], type_name(g->bound[j]));
+        }
+    }
 }
 
 /** A list, array, or Box may not hold a reference: storing one there would
@@ -1120,6 +1222,12 @@ static Type *make_struct_inst(AstNode *st, Type **args, size_t n, const SourceLo
            reference. A field already rejected at the decl is not reported twice. */
         if (type_holds_ref(t->field_types[i]) && !type_holds_ref(tmpl->field_types[i]))
             reject_ref_field(at ? *at : st->loc, t->name, t->field_names[i], t->field_types[i]);
+        /* `Holder<T>` with a `[]U` field, built in a generic fn, boxes T. */
+        {
+            const Type *ft = t->field_types[i];
+            if (ft && (ft->kind == TY_BOX || ft->kind == TY_ARRAY || ft->kind == TY_VEC))
+                note_boxed(ft->elem);
+        }
     }
     if (nstruct_insts >= LOAM_MAX_STRUCT_INSTS) {
         err(st->loc, "too many generic struct instantiations (max %d)", LOAM_MAX_STRUCT_INSTS);
@@ -1157,12 +1265,14 @@ static Type *resolve_type(AstNode *tn) {
         Type *et = resolve_type(tn->as.type.elem);
         Type *ct = tn->as.type.array_len < 0 ? type_vec(et) : type_array(et, tn->as.type.array_len);
         if (et && et->kind == TY_PTR) reject_ref_elem(tn->loc, ct);
+        note_boxed(et);
         return ct;
     }
     if (tn->as.type.tag == 4) {
         Type *et = resolve_type(tn->as.type.elem);
         Type *bt = type_box(et);
         if (et && et->kind == TY_PTR) reject_ref_elem(tn->loc, bt);
+        note_boxed(et);
         return bt;
     }
     if (tn->as.type.tag == 5) {
@@ -1230,6 +1340,8 @@ static Type *fn_type_of(AstNode *fn) {
     size_t save_n = cur_ntparams;
     cur_tparams = fn->as.fn.tparams;
     cur_ntparams = fn->as.fn.tparam_count;
+    AstNode *save_gfn = cur_gfn;
+    cur_gfn = fn->as.fn.tparam_count ? fn : NULL;
     Type **ps = NULL;
     size_t n = fn->as.fn.param_count;
     if (n) ps = calloc(n, sizeof(Type *));
@@ -1244,6 +1356,7 @@ static Type *fn_type_of(AstNode *fn) {
     Type *ret = fn->as.fn.ret_type ? resolve_type(fn->as.fn.ret_type) : ty_void();
     Type *t = type_proc(ps, n, ret);
     fn->ty = t;
+    cur_gfn = save_gfn;
     cur_tparams = save_tp;
     cur_ntparams = save_n;
     Gcur = save_cur;
@@ -2025,12 +2138,9 @@ static Type *finish_proc_call(AstNode *n, Type *ft, AstNode *named) {
                 return ret;
             }
         }
-        Type *tmpl_ret = ret;
         ret = subst_type(ret, named->as.fn.tparams, bound, nt);
-        /* `fn wrap<T>(x: T) -> []T` called with a reference. */
-        if (container_of_ref(ret) && !container_of_ref(tmpl_ret))
-            err(n->loc, "'%s' would return %s — a container cannot hold a reference",
-                named->as.fn.name, type_name(ret));
+        /* Checked once every body is seen (check_boxed_tparams). */
+        record_gen_call(named, bound, nt, n->loc);
         int concrete = 1;
         for (size_t i = 0; i < nt; i++)
             if (bound[i]->kind == TY_PARAM) concrete = 0;
@@ -2363,6 +2473,7 @@ static Type *check_call(AstNode *n, Type *expect) {
         n->as.call.is_box_new = 1;
         n->ty = type_box(et);
         if (et && et->kind == TY_PTR) reject_ref_elem(n->loc, n->ty);
+        note_boxed(et);
         n->place_mut = 0;
         return n->ty;
     }
@@ -3745,6 +3856,7 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
             }
             n->ty = n->as.array_lit.len < 0 ? type_vec(et) : type_array(et, n->as.array_lit.len);
             if (et && et->kind == TY_PTR) reject_ref_elem(n->loc, n->ty);
+            note_boxed(et);
             return n->ty;
         }
         case AST_TUPLE:
@@ -3938,6 +4050,8 @@ static void check_fn(AstNode *fn) {
     size_t save_n = cur_ntparams;
     cur_tparams = fn->as.fn.tparams;
     cur_ntparams = fn->as.fn.tparam_count;
+    AstNode *save_gfn = cur_gfn;
+    cur_gfn = fn->as.fn.tparam_count ? fn : NULL;
     cur_ret = ft->ret ? ft->ret : ty_void();
     loop_depth = 0;
     switch_depth = 0;
@@ -3991,6 +4105,7 @@ static void check_fn(AstNode *fn) {
     scope_pop();
     cur_ret = NULL;
     cur_async = saved_async;
+    cur_gfn = save_gfn;
     cur_tparams = save_tp;
     cur_ntparams = save_n;
 }
@@ -4995,6 +5110,15 @@ int typecheck_modules(LoamModule *mods, int nmods) {
                 if (!body || (body->kind == AST_BLOCK && body->as.block.stmt_count == 0)) {
                     if (strcmp(d->as.fn.name, "main") != 0)
                         d->as.fn.is_intrinsic = 1;
+                    /* A C hook: nothing checks what a returned reference would
+                       point at, so the boundary hands back values, never
+                       borrows. */
+                    Type *hr = d->ty ? d->ty->ret : NULL;
+                    if (d->as.fn.is_intrinsic && hr && hr->kind == TY_PTR)
+                        err(d->as.fn.ret_type ? d->as.fn.ret_type->loc : d->loc,
+                            "C hook '%s' cannot return a reference (%s) — C cannot promise "
+                            "what it points at; return a value or a handle",
+                            d->as.fn.name, type_name(hr));
                 }
             }
             {
@@ -5101,6 +5225,7 @@ int typecheck_modules(LoamModule *mods, int nmods) {
         scope_pop();
     }
 
+    check_boxed_tparams();
     instantiate_nested();
 
     while (scope) scope_pop();

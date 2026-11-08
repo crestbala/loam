@@ -1,0 +1,6 @@
+// An empty-bodied fn in a user module is a C hook; C cannot promise what a
+// returned reference points at.
+fn c_lookup(key: int) -> &int {}
+
+fn main() {
+}

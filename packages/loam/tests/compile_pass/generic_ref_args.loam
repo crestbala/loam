@@ -1,0 +1,28 @@
+import "std:fmt"
+
+// Generic code that never stores its `T` in a container may take references.
+fn id<T>(x: T) -> T {
+    return x
+}
+
+fn either<T>(a: T, b: T, left: bool) -> T {
+    if left {
+        return a
+    }
+    return b
+}
+
+// A list of `T` with `T = int` is fine; the reference is to the list.
+fn count<T>(xs: &[]T) -> int {
+    return xs.len
+}
+
+fn main() {
+    let x = 1
+    let y = 2
+    fmt.println(*id(&x))
+    fmt.println(*either(&x, &y, false))
+    let mut v = []int {}
+    v.push(3)
+    fmt.println(count(&v))
+}

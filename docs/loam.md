@@ -85,7 +85,9 @@ could outlive their source. Four rules, all checked at compile time:
    `&s.f`, `&v[i]`, `&*b`, through a `let`, or through a call). A reference
    parameter or a global may be returned.
 2. A struct field, `[]T`, `[N]T`, or `Box<T>` cannot hold a reference. A
-   `fn(&T)` field is fine.
+   `fn(&T)` field is fine. A generic fn that puts its `T` in a container
+   (even only inside its body) cannot be called with `T` a reference, and a
+   C hook cannot return one.
 3. A reference cannot be read after the binding it points into goes out of
    scope. Aiming an outer reference into an inner block is legal as long as
    it is not read after the block (or is aimed elsewhere first).
