@@ -2526,21 +2526,32 @@ fn ig_myapp() {
 /** *`.loam` file in the repo. `loamc --dump-tokens` is the reference. */
 fn ig_selfhost_lex() {
     mark("selfhost lexer")
-    let exe = tmpf("tokdump")
+    // A private scratch dir per run: concurrent runs sharing fixed tmp paths
+    // rewrite each other's tokdump binary (SIGKILL) and dumps (cmp SIGBUS).
+    let tmpl = tmpf("selfhost_lex.XXXXXX")
+    let d = trim(sys.exec("mkdir -p {{shq(TMP)}} && mktemp -d {{shq(tmpl)}}"))
+    if sys.exec_status() != 0 || d.len == 0 {
+        bad("selfhost lexer (mktemp)", d)
+        return
+    }
+    let exe = "{{d}}/tokdump"
     let o = sys.exec("{{shq(LOAMC)}} {{shq(ROOT)}}/packages/loam/compiler/tokdump.loam -o {{shq(exe)}} 2>&1")
     if sys.exec_status() != 0 {
+        sys.exec("rm -rf {{shq(d)}}")
         bad("selfhost lexer (build tokdump)", o)
         return
     }
-    let a = tmpf("tok.c")
-    let b = tmpf("tok.loam")
+    let a = "{{d}}/tok.c"
+    let b = "{{d}}/tok.loam"
     let script = cat(
         "cd {{shq(ROOT)}} && n=0; bad=''; for f in $(find packages examples nob.loam -name '*.loam' ",
         cat("-not -path '*/tmp/*' -not -path '*/build/*' -not -path '*/node_modules/*'); do n=$((n+1)); ",
             cat("{{shq(LOAMC)}} --dump-tokens \"$f\" > {{shq(a)}} 2>&1; {{shq(exe)}} \"$f\" > {{shq(b)}} 2>&1; ",
                 "cmp -s {{shq(a)}} {{shq(b)}} || bad=\"$bad $f\"; done; echo \"$n\"; [ -z \"$bad\" ] || { echo \"differ:$bad\"; exit 1; }")))
     let r = sys.exec(script)
-    if sys.exec_status() != 0 {
+    let st = sys.exec_status()
+    sys.exec("rm -rf {{shq(d)}}")
+    if st != 0 {
         bad("selfhost lexer (token streams differ)", r)
         return
     }
