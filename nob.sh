@@ -16,7 +16,9 @@ set -e
 ROOT=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 cd "$ROOT"
 
-if [ ! -x bin/loamc ]; then
+# Rebuild when missing *or* stale: `nob.loam` imports std, which may use syntax
+# only the current sources understand, so an old binary cannot build `nob`.
+if [ ! -x bin/loamc ] || [ -n "$(find packages/loam/src -name '*.[ch]' -newer bin/loamc -print | head -n 1)" ]; then
   mkdir -p bin
   # driver.c is loamc's main; lsp.c and fmt.c carry their own and are built apart.
   sources=$(ls packages/loam/src/*.c packages/loam/src/sema/*.c | grep -v -e '/lsp\.c$' -e '/fmt\.c$')
@@ -33,7 +35,7 @@ if [ ! -x bin/loamc ]; then
     $sources -o bin/loamc
 fi
 
-if [ ! -x bin/nob ] || [ nob.loam -nt bin/nob ]; then
+if [ ! -x bin/nob ] || [ nob.loam -nt bin/nob ] || [ bin/loamc -nt bin/nob ]; then
   ./bin/loamc nob.loam -o bin/nob
 fi
 
