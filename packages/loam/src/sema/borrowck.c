@@ -1,6 +1,7 @@
 /**
- * borrowck.c — moves, shared vs exclusive borrows, no return of &local
- * (that last one is also rejected in typecheck for `return &ident`).
+ * borrowck.c — moves, shared vs exclusive borrows, and reference escape:
+ * a returned reference may not point into the function's own frame (a local,
+ * a by-value parameter, a local Box, or a temporary), by any path.
  *
  * Bindings are a stack. Temps from `&x` in a statement are cleared at
  * statement end unless stored in a `let`.
@@ -15,6 +16,10 @@
 
 typedef enum { ST_OWNED, ST_MOVED } Own;
 
+/** Where a binding lives: a global outlives every call, a parameter of
+ *  reference type points into the caller, a local dies with the frame. */
+typedef enum { BK_LOCAL, BK_PARAM, BK_GLOBAL } BindKind;
+
 typedef struct Binding {
     char *name;
     Own own;
@@ -25,6 +30,11 @@ typedef struct Binding {
     int depth;
     char *borrow_of; /* place this binding holds a stored borrow of, or NULL */
     int borrow_mut;
+    BindKind kind;
+    /* Reference binding: a frame-owned binding it may point into, or NULL
+       when it only points at caller or global data. Sticky across
+       reassignment, so any branch that aimed it at a local counts. */
+    char *ref_root;
     /* `#[must_check]`: a value dropped without being read is an error. */
     int must_check;
     int checked;
@@ -136,6 +146,7 @@ static void pop_to_depth(int d) {
         }
         free(b->name);
         free(b->borrow_of);
+        free(b->ref_root);
         for (int i = 0; i < b->nmoved; i++) free(b->moved_paths[i]);
         free(b->moved_paths);
         free(b);
@@ -369,6 +380,82 @@ static void end_dead_borrows(AstNode **stmts, size_t count, size_t at, int block
 static int check_expr(AstNode *n, int as_move);
 static int check_stmt(AstNode *n);
 
+static const char *TEMP_ROOT = "<temporary>";
+
+static int is_ref_ty(const Type *t) { return t && t->kind == TY_PTR; }
+
+static const char *ref_frame_root(AstNode *e);
+
+/**
+ * The frame-owned binding that place `n` lives in, or NULL when the place is
+ * global or reached through a reference into the caller. A place that is not
+ * a binding at all (`f().x`, a struct literal) is a temporary.
+ */
+static const char *place_frame_root(AstNode *n) {
+    if (!n) return NULL;
+    switch (n->kind) {
+        case AST_IDENT: {
+            Binding *b = find_b(n->as.ident.name);
+            if (!b || b->kind == BK_GLOBAL) return NULL;
+            return b->name;
+        }
+        case AST_FIELD:
+        case AST_INDEX: {
+            AstNode *t = n->as.access.target;
+            /* `p.f` / `xs[i]` through a reference auto-derefs: the place is
+               wherever that reference points. */
+            if (t && is_ref_ty(t->ty)) return ref_frame_root(t);
+            /* `mod.g`: a module-qualified global, never a binding. */
+            if (n->kind == AST_FIELD && t && t->kind == AST_IDENT && !find_b(t->as.ident.name))
+                return NULL;
+            return place_frame_root(t);
+        }
+        case AST_DEREF: {
+            AstNode *t = n->as.access.target;
+            if (t && is_ref_ty(t->ty)) return ref_frame_root(t);
+            /* `*b` of a Box: the heap value dies with b's owner. */
+            return place_frame_root(t);
+        }
+        default:
+            return TEMP_ROOT;
+    }
+}
+
+/**
+ * For an expression of reference type: a frame-owned binding it may point
+ * into, or NULL. A call returning a reference is taken to borrow from every
+ * reference argument, so `first(&local)` points into `local`.
+ */
+static const char *ref_frame_root(AstNode *e) {
+    if (!e) return NULL;
+    switch (e->kind) {
+        case AST_ADDR:
+            return place_frame_root(e->as.access.target);
+        case AST_IDENT: {
+            Binding *b = find_b(e->as.ident.name);
+            if (!b || b->kind != BK_LOCAL) return NULL;
+            return b->ref_root;
+        }
+        case AST_CALL:
+            for (size_t i = 0; i < e->as.call.arg_count; i++) {
+                AstNode *a = e->as.call.args[i];
+                if (!a || !is_ref_ty(a->ty)) continue;
+                const char *r = ref_frame_root(a);
+                if (r) return r;
+            }
+            return NULL;
+        default:
+            return NULL;
+    }
+}
+
+/** Record that reference binding `b` may point at `root` (sticky). */
+static void note_ref_root(Binding *b, const char *root) {
+    if (!b || !root || b->ref_root) return;
+    b->ref_root = loam_dup(root);
+}
+
+
 /**
  * Ownership state of every live binding, so a branch can be checked from the
  * state its sibling started in rather than the one it left behind.
@@ -545,6 +632,7 @@ static int check_expr(AstNode *n, int as_move) {
             for (size_t k = 0; k < n->as.fn.param_count; k++) {
                 Type *pt = (ft && k < ft->param_count) ? ft->params[k] : NULL;
                 push_b(n->as.fn.params[k].name, pt);
+                binds->kind = BK_PARAM;
             }
             /* The closure body reads its *captures*, not the outer bindings
                (a moved capture's source is consumed here). Shadow each capture
@@ -617,7 +705,12 @@ static int check_stmt(AstNode *n) {
             if (n->as.var.init && n->as.var.init->kind == AST_ARRAY_LIT) mv = 0;
             if (n->as.var.init && n->as.var.init->kind == AST_CLOSURE) mv = 0;
             if (n->as.var.init && check_expr(n->as.var.init, mv)) return 1;
+            /* Resolved before the push, so `let x = &x` sees the outer x. */
+            const char *rroot =
+                is_ref_ty(n->ty) && n->as.var.init ? ref_frame_root(n->as.var.init) : NULL;
+            char *rroot_dup = rroot ? loam_dup(rroot) : NULL;
             push_b(n->as.var.name, n->ty);
+            binds->ref_root = rroot_dup;
             if (n->ty && n->ty->kind == TY_STRUCT && n->ty->must_check) {
                 binds->must_check = 1;
                 binds->loc = n->loc;
@@ -643,6 +736,10 @@ static int check_stmt(AstNode *n) {
                                n->as.assign.right->kind != AST_ADDR))
                 return 1;
             if (check_expr(n->as.assign.left, 0)) return 1;
+            if (n->as.assign.left && n->as.assign.left->kind == AST_IDENT &&
+                is_ref_ty(n->as.assign.left->ty))
+                note_ref_root(find_b(n->as.assign.left->as.ident.name),
+                              ref_frame_root(n->as.assign.right));
             release_temps();
             return 0;
         case AST_EXPR_STMT:
@@ -664,6 +761,19 @@ static int check_stmt(AstNode *n) {
                     n->as.ret.expr->ty && !type_is_copy(n->as.ret.expr->ty) &&
                     n->as.ret.expr->kind != AST_ADDR))
                 return 1;
+            if (n->as.ret.expr && is_ref_ty(n->as.ret.expr->ty)) {
+                const char *r = ref_frame_root(n->as.ret.expr);
+                if (r == TEMP_ROOT) {
+                    loam_error(n->loc, "cannot return borrow of a temporary");
+                    errn = 1;
+                    return 1;
+                }
+                if (r) {
+                    loam_error(n->loc, "cannot return borrow of local '%s'", r);
+                    errn = 1;
+                    return 1;
+                }
+            }
             release_temps();
             return 0;
         case AST_BLOCK: {
@@ -779,12 +889,16 @@ int borrowck_modules(LoamModule *mods, int nmods) {
             for (int g = 0; g < typecheck_global_count(); g++) {
                 if (typecheck_global_mod(g) != m) continue;
                 AstNode *gv = typecheck_global_var(g);
-                if (gv) push_b(gv->as.var.name, gv->ty);
+                if (gv) {
+                    push_b(gv->as.var.name, gv->ty);
+                    binds->kind = BK_GLOBAL;
+                }
             }
             Type *ft = d->ty;
             for (size_t k = 0; k < d->as.fn.param_count; k++) {
                 Type *pt = (ft && k < ft->param_count) ? ft->params[k] : NULL;
                 push_b(d->as.fn.params[k].name, pt);
+                binds->kind = BK_PARAM;
             }
             if (d->as.fn.body) check_stmt(d->as.fn.body);
             pop_to_depth(0);

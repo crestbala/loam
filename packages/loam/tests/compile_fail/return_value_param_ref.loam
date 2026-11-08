@@ -1,0 +1,7 @@
+// A by-value parameter is a copy in the callee's frame.
+fn bad(x: int) -> &int {
+    return &x
+}
+
+fn main() {
+}

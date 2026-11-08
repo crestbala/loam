@@ -1,0 +1,8 @@
+// A Box owned by the frame is freed on return; `&*b` would dangle.
+fn bad() -> &int {
+    let b = Box::new(3)
+    return &*b
+}
+
+fn main() {
+}

@@ -1,0 +1,51 @@
+import "std:fmt"
+
+struct P {
+    x: int,
+    y: int,
+}
+
+// References into the caller's data may be returned, by any path.
+fn first(xs: &[]int) -> &int {
+    return &xs[0]
+}
+
+fn pick(a: &int, b: &int, left: bool) -> &int {
+    if left {
+        return a
+    }
+    return b
+}
+
+fn y_of(p: &P) -> &int {
+    return &p.y
+}
+
+fn through_let(xs: &[]int) -> &int {
+    let p = &xs[1]
+    return p
+}
+
+fn chained(xs: &[]int) -> &int {
+    return first(xs)
+}
+
+fn deref_box(b: &Box<int>) -> &int {
+    return &**b
+}
+
+fn main() {
+    let mut v = []int {}
+    v.push(10)
+    v.push(20)
+    fmt.println(*first(&v))
+    let a = 1
+    let b = 2
+    fmt.println(*pick(&a, &b, false))
+    let p = P { x: 3, y: 4 }
+    fmt.println(*y_of(&p))
+    fmt.println(*through_let(&v))
+    fmt.println(*chained(&v))
+    let bx = Box::new(5)
+    fmt.println(*deref_box(&bx))
+}
