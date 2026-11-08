@@ -55,7 +55,7 @@ Pipeline, in order:
 | Load | `src/compile.c` | Resolve `import "std:bar"` → `std/bar.loam`, relative `"path.loam"` from the importer. Cycles are errors. |
 | Lex / parse | `src/lexer.c`, `src/parser.c` | Tokens → AST. |
 | Typecheck | `src/sema/typecheck.c` | Names, types, auto-borrow, generics (monomorphized, including nested calls and defaults), `mod.fn` / `mod.global`, method rewrite `n.w(32)` → `zeus.w(n, 32)`. |
-| Borrowck | `src/sema/borrowck.c` | Exclusive vs shared, moves, place paths (`p.a` vs `p.b`). Borrows end at the holder's last use (NLL). Enforces `#[must_check]`. |
+| Borrowck | `src/sema/borrowck.c` | Exclusive vs shared, moves, place paths (`p.a` vs `p.b`). Borrows end at the holder's last use (NLL). Reference escape: no return into the frame, no read after the source's scope, a returned reference keeps its arguments borrowed ([References](#references)). Enforces `#[must_check]`. |
 | Boundscheck | `src/sema/boundscheck.c` | Proven in-range indexes skip the runtime trap: a literal in `0..N` for `[N]T`, and `for i in 0..C.len { … C[i] … }` (loop var matched by resolution). Overflow traps likewise drop on a foldable literal op literal (`src/ir.c`). |
 | IR | `src/ir.c` | CFG, drops, closures as heap env + fn pointer (`loam_fn`: fn, env, env_size). |
 | C | `src/codegen_c.c` | C99, then `cc`. |
@@ -73,6 +73,29 @@ Owned ──scope exit──► Dropped   (free boxes / []T / closures)
 `Box<T>` is not Copy. `[]T` is Copy when `T` is Copy (refcounted buffer,
 copy-on-write on `push`). `fn` values are Copy handles. They are freed when
 the last owner drops (vectors) or interned for the process (handlers).
+
+### References
+
+Loam has no lifetime parameters. References are **second-class** instead:
+they live in parameters, locals, and return values, never in storage that
+could outlive their source. Four rules, all checked at compile time:
+
+1. A function cannot return a reference into its own frame: a local, a
+   by-value parameter, a local `Box`, or a temporary, by any path (`&x`,
+   `&s.f`, `&v[i]`, `&*b`, through a `let`, or through a call). A reference
+   parameter or a global may be returned.
+2. A struct field, `[]T`, `[N]T`, or `Box<T>` cannot hold a reference. A
+   `fn(&T)` field is fine.
+3. A reference cannot be read after the binding it points into goes out of
+   scope. Aiming an outer reference into an inner block is legal as long as
+   it is not read after the block (or is aimed elsewhere first).
+4. A returned reference borrows what its reference arguments borrow: while
+   `p = first(&v)` lives, `v` cannot be pushed, assigned, or moved. A call
+   given `&mut p` may aim `p` at any of its other reference arguments.
+
+Instead of a stored reference, store an owned value, a `Box`, an index into a
+list, or a handle (`Signal`). The design and its phases:
+[reference-escape.md](reference-escape.md).
 
 ## Repository map
 
