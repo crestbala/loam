@@ -899,7 +899,8 @@ static int is_ffi_mod(const char *name) {
            strcmp(name, "fmt") == 0 || strcmp(name, "maya") == 0 ||
            strcmp(name, "platform") == 0 || strcmp(name, "sys") == 0 ||
            strcmp(name, "net") == 0 || strcmp(name, "async") == 0 ||
-           strcmp(name, "thread") == 0;
+           strcmp(name, "thread") == 0 || strcmp(name, "buf") == 0 ||
+           strcmp(name, "conv") == 0;
 }
 
 /* User (non-std) modules may declare bodyless C-seam hooks the same way std
@@ -2940,11 +2941,13 @@ static Type *check_call(AstNode *n, Type *expect) {
 
     if (try_vec_builtin(n)) return n->ty;
 
-    /* fmt.println(...) */
+    /* fmt.println(...) / fmt.eprintln(...) (stderr: is_println == 2) */
     if (cal && cal->kind == AST_FIELD && !cal->as.access.via_colon &&
         cal->as.access.target && cal->as.access.target->kind == AST_IDENT &&
         strcmp(cal->as.access.target->as.ident.name, "fmt") == 0 &&
-        cal->as.access.field && strcmp(cal->as.access.field, "println") == 0) {
+        cal->as.access.field && (strcmp(cal->as.access.field, "println") == 0 ||
+                                 strcmp(cal->as.access.field, "eprintln") == 0)) {
+        int to_err = strcmp(cal->as.access.field, "eprintln") == 0;
         if (!module_imported(Gmods[Gcur].ast, "fmt")) {
             err(n->loc, "unknown module 'fmt' — add `import \"std:fmt\"`");
             return ty_void();
@@ -2952,13 +2955,14 @@ static Type *check_call(AstNode *n, Type *expect) {
         for (size_t i = 0; i < n->as.call.arg_count; i++) {
             Type *t = check_expr(n->as.call.args[i]);
             if (!is_printable(t))
-                err(n->as.call.args[i]->loc, "fmt.println cannot print %s", type_name(t));
+                err(n->as.call.args[i]->loc, "fmt.%s cannot print %s", cal->as.access.field,
+                    type_name(t));
         }
-        n->as.call.is_println = 1;
+        n->as.call.is_println = to_err ? 2 : 1;
         n->ty = ty_void();
         mark_module_ident(cal->as.access.target, "fmt");
         {
-            AstNode *prn = find_fn_in(find_mod("fmt"), "println");
+            AstNode *prn = find_fn_in(find_mod("fmt"), cal->as.access.field);
             cal->as.access.resolved = prn;
             if (prn) cal->ty = fn_type_of(prn);
         }

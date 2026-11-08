@@ -465,6 +465,13 @@ static int assign_to_bin(int op) {
     Variadic mixed types are not a Loam function; this is the language's
     compile-time expansion, not a C-backend special case. */
 static int lower_println(AstNode *n) {
+    /* is_println == 2 is `fmt.eprintln`: the same expansion, to stderr. */
+    int to_err = n->as.call.is_println == 2;
+    const char *w_str = to_err ? "loam_fmt_ewrite" : "loam_fmt_write";
+    const char *w_bool = to_err ? "loam_fmt_ewrite_bool" : "loam_fmt_write_bool";
+    const char *w_float = to_err ? "loam_fmt_ewrite_float" : "loam_fmt_write_float";
+    const char *w_u64 = to_err ? "loam_fmt_ewrite_u64" : "loam_fmt_write_u64";
+    const char *w_int = to_err ? "loam_fmt_ewrite_int" : "loam_fmt_write_int";
     for (size_t k = 0; k < n->as.call.arg_count; k++) {
         if (k) {
             int sp = new_local(ty_string(), NULL, 0);
@@ -474,7 +481,7 @@ static int lower_println(AstNode *n) {
             c->ty = ty_string();
             int *a = (int *)calloc(1, sizeof(int));
             a[0] = sp;
-            emit_named_call("loam_fmt_write", a, 1, ty_void(), n->loc);
+            emit_named_call(w_str, a, 1, ty_void(), n->loc);
         }
         AstNode *arg = n->as.call.args[k];
         int v = lower_expr(arg);
@@ -482,17 +489,17 @@ static int lower_println(AstNode *n) {
         a[0] = v;
         Type *t = ir_subst(arg->ty);
         if (t && t->kind == TY_STRING)
-            emit_named_call("loam_fmt_write", a, 1, ty_void(), n->loc);
+            emit_named_call(w_str, a, 1, ty_void(), n->loc);
         else if (t && t->kind == TY_BOOL)
-            emit_named_call("loam_fmt_write_bool", a, 1, ty_void(), n->loc);
+            emit_named_call(w_bool, a, 1, ty_void(), n->loc);
         else if (t && t->kind == TY_FLOAT)
-            emit_named_call("loam_fmt_write_float", a, 1, ty_void(), n->loc);
+            emit_named_call(w_float, a, 1, ty_void(), n->loc);
         else if (t && t->kind == TY_INT && t->is_unsigned && t->bits == 64)
-            emit_named_call("loam_fmt_write_u64", a, 1, ty_void(), n->loc);
+            emit_named_call(w_u64, a, 1, ty_void(), n->loc);
         else
-            emit_named_call("loam_fmt_write_int", a, 1, ty_void(), n->loc);
+            emit_named_call(w_int, a, 1, ty_void(), n->loc);
     }
-    emit_named_call("loam_fmt_writeln", NULL, 0, ty_void(), n->loc);
+    emit_named_call(to_err ? "loam_fmt_ewriteln" : "loam_fmt_writeln", NULL, 0, ty_void(), n->loc);
     return -1;
 }
 

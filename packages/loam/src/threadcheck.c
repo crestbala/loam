@@ -112,6 +112,8 @@ static const char *const worker_seam_ok[] = {
     "loam_ch_pop", "loam_ch_ready",
     "loam_fmt_write", "loam_fmt_writeln", "loam_fmt_write_int", "loam_fmt_write_u64",
     "loam_fmt_write_bool", "loam_fmt_write_float", "loam_fmt_eq",
+    "loam_fmt_ewrite", "loam_fmt_ewriteln", "loam_fmt_ewrite_int", "loam_fmt_ewrite_u64",
+    "loam_fmt_ewrite_bool", "loam_fmt_ewrite_float",
     "loam_str_of_int", "loam_str_of_u64", "loam_str_of_float", "loam_str_of_bool",
     "loam_str_of_string", "loam_str_concat", "loam_string_from_bytes",
     "loam_string_from_u8",

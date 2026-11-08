@@ -1,0 +1,85 @@
+// std:buf, std:conv, and the std:sys file additions (read, io_error,
+// write_bytes, mtime). eprintln goes to stderr, so it is not in .expected.
+import "std:fmt"
+import "std:buf"
+import "std:conv"
+import "std:sys"
+import "std:result"
+
+fn show_i(r: Result<i64>) {
+    if r.tag == ResultTag.Ok { fmt.println("ok", r.val) } else { fmt.println("err", r.err) }
+}
+fn show_u(r: Result<u64>) {
+    if r.tag == ResultTag.Ok { fmt.println("ok", r.val) } else { fmt.println("err", r.err) }
+}
+fn show_f(r: Result<f64>) {
+    if r.tag == ResultTag.Ok {
+        fmt.println("ok", conv.f64_to_str(r.val))
+    } else {
+        fmt.println("err", r.err)
+    }
+}
+
+fn main() {
+    let mut b = []u8 {}
+    for i in 0..3 {
+        buf.push_str(&mut b, "line ")
+        buf.push_int(&mut b, i)
+        push(b, u8('\n'))
+    }
+    let big: u64 = 18446744073709551615
+    buf.push_u64(&mut b, big)
+    buf.push_i64(&mut b, i64(-5))
+    fmt.println(buf.to_string(&b))
+    fmt.println(
+        sys.write_bytes("/tmp/loam_std_buf_conv.out", &b),
+        sys.mtime("/tmp/loam_std_buf_conv.out") > i64(0),
+        sys.mtime("/nope"),
+    )
+    let r = sys.read("/tmp/loam_std_buf_conv.out")
+    fmt.println(r.tag == ResultTag.Ok, r.val.len)
+    let r2 = sys.read("/tmp/loam_std_buf_conv.missing")
+    fmt.println(r2.tag == ResultTag.Err, r2.err)
+    sys.write_file("/tmp/loam_std_buf_conv.empty", "")
+    let r3 = sys.read("/tmp/loam_std_buf_conv.empty")
+    fmt.println(r3.tag == ResultTag.Ok, r3.val.len)
+
+    fmt.println(
+        conv.u64_to_radix(u64(255), 16),
+        conv.u64_to_radix(big, 2).len,
+        conv.i64_to_radix(i64(-255), 16),
+        conv.int_to_str(-7),
+    )
+    show_i(conv.parse_i64("-0x1f"))
+    show_i(conv.parse_i64("1_000_000"))
+    show_i(conv.parse_i64("-9223372036854775808"))
+    show_i(conv.parse_i64("9223372036854775808"))
+    show_i(conv.parse_i64("12x"))
+    show_i(conv.parse_i64("1__0"))
+    show_i(conv.parse_i64(""))
+    show_u(conv.parse_u64("18446744073709551615"))
+    show_u(conv.parse_u64("18446744073709551616"))
+    show_u(conv.parse_u64("0b1011"))
+    show_u(conv.parse_u64("0o777"))
+    show_u(conv.parse_u64_radix("zz", 36))
+    let pi = conv.parse_int("2147483648")
+    fmt.println(pi.tag == ResultTag.Err, pi.err)
+    show_f(conv.parse_f64("0.1"))
+    show_f(conv.parse_f64("-1.5e3"))
+    show_f(conv.parse_f64(".5"))
+    show_f(conv.parse_f64("1e"))
+    show_f(conv.parse_f64("."))
+    show_f(conv.parse_f64("inf"))
+    fmt.println(conv.f64_to_str(f64(1.0) / f64(3.0)), conv.f64_to_str(f64(100.0)))
+
+    fmt.eprintln("to stderr", 1)
+    extra()
+}
+
+fn extra() {
+    let mut a = []u8 {}
+    let c = []u8 { u8('h'), u8('i') }
+    buf.push_bytes(&mut a, &c)
+    buf.push_bytes(&mut a, &c)
+    fmt.println(buf.to_string(&a))
+}

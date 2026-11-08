@@ -1,0 +1,209 @@
+// intmap — an open-addressing hash map keyed by `int`.
+//
+// `std:map` keys by `string`; looking up a type id or node id there means
+// formatting the number first. This is the same table (linear probing, power-
+// of-two capacity, tombstones, 0.75 load factor) with the key compared as an
+// integer and hashed by a multiply, so a lookup allocates nothing.
+//
+// `imap_new<T>(absent: T)` takes the value meaning "not here", as `map_new`
+// does. To change a value in place — push onto a `[]int` stored under a key,
+// say — find its slot and write through it, with no get/put copy:
+//
+// ```
+// let s = intmap.imap_find(&mut m, id)
+// if s >= 0 {
+//     push(m.entries[s].value, 7)
+// }
+// ```
+
+/** *One slot. `used` 0 = unwritten, 1 = live, 2 = tombstone. */
+struct IEntry<T> {
+    used: int,
+    key: int,
+    value: T,
+}
+
+struct IntMap<T> {
+    entries: []IEntry<T>,
+    /** *Live entries. */
+    len: int,
+    /** *Live + tombstones: the count that decides whether growth helps. */
+    filled: int,
+    /** *What `imap_get` returns for a missing key. */
+    absent: T,
+}
+
+/** *Fibonacci hashing: the key times 2^32/phi, high bits folded down. Computed */
+/** *in i64, where the product of an i32 and this constant cannot overflow. */
+fn hash_int(k: int) -> int {
+    let x = i64(k) * i64(2654435769)
+    let h = (x ^ (x >> 29)) & i64(1073741823)
+    return i32(h)
+}
+
+fn imap_new<T>(absent: T) -> IntMap<T> {
+    return imap_with_cap(8, absent)
+}
+
+fn imap_with_cap<T>(cap: int, absent: T) -> IntMap<T> {
+    let mut n = 8
+    while n < cap {
+        n = n * 2
+    }
+    let mut es = []IEntry<T> {}
+    for i in 0..n {
+        push(es, ientry_empty(absent))
+    }
+    return imap_of(es, absent)
+}
+
+fn imap_of<T>(es: []IEntry<T>, absent: T) -> IntMap<T> {
+    return IntMap<T> { entries: es, len: 0, filled: 0, absent: absent }
+}
+
+fn ientry_empty<T>(absent: T) -> IEntry<T> {
+    return IEntry<T> { used: 0, key: 0, value: absent }
+}
+
+/** *`key`'s slot index, or -1. Write `m.entries[s].value` to change it in place. */
+fn imap_find<T>(m: &mut IntMap<T>, key: int) -> int {
+    let n = m.entries.len
+    if n == 0 {
+        return 0 - 1
+    }
+    let h = hash_int(key)
+    let mut i = 0
+    while i < n {
+        let s = (h + i) & (n - 1)
+        let u = m.entries[s].used
+        if u == 0 {
+            return 0 - 1
+        }
+        if u == 1 && m.entries[s].key == key {
+            return s
+        }
+        i = i + 1
+    }
+    return 0 - 1
+}
+
+fn imap_has<T>(m: &mut IntMap<T>, key: int) -> bool {
+    return imap_find(m, key) >= 0
+}
+
+/** *The value at `key`, or the table's `absent` value. */
+fn imap_get<T>(m: &mut IntMap<T>, key: int) -> T {
+    let s = imap_find(m, key)
+    if s < 0 {
+        return m.absent
+    }
+    return m.entries[s].value
+}
+
+/** *The value at `key`, trapping when absent. */
+fn imap_at<T>(m: &mut IntMap<T>, key: int) -> T {
+    let s = imap_find(m, key)
+    return m.entries[s].value
+}
+
+/** *Insert or replace. Returns 1 when the key was new, 0 when it was replaced. */
+fn imap_put<T>(m: &mut IntMap<T>, key: int, value: T) -> int {
+    if (m.filled + 1) * 4 >= m.entries.len * 3 {
+        imap_grow(m, m.absent)
+    }
+    return imap_put_nogrow(m, key, value)
+}
+
+fn imap_put_nogrow<T>(m: &mut IntMap<T>, key: int, value: T) -> int {
+    let n = m.entries.len
+    let h = hash_int(key)
+    let mut i = 0
+    let mut tomb = 0 - 1
+    while i < n {
+        let s = (h + i) & (n - 1)
+        let u = m.entries[s].used
+        if u == 0 {
+            let mut at = tomb
+            if tomb < 0 {
+                at = s
+                m.filled = m.filled + 1
+            }
+            m.entries[at].used = 1
+            m.entries[at].key = key
+            m.entries[at].value = value
+            m.len = m.len + 1
+            return 1
+        }
+        if u == 2 {
+            if tomb < 0 {
+                tomb = s
+            }
+        } else if m.entries[s].key == key {
+            m.entries[s].value = value
+            return 0
+        }
+        i = i + 1
+    }
+    if tomb >= 0 {
+        m.entries[tomb].used = 1
+        m.entries[tomb].key = key
+        m.entries[tomb].value = value
+        m.len = m.len + 1
+        return 1
+    }
+    return 0
+}
+
+/** *Remove `key`, leaving a tombstone. Returns 1 when something was removed. */
+fn imap_remove<T>(m: &mut IntMap<T>, key: int) -> int {
+    let s = imap_find(m, key)
+    if s < 0 {
+        return 0
+    }
+    m.entries[s].used = 2
+    m.entries[s].value = m.absent
+    m.len = m.len - 1
+    return 1
+}
+
+/** *Double the table (or rebuild it at the same size when it is mostly */
+/** *tombstones) and re-insert every live entry. */
+fn imap_grow<T>(m: &mut IntMap<T>, absent: T) {
+    let mut cap = m.entries.len * 2
+    if m.len * 4 < m.entries.len {
+        cap = m.entries.len
+    }
+    let old = m.entries
+    let mut es = []IEntry<T> {}
+    for i in 0..cap {
+        push(es, ientry_empty(absent))
+    }
+    m.entries = es
+    m.len = 0
+    m.filled = 0
+    for j in 0..old.len {
+        if old[j].used == 1 {
+            imap_put_nogrow(m, old[j].key, old[j].value)
+        }
+    }
+}
+
+fn imap_clear<T>(m: &mut IntMap<T>) {
+    for i in 0..m.entries.len {
+        m.entries[i].used = 0
+        m.entries[i].value = m.absent
+    }
+    m.len = 0
+    m.filled = 0
+}
+
+/** *Keys in slot order. A map has no order; sort them if output depends on it. */
+fn imap_keys<T>(m: &mut IntMap<T>) -> []int {
+    let mut out = []int {}
+    for i in 0..m.entries.len {
+        if m.entries[i].used == 1 {
+            push(out, m.entries[i].key)
+        }
+    }
+    return out
+}

@@ -87,10 +87,11 @@ typedef struct {
     int64_t cap;
 } loam_vec;
 
-/* Length-based stdout. No malloc, no printf, no NUL requirement. */
-static inline void loam_write_bytes(const char *p, size_t n) {
+/* Length-based writes to a descriptor. No malloc, no printf, no NUL
+   requirement. Stdout is `fmt.println`; stderr is `fmt.eprintln`. */
+static inline void loam_write_fd(int fd, const char *p, size_t n) {
     while (n) {
-        ssize_t w = write(STDOUT_FILENO, p, n);
+        ssize_t w = write(fd, p, n);
         if (w < 0) {
             if (errno == EINTR) continue;
             return;
@@ -101,14 +102,17 @@ static inline void loam_write_bytes(const char *p, size_t n) {
     }
 }
 
-static inline void loam_writev_all(struct iovec *iov, int n) {
+static inline void loam_write_bytes(const char *p, size_t n) { loam_write_fd(STDOUT_FILENO, p, n); }
+static inline void loam_ewrite_bytes(const char *p, size_t n) { loam_write_fd(STDERR_FILENO, p, n); }
+
+static inline void loam_writev_fd(int fd, struct iovec *iov, int n) {
     while (n > 0) {
         if (iov->iov_len == 0) {
             iov++;
             n--;
             continue;
         }
-        ssize_t w = writev(STDOUT_FILENO, iov, n);
+        ssize_t w = writev(fd, iov, n);
         if (w < 0) {
             if (errno == EINTR) continue;
             return;
@@ -126,6 +130,8 @@ static inline void loam_writev_all(struct iovec *iov, int n) {
         }
     }
 }
+
+static inline void loam_writev_all(struct iovec *iov, int n) { loam_writev_fd(STDOUT_FILENO, iov, n); }
 
 static inline void loam_fmt_write(loam_str s) {
     if (!s.ptr || s.len <= 0) return;
@@ -203,6 +209,33 @@ static inline void loam_fmt_write_float(double v) {
 }
 
 static inline void loam_fmt_writeln(void) { loam_write_bytes("\n", 1); }
+
+/* The stderr twins of the writers above, for `fmt.eprintln` / `fmt.ewrite`:
+   diagnostics must not mix with output a program sends to stdout. */
+static inline void loam_fmt_ewrite(loam_str s) {
+    if (!s.ptr || s.len <= 0) return;
+    loam_ewrite_bytes(s.ptr, (size_t)s.len);
+}
+static inline void loam_fmt_ewrite_int(int64_t v) {
+    char buf[24];
+    loam_str s = loam_fmt_itoa(buf, v);
+    loam_ewrite_bytes(s.ptr, (size_t)s.len);
+}
+static inline void loam_fmt_ewrite_u64(uint64_t v) {
+    char buf[24];
+    loam_str s = loam_fmt_utoa(buf, v);
+    loam_ewrite_bytes(s.ptr, (size_t)s.len);
+}
+static inline void loam_fmt_ewrite_bool(bool v) {
+    if (v) loam_ewrite_bytes("true", 4);
+    else loam_ewrite_bytes("false", 5);
+}
+static inline void loam_fmt_ewrite_float(double v) {
+    char buf[64];
+    loam_str s = loam_fmt_ftoa(buf, v);
+    loam_ewrite_bytes(s.ptr, (size_t)s.len);
+}
+static inline void loam_fmt_ewriteln(void) { loam_ewrite_bytes("\n", 1); }
 
 static inline bool loam_fmt_eq(loam_str a, loam_str b) {
     if (a.len != b.len) return false;
@@ -1223,6 +1256,66 @@ static inline loam_str loam_string_from_u8(loam_vec b) {
     return loam_str_owned(p, n);
 }
 
+/* --- std:buf — byte builders over `[]u8` ----------------------------------
+   One memcpy per append, amortized O(1) growth from loam_vec_reserve: N pieces
+   cost O(total bytes), not the O(N^2) of re-concatenating strings. */
+static inline void loam_buf_push_str(loam_vec *b, loam_str s) {
+    if (!b || !s.ptr || s.len <= 0) return;
+    loam_vec_reserve(b, b->len + s.len, 1, "buf.push_str", 0);
+    memcpy((char *)b->ptr + b->len, s.ptr, (size_t)s.len);
+    b->len += s.len;
+}
+
+static inline void loam_buf_push_bytes(loam_vec *b, const loam_vec *src) {
+    /* The borrow rules keep `src` from being `b`; a copy-on-write sibling of
+       `b` keeps its own reference, so its bytes outlive the reserve below. */
+    if (!b || !src || !src->ptr || src->len <= 0) return;
+    int64_t n = src->len;
+    loam_vec_reserve(b, b->len + n, 1, "buf.push_bytes", 0);
+    memcpy((char *)b->ptr + b->len, src->ptr, (size_t)n);
+    b->len += n;
+}
+
+static inline void loam_buf_push_i64(loam_vec *b, int64_t v) {
+    char tmp[24];
+    loam_buf_push_str(b, loam_fmt_itoa(tmp, v));
+}
+
+static inline void loam_buf_push_int(loam_vec *b, int64_t v) { loam_buf_push_i64(b, v); }
+
+static inline void loam_buf_push_u64(loam_vec *b, uint64_t v) {
+    char tmp[24];
+    loam_buf_push_str(b, loam_fmt_utoa(tmp, v));
+}
+
+/** A string copy of the bytes; the buffer stays usable. */
+static inline loam_str loam_buf_to_string(const loam_vec *b) {
+    if (!b || !b->ptr || b->len <= 0) return (loam_str){"", 0};
+    return loam_str_copy((const char *)b->ptr, b->len);
+}
+
+/* --- std:conv — the float halves (the integer halves are Loam) -------------
+   Shortest of %.15g / %.16g / %.17g that reads back to the same double, so
+   0.1 prints as "0.1" and every finite value round-trips exactly. */
+static inline loam_str loam_conv_f64_to_str(double v) {
+    char buf[40];
+    int prec;
+    for (prec = 15; prec <= 17; prec++) {
+        snprintf(buf, sizeof buf, "%.*g", prec, v);
+        if (prec == 17 || strtod(buf, NULL) == v) break;
+    }
+    return loam_str_copy(buf, (int64_t)strlen(buf));
+}
+
+/** `strtod` over text `std:conv` already validated as a decimal float. */
+static inline double loam_conv_strtod(loam_str s) {
+    char buf[512];
+    if (!s.ptr || s.len <= 0 || s.len >= (int64_t)sizeof buf) return 0.0;
+    memcpy(buf, s.ptr, (size_t)s.len);
+    buf[s.len] = 0;
+    return strtod(buf, NULL);
+}
+
 /** Compile target: "wasm" | "ios" | "android" | "native". Used by
  *  `http.client()` to pick a default RPC address. */
 static inline loam_str loam_sys_target(void) {
@@ -1299,6 +1392,16 @@ static inline int64_t loam_sys_stdout_tty(void) { return 0; }
 static inline loam_str loam_sys_read_file(loam_str path) {
     (void)path;
     return (loam_str){"", 0};
+}
+static inline loam_str loam_sys_io_error(void) { return (loam_str){"no filesystem", 13}; }
+static inline int64_t loam_sys_write_bytes(loam_str path, const loam_vec *b) {
+    (void)path;
+    (void)b;
+    return 1;
+}
+static inline int64_t loam_sys_mtime(loam_str path) {
+    (void)path;
+    return -1;
 }
 static inline int64_t loam_sys_mkdir(loam_str path) {
     (void)path;
@@ -1455,6 +1558,11 @@ static inline int64_t loam_sys_stdout_tty(void) { return isatty(STDOUT_FILENO); 
    no-op outside a host build, so an app that calls it still runs its own loop. */
 void loam_host_run(loam_str path);
 
+/* Why the last `sys.read_file` came back empty, or "" when it succeeded: an
+   empty file and a missing one read the same, and `sys.read` tells them apart
+   through `sys.io_error()`. A static message, never freed. */
+static const char *loam_sys_io_err = "";
+
 static inline loam_str loam_sys_read_file(loam_str path) {
     char pbuf[4096];
     FILE *f;
@@ -1464,23 +1572,33 @@ static inline loam_str loam_sys_read_file(loam_str path) {
     /* Loam's `int` indexes a string, so a file has to fit in an i32 length.
        1 GiB leaves headroom; past it the read is empty, as documented. */
     const size_t max_n = (size_t)1u << 30;
-    if (!path.ptr || path.len <= 0 || path.len >= 4095) return (loam_str){"", 0};
+    loam_sys_io_err = "";
+    if (!path.ptr || path.len <= 0 || path.len >= 4095) {
+        loam_sys_io_err = path.len <= 0 ? "empty path" : "path too long";
+        return (loam_str){"", 0};
+    }
     memcpy(pbuf, path.ptr, (size_t)path.len);
     pbuf[path.len] = 0;
     f = fopen(pbuf, "rb");
-    if (!f) return (loam_str){"", 0};
+    if (!f) {
+        loam_sys_io_err = strerror(errno);
+        return (loam_str){"", 0};
+    }
     if (fseek(f, 0, SEEK_END) != 0) {
+        loam_sys_io_err = strerror(errno);
         fclose(f);
         return (loam_str){"", 0};
     }
     sz = ftell(f);
     if (sz < 0 || (size_t)sz > max_n) {
+        loam_sys_io_err = sz < 0 ? "not a regular file" : "file too large (over 1 GiB)";
         fclose(f);
         return (loam_str){"", 0};
     }
     rewind(f);
     p = loam_str_bytes((int64_t)sz);
     n = fread(p, 1, (size_t)sz, f);
+    if (n < (size_t)sz && ferror(f)) loam_sys_io_err = "read error";
     fclose(f);
     p[n] = 0;
     if (n == 0) {
@@ -1491,6 +1609,27 @@ static inline loam_str loam_sys_read_file(loam_str path) {
     return loam_str_owned(p, (int64_t)n);
 }
 
+static inline loam_str loam_sys_io_error(void) {
+    return (loam_str){loam_sys_io_err, (int64_t)strlen(loam_sys_io_err)};
+}
+
+/* `[]u8` straight to a file: a built buffer is written without first becoming
+   one giant string. Returns 0 on success, like `write_file`. */
+static inline int64_t loam_sys_write_bytes(loam_str path, const loam_vec *b) {
+    char pbuf[4096];
+    FILE *f;
+    if (!path.ptr || path.len <= 0 || path.len >= 4095) return 1;
+    memcpy(pbuf, path.ptr, (size_t)path.len);
+    pbuf[path.len] = 0;
+    f = fopen(pbuf, "wb");
+    if (!f) return 1;
+    if (b && b->ptr && b->len > 0 && fwrite(b->ptr, 1, (size_t)b->len, f) != (size_t)b->len) {
+        fclose(f);
+        return 1;
+    }
+    return fclose(f) == 0 ? 0 : 1;
+}
+
 #include <sys/stat.h>
 
 static int loam_sys_cpath(loam_str path, char *buf, size_t cap) {
@@ -1498,6 +1637,22 @@ static int loam_sys_cpath(loam_str path, char *buf, size_t cap) {
     memcpy(buf, path.ptr, (size_t)path.len);
     buf[path.len] = 0;
     return 0;
+}
+
+/* Last modification time in milliseconds since the epoch, or -1 when the path
+   does not exist. Sub-second where the platform records it. */
+static inline int64_t loam_sys_mtime(loam_str path) {
+    char pbuf[4096];
+    struct stat st;
+    if (loam_sys_cpath(path, pbuf, sizeof pbuf) != 0) return -1;
+    if (stat(pbuf, &st) != 0) return -1;
+#if defined(__APPLE__)
+    return (int64_t)st.st_mtimespec.tv_sec * 1000 + (int64_t)st.st_mtimespec.tv_nsec / 1000000;
+#elif defined(__linux__)
+    return (int64_t)st.st_mtim.tv_sec * 1000 + (int64_t)st.st_mtim.tv_nsec / 1000000;
+#else
+    return (int64_t)st.st_mtime * 1000;
+#endif
 }
 
 #include <dirent.h>
