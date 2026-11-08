@@ -79,96 +79,96 @@ struct OpenProps {
 }
 
 #[c("sqlite3_libversion")]
-fn c_libversion() -> string {}
+fn c_sqlite_lib_version() -> string {}
 
 #[c("sqlite3_open_v2")]
-fn c_open(path: string, out: []i64, flags: int, vfs: i64) -> int {}
+fn c_sqlite_open(path: string, out: []i64, flags: int, vfs: i64) -> int {}
 
 #[c("sqlite3_close")]
-fn c_close(db: i64) -> int {}
+fn c_sqlite_close(db: i64) -> int {}
 
 #[c("sqlite3_errmsg")]
-fn c_errmsg(db: i64) -> string {}
+fn c_sqlite_err_msg(db: i64) -> string {}
 
 #[c("sqlite3_busy_timeout")]
-fn c_busy_timeout(db: i64, ms: int) -> int {}
+fn c_sqlite_busy_timeout(db: i64, ms: int) -> int {}
 
 #[c("sqlite3_changes64")]
-fn c_changes(db: i64) -> i64 {}
+fn c_sqlite_changes(db: i64) -> i64 {}
 
 #[c("sqlite3_last_insert_rowid")]
-fn c_last_insert_rowid(db: i64) -> i64 {}
+fn c_sqlite_last_insert_rowid(db: i64) -> i64 {}
 
 #[c("sqlite3_prepare_v2")]
-fn c_prepare(db: i64, sql: string, n: int, out: []i64, tail: i64) -> int {}
+fn c_sqlite_prepare(db: i64, sql: string, n: int, out: []i64, tail: i64) -> int {}
 
 #[c("sqlite3_sql")]
-fn c_sql(stmt: i64) -> string {}
+fn c_sqlite_sql(stmt: i64) -> string {}
 
 #[c("sqlite3_finalize")]
-fn c_finalize(stmt: i64) -> int {}
+fn c_sqlite_finalize(stmt: i64) -> int {}
 
 #[c("sqlite3_reset")]
-fn c_reset(stmt: i64) -> int {}
+fn c_sqlite_reset(stmt: i64) -> int {}
 
 #[c("sqlite3_clear_bindings")]
-fn c_clear_bindings(stmt: i64) -> int {}
+fn c_sqlite_clear_bindings(stmt: i64) -> int {}
 
 #[c("sqlite3_step")]
-fn c_step(stmt: i64) -> int {}
+fn c_sqlite_step(stmt: i64) -> int {}
 
 #[c("sqlite3_bind_null")]
-fn c_bind_null(stmt: i64, i: int) -> int {}
+fn c_sqlite_bind_null(stmt: i64, i: int) -> int {}
 
 #[c("sqlite3_bind_int64")]
-fn c_bind_i64(stmt: i64, i: int, v: i64) -> int {}
+fn c_sqlite_bind_i64(stmt: i64, i: int, v: i64) -> int {}
 
 #[c("sqlite3_bind_double")]
-fn c_bind_f64(stmt: i64, i: int, v: f64) -> int {}
+fn c_sqlite_bind_f64(stmt: i64, i: int, v: f64) -> int {}
 
 #[c("sqlite3_bind_text")]
-fn c_bind_text(stmt: i64, i: int, v: string, n: int, destructor: i64) -> int {}
+fn c_sqlite_bind_text(stmt: i64, i: int, v: string, n: int, destructor: i64) -> int {}
 
 #[c("sqlite3_bind_blob")]
-fn c_bind_blob(stmt: i64, i: int, v: []u8, n: int, destructor: i64) -> int {}
+fn c_sqlite_bind_blob(stmt: i64, i: int, v: []u8, n: int, destructor: i64) -> int {}
 
 #[c("sqlite3_bind_zeroblob")]
-fn c_bind_zeroblob(stmt: i64, i: int, n: int) -> int {}
+fn c_sqlite_bind_zeroblob(stmt: i64, i: int, n: int) -> int {}
 
 #[c("sqlite3_column_count")]
-fn c_column_count(stmt: i64) -> int {}
+fn c_sqlite_column_count(stmt: i64) -> int {}
 
 #[c("sqlite3_column_name")]
-fn c_column_name(stmt: i64, i: int) -> string {}
+fn c_sqlite_column_name(stmt: i64, i: int) -> string {}
 
 #[c("sqlite3_column_type")]
-fn c_column_type(stmt: i64, i: int) -> int {}
+fn c_sqlite_column_type(stmt: i64, i: int) -> int {}
 
 #[c("sqlite3_column_int64")]
-fn c_column_i64(stmt: i64, i: int) -> i64 {}
+fn c_sqlite_column_i64(stmt: i64, i: int) -> i64 {}
 
 #[c("sqlite3_column_double")]
-fn c_column_f64(stmt: i64, i: int) -> f64 {}
+fn c_sqlite_column_f64(stmt: i64, i: int) -> f64 {}
 
 #[c("sqlite3_column_text")]
-fn c_column_text(stmt: i64, i: int) -> i64 {}
+fn c_sqlite_column_text(stmt: i64, i: int) -> i64 {}
 
 #[c("sqlite3_column_blob")]
-fn c_column_blob(stmt: i64, i: int) -> i64 {}
+fn c_sqlite_column_blob(stmt: i64, i: int) -> i64 {}
 
 #[c("sqlite3_column_bytes")]
-fn c_column_bytes(stmt: i64, i: int) -> int {}
+fn c_sqlite_column_bytes(stmt: i64, i: int) -> int {}
 
 #[c("memcpy")]
-fn c_copy(dst: []u8, src: i64, n: i64) -> i64 {}
+fn c_sqlite_memcpy(dst: []u8, src: i64, n: i64) -> i64 {}
 
 /** *The SQLite library's version, such as "3.54.1". */
 fn version() -> string {
-    return c_libversion()
+    return c_sqlite_lib_version()
 }
 
 fn failed(db: i64) -> Result<bool> {
-    return result.res_err("sqlite: {{c_errmsg(db)}}", false)
+    return result.res_err("sqlite: {{c_sqlite_err_msg(db)}}", false)
 }
 
 fn checked(db: i64, rc: int) -> Result<bool> {
@@ -199,17 +199,17 @@ fn open(path: string, p: OpenProps, db: &mut Db) -> Result<bool> {
     }
     let out = []i64 { 0 }
     let flags = if p.read_only { OPEN_READONLY } else { OPEN_READWRITE + OPEN_CREATE }
-    let rc = c_open(path, out, flags, i64(0))
+    let rc = c_sqlite_open(path, out, flags, i64(0))
     let handle = out[0]
     if rc != SQLITE_OK {
         // SQLite hands back a handle even on failure, to read the error from.
         let outcome = failed(handle)
-        let _ = c_close(handle)
+        let _ = c_sqlite_close(handle)
         return outcome
     }
     let setup = configure(Db { handle: handle }, p)
     if result.is_err(setup) {
-        let _ = c_close(handle)
+        let _ = c_sqlite_close(handle)
         return setup
     }
     db.handle = handle
@@ -217,7 +217,7 @@ fn open(path: string, p: OpenProps, db: &mut Db) -> Result<bool> {
 }
 
 fn configure(db: Db, p: OpenProps) -> Result<bool> {
-    checked(db.handle, c_busy_timeout(db.handle, p.busy_ms))?
+    checked(db.handle, c_sqlite_busy_timeout(db.handle, p.busy_ms))?
     exec(db, "PRAGMA foreign_keys = ON")?
     if !p.read_only {
         // This reports the mode as a row, so `exec` steps over it.
@@ -229,7 +229,7 @@ fn configure(db: Db, p: OpenProps) -> Result<bool> {
 /** *Close the connection. It fails while a statement is left unfinalized, and the */
 /** *database stays open. Closing twice is harmless. */
 fn close(db: &mut Db) -> Result<bool> {
-    let rc = c_close(db.handle)
+    let rc = c_sqlite_close(db.handle)
     if rc != SQLITE_OK {
         return failed(db.handle)
     }
@@ -239,17 +239,17 @@ fn close(db: &mut Db) -> Result<bool> {
 
 /** *The text of the connection's latest error. */
 fn errmsg(db: Db) -> string {
-    return c_errmsg(db.handle)
+    return c_sqlite_err_msg(db.handle)
 }
 
 /** *Rows the latest INSERT, UPDATE, or DELETE changed. */
 fn changes(db: Db) -> i64 {
-    return c_changes(db.handle)
+    return c_sqlite_changes(db.handle)
 }
 
 /** *The rowid of the latest successful INSERT. */
 fn last_insert_rowid(db: Db) -> i64 {
-    return c_last_insert_rowid(db.handle)
+    return c_sqlite_last_insert_rowid(db.handle)
 }
 
 /** *Whether `sql` from `at` holds nothing but spaces and semicolons. */
@@ -267,14 +267,14 @@ fn only_filler(sql: string, at: int) -> bool {
 /** *that statement is an error, because SQLite would silently ignore it. A statement */
 /** *already in `st` is finalized first. */
 fn prepare(db: Db, sql: string, st: &mut Stmt) -> Result<bool> {
-    let _ = c_finalize(st.handle)
+    let _ = c_sqlite_finalize(st.handle)
     st.handle = 0
     st.db = 0
     if db.handle == 0 {
         return result.res_err("sqlite: the database is closed", false)
     }
     let out = []i64 { 0 }
-    let rc = c_prepare(db.handle, sql, sql.len, out, i64(0))
+    let rc = c_sqlite_prepare(db.handle, sql, sql.len, out, i64(0))
     if rc != SQLITE_OK {
         return failed(db.handle)
     }
@@ -282,8 +282,8 @@ fn prepare(db: Db, sql: string, st: &mut Stmt) -> Result<bool> {
     if handle == 0 {
         return result.res_err("sqlite: the SQL holds no statement", false)
     }
-    if !only_filler(sql, c_sql(handle).len) {
-        let _ = c_finalize(handle)
+    if !only_filler(sql, c_sqlite_sql(handle).len) {
+        let _ = c_sqlite_finalize(handle)
         return result.res_err("sqlite: prepare takes one statement", false)
     }
     st.handle = handle
@@ -294,35 +294,35 @@ fn prepare(db: Db, sql: string, st: &mut Stmt) -> Result<bool> {
 /** *Free the statement. Finalizing twice is harmless. The result of SQLite's own */
 /** *call only repeats the error `step` already reported, so there is none here. */
 fn finalize(st: &mut Stmt) {
-    let _ = c_finalize(st.handle)
+    let _ = c_sqlite_finalize(st.handle)
     st.handle = 0
 }
 
 /** *Rewind the statement to run again. Its bindings stay. */
 fn reset(st: Stmt) {
-    let _ = c_reset(st.handle)
+    let _ = c_sqlite_reset(st.handle)
 }
 
 /** *Rewind the statement, and set every parameter back to NULL. */
 fn clear(st: Stmt) {
-    let _ = c_reset(st.handle)
-    let _ = c_clear_bindings(st.handle)
+    let _ = c_sqlite_reset(st.handle)
+    let _ = c_sqlite_clear_bindings(st.handle)
 }
 
 /** *Advance to the next row. False means the statement finished. A finished or */
 /** *failed statement rewinds itself, so it can be bound and run again. A query left */
 /** *partway holds its read lock, so call `reset` to stop early. */
 fn step(st: Stmt) -> Result<bool> {
-    let rc = c_step(st.handle)
+    let rc = c_sqlite_step(st.handle)
     if rc == SQLITE_ROW {
         return result.res_ok(true)
     }
     if rc == SQLITE_DONE {
-        let _ = c_reset(st.handle)
+        let _ = c_sqlite_reset(st.handle)
         return result.res_ok(false)
     }
     let outcome = failed(st.db)
-    let _ = c_reset(st.handle)
+    let _ = c_sqlite_reset(st.handle)
     return outcome
 }
 
@@ -384,64 +384,64 @@ fn abandon(db: Db) {
 }
 
 fn bind_null(st: Stmt, i: int) -> Result<bool> {
-    return checked(st.db, c_bind_null(st.handle, i))
+    return checked(st.db, c_sqlite_bind_null(st.handle, i))
 }
 
 fn bind_int(st: Stmt, i: int, v: int) -> Result<bool> {
-    return checked(st.db, c_bind_i64(st.handle, i, i64(v)))
+    return checked(st.db, c_sqlite_bind_i64(st.handle, i, i64(v)))
 }
 
 fn bind_i64(st: Stmt, i: int, v: i64) -> Result<bool> {
-    return checked(st.db, c_bind_i64(st.handle, i, v))
+    return checked(st.db, c_sqlite_bind_i64(st.handle, i, v))
 }
 
 fn bind_f64(st: Stmt, i: int, v: f64) -> Result<bool> {
-    return checked(st.db, c_bind_f64(st.handle, i, v))
+    return checked(st.db, c_sqlite_bind_f64(st.handle, i, v))
 }
 
 /** *Bind text, keeping any NUL inside it. SQLite copies it. */
 fn bind_text(st: Stmt, i: int, v: string) -> Result<bool> {
-    return checked(st.db, c_bind_text(st.handle, i, v, v.len, TRANSIENT))
+    return checked(st.db, c_sqlite_bind_text(st.handle, i, v, v.len, TRANSIENT))
 }
 
 /** *Bind bytes. Empty bytes stay empty: they do not become NULL. SQLite copies them. */
 fn bind_blob(st: Stmt, i: int, v: []u8) -> Result<bool> {
     if v.len == 0 {
-        return checked(st.db, c_bind_zeroblob(st.handle, i, 0))
+        return checked(st.db, c_sqlite_bind_zeroblob(st.handle, i, 0))
     }
-    return checked(st.db, c_bind_blob(st.handle, i, v, v.len, TRANSIENT))
+    return checked(st.db, c_sqlite_bind_blob(st.handle, i, v, v.len, TRANSIENT))
 }
 
 fn column_count(st: Stmt) -> int {
-    return c_column_count(st.handle)
+    return c_sqlite_column_count(st.handle)
 }
 
 fn column_name(st: Stmt, i: int) -> string {
-    return c_column_name(st.handle, i)
+    return c_sqlite_column_name(st.handle, i)
 }
 
 /** *What the column holds in this row. Read it before any `column_text` or other */
 /** *reader, which may convert the value. */
 fn column_type(st: Stmt, i: int) -> int {
-    return c_column_type(st.handle, i)
+    return c_sqlite_column_type(st.handle, i)
 }
 
 fn column_is_null(st: Stmt, i: int) -> bool {
-    return c_column_type(st.handle, i) == ColumnType.Null
+    return c_sqlite_column_type(st.handle, i) == ColumnType.Null
 }
 
 fn column_i64(st: Stmt, i: int) -> i64 {
-    return c_column_i64(st.handle, i)
+    return c_sqlite_column_i64(st.handle, i)
 }
 
 /** *The column as an `int`, for values that fit 32 bits. Use `column_i64` for */
 /** *counts of bytes, rowids, and times. */
 fn column_int(st: Stmt, i: int) -> int {
-    return int(c_column_i64(st.handle, i))
+    return int(c_sqlite_column_i64(st.handle, i))
 }
 
 fn column_f64(st: Stmt, i: int) -> f64 {
-    return c_column_f64(st.handle, i)
+    return c_sqlite_column_f64(st.handle, i)
 }
 
 fn copy_bytes(from: i64, n: int) -> []u8 {
@@ -450,7 +450,7 @@ fn copy_bytes(from: i64, n: int) -> []u8 {
         out.push(u8(0))
     }
     if n > 0 {
-        let _ = c_copy(out, from, i64(n))
+        let _ = c_sqlite_memcpy(out, from, i64(n))
     }
     return out
 }
@@ -458,14 +458,14 @@ fn copy_bytes(from: i64, n: int) -> []u8 {
 /** *The column as text, keeping any NUL inside it. NULL reads as "". */
 fn column_text(st: Stmt, i: int) -> string {
     // SQLite requires this order: the pointer, then its length.
-    let from = c_column_text(st.handle, i)
-    let n = c_column_bytes(st.handle, i)
+    let from = c_sqlite_column_text(st.handle, i)
+    let n = c_sqlite_column_bytes(st.handle, i)
     return string_from_bytes(copy_bytes(from, n))
 }
 
 /** *The column as bytes. NULL and an empty blob both read as no bytes. */
 fn column_blob(st: Stmt, i: int) -> []u8 {
-    let from = c_column_blob(st.handle, i)
-    let n = c_column_bytes(st.handle, i)
+    let from = c_sqlite_column_blob(st.handle, i)
+    let n = c_sqlite_column_bytes(st.handle, i)
     return copy_bytes(from, n)
 }
