@@ -1,0 +1,47 @@
+import "std:fmt"
+
+fn aim(pp: &mut &int, src: &int) {
+    *pp = src
+}
+
+fn grow(xs: &mut []int, n: int) {
+    xs.push(n)
+}
+
+// A loan ends when its holder is overwritten before it is read again, not at
+// the holder's last mention.
+fn main() {
+    let mut x = 1
+    let y = 2
+    let mut r = &x
+    fmt.println(*r)
+    r = &y
+    x = 3
+    fmt.println(*r)
+    // Overwritten on both paths before the read.
+    let mut v = []int {}
+    v.push(1)
+    let mut s = &v[0]
+    fmt.println(*s)
+    if v.len > 0 {
+        s = &y
+    } else {
+        s = &x
+    }
+    v.push(2)
+    fmt.println(*s)
+    // Overwritten at the top of every iteration, never read after the loop.
+    let mut t = &v[0]
+    fmt.println(*t)
+    for i in 0..3 {
+        t = &y
+        v.push(i)
+        fmt.println(*t)
+    }
+    // Reading `q`'s value into an argument before `&mut q` is taken.
+    let mut q = &x
+    aim(&mut q, q)
+    fmt.println(*q)
+    grow(&mut v, v.len)
+    fmt.println(v.len)
+}

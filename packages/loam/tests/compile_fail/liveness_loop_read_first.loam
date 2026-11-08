@@ -1,0 +1,17 @@
+import "std:fmt"
+
+// The next iteration reads `t` first, and it is overwritten on one path only,
+// so it may still point into `v` after the push moved the buffer.
+fn main() {
+    let mut v = []int {}
+    v.push(1)
+    let y = 2
+    let mut t = &v[0]
+    for i in 0..40 {
+        fmt.println(*t)
+        v.push(i)
+        if i > 50 {
+            t = &y
+        }
+    }
+}

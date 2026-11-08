@@ -33,8 +33,9 @@ Costs that still bite and stay unless a later phase names them: C99 + `cc`
 backend (debuggers see generated C); `loam` is C11; no package registry;
 references are second-class (no struct
 field, list, or `Box` holds one, so a borrowing view such as a parser over a
-`&string` copies or keeps indices) and borrow liveness is per statement,
-coarser than Rust's; closures capture Copy values by copy and owned values by
+`&string` copies or keeps indices); a loan ends when its holder is
+overwritten or not read again, judged at the holder's own block; closures
+capture Copy values by copy and owned values by
 move (never a borrow); `+ - *` and indexes trap;
 wasm `thread.spawn` is a no-op; no async TLS (Phase 8 here); HTTP server is
 one thread; native GUI is macOS.

@@ -1,0 +1,14 @@
+import "std:fmt"
+
+// Overwritten on one path only: the other still reads the old loan.
+fn main() {
+    let mut v = []int {}
+    v.push(1)
+    let y = 2
+    let mut s = &v[0]
+    if v.len > 5 {
+        s = &y
+    }
+    v.push(2)
+    fmt.println(*s)
+}

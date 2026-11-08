@@ -23,6 +23,7 @@
 #include "borrowck.h"
 #include "typecheck.h"
 #include "../diagnostics.h"
+#include "../lexer.h"
 #include "type.h"
 #include <stdlib.h>
 #include <string.h>
@@ -337,6 +338,12 @@ static int expr_uses(AstNode *n, const char *name) {
             for (size_t i = 0; i < n->as.array_lit.count; i++)
                 if (expr_uses(n->as.array_lit.elems[i], name)) return 1;
             return 0;
+        case AST_IF:
+            /* An `if` expression: its condition and either arm. Missing this
+               let `q = if c { … } else { q }` count as not reading `q`. */
+            return expr_uses(n->as.if_stmt.cond, name) ||
+                   stmt_uses(n->as.if_stmt.then_block, name) ||
+                   stmt_uses(n->as.if_stmt.else_block, name);
         default:
             return 0;
     }
@@ -457,18 +464,157 @@ static void set_borrows(const Borrow *l) {
     borrows = dup_borrows(l);
 }
 
+/* --- Liveness: is a holder read again before it is overwritten? --- */
+
+typedef enum { ACC_NONE, ACC_READ, ACC_KILL } Access;
+
+static Access first_access(AstNode *n, const char *name);
+
+/** First access to `name` along a run of statements. */
+static Access seq_access(AstNode **stmts, size_t from, size_t count, const char *name) {
+    for (size_t j = from; j < count; j++) {
+        AstNode *st = stmts[j];
+        /* A nested `let name` shadows it for the rest of this block. */
+        if (st && st->kind == AST_VAR_DECL && st->as.var.name &&
+            strcmp(st->as.var.name, name) == 0)
+            return expr_uses(st->as.var.init, name) ? ACC_READ : ACC_NONE;
+        Access a = first_access(st, name);
+        if (a != ACC_NONE) return a;
+    }
+    return ACC_NONE;
+}
+
 /**
- * NLL: end the borrow held by any binding of this block whose last use is
- * before statement `at`. The borrow is dead after its holder's final read, so
- * a later use of the borrowed place is legal (unlike a scope-length borrow).
+ * How statement `n` first touches `name` on any path: READ if some path may
+ * read it before writing it, KILL if every path overwrites it first (`name =
+ * expr` without reading it), else NONE. Anything unclear counts as READ.
+ */
+static Access first_access(AstNode *n, const char *name) {
+    if (!n) return ACC_NONE;
+    switch (n->kind) {
+        case AST_ASSIGN: {
+            AstNode *L = n->as.assign.left;
+            if (expr_uses(n->as.assign.right, name)) return ACC_READ;
+            if (L && L->kind == AST_IDENT && strcmp(L->as.ident.name, name) == 0)
+                return n->as.assign.op == TOK_EQ ? ACC_KILL : ACC_READ;
+            return expr_uses(L, name) ? ACC_READ : ACC_NONE;
+        }
+        case AST_BLOCK:
+            return seq_access(n->as.block.stmts, 0, n->as.block.stmt_count, name);
+        case AST_IF: {
+            if (expr_uses(n->as.if_stmt.cond, name)) return ACC_READ;
+            Access t = first_access(n->as.if_stmt.then_block, name);
+            Access e = first_access(n->as.if_stmt.else_block, name);
+            if (t == ACC_READ || e == ACC_READ) return ACC_READ;
+            if (t == ACC_KILL && e == ACC_KILL) return ACC_KILL;
+            /* Overwritten on one path only: what follows may read the old
+               value along the other. */
+            return ACC_NONE;
+        }
+        case AST_FOR:
+            if (expr_uses(n->as.for_stmt.iter, name)) return ACC_READ;
+            /* The body may not run, so a kill inside it proves nothing. */
+            return first_access(n->as.for_stmt.body, name) == ACC_READ ? ACC_READ : ACC_NONE;
+        case AST_WHILE:
+            if (expr_uses(n->as.if_stmt.cond, name)) return ACC_READ;
+            return first_access(n->as.if_stmt.then_block, name) == ACC_READ ? ACC_READ
+                                                                           : ACC_NONE;
+        case AST_SWITCH: {
+            if (expr_uses(n->as.switch_stmt.scrut, name)) return ACC_READ;
+            for (size_t i = 0; i < n->as.switch_stmt.case_count; i++)
+                if (first_access(n->as.switch_stmt.cases[i], name) == ACC_READ) return ACC_READ;
+            return ACC_NONE;
+        }
+        case AST_CASE:
+            return first_access(n->as.switch_case.body, name);
+        default:
+            return stmt_uses(n, name) ? ACC_READ : ACC_NONE;
+    }
+}
+
+/* --- The blocks being walked, for the liveness of outer bindings --- */
+
+typedef struct {
+    AstNode **stmts; /* NULL: a closure body starts here (runs later) */
+    size_t count;
+    size_t idx;      /* statement being checked */
+    int depth;
+    int stop_live;   /* an `if` expression arm: the rest of its statement is
+                        unknown, so leaving it keeps outer holders live */
+} Frame;
+
+static Frame *frames;
+static int nframes, cap_frames;
+
+static void push_frame(AstNode **stmts, size_t count, int d, int stop_live) {
+    if (nframes == cap_frames) {
+        cap_frames = cap_frames ? cap_frames * 2 : 32;
+        frames = (Frame *)realloc(frames, (size_t)cap_frames * sizeof(Frame));
+        if (!frames) loam_fatal("out of memory");
+    }
+    Frame f = { stmts, count, 0, d, stop_live };
+    frames[nframes++] = f;
+}
+
+static void pop_frame(void) {
+    if (nframes) nframes--;
+}
+
+/**
+ * Is outer binding `b` (declared in an enclosing block) read again, before
+ * being overwritten, from the innermost frame's current statement on? After
+ * the rest of a block, control returns to the statement holding it: a loop
+ * may run its body again, a `switch` may fall into the next case, an `if`
+ * is done; then the statements after it follow, up to `b`'s own block.
+ */
+static int outer_live(Binding *b) {
+    if (!nframes) return 1;
+    Frame *top = &frames[nframes - 1];
+    Access a = seq_access(top->stmts, top->idx, top->count, b->name);
+    if (a != ACC_NONE) return a == ACC_READ;
+    for (int f = nframes - 2; f >= 0; f--) {
+        Frame *child = &frames[f + 1];
+        Frame *F = &frames[f];
+        if (child->stop_live || !F->stmts || F->idx >= F->count) return 1;
+        AstNode *S = F->stmts[F->idx];
+        if (!S) return 1;
+        switch (S->kind) {
+            case AST_FOR:
+            case AST_WHILE:
+                if (first_access(S, b->name) == ACC_READ) return 1;
+                break;
+            case AST_SWITCH:
+                if (stmt_uses(S, b->name)) return 1;
+                break;
+            case AST_IF:
+            case AST_BLOCK:
+                break;
+            default:
+                return 1;
+        }
+        a = seq_access(F->stmts, F->idx + 1, F->count, b->name);
+        if (a != ACC_NONE) return a == ACC_READ;
+        if (F->depth <= b->depth) return 0; /* b's own block ends here */
+    }
+    return 1;
+}
+
+/**
+ * NLL: end the loans held by any binding of this block that is not read again
+ * from statement `at` on, along any path, before being overwritten. A holder
+ * overwritten first (`r = &y` before any read of `r`) frees what it borrowed
+ * right away. Bindings of outer blocks are judged at their own level, where a
+ * loop around this block is one statement, so the back edge is covered.
  */
 static void end_dead_borrows(AstNode **stmts, size_t count, size_t at, int block_depth) {
     for (Binding *b = binds; b; b = b->next) {
-        if (b->depth != block_depth || !holds_loans(b)) continue;
-        int used = 0;
-        for (size_t j = at; j < count && !used; j++)
-            if (stmt_uses(stmts[j], b->name)) used = 1;
-        if (used) continue;
+        if (b->depth > block_depth || b->kind != BK_LOCAL || !holds_loans(b)) continue;
+        if (b->depth == block_depth) {
+            if (seq_access(stmts, at, count, b->name) == ACC_READ) continue;
+        } else if (outer_live(b)) {
+            /* Declared outside this block: judged by what follows it too. */
+            continue;
+        }
         release_owned(b);
     }
 }
@@ -653,7 +799,15 @@ static Borrow *find_temp(const char *path) {
  * and, for a call returning a reference, those of each reference argument.
  * `result_mut`: the reference is `&mut` (a `&T` keeps only shared loans).
  */
+static int gather_loans_ex(AstNode *e, int result_mut, Loans *ls, SourceLoc loc, int reborrow);
+
 static int gather_loans(AstNode *e, int result_mut, Loans *ls, SourceLoc loc) {
+    return gather_loans_ex(e, result_mut, ls, loc, 1);
+}
+
+/** `reborrow`: also borrow a copied reference itself (off when only its value
+ *  is stored, as in `aim(&mut p, q)`). */
+static int gather_loans_ex(AstNode *e, int result_mut, Loans *ls, SourceLoc loc, int reborrow) {
     if (!e) return 0;
     switch (e->kind) {
         case AST_ADDR: {
@@ -677,6 +831,7 @@ static int gather_loans(AstNode *e, int result_mut, Loans *ls, SourceLoc loc) {
             }
             /* Through `q` itself: while the result lives, `q` may not be
                used to write what it points at. */
+            if (!reborrow) return 0;
             int m = result_mut && e->ty->is_mut;
             if (take_borrow_path(e->as.ident.name, m, loc)) return 1;
             Loan l = { borrows, NULL, m, NULL };
@@ -687,13 +842,16 @@ static int gather_loans(AstNode *e, int result_mut, Loans *ls, SourceLoc loc) {
             if (!is_ref_ty(e->ty)) return 0;
             for (size_t i = 0; i < e->as.call.arg_count; i++) {
                 AstNode *a = e->as.call.args[i];
-                if (a && is_ref_ty(a->ty) && gather_loans(a, result_mut, ls, loc)) return 1;
+                if (a && is_ref_ty(a->ty) && gather_loans_ex(a, result_mut, ls, loc, reborrow))
+                    return 1;
             }
             return 0;
         case AST_IF:
             /* Either arm's value may be the result. */
-            if (gather_loans(arm_tail(e->as.if_stmt.then_block), result_mut, ls, loc)) return 1;
-            return gather_loans(arm_tail(e->as.if_stmt.else_block), result_mut, ls, loc);
+            if (gather_loans_ex(arm_tail(e->as.if_stmt.then_block), result_mut, ls, loc, reborrow))
+                return 1;
+            return gather_loans_ex(arm_tail(e->as.if_stmt.else_block), result_mut, ls, loc,
+                                   reborrow);
         default:
             return 0;
     }
@@ -834,7 +992,9 @@ static int check_value_arm(AstNode *blk, int as_move, Root *acc) {
     depth++;
     size_t cnt = blk->as.block.stmt_count;
     int rc = 0;
+    push_frame(blk->as.block.stmts, cnt, depth, 1);
     for (size_t i = 0; i < cnt && !rc; i++) {
+        frames[nframes - 1].idx = i;
         end_dead_borrows(blk->as.block.stmts, cnt, i, depth);
         AstNode *st = blk->as.block.stmts[i];
         if (i + 1 == cnt && st && st->kind == AST_EXPR_STMT) {
@@ -851,6 +1011,7 @@ static int check_value_arm(AstNode *blk, int as_move, Root *acc) {
             rc = check_stmt(st);
         }
     }
+    pop_frame();
     pop_to_depth(depth - 1);
     depth--;
     return rc;
@@ -1013,18 +1174,25 @@ static int check_expr(AstNode *n, int as_move) {
                 Type *ct = n->as.fn.cap_types ? n->as.fn.cap_types[k] : NULL;
                 push_b(n->as.fn.caps[k], ct);
             }
-            if (n->as.fn.body && check_stmt(n->as.fn.body)) {
-                pop_to_depth(depth - 1);
-                depth--;
-                return 1;
-            }
+            /* The body runs later: outer holders stay as they are. */
+            push_frame(NULL, 0, depth, 1);
+            int crc = n->as.fn.body ? check_stmt(n->as.fn.body) : 0;
+            pop_frame();
             pop_to_depth(depth - 1);
             depth--;
-            return 0;
+            return crc;
         }
         case AST_CALL: {
             Borrow *call_mark = borrows;
+            /* Two phases: every other argument is read first, then the
+               `&mut place` ones are taken. Copying a value out of `p` before
+               `aim(&mut p, p)` runs is fine; a borrow still held by another
+               argument (`f(&mut v, &v[0])`) conflicts with the `&mut`. */
+            for (int phase = 0; phase < 2; phase++)
             for (size_t i = 0; i < n->as.call.arg_count; i++) {
+                AstNode *a0 = n->as.call.args[i];
+                int late = a0 && a0->kind == AST_ADDR && a0->as.access.is_mut;
+                if (late != phase) continue;
                 AstNode *a = n->as.call.args[i];
                 int move_arg = 0;
                 if (a && a->kind != AST_ADDR && a->ty && !type_is_copy(a->ty) &&
@@ -1079,7 +1247,7 @@ static int check_expr(AstNode *n, int as_move) {
                     AstNode *o = n->as.call.args[k];
                     if (k == i || !o || !is_ref_ty(o->ty)) continue;
                     r = deeper(r, ref_root(o));
-                    if (gather_loans(o, t->ty->is_mut, &ls, o->loc)) {
+                    if (gather_loans_ex(o, t->ty->is_mut, &ls, o->loc, 0)) {
                         loans_free(&ls);
                         return 1;
                     }
@@ -1266,14 +1434,18 @@ static int check_stmt(AstNode *n) {
             return 0;
         case AST_BLOCK: {
             depth++;
+            push_frame(n->as.block.stmts, n->as.block.stmt_count, depth, 0);
             for (size_t i = 0; i < n->as.block.stmt_count; i++) {
+                frames[nframes - 1].idx = i;
                 end_dead_borrows(n->as.block.stmts, n->as.block.stmt_count, i, depth);
                 if (check_stmt(n->as.block.stmts[i])) {
+                    pop_frame();
                     pop_to_depth(depth - 1);
                     depth--;
                     return 1;
                 }
             }
+            pop_frame();
             pop_to_depth(depth - 1);
             depth--;
             return 0;
@@ -1417,6 +1589,7 @@ int borrowck_modules(LoamModule *mods, int nmods) {
                 continue;
             binds = NULL;
             borrows = NULL;
+            nframes = 0;
             depth = 0;
             depth = 1;
             for (int g = 0; g < typecheck_global_count(); g++) {
