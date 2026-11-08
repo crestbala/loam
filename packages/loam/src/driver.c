@@ -773,6 +773,9 @@ static uint64_t fresh_key_hash(char **argv, int argc, const char *in_path) {
         "ZEUS_HEADLESS", "LOAM_HEADLESS", "MAYA_HEADLESS", "LOAM_DEV",
         "LOAM_BATCH",    "LOAM_SHARD",    "LOAM_DEBUG",    "ZEUS_MEM_STATS",
         "LOAM_HOST",     "LOAM_SERVER_SPLIT", "LOAM_WASM_CC", "LOAM_NO_DCE",
+        /* Extra link inputs or flags (e.g. -fsanitize=address) change the
+           binary as much as any other input. */
+        "LOAM_LINK_EXTRA",
     };
     for (size_t i = 0; i < sizeof envs / sizeof envs[0]; i++) {
         const char *v = getenv(envs[i]);

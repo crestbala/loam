@@ -1,0 +1,13 @@
+import "std:fmt"
+
+// Found by `nob fuzz-borrow`: the read of `q` inside the `if` expression was
+// missed, so the loan on `b0` ended early and `b0 = …` freed what `q` saw.
+fn main() {
+    let z = 0
+    let mut b0 = Box::new(10)
+    let mut q = &z
+    q = &*b0
+    b0 = Box::new(20)
+    q = if z > 2 { &z } else { q }
+    fmt.println(*q)
+}

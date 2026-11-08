@@ -55,7 +55,7 @@ Pipeline, in order:
 | Load | `src/compile.c` | Resolve `import "std:bar"` → `std/bar.loam`, relative `"path.loam"` from the importer. Cycles are errors. |
 | Lex / parse | `src/lexer.c`, `src/parser.c` | Tokens → AST. |
 | Typecheck | `src/sema/typecheck.c` | Names, types, auto-borrow, generics (monomorphized, including nested calls and defaults), `mod.fn` / `mod.global`, method rewrite `n.w(32)` → `zeus.w(n, 32)`. |
-| Borrowck | `src/sema/borrowck.c` | Exclusive vs shared, moves, place paths (`p.a` vs `p.b`). Borrows end at the holder's last use (NLL). Reference escape: no return into the frame, no read after the source's scope, a returned reference keeps its arguments borrowed ([References](#references)). Enforces `#[must_check]`. |
+| Borrowck | `src/sema/borrowck.c` | Exclusive vs shared, moves, place paths (`p.a` vs `p.b`). Borrows end when the holder is not read again before being overwritten, along any path (NLL-style). Reference escape: no return into the frame, no read after the source's scope, a returned reference keeps its arguments borrowed ([References](#references)). Enforces `#[must_check]`. |
 | Boundscheck | `src/sema/boundscheck.c` | Proven in-range indexes skip the runtime trap: a literal in `0..N` for `[N]T`, and `for i in 0..C.len { … C[i] … }` (loop var matched by resolution). Overflow traps likewise drop on a foldable literal op literal (`src/ir.c`). |
 | IR | `src/ir.c` | CFG, drops, closures as heap env + fn pointer (`loam_fn`: fn, env, env_size). |
 | C | `src/codegen_c.c` | C99, then `cc`. |
@@ -285,15 +285,21 @@ fn main() {
 ```
 
 `let` is immutable, `let mut` is mutable. Passing an owned place to a `&T` /
-`&mut T` parameter inserts the borrow. A stored borrow is live only up to the
-holder's **last use** (NLL-style liveness), so the borrowed place is free again
-afterward:
+`&mut T` parameter inserts the borrow. A stored borrow is live only while the
+holder may still be read: after its **last use**, or once it is overwritten
+before any further read, the borrowed place is free again (NLL-style
+liveness, following branches and loops):
 
 ```loam
 let mut x = 1
 let p = &mut x
 *p = 2
 x = 3            // legal: p is dead after `*p = 2`
+
+let y = 4
+let mut r = &x
+r = &y           // r no longer borrows x
+x = 5            // legal
 ```
 
 Several names can be bound on one line. Each takes the value in its position,

@@ -1,0 +1,10 @@
+fn put(xs: &mut []int, src: &int) {
+    xs.push(*src)
+}
+
+// The callee gets `&mut v` and a borrow into `v` at once.
+fn main() {
+    let mut v = []int {}
+    v.push(1)
+    put(&mut v, &v[0])
+}

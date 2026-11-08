@@ -1,0 +1,16 @@
+import "std:fmt"
+
+// Read after the enclosing block, two levels up.
+fn main() {
+    let mut v = []int {}
+    v.push(1)
+    let r = &v[0]
+    if v.len > 0 {
+        if v.len > 0 {
+            for i in 0..40 {
+                v.push(i)
+            }
+        }
+        fmt.println(*r)
+    }
+}

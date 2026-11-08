@@ -16,6 +16,7 @@
 //     nob grammar-check    check the grammar against the compiler's parser
 //     nob install-editor   install the VS Code extension
 //     nob clean            remove build output
+//     nob fuzz-borrow [N]  hunt borrow-checker holes with ASan (phase 7)
 //     nob help
 //
 // `-j N` (default: every core, or `NOB_JOBS` / `LOAM_JOBS`) bounds how many
@@ -2842,6 +2843,251 @@ fn clean() {
     fmt.println("nob: clean")
 }
 
+// --- fuzz-borrow: look for borrow-checker holes with AddressSanitizer -------
+//
+// Generates small programs that aim references at lists, boxes, and locals,
+// then grow, reassign, or drop what they point at, across branches, loops,
+// `if` expressions, calls returning references, and `&mut` out parameters.
+// Every program `loamc` accepts is built with ASan and run: an ASan report
+// means the checker let unsafe code through. Kept out of `nob test`.
+// `LOAM_FUZZ_LOAMC` picks the compiler under test (default bin/loamc);
+// `FUZZ_SEED` the first seed. See docs/reference-escape.md, phase 7.
+//
+// The backend drops values at function exit, so a reference outliving an
+// inner block is invisible at run time; what ASan sees is a list buffer
+// reallocated or freed, a Box replaced, and a reference into a returned frame.
+
+let mut FZ_SEED: i64 = i64(1)
+let mut FZ_UID: int = 0
+
+fn fz_next() -> int {
+    FZ_SEED = (FZ_SEED * i64(1103515245) + i64(12345)) % i64(2147483647)
+    return int(FZ_SEED / i64(65536))
+}
+
+fn fz(n: int) -> int {
+    return fz_next() % n
+}
+
+fn fz_list() -> string {
+    return "v{{fz(3)}}"
+}
+
+fn fz_box() -> string {
+    return "b{{fz(2)}}"
+}
+
+fn fz_ref() -> string {
+    if fz(2) == 0 {
+        return "p"
+    }
+    return "q"
+}
+
+fn fz_cond() -> string {
+    return "{{fz_list()}}.len > {{fz(4)}}"
+}
+
+/** *An expression of type `&int`. */
+fn fz_refexpr(d: int) -> string {
+    let k = fz(10)
+    if k == 0 {
+        return "&{{fz_list()}}[0]"
+    }
+    if k == 1 {
+        return "first(&{{fz_list()}})"
+    }
+    if k == 2 {
+        return "&*{{fz_box()}}"
+    }
+    if k == 3 {
+        return fz_ref()
+    }
+    if k == 4 {
+        return "id({{fz_ref()}})"
+    }
+    if k == 5 {
+        return "pick(&{{fz_list()}}[0], {{fz_ref()}}, {{fz_cond()}})"
+    }
+    if k == 6 && d < 2 {
+        return "if {{fz_cond()}} { {{fz_refexpr(d + 1)}} } else { {{fz_refexpr(d + 1)}} }"
+    }
+    if k == 7 {
+        return "frame{{fz(3)}}({{fz_ref()}}, {{fz_cond()}})"
+    }
+    if k == 8 {
+        return "first({{fz_list()}}ref(&{{fz_list()}}))"
+    }
+    return "&z"
+}
+
+fn fz_block(d: int, ind: string) -> string {
+    let mut out = ""
+    let n = 1 + fz(3)
+    for i in 0..n {
+        out = cat(out, "{{ind}}{{fz_stmt(d, ind)}}\n")
+    }
+    return out
+}
+
+fn fz_stmt(d: int, ind: string) -> string {
+    let k = fz(15)
+    let in2 = "{{ind}}    "
+    if k <= 2 {
+        return "{{fz_ref()}} = {{fz_refexpr(0)}}"
+    }
+    if k == 3 {
+        return "for i in 0..40 { {{fz_list()}}.push(i) }"
+    }
+    if k == 4 {
+        let l = fz_list()
+        return "{{l}} = []int {}\n{{ind}}{{l}}.push(7)"
+    }
+    if k == 5 {
+        return "{{fz_box()}} = Box::new({{fz(100)}})"
+    }
+    if k == 6 {
+        return "fmt.println(*{{fz_ref()}})"
+    }
+    if k == 7 && d < 2 {
+        return "if {{fz_cond()}} {\n{{fz_block(d + 1, in2)}}{{ind}}} else {\n{{fz_block(d + 1, in2)}}{{ind}}}"
+    }
+    if k == 8 && d < 2 {
+        return "for j in 0..2 {\n{{fz_block(d + 1, in2)}}{{ind}}}"
+    }
+    if k == 9 {
+        return "aim(&mut {{fz_ref()}}, {{fz_refexpr(0)}})"
+    }
+    if k == 10 {
+        FZ_UID += 1
+        return "let t{{FZ_UID}} = {{fz_refexpr(0)}}\n{{ind}}{{fz_ref()}} = t{{FZ_UID}}"
+    }
+    if k == 11 && d < 2 {
+        return "if true {\n{{in2}}let bb = Box::new(5)\n{{in2}}{{fz_ref()}} = &*bb\n{{ind}}}"
+    }
+    if k == 12 {
+        return "fmt.println(smash())"
+    }
+    if k == 13 {
+        return "{{fz_list()}}[0] = {{fz(9)}}"
+    }
+    return "fmt.println(*{{fz_refexpr(0)}})"
+}
+
+/** *A helper returning a reference: mostly safe bodies, sometimes one that
+    points into its own frame (the checker must reject the program then). */
+fn fz_frame(i: int, unsafe_ok: bool) -> string {
+    let head = "fn frame{{i}}(a: &int, c: bool) -> &int {\n"
+    let mut k = fz(16)
+    if !unsafe_ok && k >= 3 && k <= 8 {
+        k = 0
+    }
+    let mut b = "    return a\n"
+    if k == 1 {
+        b = "    if c {\n        return a\n    }\n    return a\n"
+    } else if k == 2 {
+        b = "    let r = if c { a } else { a }\n    return r\n"
+    } else if k == 3 {
+        b = "    let x = 3\n    return if c { &x } else { a }\n"
+    } else if k == 4 {
+        b = "    let x = 3\n    let r = &x\n    return id(r)\n"
+    } else if k == 5 {
+        b = "    let bx = Box::new(4)\n    return &*bx\n"
+    } else if k == 6 {
+        b = "    let mut v = []int {}\n    v.push(1)\n    return first(&v)\n"
+    } else if k == 7 {
+        b = "    let x = 3\n    let mut r = a\n    if c {\n        r = &x\n    }\n    return r\n"
+    } else if k == 8 {
+        b = "    let x = 3\n    let mut r = a\n    aim(&mut r, &x)\n    return r\n"
+    }
+    return cat(cat(head, b), "}\n")
+}
+
+fn fz_program() -> string {
+    let mut s = "import \"std:fmt\"\n\n"
+    s = cat(s, "fn first(xs: &[]int) -> &int {\n    return &xs[0]\n}\n\n")
+    s = cat(s, "fn id(a: &int) -> &int {\n    return a\n}\n\n")
+    s = cat(s, "fn pick(a: &int, b: &int, l: bool) -> &int {\n    if l {\n        return a\n    }\n    return b\n}\n\n")
+    s = cat(s, "fn aim(pp: &mut &int, src: &int) {\n    *pp = src\n}\n\n")
+    s = cat(s, "fn smash() -> int {\n    let mut t = 0\n    for k in 0..64 {\n        t += k\n    }\n    return t\n}\n\n")
+    for i in 0..3 {
+        s = cat(s, "fn v{{i}}ref(xs: &[]int) -> &[]int {\n    return xs\n}\n\n")
+    }
+    // One helper in four programs may point into its own frame; the rest
+    // stay safe so most programs reach the run.
+    let bad_frame = fz(12)
+    for i in 0..3 {
+        s = cat(s, fz_frame(i, bad_frame == i))
+        s = cat(s, "\n")
+    }
+    s = cat(s, "fn main() {\n")
+    for i in 0..3 {
+        s = cat(s, "    let mut v{{i}} = []int {}\n    v{{i}}.push({{i + 1}})\n")
+    }
+    s = cat(s, "    let mut b0 = Box::new(10)\n    let mut b1 = Box::new(20)\n")
+    s = cat(s, "    let z = 0\n    let mut p = &z\n    let mut q = &z\n")
+    let n = 3 + fz(6)
+    for i in 0..n {
+        s = cat(s, "    {{fz_stmt(0, \"    \")}}\n")
+    }
+    s = cat(s, "    fmt.println(*p + *q)\n}\n")
+    return s
+}
+
+fn fuzz_borrow(count: int) -> int {
+    let dir = tmpf("fuzz")
+    sys.exec("rm -rf {{shq(dir)}} && mkdir -p {{shq(dir)}}/holes")
+    let mut loamc = sys.env("LOAM_FUZZ_LOAMC")
+    if loamc == "" {
+        loamc = LOAMC
+    }
+    let seed = int_of(sys.env("FUZZ_SEED"))
+    FZ_SEED = i64(1)
+    if seed > 0 {
+        FZ_SEED = i64(seed)
+    }
+    let first_seed = FZ_SEED
+    for i in 0..count {
+        sys.write_file("{{dir}}/f{{pad4(i)}}.loam", fz_program())
+    }
+    // One case: compile with ASan into a fresh binary, run it, classify.
+    let borrow_msgs = "borrow|out of scope|live long enough|temporary|cannot assign to|cannot use|moved|stores its type parameter|cannot hold a reference"
+    let runner = "f=\"$1\"; b=\"${f%.loam}\"\nif ! LOAM_NO_FRESH=1 LOAM_LINK_EXTRA='-O0 -fno-inline -fsanitize=address -fsanitize-address-use-after-return=always -g' {{shq(loamc)}} \"$f\" -o \"$b\" > \"$b.build\" 2>&1; then\n  if grep -qE '{{borrow_msgs}}' \"$b.build\"; then echo \"REJECT $f\"; else echo \"OTHER $f\"; fi\n  exit 0\nfi\nASAN_OPTIONS=detect_stack_use_after_return=1:detect_leaks=0 \"./$b\" > \"$b.out\" 2>&1\nif grep -q AddressSanitizer \"$b.out\"; then echo \"HOLE $f\"; elif [ -s \"$b.out\" ]; then echo \"SAFE $f\"; else echo \"OTHER $f\"; fi\nrm -f \"$b\"\n"
+    sys.write_file("{{dir}}/case.sh", runner)
+    fmt.println("nob: fuzz-borrow — {{count}} programs, seed {{first_seed}}, {{loamc}}")
+    let res = sys.exec("cd {{shq(dir)}} && ls f*.loam | ZEUS_HEADLESS=1 MAYA_HEADLESS=1 xargs -P {{JOBS}} -n 1 sh case.sh")
+    let lines = split_lines(res)
+    let mut holes = 0
+    let mut rejected = 0
+    let mut safe = 0
+    let mut other = 0
+    for i in 0..lines.len {
+        let l = lines[i]
+        if starts_with(l, "HOLE ") {
+            holes += 1
+            let f = slice(l, 5, l.len)
+            sys.exec("cp {{shq(dir)}}/{{f}} {{shq(dir)}}/holes/ && cp {{shq(dir)}}/{{stem_of(f)}}.out {{shq(dir)}}/holes/")
+            fmt.println("HOLE {{dir}}/holes/{{f}}")
+        } else if starts_with(l, "REJECT ") {
+            rejected += 1
+        } else if starts_with(l, "SAFE ") {
+            safe += 1
+        } else if starts_with(l, "OTHER ") {
+            other += 1
+            if other <= 3 {
+                let f = slice(l, 6, l.len)
+                fmt.println("note: {{f}} failed for a non-borrow reason (generator bug?):")
+                catlog("{{dir}}/{{stem_of(f)}}.build")
+            }
+        }
+    }
+    fmt.println("accepted and ASan-clean {{safe}}, rejected {{rejected}}, holes {{holes}}, other {{other}}")
+    if holes > 0 || other > 0 {
+        return 1
+    }
+    return 0
+}
+
 fn usage() {
     fmt.println("nob — build and test Loam")
     fmt.println("")
@@ -2860,6 +3106,8 @@ fn usage() {
     fmt.println("  grammar-check  check the grammar against the compiler's parser")
     fmt.println("  install-editor  install the VS Code extension")
     fmt.println("  clean   remove obj/, bin/ and packages/loam/tests/tmp")
+    fmt.println("  fuzz-borrow [N]  N random programs (default 200): any the checker")
+    fmt.println("          accepts that ASan flags is a borrow-checker hole")
     fmt.println("")
     fmt.println("  -j N    cases in flight (default: every core; NOB_JOBS / LOAM_JOBS)")
 }
@@ -2945,7 +3193,8 @@ fn main() {
     if pos.len > 1 {
         only = pos[1]
     }
-    if pos.len > 2 || (pos.len > 1 && cmd != "integration" && cmd != "test") {
+    if pos.len > 2 || (pos.len > 1 && cmd != "integration" && cmd != "test" &&
+                       cmd != "fuzz-borrow") {
         fmt.println("nob: unexpected argument", only)
         sys.exit(2)
     }
@@ -2990,6 +3239,12 @@ fn main() {
         sys.exit(grammar_check())
     } else if cmd == "install-editor" {
         sys.exit(rc("python3 packages/tooling/editors/vscode/install.py 1>&2"))
+    } else if cmd == "fuzz-borrow" {
+        let mut n = 200
+        if only != "" && int_of(only) > 0 {
+            n = int_of(only)
+        }
+        sys.exit(fuzz_borrow(n))
     } else if cmd == "clean" {
         clean()
         sys.exit(0)

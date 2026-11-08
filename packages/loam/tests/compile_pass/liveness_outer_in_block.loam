@@ -1,0 +1,37 @@
+import "std:fmt"
+
+// An outer reference whose last read is inside an inner block frees its loan
+// there, not when the block ends.
+fn main() {
+    let mut v = []int {}
+    v.push(1)
+    let r = &v[0]
+    if v.len > 0 {
+        fmt.println(*r)
+        v.push(2)
+    }
+    let s = &v[0]
+    if v.len > 5 {
+        fmt.println(0)
+    } else {
+        if v.len > 1 {
+            fmt.println(*s)
+            v.push(3)
+        }
+    }
+    let y = 9
+    let mut t = &v[0]
+    if v.len > 0 {
+        t = &y
+        v.push(4)
+    }
+    fmt.println(*t)
+    // Read at the top of each iteration, overwritten before the next one.
+    let mut u = &v[0]
+    for i in 0..3 {
+        fmt.println(*u)
+        v.push(i)
+        u = &y
+    }
+    fmt.println(v.len)
+}

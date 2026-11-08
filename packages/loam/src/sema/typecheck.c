@@ -1372,6 +1372,8 @@ static void check_stmt(AstNode *n);
 
 /** A block in value position: every statement is checked, and the type is
  *  that of a trailing expression statement (void if there is none). */
+static int if_is_value(AstNode *n);
+
 static Type *check_block_value(AstNode *blk, Type *expect) {
     if (!blk || blk->kind != AST_BLOCK) return ty_void();
     Type *t = ty_void();
@@ -1379,6 +1381,13 @@ static Type *check_block_value(AstNode *blk, Type *expect) {
     for (size_t i = 0; i < blk->as.block.stmt_count; i++) {
         AstNode *st = blk->as.block.stmts[i];
         int last = (i + 1 == blk->as.block.stmt_count);
+        /* `if a { if b { 1 } else { 2 } } else { 3 }`: a nested `if` ending an
+           arm parses as a statement; as the arm's value it is an expression,
+           the same shape `wrap_else_if` gives an `else if`. */
+        if (last && st && st->kind == AST_IF && if_is_value(st)) {
+            st = ast_expr_stmt(st, st->loc);
+            blk->as.block.stmts[i] = st;
+        }
         if (last && st && st->kind == AST_EXPR_STMT) {
             t = check_expr_ty(st->as.expr_stmt.expr, expect);
             st->ty = t;

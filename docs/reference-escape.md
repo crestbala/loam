@@ -222,34 +222,85 @@ Decision: **tie to arguments**. `-> &T` stays legal (accessors like
   entry programs give the same result as the phase 3 build apart from the
   new pass tests. **Green.**
 
-### Phase 7: Find holes automatically (planned)
+### Phase 7: Find holes automatically — done
 
-There is no proof that the rules are sound, and every manual search so far
-found more holes. Loam emits C, so a cheap search is available.
+`nob fuzz-borrow [N]` (default 200; `FUZZ_SEED`, `LOAM_FUZZ_LOAMC`), off the
+default suite. It generates programs that aim two references at three lists,
+two boxes, and locals, through `&v[0]`, `first(&v)`, `&*b`, copies, `pick`,
+nested `if` expressions, `aim(&mut p, …)` out parameters, and helpers that
+may point into their own frame; then grows, empties, or replaces what they
+point at, inside branches and loops. Every program `loamc` accepts is built
+with `-fsanitize=address -fsanitize-address-use-after-return=always -O0` and
+run. An ASan report is a hole (copied to `tests/tmp/fuzz/holes/`); a program
+rejected for a non-borrow reason is a generator bug (`other`).
 
-- [ ] A generator for small programs mixing references, scopes, branches,
-      loops, `if` expressions, calls returning references, `&mut` out
-      parameters, and pushes or reassignments of the borrowed value.
-- [ ] Compile every program `loamc` accepts with `-fsanitize=address` and run
-      it. An ASan use-after-free or stack-use-after-scope report is a checker
-      hole: shrink it into a `compile_fail` test and fix the rule.
-- [ ] A `nob` target (e.g. `nob fuzz-borrow N`), off the default suite.
-- **Exit:** a long run finds nothing new; every hole found has a test.
+- [x] **The oracle.** The C backend hoists every local to the function and
+      drops values at function exit, so a reference outliving an inner block
+      cannot fail at run time and ASan cannot see it. What it does see: a
+      list buffer reallocated or freed under a reference, a replaced `Box`,
+      and a reference into a returned frame. Inner-scope rules stay covered
+      by the `compile_fail` tests.
+- [x] **Validated against the old checker.** With `LOAM_FUZZ_LOAMC` set to a
+      `loamc` built from before phase 1, 100 programs gave 17 holes. Against
+      the current one: 0.
+- [x] Found on the way and fixed:
+      - `loamc` reused a stale binary when only `LOAM_LINK_EXTRA` changed
+        (the freshness key ignored it), so sanitizer flags silently did
+        nothing. It is part of the key now.
+      - A nested `if` expression ending an arm
+        (`if a { if b { 1 } else { 2 } } else { 3 }`) was typed `void`.
+        `check_block_value` now treats it as the arm's value, the same shape
+        `wrap_else_if` gives an `else if` (`if_expr_nested_arm`).
+      - `aim(&mut q, q)` was rejected: the explicit `&mut q` was taken before
+        the other argument copied `q`. Arguments are now read first and the
+        `&mut place` ones taken after, so only a *borrow* still held by
+        another argument conflicts (`put(&mut v, &v[0])` stays an error).
+- [x] **A real hole, found by the fuzzer** (seed 4242, program 1739):
+      `expr_uses` did not look inside `if` expressions, so in
+      `q = &*b0; b0 = Box::new(20); q = if c { … } else { q }` the read of `q`
+      was missed, `q`'s loan ended early, and replacing `b0` freed what `q`
+      pointed at. The same blind spot hit the older last-use check
+      (`let n = if c { *p } else { 0 }` after a push). Fixed in `expr_uses`;
+      tests `if_expr_reads_holder`, `if_expr_last_use`.
+- **Exit:** 0 holes in 4,500 programs on the current rules: seeds 4242 and
+  99 (2,000 each, after the `expr_uses` fix, before outer liveness) and seed
+  1 (500, with outer liveness). The 2,000-program reruns of seeds 4242 and
+  99 with outer liveness were still running at this commit. **Green.**
 
-### Phase 8: Real liveness (planned)
+### Phase 8: Real liveness — done
 
-A loan lasts while its holder is mentioned anywhere later in the block
-(`end_dead_borrows`), even when the holder is overwritten before it is read.
-That is safe but rejects valid code, the thing people dislike most in Rust.
-
-- [ ] A loan ends at the holder's last *read* along the control flow: a
-      backwards liveness pass over each body, where an assignment kills the
-      holder and a read makes it live (loops iterate to a fixed point).
-- [ ] Replace the per-statement `stmt_uses` scan with that result.
-- [ ] `compile_pass`: `let mut r = &x; …; r = &y; x = 2; use(r)`, and a branch
-      that reassigns before reading.
-- **Exit:** no rejection the phase 7 fuzzer shows to be safe at runtime;
-  nothing it shows to be unsafe accepted.
+- [x] `end_dead_borrows` asks `seq_access`/`first_access` whether a holder is
+      read again, along any path, before it is overwritten: an assignment
+      `r = …` that does not read `r` kills it; `if` kills only when both arms
+      do; a loop body never kills (it may not run); anything unclear (a
+      closure, `aim(&mut r, …)`, a compound assignment) counts as a read. A
+      killed or unread holder's loans end at once.
+- [x] A binding of this block is judged by the rest of the block. An *outer*
+      binding (declared in an enclosing block) is judged by the rest of this
+      block and then by what follows it, walking out through a stack of the
+      blocks being checked: a loop around the block may run its body again
+      (`liveness_loop_read_first`, `liveness_outer_next_iter`), a `switch`
+      may fall into the next case, an `if` is done, then the statements after
+      it, up to the binding's own block. So `let r = &v[0]; if c { use(r);
+      v.push(2) }` is legal (`liveness_outer_in_block`), and a read after the
+      block keeps the loan (`liveness_outer_read_after`,
+      `liveness_outer_two_levels`).
+- [x] `compile_pass`: `liveness_overwrite` (overwrite then mutate the old
+      target, overwrite in both arms, overwrite at the top of every
+      iteration, `aim(&mut q, q)`, `grow(&mut v, v.len)`).
+- [x] `compile_fail`: `liveness_one_path_kill`, `liveness_loop_read_first`,
+      `mut_arg_with_shared_borrow`, `liveness_outer_read_after`,
+      `liveness_outer_next_iter`, `liveness_outer_two_levels`.
+- [x] Fuzzer acceptance on the same 500 programs went from 180 to 212, with
+      0 holes before and after.
+- **Exit:** `nob test compile_` (764) and `nob test examples` green; all 508
+  entry programs give the same result as the phase 3 build apart from the
+  new pass tests. **Green.**
+- Still conservative: leaving an `if` expression arm or a closure body keeps
+  outer holders live (the rest of the enclosing statement is not walked);
+  a loop or `switch` that mentions a holder anywhere keeps it live through
+  the whole statement. `aim(&mut r, …)` counts as a read of `r` by design,
+  not caution: the callee may leave `r` as it was, so its old loans stay.
 
 ## Later, only if a program needs it
 
