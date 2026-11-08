@@ -1,0 +1,649 @@
+// dump — the tree as text: the format of src/ast_dump.c (`loamc --dump-ast`,
+// and with `TYPED` set, `--dump-typed`). Shared by astdump and tcdump.
+import "std:buf"
+import "std:conv"
+import "std:fmt"
+import "lexer.loam"
+import "ast.loam"
+import "types.loam"
+
+/** *Print what typecheck set too (`--dump-typed`). */
+let mut TYPED: bool = false
+/** *Module paths, by `Loc.file`: where a resolved target lives. */
+let mut PATHS: []string = []string {}
+
+fn hex_digit(d: int) -> int {
+    if d < 10 {
+        return '0' + d
+    }
+    return 'a' + d - 10
+}
+
+fn put_str(b: &mut []u8, s: string) {
+    push(b, u8('"'))
+    for k in 0..s.len {
+        let c = s[k]
+        if c == '\\' {
+            buf.push_str(b, "\\\\")
+        } else if c == '"' {
+            buf.push_str(b, "\\\"")
+        } else if c == '\n' {
+            buf.push_str(b, "\\n")
+        } else if c == '\t' {
+            buf.push_str(b, "\\t")
+        } else if c == '\r' {
+            buf.push_str(b, "\\r")
+        } else if c < 32 || c == 127 {
+            buf.push_str(b, "\\x")
+            push(b, u8(hex_digit(c / 16)))
+            push(b, u8(hex_digit(c % 16)))
+        } else {
+            push(b, u8(c))
+        }
+    }
+    push(b, u8('"'))
+}
+
+fn attr_str(b: &mut []u8, key: string, has: bool, s: string) {
+    if !has {
+        return
+    }
+    push(b, u8(' '))
+    buf.push_str(b, key)
+    push(b, u8('='))
+    put_str(b, s)
+}
+
+fn attr_int(b: &mut []u8, key: string, v: int) {
+    push(b, u8(' '))
+    buf.push_str(b, key)
+    push(b, u8('='))
+    buf.push_int(b, v)
+}
+
+fn attr_flag(b: &mut []u8, key: string, on: bool) {
+    if on {
+        attr_int(b, key, 1)
+    }
+}
+
+fn indent(b: &mut []u8, depth: int) {
+    for i in 0..depth {
+        buf.push_str(b, "  ")
+    }
+}
+
+fn nl(b: &mut []u8) {
+    push(b, u8('\n'))
+}
+
+fn head(b: &mut []u8, depth: int, role: string, kind: string, l: Loc) {
+    indent(b, depth)
+    buf.push_str(b, role)
+    push(b, u8(' '))
+    buf.push_str(b, kind)
+    push(b, u8(' '))
+    buf.push_int(b, l.line)
+    push(b, u8(':'))
+    buf.push_int(b, l.col)
+    push(b, u8('-'))
+    buf.push_int(b, l.end_line)
+    push(b, u8(':'))
+    buf.push_int(b, l.end_col)
+}
+
+fn leaf_str(b: &mut []u8, depth: int, role: string, s: string) {
+    indent(b, depth)
+    buf.push_str(b, role)
+    push(b, u8(' '))
+    put_str(b, s)
+    nl(b)
+}
+
+fn kind_name(k: int) -> string {
+    switch k {
+        case Kind.Program:
+            return "Program"
+        case Kind.Import:
+            return "Import"
+        case Kind.Fn:
+            return "Fn"
+        case Kind.Struct:
+            return "Struct"
+        case Kind.Enum:
+            return "Enum"
+        case Kind.Var:
+            return "Var"
+        case Kind.Block:
+            return "Block"
+        case Kind.If:
+            return "If"
+        case Kind.For:
+            return "For"
+        case Kind.While:
+            return "While"
+        case Kind.Switch:
+            return "Switch"
+        case Kind.Case:
+            return "Case"
+        case Kind.Return:
+            return "Return"
+        case Kind.Break:
+            return "Break"
+        case Kind.Continue:
+            return "Continue"
+        case Kind.ExprStmt:
+            return "ExprStmt"
+        case Kind.Assign:
+            return "Assign"
+        case Kind.Binary:
+            return "Binary"
+        case Kind.Unary:
+            return "Unary"
+        case Kind.Cast:
+            return "Cast"
+        case Kind.Call:
+            return "Call"
+        case Kind.Index:
+            return "Index"
+        case Kind.Field:
+            return "Field"
+        case Kind.Ident:
+            return "Ident"
+        case Kind.Number:
+            return "Number"
+        case Kind.Float:
+            return "Float"
+        case Kind.String:
+            return "String"
+        case Kind.Bool:
+            return "Bool"
+        case Kind.StructLit:
+            return "StructLit"
+        case Kind.ArrayLit:
+            return "ArrayLit"
+        case Kind.Tuple:
+            return "Tuple"
+        case Kind.Deref:
+            return "Deref"
+        case Kind.Addr:
+            return "Addr"
+        case Kind.Type:
+            return "Type"
+        case Kind.Closure:
+            return "Closure"
+        case Kind.IncDec:
+            return "IncDec"
+        case Kind.Try:
+            return "Try"
+        default:
+            return "Error"
+    }
+}
+
+fn dump_list(b: &mut []u8, xs: []int, depth: int, role: string) {
+    for i in 0..xs.len {
+        dump(b, xs[i], depth, role)
+    }
+}
+
+fn dump(b: &mut []u8, i: int, depth: int, role: string) {
+    if i == ast.NONE {
+        indent(b, depth)
+        buf.push_str(b, role)
+        buf.push_str(b, " -\n")
+        return
+    }
+    let n = ast.NODES[i]
+    let d = depth + 1
+    head(b, depth, role, kind_name(n.kind), n.loc)
+    if n.flags != 0 {
+        attr_int(b, "flags", n.flags)
+    }
+    attr_str(b, "doc", n.has_doc, n.doc)
+    if TYPED {
+        typed_attrs(b, n)
+    }
+    switch n.kind {
+        case Kind.Program:
+            attr_str(b, "mod_doc", n.has_text, n.text)
+            nl(b)
+            for k in 0..n.kids.len {
+                let c = ast.NODES[n.kids[k]]
+                if c.kind == Kind.CDir {
+                    head(b, d, "cdir", "CDir", c.loc)
+                    attr_int(b, "link", c.op)
+                    nl(b)
+                    for s in 0..c.strs.len {
+                        leaf_str(b, d + 1, "arg", c.strs[s])
+                    }
+                }
+            }
+            for k in 0..n.kids.len {
+                if ast.NODES[n.kids[k]].kind == Kind.Import {
+                    dump(b, n.kids[k], d, "import")
+                }
+            }
+            for k in 0..n.kids.len {
+                let kk = ast.NODES[n.kids[k]].kind
+                if kk != Kind.Import && kk != Kind.CDir {
+                    dump(b, n.kids[k], d, "decl")
+                }
+            }
+            break
+        case Kind.Import:
+            attr_str(b, "alias", n.has_name, n.name)
+            attr_str(b, "path", n.has_text, n.text)
+            nl(b)
+            for k in 0..n.kids.len {
+                let c = ast.NODES[n.kids[k]]
+                indent(b, d)
+                buf.push_str(b, "name")
+                attr_str(b, "src", true, c.name)
+                attr_str(b, "local", true, c.text)
+                nl(b)
+            }
+            break
+        case Kind.Fn, Kind.Closure:
+            attr_str(b, "name", n.has_name, n.name)
+            attr_flag(b, "async", (n.op & 1) != 0)
+            attr_flag(b, "test", (n.op & 2) != 0)
+            attr_flag(b, "server", (n.op & 4) != 0)
+            attr_str(b, "c_sym", n.has_text, n.text)
+            nl(b)
+            for k in 0..n.strs.len {
+                leaf_str(b, d, "tparam", n.strs[k])
+            }
+            if TYPED {
+                for k in 0..n.caps.len {
+                    indent(b, d)
+                    buf.push_str(b, "cap ")
+                    put_str(b, n.caps[k])
+                    buf.push_str(b, " ty=")
+                    put_type(b, n.cap_types[k])
+                    nl(b)
+                }
+            }
+            for k in 0..n.kids.len {
+                let c = ast.NODES[n.kids[k]]
+                head(b, d, "param", "Param", c.loc)
+                attr_str(b, "name", true, c.name)
+                nl(b)
+                dump(b, c.a, d + 1, "type")
+                dump(b, c.b, d + 1, "def")
+            }
+            dump(b, n.a, d, "ret")
+            dump(b, n.b, d, "body")
+            break
+        case Kind.Struct:
+            attr_str(b, "name", n.has_name, n.name)
+            attr_flag(b, "proto", (n.op & 1) != 0)
+            attr_flag(b, "json", (n.op & 2) != 0)
+            attr_flag(b, "must_check", (n.op & 4) != 0)
+            attr_flag(b, "no_send", (n.op & 8) != 0)
+            nl(b)
+            for k in 0..n.strs.len {
+                leaf_str(b, d, "tparam", n.strs[k])
+            }
+            for k in 0..n.kids.len {
+                let c = ast.NODES[n.kids[k]]
+                indent(b, d)
+                buf.push_str(b, "field")
+                attr_str(b, "name", true, c.name)
+                attr_str(b, "doc", c.has_doc, c.doc)
+                nl(b)
+                dump(b, c.a, d + 1, "type")
+                dump(b, c.b, d + 1, "def")
+            }
+            break
+        case Kind.Enum:
+            attr_str(b, "name", n.has_name, n.name)
+            nl(b)
+            for k in 0..n.kids.len {
+                let c = ast.NODES[n.kids[k]]
+                indent(b, d)
+                buf.push_str(b, "variant")
+                attr_str(b, "name", true, c.name)
+                buf.push_str(b, " value=")
+                buf.push_i64(b, c.num)
+                nl(b)
+            }
+            break
+        case Kind.Var:
+            attr_str(b, "name", n.has_name, n.name)
+            attr_int(b, "mut", n.op)
+            nl(b)
+            dump(b, n.a, d, "type")
+            dump(b, n.b, d, "init")
+            break
+        case Kind.Block:
+            nl(b)
+            dump_list(b, n.kids, d, "stmt")
+            break
+        case Kind.If, Kind.While:
+            nl(b)
+            dump(b, n.a, d, "cond")
+            dump(b, n.b, d, "then")
+            dump(b, n.c, d, "else")
+            break
+        case Kind.For:
+            attr_str(b, "var", n.has_name, n.name)
+            nl(b)
+            dump(b, n.a, d, "iter")
+            dump(b, n.b, d, "body")
+            break
+        case Kind.Switch:
+            nl(b)
+            dump(b, n.a, d, "scrut")
+            dump_list(b, n.kids, d, "case")
+            break
+        case Kind.Case:
+            attr_int(b, "default", n.op)
+            nl(b)
+            dump_list(b, n.kids, d, "pat")
+            dump(b, n.a, d, "body")
+            break
+        case Kind.Return, Kind.ExprStmt, Kind.Try:
+            nl(b)
+            dump(b, n.a, d, "expr")
+            break
+        case Kind.Break, Kind.Continue:
+            nl(b)
+            break
+        case Kind.Assign, Kind.Binary:
+            buf.push_str(b, " op=")
+            buf.push_str(b, lexer.kind_name(n.op))
+            nl(b)
+            dump(b, n.a, d, "left")
+            dump(b, n.b, d, "right")
+            break
+        case Kind.Unary:
+            buf.push_str(b, " op=")
+            buf.push_str(b, lexer.kind_name(n.op))
+            nl(b)
+            dump(b, n.a, d, "operand")
+            break
+        case Kind.Cast:
+            nl(b)
+            dump(b, n.a, d, "expr")
+            dump(b, n.b, d, "type")
+            break
+        case Kind.Call:
+            nl(b)
+            dump(b, n.a, d, "callee")
+            dump_list(b, n.kids, d, "arg")
+            break
+        case Kind.Index:
+            nl(b)
+            dump(b, n.a, d, "target")
+            dump(b, n.b, d, "index")
+            break
+        case Kind.Field:
+            attr_str(b, "name", n.has_name, n.name)
+            attr_int(b, "colon", n.op)
+            nl(b)
+            dump(b, n.a, d, "target")
+            break
+        case Kind.Deref:
+            nl(b)
+            dump(b, n.a, d, "target")
+            break
+        case Kind.Addr:
+            attr_int(b, "mut", n.op)
+            nl(b)
+            dump(b, n.a, d, "target")
+            break
+        case Kind.Ident:
+            attr_str(b, "name", n.has_name, n.name)
+            nl(b)
+            break
+        case Kind.Number:
+            buf.push_str(b, " value=")
+            buf.push_i64(b, n.num)
+            nl(b)
+            break
+        case Kind.Float:
+            buf.push_str(b, " value=")
+            buf.push_str(b, conv.f64_to_str(n.fnum))
+            nl(b)
+            break
+        case Kind.String:
+            attr_str(b, "value", n.has_text, n.text)
+            nl(b)
+            break
+        case Kind.Bool:
+            attr_int(b, "value", n.op)
+            nl(b)
+            break
+        case Kind.StructLit:
+            attr_str(b, "name", n.has_name, n.name)
+            nl(b)
+            dump_list(b, n.kids2, d, "targ")
+            for k in 0..n.kids.len {
+                let c = ast.NODES[n.kids[k]]
+                indent(b, d)
+                buf.push_str(b, "init")
+                attr_str(b, "name", true, c.name)
+                nl(b)
+                dump(b, c.a, d + 1, "value")
+            }
+            break
+        case Kind.ArrayLit:
+            buf.push_str(b, " len=")
+            buf.push_i64(b, n.num)
+            nl(b)
+            dump(b, n.a, d, "type")
+            dump_list(b, n.kids, d, "elem")
+            break
+        case Kind.Tuple:
+            nl(b)
+            dump_list(b, n.kids, d, "elem")
+            break
+        case Kind.Type:
+            attr_int(b, "tag", n.op)
+            attr_str(b, "name", n.has_name, n.name)
+            buf.push_str(b, " len=")
+            buf.push_i64(b, n.num)
+            nl(b)
+            dump(b, n.a, d, "elem")
+            dump_list(b, n.kids, d, "param")
+            dump_list(b, n.kids2, d, "targ")
+            break
+        case Kind.IncDec:
+            attr_int(b, "dec", n.op)
+            attr_int(b, "post", n.aux)
+            nl(b)
+            dump(b, n.a, d, "operand")
+            break
+        default:
+            nl(b)
+    }
+}
+
+
+/** *A type, structurally: `'T` is a type parameter, `Name#cname` a struct */
+/** *whose C name differs (ast_dump.c's `put_type`). */
+fn put_type(b: &mut []u8, t: int) {
+    if t == types.NO_TYPE {
+        buf.push_str(b, "?")
+        return
+    }
+    let x = types.TYPES[t]
+    switch x.kind {
+        case TK.Void:
+            buf.push_str(b, "void")
+        case TK.Bool:
+            buf.push_str(b, "bool")
+        case TK.String:
+            buf.push_str(b, "string")
+        case TK.Int, TK.Float:
+            buf.push_str(b, types.type_name(t))
+        case TK.Ptr:
+            buf.push_str(b, if x.is_mut != 0 { "&mut " } else { "&" })
+            put_type(b, x.elem)
+        case TK.Box:
+            buf.push_str(b, "Box<")
+            put_type(b, x.elem)
+            buf.push_str(b, ">")
+        case TK.Array:
+            push(b, u8('['))
+            buf.push_i64(b, x.array_len)
+            push(b, u8(']'))
+            put_type(b, x.elem)
+        case TK.Vec:
+            buf.push_str(b, "[]")
+            put_type(b, x.elem)
+        case TK.Struct:
+            buf.push_str(b, if x.has_name { x.name } else { "struct" })
+            if x.params.len > 0 {
+                push(b, u8('<'))
+                for i in 0..x.params.len {
+                    if i > 0 {
+                        buf.push_str(b, ", ")
+                    }
+                    put_type(b, x.params[i])
+                }
+                push(b, u8('>'))
+            }
+            if x.has_cname {
+                push(b, u8('#'))
+                buf.push_str(b, x.cname)
+            }
+        case TK.Param:
+            push(b, u8('\''))
+            buf.push_str(b, if x.has_name { x.name } else { "?" })
+        case TK.Proc:
+            buf.push_str(b, "fn(")
+            for i in 0..x.params.len {
+                if i > 0 {
+                    buf.push_str(b, ", ")
+                }
+                put_type(b, x.params[i])
+            }
+            buf.push_str(b, ") -> ")
+            put_type(b, x.ret)
+        default:
+            buf.push_str(b, "<unknown>")
+    }
+}
+
+fn path_of(file: int) -> string {
+    if file >= 0 && file < PATHS.len {
+        return PATHS[file]
+    }
+    return "-"
+}
+
+/** *` key=Kind "name" file:line:col` for a resolved declaration. */
+fn put_ref(b: &mut []u8, key: string, d: int) {
+    if d == ast.NONE {
+        return
+    }
+    let n = ast.NODES[d]
+    push(b, u8(' '))
+    buf.push_str(b, key)
+    push(b, u8('='))
+    buf.push_str(b, kind_name(n.kind))
+    let named = n.kind == Kind.Var || n.kind == Kind.Fn || n.kind == Kind.Closure || n.kind == Kind.Struct || n.kind == Kind.Enum
+    if named && n.has_name {
+        push(b, u8(' '))
+        put_str(b, n.name)
+    }
+    push(b, u8(' '))
+    buf.push_str(b, path_of(n.loc.file))
+    push(b, u8(':'))
+    buf.push_int(b, n.loc.line)
+    push(b, u8(':'))
+    buf.push_int(b, n.loc.col)
+}
+
+fn attr_nz(b: &mut []u8, key: string, v: int) {
+    if v != 0 {
+        attr_int(b, key, v)
+    }
+}
+
+fn mark(b: &mut []u8, key: string, n: Node, bit: int) {
+    if (n.marks & bit) != 0 {
+        attr_int(b, key, 1)
+    }
+}
+
+fn typed_attrs(b: &mut []u8, n: Node) {
+    if n.ty != types.NO_TYPE {
+        buf.push_str(b, " ty=")
+        put_type(b, n.ty)
+    }
+    attr_nz(b, "place_mut", n.place_mut)
+    switch n.kind {
+        case Kind.Program:
+            attr_str(b, "mod_name", n.has_sname, n.sname)
+        case Kind.Import:
+            attr_str(b, "resolved", n.has_sname, n.sname)
+        case Kind.Fn, Kind.Closure:
+            attr_str(b, "cname", n.has_sname, n.sname)
+            mark(b, "intrinsic", n, ast.M_INTRINSIC)
+            attr_nz(b, "clos_id", n.clos_id)
+            mark(b, "as_value", n, ast.M_AS_VALUE)
+        case Kind.Call:
+            mark(b, "println", n, ast.M_PRINTLN)
+            mark(b, "box_new", n, ast.M_BOX_NEW)
+            mark(b, "vec_push", n, ast.M_VEC_PUSH)
+            mark(b, "vec_pop", n, ast.M_VEC_POP)
+            mark(b, "sizeof", n, ast.M_SIZEOF)
+            mark(b, "panic", n, ast.M_PANIC)
+            attr_nz(b, "numb", n.numb)
+            attr_str(b, "c_builtin", n.has_cbuiltin, n.cbuiltin)
+            attr_str(b, "rcname", n.has_sname, n.sname)
+            mark(b, "fn_val", n, ast.M_FN_VAL)
+            attr_nz(b, "sig", n.sig)
+            mark(b, "value_key", n, ast.M_VALUE_KEY)
+            attr_nz(b, "fut", n.fut)
+            attr_nz(b, "ch", n.ch)
+        case Kind.Field, Kind.Index:
+            put_ref(b, "res", n.res)
+        case Kind.Ident:
+            put_ref(b, "res", n.res)
+            if n.def_line != 0 {
+                buf.push_str(b, " def=")
+                buf.push_int(b, n.def_line)
+                push(b, u8(':'))
+                buf.push_int(b, n.def_col)
+            }
+        case Kind.StructLit:
+            mark(b, "zero_rest", n, ast.M_ZERO_REST)
+        case Kind.Cast:
+            attr_nz(b, "conv", n.conv)
+        case Kind.Try:
+            attr_str(b, "errname", n.has_sname, n.sname)
+        default:
+            return
+    }
+}
+
+/** *Every diagnostic, in order, on stderr: `file:line:col: error: msg`, the */
+/** *message cut at 1023 bytes as C's 1024-byte buffer does. */
+fn print_diags() {
+    let mut e = []u8 {}
+    for k in 0..ast.DIAGS.len {
+        let g = ast.DIAGS[k]
+        buf.push_str(&mut e, path_of(g.loc.file))
+        push(e, u8(':'))
+        buf.push_int(&mut e, g.loc.line)
+        push(e, u8(':'))
+        buf.push_int(&mut e, g.loc.col)
+        buf.push_str(&mut e, ": error: ")
+        let m = g.msg
+        if m.len > 1023 {
+            for i in 0..1023 {
+                push(e, u8(m[i]))
+            }
+        } else {
+            buf.push_str(&mut e, m)
+        }
+        push(e, u8('\n'))
+    }
+    if e.len > 0 {
+        fmt.ewrite(buf.to_string(&e))
+    }
+}

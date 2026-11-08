@@ -538,6 +538,23 @@ void loam_session_free(LoamSession *s) {
     typecheck_cleanup();
 }
 
+/** Load (and with `check`, typecheck) only, printing diagnostics as they occur (no capture):
+    `--dump-modules` / `--dump-typed`, the references the self-hosted checker is
+    diffed against. Returns 0 on success, 1 on a load error, 2 on a type error. */
+int loam_session_typecheck(LoamSession *s, const char *path, int check) {
+    loam_session_free(s);
+    loam_session_init(s);
+    CUR = s;
+    loam_packages_discover(path);
+    char *stem = stem_of(path);
+    int load_err = load_module(path, stem);
+    free(stem);
+    int rc = load_err ? 1 : 0;
+    if (check && !load_err && s->nmods > 0 && typecheck_modules(s->mods, s->nmods) != 0) rc = 2;
+    CUR = NULL;
+    return rc;
+}
+
 /** Parse, typecheck, borrowck, boundscheck. Returns 0 on success. */
 int loam_session_check(LoamSession *s, const char *path, const char *src) {
     loam_session_free(s);
