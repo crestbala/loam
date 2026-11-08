@@ -1,0 +1,32 @@
+import "std:fmt"
+
+// What a struct holds instead of a reference: an owned value, a Box, an
+// index into a list, or a callback that takes a reference.
+struct Holder<T> {
+    v: T,
+}
+
+struct Cursor {
+    at: int,
+}
+
+struct Node {
+    val: Box<int>,
+    on_visit: fn(&int) -> int,
+}
+
+fn double(x: &int) -> int {
+    return *x * 2
+}
+
+fn main() {
+    let h = Holder { v: 7 }
+    fmt.println(h.v)
+    let mut xs = []int {}
+    xs.push(10)
+    xs.push(20)
+    let c = Cursor { at: 1 }
+    fmt.println(xs[c.at])
+    let n = Node { val: Box::new(21), on_visit: double }
+    fmt.println(n.on_visit(&*n.val))
+}
