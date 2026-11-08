@@ -1,0 +1,12 @@
+import "std:fmt"
+
+fn main() {
+    let b = Box::new(1)
+    let n = if *b > 0 {
+        let t = b
+        1
+    } else {
+        2
+    }
+    fmt.println(*b + n)
+}

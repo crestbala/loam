@@ -1,0 +1,12 @@
+import "std:fmt"
+
+// Either arm's borrow may be the result, so both stay borrowed.
+fn main() {
+    let mut v = []int {}
+    v.push(1)
+    let mut w = []int {}
+    w.push(2)
+    let p = if v.len > 5 { &v[0] } else { &w[0] }
+    v.push(3)
+    fmt.println(*p)
+}

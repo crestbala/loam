@@ -1,0 +1,29 @@
+import "std:fmt"
+
+fn pick(a: &int, b: &int, left: bool) -> &int {
+    return if left { a } else { b }
+}
+
+fn main() {
+    let mut v = []int {}
+    v.push(1)
+    let mut w = []int {}
+    w.push(2)
+    let p = if v.len > 5 { &v[0] } else { &w[0] }
+    fmt.println(*p)
+    // `p` is dead: both lists are free again.
+    v.push(3)
+    w.push(4)
+    let x = 5
+    let y = 6
+    fmt.println(*pick(&x, &y, false))
+    // A move in one arm only; the other arm still sees `b`.
+    let b = Box::new(7)
+    let n = if v.len > 10 {
+        let t = b
+        *t
+    } else {
+        *b
+    }
+    fmt.println(n)
+}

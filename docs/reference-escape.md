@@ -69,8 +69,12 @@ reject too much.
 - **Exit:** probe d is rejected; `nob test compile_` (705) and
   `nob test examples` green; `loamc check` on all 499 entry programs gives no
   new rejection. **Green.**
-- Not followed yet: `return if c { &x } else { a }` and a reference read out
-  of `*pp` (`&&T`). Both are treated as safe until a program needs them.
+- Follow-up: `if` expressions were not borrow-checked at all (arms
+  unchecked, value not followed). Fixed after phase 5: arms are checked like
+  a statement `if`, the value's root is recorded while the arms' locals are
+  live, and both arms' borrows are kept. Tests: `if_expr_*`. A reference
+  read out of `*pp` (`& &T`) is caught through the call rule
+  (`inner(&p)` points into `p`).
 
 ### Phase 2: No reference-typed struct fields (case b) — done
 

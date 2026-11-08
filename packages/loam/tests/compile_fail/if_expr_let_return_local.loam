@@ -1,0 +1,8 @@
+fn bad(a: &int, c: bool) -> &int {
+    let x = 5
+    let p = if c { &x } else { a }
+    return p
+}
+
+fn main() {
+}

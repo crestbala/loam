@@ -1,0 +1,14 @@
+import "std:fmt"
+
+// `y` ends with its arm, so `p` dangles from the start.
+fn main() {
+    let a = 1
+    let c = a > 0
+    let p = if c {
+        let y = 2
+        &y
+    } else {
+        &a
+    }
+    fmt.println(*p)
+}

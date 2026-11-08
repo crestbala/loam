@@ -431,10 +431,11 @@ static void free_borrows(Borrow *l) {
     }
 }
 
-/** Add to `*dst` every loan of `other` it lacks (join after a branch). */
-static void union_into(Borrow **dst, const Borrow *other) {
+/** Add to `*dst` every loan of `other` it lacks (join after a branch).
+ *  `temps`: statement temps too (an `if` expression's arms are mid-statement). */
+static void union_into_ex(Borrow **dst, const Borrow *other, int temps) {
     for (; other; other = other->next) {
-        if (!other->stored) continue;
+        if (!other->stored && !temps) continue;
         int have = 0;
         for (Borrow *b = *dst; b && !have; b = b->next)
             have = b->stored && b->owner == other->owner && b->is_mut == other->is_mut &&
@@ -448,6 +449,7 @@ static void union_into(Borrow **dst, const Borrow *other) {
     }
 }
 
+static void union_into(Borrow **dst, const Borrow *other) { union_into_ex(dst, other, 0); }
 static void union_borrows(const Borrow *other) { union_into(&borrows, other); }
 
 static void set_borrows(const Borrow *l) {
@@ -488,6 +490,44 @@ typedef struct {
 static const Root NO_ROOT = { 0, NULL };
 
 static Root deeper(Root a, Root b) { return b.depth > a.depth ? b : a; }
+
+/* What an `if` expression's value points into, recorded while its arms'
+   bindings were live (so `if c { let y = 1; &y } else { a }` sees `y`). */
+typedef struct {
+    AstNode *n;
+    Root r;
+} IfRoot;
+static IfRoot *if_roots;
+static int n_if_roots, cap_if_roots;
+
+static void set_if_root(AstNode *n, Root r) {
+    for (int i = 0; i < n_if_roots; i++)
+        if (if_roots[i].n == n) {
+            if_roots[i].r = r;
+            return;
+        }
+    if (n_if_roots == cap_if_roots) {
+        cap_if_roots = cap_if_roots ? cap_if_roots * 2 : 16;
+        if_roots = (IfRoot *)realloc(if_roots, (size_t)cap_if_roots * sizeof(IfRoot));
+        if (!if_roots) loam_fatal("out of memory");
+    }
+    if_roots[n_if_roots].n = n;
+    if_roots[n_if_roots].r = r;
+    n_if_roots++;
+}
+
+static Root get_if_root(AstNode *n) {
+    for (int i = 0; i < n_if_roots; i++)
+        if (if_roots[i].n == n) return if_roots[i].r;
+    return NO_ROOT;
+}
+
+/** The value expression an `if` arm ends in, or NULL. */
+static AstNode *arm_tail(AstNode *blk) {
+    if (!blk || blk->kind != AST_BLOCK || !blk->as.block.stmt_count) return NULL;
+    AstNode *last = blk->as.block.stmts[blk->as.block.stmt_count - 1];
+    return last && last->kind == AST_EXPR_STMT ? last->as.expr_stmt.expr : NULL;
+}
 
 static Root ref_root(AstNode *e);
 
@@ -552,6 +592,8 @@ static Root ref_root(AstNode *e) {
             }
             return r;
         }
+        case AST_IF:
+            return get_if_root(e);
         default:
             return NO_ROOT;
     }
@@ -648,6 +690,10 @@ static int gather_loans(AstNode *e, int result_mut, Loans *ls, SourceLoc loc) {
                 if (a && is_ref_ty(a->ty) && gather_loans(a, result_mut, ls, loc)) return 1;
             }
             return 0;
+        case AST_IF:
+            /* Either arm's value may be the result. */
+            if (gather_loans(arm_tail(e->as.if_stmt.then_block), result_mut, ls, loc)) return 1;
+            return gather_loans(arm_tail(e->as.if_stmt.else_block), result_mut, ls, loc);
         default:
             return 0;
     }
@@ -778,6 +824,38 @@ static int case_falls_through(const AstNode *cs) {
     return !cs || cs->kind != AST_CASE || stmt_continues(cs->as.switch_case.body);
 }
 
+/**
+ * One arm of an `if` expression: its statements, then its value. What the
+ * value points into is folded into `acc` while the arm's bindings are live.
+ */
+static int check_value_arm(AstNode *blk, int as_move, Root *acc) {
+    if (!blk) return 0;
+    if (blk->kind != AST_BLOCK) return check_expr(blk, as_move);
+    depth++;
+    size_t cnt = blk->as.block.stmt_count;
+    int rc = 0;
+    for (size_t i = 0; i < cnt && !rc; i++) {
+        end_dead_borrows(blk->as.block.stmts, cnt, i, depth);
+        AstNode *st = blk->as.block.stmts[i];
+        if (i + 1 == cnt && st && st->kind == AST_EXPR_STMT) {
+            AstNode *e = st->as.expr_stmt.expr;
+            Borrow *before = borrows;
+            rc = check_expr(e, as_move);
+            /* Borrows the value makes belong to the enclosing statement and
+               outlive the arm (unless they root in the arm's own locals,
+               which drop_borrows_of removes at the pop). */
+            for (Borrow *b = borrows; b && b != before; b = b->next)
+                if (!b->stored) b->depth = depth - 1;
+            if (!rc && e && is_ref_ty(e->ty)) *acc = deeper(*acc, ref_root(e));
+        } else {
+            rc = check_stmt(st);
+        }
+    }
+    pop_to_depth(depth - 1);
+    depth--;
+    return rc;
+}
+
 /** Walk an expression. `as_move` if this use consumes a non-Copy value. */
 static int check_expr(AstNode *n, int as_move) {
     if (!n) return 0;
@@ -850,6 +928,35 @@ static int check_expr(AstNode *n, int as_move) {
         case AST_INDEX:
             if (check_expr(n->as.access.target, 0)) return 1;
             return check_expr(n->as.access.index, 0);
+        case AST_IF: {
+            /* An `if` expression: arms checked like a statement `if`, each
+               from the state before it, joined after. Temps made in an arm's
+               value belong to the enclosing statement, so they join too. */
+            if (check_expr(n->as.if_stmt.cond, 0)) return 1;
+            BSnap *pre = NULL, *post_then = NULL;
+            int npre = snapshot(&pre), nthen = 0;
+            Borrow *pre_loans = dup_borrows(borrows), *then_loans = NULL;
+            Root acc = NO_ROOT;
+            int rc = check_value_arm(n->as.if_stmt.then_block, as_move, &acc);
+            if (!rc) {
+                nthen = snapshot(&post_then);
+                then_loans = dup_borrows(borrows);
+                restore(pre, npre);
+                set_borrows(pre_loans);
+                rc = check_value_arm(n->as.if_stmt.else_block, as_move, &acc);
+                if (!rc) {
+                    join_moved(post_then, nthen);
+                    join_refs(post_then, nthen);
+                    union_into_ex(&borrows, then_loans, 1);
+                }
+            }
+            free_borrows(pre_loans);
+            free_borrows(then_loans);
+            free(pre);
+            free(post_then);
+            set_if_root(n, acc);
+            return rc;
+        }
         case AST_BINARY:
             if (check_expr(n->as.binary.left, 0)) return 1;
             return check_expr(n->as.binary.right, 0);
@@ -1028,6 +1135,8 @@ static int check_stmt(AstNode *n) {
             }
             push_b(n->as.var.name, n->ty);
             set_ref(binds, rr);
+            /* Aimed at a binding already out of scope (an `if` arm's local). */
+            if (rr.depth > depth) binds->dangling = 1;
             /* The loans outlive the statement and end at the binding's last
                use (end_dead_borrows) or its scope. */
             attach_loans(binds, &ls, 1);
@@ -1072,6 +1181,7 @@ static int check_stmt(AstNode *n) {
             }
             if (rebind) {
                 set_ref(lb, rr);
+                if (rr.depth > depth) lb->dangling = 1;
                 attach_loans(lb, &ls, 1);
             } else if (stores_ref) {
                 /* `*pp = &x`, or a global: the place is not tracked, so what
