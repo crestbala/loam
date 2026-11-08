@@ -176,15 +176,16 @@ Decision: **tie to arguments**. `-> &T` stays legal (accessors like
   to the end of the statement, as before this work, so
   `f(&mut x) + g(&mut x)` is rejected.
 
-### Phase 5: Docs and cleanup
+### Phase 5: Docs and cleanup — done
 
-- [ ] `docs/loam.md`: add the four rules beside the ownership state diagram,
-      plus a short "what to use instead" (owned value, `Box`, index, handle).
-- [ ] `docs/downsides.md`: the cost line "borrowck is not NLL" is stale
-      (loam.md says NLL). Fix it and add "references are second-class".
-- [ ] `borrowck.c` header comment: list the escape rules.
-- [ ] Run the probe programs one last time; all six are rejected.
-- **Exit:** full `make test` green (run once, at the end).
+- [x] `docs/loam.md`: a "References" section after the ownership state
+      diagram (the four rules and what to store instead); the borrowck row in
+      the pipeline table names the escape rules.
+- [x] `docs/downsides.md`: "borrowck is not NLL" replaced; references are
+      second-class in the keep column and in the costs line.
+- [x] `borrowck.c` header comment lists the escape and loan rules.
+- [x] The probe programs, one last time: all rejected.
+- **Exit:** full `./nob.sh test` green (run once, at the end).
 
 ## Later, only if a program needs it
 
