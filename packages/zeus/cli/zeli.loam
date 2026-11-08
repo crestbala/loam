@@ -1886,20 +1886,82 @@ struct BuildStep {
 /** *Web stays at `-Oz`, which here is faster than the lower levels; the post-link */
 /** *optimizer is what `split_web` skips. */
 /** */
-/** *Every serve build also compiles in units cached under `.zeus/cc` */
+/** *Every serve build also compiles in units cached under `.zeus/cc/<slot>` */
 /** *(`LOAM_SHARD`, see driver.c), so an edit recompiles the code it changed. */
+/** *A new serve, build, or preview removes the slots and wasm copies it does */
+/** *not use. The compiler then removes hashes the compile it just ran did not */
+/** *link, so a previous edit does not stay in the cache for a day. */
 fn serve_build_env(appdir: string, target: string) -> string {
-    let shards = shard_env(appdir)
+    let shards = shard_env(appdir, "serve-{{target}}")
     if target == "web" {
         return shards
     }
     return "LOAM_DEV=1 {{shards}}"
 }
 
-/** *Where this app's compiled units live: under `.zeus`, because a build clears */
-/** *`build/` and the point is for them to outlast one. */
-fn shard_env(appdir: string) -> string {
-    return cat("LOAM_SHARD=", shell_quote(join(join(appdir, ".zeus"), "cc")))
+/** *The RPC backend is its own program. It does not share the app's slot: a */
+/** *rebuild of either would otherwise delete the other's objects. */
+fn server_build_env(appdir: string) -> string {
+    let shards = shard_env(appdir, "server")
+    return "LOAM_DEV=1 {{shards}}"
+}
+
+/** *Where one compile's units live. Under `.zeus`, because a build clears */
+/** *`build/` and the point is for the units to outlast that. One slot per */
+/** *command: serve, a dev build, the metadata dump, and the backend each hash */
+/** *differently, and a shared directory kept every generation. */
+fn shard_env(appdir: string, slot: string) -> string {
+    return cat("LOAM_SHARD=", shell_quote(join(join(join(appdir, ".zeus"), "cc"), slot)))
+}
+
+/** *Remove shard caches and linked wasm copies this command will not use. */
+/** * */
+/** *`cc/` used to hold every serve, build, and preview in one directory, and a */
+/** *loose file there is that old layout. A directory whose name is not in */
+/** *`slots` is another command's cache. `out/<kind>` is the linked wasm a later */
+/** *run reuses; kinds other than `out_kind` are the runs this one replaces. */
+/** *`out_kind` of `""` means this command publishes no wasm. */
+fn retire_caches(appdir: string, slots: []string, out_kind: string) {
+    let cc = join(join(appdir, ".zeus"), "cc")
+    if sys.exists(cc) == 1 {
+        let names = sys.list_dir(cc)
+        for i in 0..names.len {
+            let p = join(cc, names[i])
+            if sys.is_dir(p) == 0 || index_of(slots, names[i]) < 0 {
+                if sys.remove_path(p) != 0 {
+                    say("zeli: could not remove {{rel_to(repo_root(), p)}}")
+                }
+            }
+        }
+    }
+    let out = join(join(appdir, ".zeus"), "out")
+    if sys.exists(out) == 1 {
+        let names = sys.list_dir(out)
+        for i in 0..names.len {
+            if names[i] != out_kind {
+                let p = join(out, names[i])
+                if sys.remove_path(p) != 0 {
+                    say("zeli: could not remove {{rel_to(repo_root(), p)}}")
+                }
+            }
+        }
+    }
+}
+
+/** *Shard slots `serve` still compiles into, and the wasm kind it republishes. */
+fn serve_cache_slots(appdir: string, target: string) -> []string {
+    let mut slots = []string { "serve-{{target}}", "server" }
+    if target == "web" && sys.exists(join(appdir, "routes")) == 1 {
+        push(slots, "meta")
+    }
+    return slots
+}
+
+fn serve_out_kind(appdir: string, target: string) -> string {
+    if target == "web" && can_split(appdir) {
+        return "serve"
+    }
+    return ""
 }
 
 /** *Bump when the HTML shell, the split, or the compression of a web build changes */
@@ -2203,7 +2265,7 @@ fn ensure_backend(appdir: string) -> int {
     let log = app_log(appdir, "server", "main")
     chat("zeli: building rpc backend…")
     let built = run_loam(
-        serve_build_env(appdir, "macos"),
+        server_build_env(appdir),
         cat(cat(shell_quote(entry), " -o "), shell_quote(bin)),
     )
     if sys.exec_status() != 0 {
@@ -2262,6 +2324,7 @@ fn serve(appdir: string, target: string, port: int, build_only: bool) -> int {
     }
     let entry = find_entry(appdir)
     let stem = drop_suffix(base_name(entry), ".loam")
+    retire_caches(appdir, serve_cache_slots(appdir, target), serve_out_kind(appdir, target))
     ui_open(platform_name(target), !build_only)
     if target == "web" && !build_only {
         ui_url = "http://127.0.0.1:{{port}}"
@@ -3382,6 +3445,7 @@ fn preview(appdir: string, target: string, port: int, reuse: bool) -> int {
         if reuse {
             die("zeli: --no-build does not apply to {{target}}: installing builds it")
         }
+        retire_caches(appdir, []string {}, "")
         device_log_follow(appdir, target, stem)
         // No `serve_build_env`: that is what asks for the dev profile.
         if !device_run(appdir, target, stem, entry, device_log_env(appdir, target, stem)) {
@@ -3414,6 +3478,7 @@ fn preview_build(appdir: string, target: string, stem: string) -> bool {
     let web = join(join(appdir, "build"), "web")
     let vite = vite_host(appdir)
     if vite != "" {
+        retire_caches(appdir, []string {}, "")
         return preview_vite_build(web, vite)
     }
     if build(appdir, []string { "web" }, "", true) != 0 {
@@ -4469,12 +4534,13 @@ fn fresh_target_dir(appdir: string, target: string) -> string {
 /** *and the rest still build, so one missing SDK does not cost you the others. */
 /** *The exit code is 1 only when nothing built. */
 /** */
-/** *A routed web build keeps the linked wasm under `.zeus/out` and republishes */
-/** *`build/web` only when that wasm, the base URL, or the shell changed, and */
-/** *only when this command was the one that published the directory. An */
-/** *unchanged app finishes in well under a second. `--release` (`full`) is the */
-/** *smallest output instead: one whole-program compile and `-Oz`, several times */
-/** *slower, and it is cached the same way. */
+/** *A routed web build keeps the linked wasm under `.zeus/out/<kind>` and */
+/** *republishes `build/web` only when that wasm, the base URL, or the shell */
+/** *changed, and only when this command was the one that published the */
+/** *directory. An unchanged app finishes in well under a second. `--release` */
+/** *(`full`) is the smallest output instead: one whole-program compile and */
+/** *`-Oz`, several times slower. The other kind's wasm, and any serve cache, */
+/** *is removed first: a new build does not keep the previous command's files. */
 fn build(appdir: string, targets: []string, base: string, full: bool) -> int {
     if sys.exists(loam_path()) == 0 {
         die("zeli: missing {{loam_path()}} — run `make` in {{repo_root()}} first")
@@ -4487,6 +4553,20 @@ fn build(appdir: string, targets: []string, base: string, full: bool) -> int {
     let entry = find_entry(appdir)
     let stem = drop_suffix(base_name(entry), ".loam")
     let routed = sys.exists(join(appdir, "routes")) == 1
+    let mut keep_slots = []string {}
+    let mut keep_out = ""
+    if routed {
+        for i in 0..targets.len {
+            if targets[i] == "web" {
+                if !full {
+                    push(keep_slots, "build")
+                }
+                push(keep_slots, "meta")
+                keep_out = if full { "release" } else { "build" }
+            }
+        }
+    }
+    retire_caches(appdir, keep_slots, keep_out)
     ui_open(platform_list(targets), false)
     ui_build_begin()
 
@@ -4545,7 +4625,7 @@ fn build(appdir: string, targets: []string, base: string, full: bool) -> int {
         // A routed web build is optimized again after the split, so its compile
         // can come from cached units, as in `serve`. `--release` and anything else
         // ship what one whole-program compile leaves, which is smaller and slower.
-        let compile_env = if t == "web" && routed && !full { shard_env(appdir) } else { "" }
+        let compile_env = if t == "web" && routed && !full { shard_env(appdir, "build") } else { "" }
         push(cmds, loam_cmd(ui_env(compile_env, report), args))
     }
     let meta_job = cmds.len
@@ -4789,8 +4869,9 @@ fn meta_compile_cmd(appdir: string) -> string {
     let bin = join(zdir, "meta_dump")
     /* The dump only *calls* meta()/paths(); a DCE edge case can drop a needed
        zeus helper while keeping its call, so compile it with DCE off. */
+    let shards = shard_env(appdir, "meta")
     return loam_cmd(
-        "LOAM_DEV=1 LOAM_NO_DCE=1 {{shard_env(appdir)}}",
+        "LOAM_DEV=1 LOAM_NO_DCE=1 {{shards}}",
         cat(cat(shell_quote(src), " -o "), shell_quote(bin)),
     )
 }
