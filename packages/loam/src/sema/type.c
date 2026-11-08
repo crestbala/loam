@@ -235,9 +235,20 @@ int type_is_copy(const Type *t) {
     if (t->kind == TY_ARRAY) return type_is_copy(t->elem);
     if (t->kind == TY_VEC) return type_is_copy(t->elem);
     if (t->kind == TY_STRUCT) {
-        for (size_t i = 0; i < t->field_count; i++)
-            if (!type_is_copy(t->field_types[i])) return 0;
-        return 1;
+        /* `struct Node { kids: []Node }` reaches itself through `[]T`: a struct
+           already being asked about is assumed Copy, so the answer is Copy
+           exactly when every other field is (the greatest fixed point). */
+        static const Type *walking[64];
+        static int nwalking;
+        for (int k = 0; k < nwalking; k++)
+            if (walking[k] == t) return 1;
+        if (nwalking >= 64) return 0;
+        walking[nwalking++] = t;
+        int copy = 1;
+        for (size_t i = 0; copy && i < t->field_count; i++)
+            if (!type_is_copy(t->field_types[i])) copy = 0;
+        nwalking--;
+        return copy;
     }
     return 0;
 }

@@ -175,6 +175,13 @@ static const char *lex(const char *src, Toks *ts) {
             if (!*p) return "unterminated string";
             p++;
             k = K_STR;
+        } else if (c == '\'') {
+            /* A character literal: one byte or one escape, on one line. */
+            p++;
+            while (*p && *p != '\'' && *p != '\n') p += (*p == '\\' && p[1] && p[1] != '\n') ? 2 : 1;
+            if (*p != '\'') return "unterminated character literal";
+            p++;
+            k = K_NUM;
         } else if (isdigit((unsigned char)c)) {
             if (c == '0' && (p[1] == 'x' || p[1] == 'X')) {
                 p += 2;

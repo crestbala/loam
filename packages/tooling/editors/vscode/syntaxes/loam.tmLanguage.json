@@ -121,6 +121,7 @@
     },
     "numbers": {
       "patterns": [
+        { "name": "constant.character.loam", "match": "'([^'\\\\]|\\\\x[0-9A-Fa-f]{2}|\\\\[^x])'" },
         { "name": "constant.numeric.loam", "match": "\\b0[xX][0-9A-Fa-f]+\\b" },
         { "name": "constant.numeric.loam", "match": "\\b[0-9]+(\\.[0-9]+)?\\b" }
       ]

@@ -807,6 +807,7 @@ static CastShape cast_shape(const Type *from, const Type *to, int mode, char *fn
     }
     if (from->kind != TY_INT) return CAST_PLAIN;
     if (mode == 1) return CAST_PLAIN; /* wrapping: a plain truncating cast */
+    if (from->bits == to->bits && from->is_unsigned == to->is_unsigned) return CAST_PLAIN;
     int from_u64 = from->bits == 64 && from->is_unsigned;
     int to_u64 = to->bits == 64 && to->is_unsigned;
     if (from_u64 && !to_u64) {
@@ -1965,23 +1966,38 @@ static void emit_block_body(FILE *o, AstNode *b, int ind, int is_main) {
     (void)is_main;
 }
 
+/* A type argument names a type parameter anywhere inside it
+   (`Option<Box<List<T>>>`, built while `List<T>` itself resolves). Walks type
+   arguments, never fields, so a recursive struct cannot loop here. A fn type
+   is one C handle whatever its signature, so it is not looked inside: generic
+   code does name `Option<fn(T)>` instances. */
+static int targ_concrete(const Type *t) {
+    if (!t || t->kind == TY_PARAM) return 0;
+    if (t->kind == TY_PROC) return 1;
+    if (t->elem && !targ_concrete(t->elem)) return 0;
+    for (size_t i = 0; i < t->param_count; i++)
+        if (!targ_concrete(t->params[i])) return 0;
+    return 1;
+}
+
 static int struct_targs_concrete(Type *t) {
     if (!t) return 0;
     for (size_t i = 0; i < t->param_count; i++)
-        if (!t->params[i] || t->params[i]->kind == TY_PARAM) return 0;
+        if (!targ_concrete(t->params[i])) return 0;
     return 1;
 }
 
 static void emit_struct_type(FILE *o, Type *t) {
     char cn[256];
     type_c_name(t, cn, sizeof cn);
-    fprintf(o, "typedef struct %s {\n", cn);
+    /* The typedef name was forward-declared, so a `Box<Self>` field can name it. */
+    fprintf(o, "struct %s {\n", cn);
     for (size_t i = 0; i < t->field_count; i++) {
         fprintf(o, "    ");
         emit_var_decl_type(o, t->field_types[i], t->field_names[i]);
         fprintf(o, ";\n");
     }
-    fprintf(o, "} %s;\n\n", cn);
+    fprintf(o, "};\n\n");
 }
 
 /* Struct definitions in by-value dependency order. A plain struct may hold a
@@ -4271,6 +4287,10 @@ void codegen_emit_c(FILE *out, LoamModule *mods, int nmods, const char *rt_path)
             continue;
         if (t && struct_targs_concrete(t)) se_add(t);
     }
+    /* Every struct name first, so a field may point at a struct defined later
+       (`Box<Tree>` inside `Tree`, or two structs boxing each other). */
+    for (int i = 0; i < se_n; i++) fprintf(out, "typedef struct %s %s;\n", se_list[i].name, se_list[i].name);
+    if (se_n) fprintf(out, "\n");
     for (int i = 0; i < se_n; i++) se_emit(out, i);
 
     /* One prototype per possible hook id, not just the ones registered so far:

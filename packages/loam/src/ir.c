@@ -429,11 +429,6 @@ static int ident_is_state(AstNode *n) {
     return d && (d->flags & ASTF_STATE);
 }
 
-static int fn_returns_node(void) {
-    Type *r = (F && F->sig) ? F->sig->ret : NULL;
-    return r && r->kind == TY_STRUCT && r->name && strcmp(r->name, "Node") == 0;
-}
-
 static int state_sig_local(AstNode *n) {
     if (!n || n->kind != AST_IDENT || !n->as.ident.name) return -1;
     return scope_find(n->as.ident.name);
@@ -492,6 +487,8 @@ static int lower_println(AstNode *n) {
             emit_named_call("loam_fmt_write_bool", a, 1, ty_void(), n->loc);
         else if (t && t->kind == TY_FLOAT)
             emit_named_call("loam_fmt_write_float", a, 1, ty_void(), n->loc);
+        else if (t && t->kind == TY_INT && t->is_unsigned && t->bits == 64)
+            emit_named_call("loam_fmt_write_u64", a, 1, ty_void(), n->loc);
         else
             emit_named_call("loam_fmt_write_int", a, 1, ty_void(), n->loc);
     }

@@ -161,6 +161,26 @@ static inline void loam_fmt_write_int(int64_t v) {
     loam_write_bytes(s.ptr, (size_t)s.len);
 }
 
+/* A u64 in decimal: the whole 0..2^64-1 range, never a sign. */
+static inline loam_str loam_fmt_utoa(char buf[24], uint64_t u) {
+    char *end = buf + 24;
+    char *p = end;
+    do {
+        *--p = (char)('0' + (u % 10));
+        u /= 10;
+    } while (u);
+    loam_str s;
+    s.ptr = p;
+    s.len = (int64_t)(end - p);
+    return s;
+}
+
+static inline void loam_fmt_write_u64(uint64_t v) {
+    char buf[24];
+    loam_str s = loam_fmt_utoa(buf, v);
+    loam_write_bytes(s.ptr, (size_t)s.len);
+}
+
 static inline void loam_fmt_write_bool(bool v) {
     if (v) loam_write_bytes("true", 4);
     else loam_write_bytes("false", 5);
@@ -1143,6 +1163,15 @@ static inline loam_str loam_key_addr(uint64_t bits, char kind) {
 static inline loam_str loam_str_of_int(int64_t v) {
     char buf[24];
     loam_str s = loam_fmt_itoa(buf, v);
+    char *p = loam_str_bytes(s.len);
+    memcpy(p, s.ptr, (size_t)s.len);
+    p[s.len] = 0;
+    return loam_str_owned(p, s.len);
+}
+
+static inline loam_str loam_str_of_u64(uint64_t v) {
+    char buf[24];
+    loam_str s = loam_fmt_utoa(buf, v);
     char *p = loam_str_bytes(s.len);
     memcpy(p, s.ptr, (size_t)s.len);
     p[s.len] = 0;

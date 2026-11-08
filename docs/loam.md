@@ -317,6 +317,20 @@ parenthesized list with one value per name, so `let (a, b) = pair()` is an
 error. Values run left to right, before any name binds, so in a nested scope
 `let (x, y) = (y, x)` swaps the outer pair. `let mut (a, b)` is an error.
 
+A struct may hold itself through a `[]T` or a `Box<T>`, directly or through
+another struct; both are pointers, so the type has a finite size. A recursive
+`Box` ends in an `Option`, whose bare `none` needs no placeholder value:
+
+```loam
+struct Node { kind: int, kids: []Node }
+struct Tree { left: Option<Box<Tree>>, right: Option<Box<Tree>>, v: int }
+
+let t = Tree { left: some(Box::new(Tree { left: none, right: none, v: 2 })), right: none, v: 1 }
+```
+
+Holding itself inline — `struct A { a: A }`, or through `[N]T` or another
+struct's field — is an error: the struct would have infinite size.
+
 ### 2b. Error handling: `Result<T>` and `Option<T>`
 
 `std:result` has two checked containers, both `#[must_check]`:
@@ -597,8 +611,12 @@ LOAM_DEBUG=1 ./bin/loamc app.loam -o app
 
 ### 8. Text, Unicode, and fonts
 
-`string` is bytes: `s[i]` is one byte and `s.len` is a byte count. Three std
-modules sit above that:
+`string` is bytes: `s[i]` is one byte and `s.len` is a byte count. A
+character literal is an untyped integer literal holding one byte, so it
+compares with `s[i]` directly and takes `u8` in a `u8` context: `'a'`, `' '`,
+and the escapes `'\n'` `'\t'` `'\r'` `'\0'` `'\\'` `'\''` `'\"'` `'\xHH'`.
+A non-ASCII character is several bytes, so `'é'` is an error; use a string.
+There is no `char` type. Three std modules sit above that:
 
 - `std:str` — byte-level helpers: `slice`, `starts_with`, `ends_with`,
   `index_of` / `last_index_of` (and `_byte` forms), `contains`, `count`,

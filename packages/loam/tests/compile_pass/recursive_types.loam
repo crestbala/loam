@@ -1,0 +1,107 @@
+// Recursive types: a struct may hold itself through `[]T` or `Box<T>` (both
+// pointers), directly, through another struct, or as a generic instance.
+import "std:fmt"
+import "std:result"
+
+struct Node {
+    kind: int,
+    kids: []Node,
+    name: string,
+}
+
+struct Expr {
+    op: int,
+    args: []Arg,
+}
+
+struct Arg {
+    name: string,
+    e: Expr,
+}
+
+// Declared and never built: resolving it must still terminate.
+struct Chain {
+    next: Box<Chain>,
+    v: int,
+}
+
+struct Tree {
+    left: Option<Box<Tree>>,
+    right: Option<Box<Tree>>,
+    v: int,
+}
+
+struct List<T> {
+    v: T,
+    next: Option<Box<List<T>>>,
+}
+
+struct A {
+    n: int,
+    b: Option<Box<B>>,
+}
+
+struct B {
+    xs: []A,
+}
+
+fn count(n: &Node) -> int {
+    let mut c = 1
+    for i in 0..n.kids.len {
+        c = c + count(&n.kids[i])
+    }
+    return c
+}
+
+fn leaf(v: int) -> Tree {
+    return Tree { left: none, right: none, v: v }
+}
+
+fn sum(t: &Tree) -> int {
+    let mut s = t.v
+    if t.left.tag == OptionTag.Some {
+        s = s + sum(&*t.left.val)
+    }
+    if t.right.tag == OptionTag.Some {
+        s = s + sum(&*t.right.val)
+    }
+    return s
+}
+
+fn list_sum(l: &List<int>) -> int {
+    let mut s = l.v
+    if l.next.tag == OptionTag.Some {
+        s = s + list_sum(&*l.next.val)
+    }
+    return s
+}
+
+fn main() {
+    let mut root = Node { kind: 0, kids: []Node {}, name: "r" }
+    for i in 0..3 {
+        let mut k = Node { kind: i, kids: []Node {}, name: "k" }
+        push(k.kids, Node { kind: 9, kids: []Node {}, name: "g" })
+        push(root.kids, k)
+    }
+    let snapshot = root
+    push(root.kids, Node { kind: 7, kids: []Node {}, name: "x" })
+    fmt.println(count(&root), count(&snapshot))
+    fmt.println(root.kids[3].name, root.kids[0].kids[0].kind)
+
+    let mut e = Expr { op: 1, args: []Arg {} }
+    push(e.args, Arg { name: "x", e: Expr { op: 2, args: []Arg {} } })
+    fmt.println(e.args[0].name, e.args[0].e.op)
+
+    let t = Tree {
+        left: some(Box::new(leaf(2))),
+        right: some(Box::new(Tree { left: some(Box::new(leaf(4))), right: none, v: 3 })),
+        v: 1,
+    }
+    fmt.println(sum(&t))
+
+    let l = List { v: 1, next: some(Box::new(List { v: 2, next: some(Box::new(List { v: 3, next: none })) })) }
+    fmt.println(list_sum(&l))
+
+    let a = A { n: 5, b: some(Box::new(B { xs: []A {} })) }
+    fmt.println(a.n, (*a.b.val).xs.len)
+}

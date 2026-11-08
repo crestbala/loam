@@ -1,0 +1,10 @@
+// The cycle runs through a fixed array and a second struct: still inline.
+struct P {
+    q: [2]Q,
+}
+
+struct Q {
+    p: P,
+}
+
+fn main() {}

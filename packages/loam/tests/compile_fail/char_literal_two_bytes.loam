@@ -1,0 +1,4 @@
+// One byte per literal: two characters are an error.
+fn main() {
+    let x = 'ab'
+}
