@@ -74,6 +74,20 @@ static void elem_hook_cnames(Type *elem, char *retain, size_t rc, char *release,
 /** `loam_zeus_sig_bind_vec(id, &val, …)`: a `[]T` cell keeps the reference in
  *  `val` and drops it, elements through their release hook, when it is freed. */
 static void format_ctype(char *buf, size_t cap, Type *t);
+
+/* `&T` / `&mut T` for an already-formatted `inner`. A shared ref to a pointer
+   is `T * const *`: `const T * *` would const the pointee instead, and C has
+   no implicit `T **` -> `const T **` (gcc 14 rejects it). */
+static const char *ptr_ctype(char *buf, size_t cap, const char *inner, int is_mut) {
+    size_t n = strlen(inner);
+    if (is_mut)
+        snprintf(buf, cap, "%s *", inner);
+    else if (n > 0 && inner[n - 1] == '*')
+        snprintf(buf, cap, "%s const *", inner);
+    else
+        snprintf(buf, cap, "const %s *", inner);
+    return buf;
+}
 static void emit_drop_place(FILE *o, const char *place, Type *t, int ind);
 static void emit_nested_keeps(FILE *o, const char *place, Type *t, int ind);
 static void emit_sig_bind_vec(FILE *o, Type *vt, const char *id, const char *val) {
@@ -284,11 +298,12 @@ static void emit_ctype(FILE *o, Type *t) {
         case TY_VEC:
             fprintf(o, "loam_vec");
             break;
-        case TY_PTR:
-            if (!t->is_mut) fprintf(o, "const ");
-            emit_ctype(o, t->elem);
-            fprintf(o, " *");
+        case TY_PTR: {
+            char inner[256], buf_ptr[300];
+            format_ctype(inner, sizeof inner, t->elem);
+            fprintf(o, "%s", ptr_ctype(buf_ptr, sizeof buf_ptr, inner, t->is_mut));
             break;
+        }
         case TY_BOX:
             emit_ctype(o, t->elem);
             fprintf(o, " *");
@@ -351,8 +366,8 @@ static void format_ctype(char *buf, size_t cap, Type *t) {
         case TY_BOX: {
             char inner[256];
             format_ctype(inner, sizeof inner, t->elem);
-            if (t->kind == TY_PTR && !t->is_mut)
-                snprintf(buf, cap, "const %s *", inner);
+            if (t->kind == TY_PTR)
+                ptr_ctype(buf, cap, inner, t->is_mut);
             else
                 snprintf(buf, cap, "%s *", inner);
             break;
