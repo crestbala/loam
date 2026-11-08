@@ -2546,38 +2546,52 @@ fn ig_myapp() {
 /** *Self-hosting: the Loam lexer (`packages/loam/compiler/lexer.loam`) must agree */
 /** *with `src/lexer.c` token for token — kind, span, and positions — on every */
 /** *`.loam` file in the repo. `loamc --dump-tokens` is the reference. */
-fn ig_selfhost_lex() {
-    mark("selfhost lexer")
+/** *A self-hosted compiler stage diffed against its C twin: `tool` (in */
+/** *packages/loam/compiler) and `loamc <flag>` dump every .loam file in the */
+/** *repo; stdout, stderr and the exit status must match byte for byte. */
+fn selfhost_diff(what: string, tool: string, flag: string, ok_msg: string) {
+    mark("selfhost {{what}}")
     // A private scratch dir per run: concurrent runs sharing fixed tmp paths
-    // rewrite each other's tokdump binary (SIGKILL) and dumps (cmp SIGBUS).
-    let tmpl = tmpf("selfhost_lex.XXXXXX")
+    // rewrite each other's binary (SIGKILL) and dumps (cmp SIGBUS).
+    let tmpl = tmpf("selfhost_{{tool}}.XXXXXX")
     let d = trim(sys.exec("mkdir -p {{shq(TMP)}} && mktemp -d {{shq(tmpl)}}"))
     if sys.exec_status() != 0 || d.len == 0 {
-        bad("selfhost lexer (mktemp)", d)
+        bad("selfhost {{what}} (mktemp)", d)
         return
     }
-    let exe = "{{d}}/tokdump"
-    let o = sys.exec("{{shq(LOAMC)}} {{shq(ROOT)}}/packages/loam/compiler/tokdump.loam -o {{shq(exe)}} 2>&1")
+    let exe = "{{d}}/{{tool}}"
+    let o = sys.exec("{{shq(LOAMC)}} {{shq(ROOT)}}/packages/loam/compiler/{{tool}}.loam -o {{shq(exe)}} 2>&1")
     if sys.exec_status() != 0 {
         sys.exec("rm -rf {{shq(d)}}")
-        bad("selfhost lexer (build tokdump)", o)
+        bad("selfhost {{what}} (build {{tool}})", o)
         return
     }
-    let a = "{{d}}/tok.c"
-    let b = "{{d}}/tok.loam"
+    let a = "{{d}}/out.c"
+    let b = "{{d}}/out.loam"
     let script = cat(
         "cd {{shq(ROOT)}} && n=0; bad=''; for f in $(find packages examples nob.loam -name '*.loam' ",
         cat("-not -path '*/tmp/*' -not -path '*/build/*' -not -path '*/node_modules/*'); do n=$((n+1)); ",
-            cat("{{shq(LOAMC)}} --dump-tokens \"$f\" > {{shq(a)}} 2>&1; {{shq(exe)}} \"$f\" > {{shq(b)}} 2>&1; ",
-                "cmp -s {{shq(a)}} {{shq(b)}} || bad=\"$bad $f\"; done; echo \"$n\"; [ -z \"$bad\" ] || { echo \"differ:$bad\"; exit 1; }")))
+            cat("{{shq(LOAMC)}} {{flag}} \"$f\" > {{shq(a)}} 2>&1; echo \"exit $?\" >> {{shq(a)}}; ",
+                cat("{{shq(exe)}} \"$f\" > {{shq(b)}} 2>&1; echo \"exit $?\" >> {{shq(b)}}; ",
+                    "cmp -s {{shq(a)}} {{shq(b)}} || bad=\"$bad $f\"; done; echo \"$n\"; [ -z \"$bad\" ] || { echo \"differ:$bad\"; exit 1; }"))))
     let r = sys.exec(script)
     let st = sys.exec_status()
     sys.exec("rm -rf {{shq(d)}}")
     if st != 0 {
-        bad("selfhost lexer (token streams differ)", r)
+        bad("selfhost {{what}} (dumps differ)", r)
         return
     }
-    ok("selfhost lexer matches lexer.c on {{trim(r)}} files")
+    ok("selfhost {{what}} matches {{ok_msg}} on {{trim(r)}} files")
+}
+
+fn ig_selfhost_lex() {
+    selfhost_diff("lexer", "tokdump", "--dump-tokens", "lexer.c")
+}
+
+/** *The parser: `astdump` against `loamc --dump-ast` (trees, diagnostics, and */
+/** *exit status), compile_fail files included. */
+fn ig_selfhost_parse() {
+    selfhost_diff("parser", "astdump", "--dump-ast", "parser.c")
 }
 
 /** *Floats on wasm: the wasm libc's exact `%g` / `strtod` match the host libc */
@@ -2757,6 +2771,8 @@ fn stanza_dispatch(name: string) -> bool {
         ig_wasm_float()
     } else if name == "selfhost_lex" {
         ig_selfhost_lex()
+    } else if name == "selfhost_parse" {
+        ig_selfhost_parse()
     } else if name == "suite_zeus" {
         ig_suite("zeus")
     } else if name == "suite_plain" {
@@ -2805,6 +2821,7 @@ fn stanza_names() -> []string {
     push(v, "api_freeze")
     push(v, "modules")
     push(v, "selfhost_lex")
+    push(v, "selfhost_parse")
     push(v, "wasm_float")
     return v
 }
@@ -2874,7 +2891,7 @@ fn integration() -> int {
 /** *app. The wasm module's entry points, the server/client split, and the */
 /** *language server all sit next to the compiler. */
 fn host_stanzas() -> []string {
-    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "api_freeze", "modules", "selfhost_lex", "wasm_float" }
+    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "api_freeze", "modules", "selfhost_lex", "selfhost_parse", "wasm_float" }
 }
 
 /** *One after another, for an `--isolated` run; a batched run pools them. */

@@ -1,0 +1,489 @@
+// astdump — parse a .loam file and print its tree in the format of
+// `loamc --dump-ast` (src/ast_dump.c has the format). Diagnostics go to
+// stderr as `file:line:col: error: msg`; after a parse error nothing is
+// printed and the exit status is 1. `nob integration selfhost_parse` diffs
+// the two over every .loam file in the repo.
+import "std:buf"
+import "std:conv"
+import "std:fmt"
+import "std:result"
+import "std:sys"
+import "lexer.loam"
+import "ast.loam"
+import "parser.loam"
+
+fn hex_digit(d: int) -> int {
+    if d < 10 {
+        return '0' + d
+    }
+    return 'a' + d - 10
+}
+
+fn put_str(b: &mut []u8, s: string) {
+    push(b, u8('"'))
+    for k in 0..s.len {
+        let c = s[k]
+        if c == '\\' {
+            buf.push_str(b, "\\\\")
+        } else if c == '"' {
+            buf.push_str(b, "\\\"")
+        } else if c == '\n' {
+            buf.push_str(b, "\\n")
+        } else if c == '\t' {
+            buf.push_str(b, "\\t")
+        } else if c == '\r' {
+            buf.push_str(b, "\\r")
+        } else if c < 32 || c == 127 {
+            buf.push_str(b, "\\x")
+            push(b, u8(hex_digit(c / 16)))
+            push(b, u8(hex_digit(c % 16)))
+        } else {
+            push(b, u8(c))
+        }
+    }
+    push(b, u8('"'))
+}
+
+fn attr_str(b: &mut []u8, key: string, has: bool, s: string) {
+    if !has {
+        return
+    }
+    push(b, u8(' '))
+    buf.push_str(b, key)
+    push(b, u8('='))
+    put_str(b, s)
+}
+
+fn attr_int(b: &mut []u8, key: string, v: int) {
+    push(b, u8(' '))
+    buf.push_str(b, key)
+    push(b, u8('='))
+    buf.push_int(b, v)
+}
+
+fn attr_flag(b: &mut []u8, key: string, on: bool) {
+    if on {
+        attr_int(b, key, 1)
+    }
+}
+
+fn indent(b: &mut []u8, depth: int) {
+    for i in 0..depth {
+        buf.push_str(b, "  ")
+    }
+}
+
+fn nl(b: &mut []u8) {
+    push(b, u8('\n'))
+}
+
+fn head(b: &mut []u8, depth: int, role: string, kind: string, l: Loc) {
+    indent(b, depth)
+    buf.push_str(b, role)
+    push(b, u8(' '))
+    buf.push_str(b, kind)
+    push(b, u8(' '))
+    buf.push_int(b, l.line)
+    push(b, u8(':'))
+    buf.push_int(b, l.col)
+    push(b, u8('-'))
+    buf.push_int(b, l.end_line)
+    push(b, u8(':'))
+    buf.push_int(b, l.end_col)
+}
+
+fn leaf_str(b: &mut []u8, depth: int, role: string, s: string) {
+    indent(b, depth)
+    buf.push_str(b, role)
+    push(b, u8(' '))
+    put_str(b, s)
+    nl(b)
+}
+
+fn kind_name(k: int) -> string {
+    switch k {
+        case Kind.Program:
+            return "Program"
+        case Kind.Import:
+            return "Import"
+        case Kind.Fn:
+            return "Fn"
+        case Kind.Struct:
+            return "Struct"
+        case Kind.Enum:
+            return "Enum"
+        case Kind.Var:
+            return "Var"
+        case Kind.Block:
+            return "Block"
+        case Kind.If:
+            return "If"
+        case Kind.For:
+            return "For"
+        case Kind.While:
+            return "While"
+        case Kind.Switch:
+            return "Switch"
+        case Kind.Case:
+            return "Case"
+        case Kind.Return:
+            return "Return"
+        case Kind.Break:
+            return "Break"
+        case Kind.Continue:
+            return "Continue"
+        case Kind.ExprStmt:
+            return "ExprStmt"
+        case Kind.Assign:
+            return "Assign"
+        case Kind.Binary:
+            return "Binary"
+        case Kind.Unary:
+            return "Unary"
+        case Kind.Cast:
+            return "Cast"
+        case Kind.Call:
+            return "Call"
+        case Kind.Index:
+            return "Index"
+        case Kind.Field:
+            return "Field"
+        case Kind.Ident:
+            return "Ident"
+        case Kind.Number:
+            return "Number"
+        case Kind.Float:
+            return "Float"
+        case Kind.String:
+            return "String"
+        case Kind.Bool:
+            return "Bool"
+        case Kind.StructLit:
+            return "StructLit"
+        case Kind.ArrayLit:
+            return "ArrayLit"
+        case Kind.Tuple:
+            return "Tuple"
+        case Kind.Deref:
+            return "Deref"
+        case Kind.Addr:
+            return "Addr"
+        case Kind.Type:
+            return "Type"
+        case Kind.Closure:
+            return "Closure"
+        case Kind.IncDec:
+            return "IncDec"
+        case Kind.Try:
+            return "Try"
+        default:
+            return "Error"
+    }
+}
+
+fn dump_list(b: &mut []u8, p: &Parser, xs: []int, depth: int, role: string) {
+    for i in 0..xs.len {
+        dump(b, p, xs[i], depth, role)
+    }
+}
+
+fn dump(b: &mut []u8, p: &Parser, i: int, depth: int, role: string) {
+    if i == ast.NONE {
+        indent(b, depth)
+        buf.push_str(b, role)
+        buf.push_str(b, " -\n")
+        return
+    }
+    let n = p.nodes[i]
+    let d = depth + 1
+    head(b, depth, role, kind_name(n.kind), n.loc)
+    if n.flags != 0 {
+        attr_int(b, "flags", n.flags)
+    }
+    attr_str(b, "doc", n.has_doc, n.doc)
+    switch n.kind {
+        case Kind.Program:
+            attr_str(b, "mod_doc", n.has_text, n.text)
+            nl(b)
+            for k in 0..n.kids.len {
+                let c = p.nodes[n.kids[k]]
+                if c.kind == Kind.CDir {
+                    head(b, d, "cdir", "CDir", c.loc)
+                    attr_int(b, "link", c.op)
+                    nl(b)
+                    for s in 0..c.strs.len {
+                        leaf_str(b, d + 1, "arg", c.strs[s])
+                    }
+                }
+            }
+            for k in 0..n.kids.len {
+                if p.nodes[n.kids[k]].kind == Kind.Import {
+                    dump(b, p, n.kids[k], d, "import")
+                }
+            }
+            for k in 0..n.kids.len {
+                let kk = p.nodes[n.kids[k]].kind
+                if kk != Kind.Import && kk != Kind.CDir {
+                    dump(b, p, n.kids[k], d, "decl")
+                }
+            }
+            break
+        case Kind.Import:
+            attr_str(b, "alias", n.has_name, n.name)
+            attr_str(b, "path", n.has_text, n.text)
+            nl(b)
+            for k in 0..n.kids.len {
+                let c = p.nodes[n.kids[k]]
+                indent(b, d)
+                buf.push_str(b, "name")
+                attr_str(b, "src", true, c.name)
+                attr_str(b, "local", true, c.text)
+                nl(b)
+            }
+            break
+        case Kind.Fn, Kind.Closure:
+            attr_str(b, "name", n.has_name, n.name)
+            attr_flag(b, "async", (n.op & 1) != 0)
+            attr_flag(b, "test", (n.op & 2) != 0)
+            attr_flag(b, "server", (n.op & 4) != 0)
+            attr_str(b, "c_sym", n.has_text, n.text)
+            nl(b)
+            for k in 0..n.strs.len {
+                leaf_str(b, d, "tparam", n.strs[k])
+            }
+            for k in 0..n.kids.len {
+                let c = p.nodes[n.kids[k]]
+                head(b, d, "param", "Param", c.loc)
+                attr_str(b, "name", true, c.name)
+                nl(b)
+                dump(b, p, c.a, d + 1, "type")
+                dump(b, p, c.b, d + 1, "def")
+            }
+            dump(b, p, n.a, d, "ret")
+            dump(b, p, n.b, d, "body")
+            break
+        case Kind.Struct:
+            attr_str(b, "name", n.has_name, n.name)
+            attr_flag(b, "proto", (n.op & 1) != 0)
+            attr_flag(b, "json", (n.op & 2) != 0)
+            attr_flag(b, "must_check", (n.op & 4) != 0)
+            attr_flag(b, "no_send", (n.op & 8) != 0)
+            nl(b)
+            for k in 0..n.strs.len {
+                leaf_str(b, d, "tparam", n.strs[k])
+            }
+            for k in 0..n.kids.len {
+                let c = p.nodes[n.kids[k]]
+                indent(b, d)
+                buf.push_str(b, "field")
+                attr_str(b, "name", true, c.name)
+                attr_str(b, "doc", c.has_doc, c.doc)
+                nl(b)
+                dump(b, p, c.a, d + 1, "type")
+                dump(b, p, c.b, d + 1, "def")
+            }
+            break
+        case Kind.Enum:
+            attr_str(b, "name", n.has_name, n.name)
+            nl(b)
+            for k in 0..n.kids.len {
+                let c = p.nodes[n.kids[k]]
+                indent(b, d)
+                buf.push_str(b, "variant")
+                attr_str(b, "name", true, c.name)
+                buf.push_str(b, " value=")
+                buf.push_i64(b, c.num)
+                nl(b)
+            }
+            break
+        case Kind.Var:
+            attr_str(b, "name", n.has_name, n.name)
+            attr_int(b, "mut", n.op)
+            nl(b)
+            dump(b, p, n.a, d, "type")
+            dump(b, p, n.b, d, "init")
+            break
+        case Kind.Block:
+            nl(b)
+            dump_list(b, p, n.kids, d, "stmt")
+            break
+        case Kind.If, Kind.While:
+            nl(b)
+            dump(b, p, n.a, d, "cond")
+            dump(b, p, n.b, d, "then")
+            dump(b, p, n.c, d, "else")
+            break
+        case Kind.For:
+            attr_str(b, "var", n.has_name, n.name)
+            nl(b)
+            dump(b, p, n.a, d, "iter")
+            dump(b, p, n.b, d, "body")
+            break
+        case Kind.Switch:
+            nl(b)
+            dump(b, p, n.a, d, "scrut")
+            dump_list(b, p, n.kids, d, "case")
+            break
+        case Kind.Case:
+            attr_int(b, "default", n.op)
+            nl(b)
+            dump_list(b, p, n.kids, d, "pat")
+            dump(b, p, n.a, d, "body")
+            break
+        case Kind.Return, Kind.ExprStmt, Kind.Try:
+            nl(b)
+            dump(b, p, n.a, d, "expr")
+            break
+        case Kind.Break, Kind.Continue:
+            nl(b)
+            break
+        case Kind.Assign, Kind.Binary:
+            buf.push_str(b, " op=")
+            buf.push_str(b, lexer.kind_name(n.op))
+            nl(b)
+            dump(b, p, n.a, d, "left")
+            dump(b, p, n.b, d, "right")
+            break
+        case Kind.Unary:
+            buf.push_str(b, " op=")
+            buf.push_str(b, lexer.kind_name(n.op))
+            nl(b)
+            dump(b, p, n.a, d, "operand")
+            break
+        case Kind.Cast:
+            nl(b)
+            dump(b, p, n.a, d, "expr")
+            dump(b, p, n.b, d, "type")
+            break
+        case Kind.Call:
+            nl(b)
+            dump(b, p, n.a, d, "callee")
+            dump_list(b, p, n.kids, d, "arg")
+            break
+        case Kind.Index:
+            nl(b)
+            dump(b, p, n.a, d, "target")
+            dump(b, p, n.b, d, "index")
+            break
+        case Kind.Field:
+            attr_str(b, "name", n.has_name, n.name)
+            attr_int(b, "colon", n.op)
+            nl(b)
+            dump(b, p, n.a, d, "target")
+            break
+        case Kind.Deref:
+            nl(b)
+            dump(b, p, n.a, d, "target")
+            break
+        case Kind.Addr:
+            attr_int(b, "mut", n.op)
+            nl(b)
+            dump(b, p, n.a, d, "target")
+            break
+        case Kind.Ident:
+            attr_str(b, "name", n.has_name, n.name)
+            nl(b)
+            break
+        case Kind.Number:
+            buf.push_str(b, " value=")
+            buf.push_i64(b, n.num)
+            nl(b)
+            break
+        case Kind.Float:
+            buf.push_str(b, " value=")
+            buf.push_str(b, conv.f64_to_str(n.fnum))
+            nl(b)
+            break
+        case Kind.String:
+            attr_str(b, "value", n.has_text, n.text)
+            nl(b)
+            break
+        case Kind.Bool:
+            attr_int(b, "value", n.op)
+            nl(b)
+            break
+        case Kind.StructLit:
+            attr_str(b, "name", n.has_name, n.name)
+            nl(b)
+            dump_list(b, p, n.kids2, d, "targ")
+            for k in 0..n.kids.len {
+                let c = p.nodes[n.kids[k]]
+                indent(b, d)
+                buf.push_str(b, "init")
+                attr_str(b, "name", true, c.name)
+                nl(b)
+                dump(b, p, c.a, d + 1, "value")
+            }
+            break
+        case Kind.ArrayLit:
+            buf.push_str(b, " len=")
+            buf.push_i64(b, n.num)
+            nl(b)
+            dump(b, p, n.a, d, "type")
+            dump_list(b, p, n.kids, d, "elem")
+            break
+        case Kind.Tuple:
+            nl(b)
+            dump_list(b, p, n.kids, d, "elem")
+            break
+        case Kind.Type:
+            attr_int(b, "tag", n.op)
+            attr_str(b, "name", n.has_name, n.name)
+            buf.push_str(b, " len=")
+            buf.push_i64(b, n.num)
+            nl(b)
+            dump(b, p, n.a, d, "elem")
+            dump_list(b, p, n.kids, d, "param")
+            dump_list(b, p, n.kids2, d, "targ")
+            break
+        case Kind.IncDec:
+            attr_int(b, "dec", n.op)
+            attr_int(b, "post", n.aux)
+            nl(b)
+            dump(b, p, n.a, d, "operand")
+            break
+        default:
+            nl(b)
+    }
+}
+
+fn main() {
+    if sys.argc() != 2 {
+        fmt.eprintln("usage: astdump file.loam")
+        sys.exit(2)
+    }
+    let path = sys.arg(1)
+    let r = sys.read(path)
+    if r.tag == ResultTag.Err {
+        fmt.eprintln("loam: cannot read", path)
+        sys.exit(1)
+    }
+    let mut p = parser.parser_new(r.val)
+    let root = parser.parse_program(&mut p)
+    let mut e = []u8 {}
+    for k in 0..p.diags.len {
+        let g = p.diags[k]
+        buf.push_str(&mut e, path)
+        push(e, u8(':'))
+        buf.push_int(&mut e, g.loc.line)
+        push(e, u8(':'))
+        buf.push_int(&mut e, g.loc.col)
+        buf.push_str(&mut e, ": error: ")
+        // C formats into a 1024-byte buffer.
+        if g.msg.len > 1023 {
+            buf.push_str(&mut e, parser.substr(g.msg, 0, 1023))
+        } else {
+            buf.push_str(&mut e, g.msg)
+        }
+        push(e, u8('\n'))
+    }
+    if e.len > 0 {
+        fmt.ewrite(buf.to_string(&e))
+    }
+    if p.had_error {
+        sys.exit(1)
+    }
+    let mut b = []u8 {}
+    dump(&mut b, &p, root, 0, "root")
+    fmt.write(buf.to_string(&b))
+}
