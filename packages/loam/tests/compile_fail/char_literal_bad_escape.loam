@@ -1,0 +1,4 @@
+// An unknown escape is an error.
+fn main() {
+    let x = '\q'
+}

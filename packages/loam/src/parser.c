@@ -200,9 +200,45 @@ static char *doc_join(char *a, char *b) {
 
 static char *tok_text(Token t) { return loam_dupn(t.start, (size_t)t.len); }
 
-/** A `TOK_NUMBER` lexeme: decimal, or `0x`/`0X` hex (e.g. a packed RGB color).
- * Never base 0 — that would read a bare leading-zero decimal as octal. */
+static int hex_digit(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+/** A character literal's byte value (`'a'`, `'\n'`, `'\x7f'`), or -1 when the
+ *  token is not exactly one byte between quotes. */
+static int char_lit_value(Token t) {
+    const char *s = t.start;
+    int n = t.len;
+    if (n < 3 || s[0] != '\'' || s[n - 1] != '\'') return -1;
+    if (s[1] != '\\') return n == 3 && (unsigned char)s[1] < 0x80 ? (unsigned char)s[1] : -1;
+    if (n == 4) {
+        switch (s[2]) {
+            case 'n': return '\n';
+            case 't': return '\t';
+            case 'r': return '\r';
+            case '0': return 0;
+            case '\\': return '\\';
+            case '\'': return '\'';
+            case '"': return '"';
+            default: return -1;
+        }
+    }
+    if (n == 6 && s[2] == 'x' && hex_digit(s[3]) >= 0 && hex_digit(s[4]) >= 0)
+        return hex_digit(s[3]) * 16 + hex_digit(s[4]);
+    return -1;
+}
+
+/** A `TOK_NUMBER` lexeme: decimal, `0x`/`0X` hex (e.g. a packed RGB color), or a
+ * character literal. Never base 0 — that would read a bare leading-zero
+ * decimal as octal. */
 static int64_t tok_int(Token t) {
+    if (t.len > 0 && t.start[0] == '\'') {
+        int v = char_lit_value(t);
+        return v < 0 ? 0 : v;
+    }
     /* Unsigned: 2^63 has to survive to reach the `-` in front of the i64
        minimum, and a u64 literal may use the top bit. strtoll saturates. The
        type checker rejects a wrapped value that no type can hold. */
@@ -695,6 +731,14 @@ static AstNode *parse_primary(Parser *p) {
         return ast_float(v, loc);
     }
     if (match(p, TOK_NUMBER)) {
+        if (p->previous.start[0] == '\'' && char_lit_value(p->previous) < 0) {
+            if (!p->had_error)
+                loam_error(loc, "bad character literal %.*s — one ASCII byte, or an escape "
+                                "\\n \\t \\r \\0 \\\\ \\' \\\" \\xHH",
+                           p->previous.len, p->previous.start);
+            p->had_error = 1;
+            return NULL;
+        }
         return num_node(p->previous, loc);
     }
     if (match(p, TOK_STRING)) {

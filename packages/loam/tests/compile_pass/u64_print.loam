@@ -1,0 +1,17 @@
+// A u64 prints and interpolates unsigned over its whole range, and a top-bit
+// literal converts with `u64(...)`.
+import "std:fmt"
+
+fn main() {
+    let max: u64 = 18446744073709551615
+    fmt.println(max)
+    let fnv: u64 = 0xcbf29ce484222325
+    fmt.println(fnv)
+    fmt.println(u64(18446744073709551615))
+    fmt.println("{{max}} {{fnv}}")
+    fmt.println(max / 2, max - 1)
+    let small: u32 = 4294967295
+    fmt.println(small, u64(small))
+    let zero: u64 = 0
+    fmt.println(zero, "{{zero}}")
+}

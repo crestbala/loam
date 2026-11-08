@@ -1,0 +1,22 @@
+// Character literals are untyped integer literals holding one byte.
+import "std:fmt"
+
+fn is_ident_start(c: int) -> bool {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'
+}
+
+fn main() {
+    fmt.println('a', '\n', '\t', '\r', '\\', '\'', '"', '\0', '\x7f', '\xff', ' ')
+    let s = "a\n\\'"
+    fmt.println(s[0] == 'a', s[1] == '\n', s[2] == '\\', s[3] == '\'')
+    let b: u8 = 'z'
+    fmt.println(b - 'a')
+    fmt.println(is_ident_start('Q'), is_ident_start('9'), is_ident_start('_'))
+    switch s[0] {
+        case 'a':
+            fmt.println("a")
+            break
+        default:
+            fmt.println("other")
+    }
+}

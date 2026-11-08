@@ -224,6 +224,19 @@ Token lexer_next(Lexer *l) {
         return make_token(l, is_float ? TOK_FLOAT : TOK_NUMBER, start, sl, sc);
     }
 
+    /* `'a'`, `'\n'`, `'\x7f'`: a byte value, lexed as a number whose lexeme
+       keeps its quotes; the parser decodes it and rejects a bad one. The scan
+       stops at the closing quote or the end of the line. */
+    if (c == '\'') {
+        advance(l, 1);
+        while (*l->pos && *l->pos != '\'' && *l->pos != '\n') {
+            if (*l->pos == '\\' && l->pos[1] && l->pos[1] != '\n') advance(l, 2);
+            else advance(l, 1);
+        }
+        if (*l->pos == '\'') advance(l, 1);
+        return make_token(l, TOK_NUMBER, start, sl, sc);
+    }
+
     if (c == '"') {
         advance(l, 1);
         while (*l->pos && *l->pos != '"') {

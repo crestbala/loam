@@ -1121,6 +1121,51 @@ static void reject_ref_field(SourceLoc loc, const char *sname, const char *fname
         sname, fname, type_name((Type *)ft));
 }
 
+/* A struct that holds itself inline (directly, through another struct, or
+   through `[N]T`) has no finite size. `[]T` and `Box<T>` are pointers, so a
+   cycle through them is fine. On a hit the closing field becomes `void`, so the
+   passes that walk fields after this one still terminate. */
+static const Type *inline_path[64];
+static int inline_depth;
+
+/* 0, or 1 + the path index of the struct the cycle under `t` returns to. */
+static int inline_cycle(Type *t, SourceLoc loc) {
+    Type *s = t;
+    while (s && s->kind == TY_ARRAY) s = s->elem;
+    if (!s || s->kind != TY_STRUCT) return 0;
+    for (int k = 0; k < inline_depth; k++)
+        if (inline_path[k] == s) return k + 1;
+    if (inline_depth >= 64) return 0;
+    int here = inline_depth;
+    inline_path[inline_depth++] = s;
+    int up = 0;
+    for (size_t i = 0; i < s->field_count && !up; i++) {
+        int c = inline_cycle(s->field_types[i], loc);
+        if (!c) continue;
+        if (c - 1 != here) {
+            up = c;
+            continue;
+        }
+        AstNode *sd = find_struct(s->name);
+        SourceLoc at = loc;
+        if (sd && i < sd->as.strct.field_count && sd->as.strct.fields[i].type)
+            at = sd->as.strct.fields[i].type->loc;
+        err(at,
+            "struct '%s' contains itself through field '%s' and would have infinite size — "
+            "hold it in a Box, a []T, or by index",
+            s->name, s->field_names[i]);
+        s->field_types[i] = ty_void();
+    }
+    inline_depth--;
+    return up;
+}
+
+static void check_struct_size(AstNode *st) {
+    if (!st->ty) return;
+    inline_depth = 0;
+    inline_cycle(st->ty, st->loc);
+}
+
 static Type *struct_type_of(AstNode *st) {
     if (st->ty) return st->ty;
     /* As in `fn_type_of`: field types mean what they mean where they are
@@ -1150,8 +1195,12 @@ static Type *struct_type_of(AstNode *st) {
         for (size_t i = 0; i < t->param_count; i++)
             t->params[i] = type_param(st->as.strct.tparams[i]);
     }
-    for (size_t i = 0; i < t->field_count; i++) {
+    /* Publish before resolving fields: `struct Node { kids: []Node }` reaches
+       this struct again through its own field types. */
+    st->ty = t;
+    for (size_t i = 0; i < t->field_count; i++)
         t->field_names[i] = loam_dup(st->as.strct.fields[i].name);
+    for (size_t i = 0; i < t->field_count; i++) {
         t->field_types[i] = resolve_type(st->as.strct.fields[i].type);
         /* `[]&T` / `Box<&T>` fields are already reported by resolve_type. */
         if (t->field_types[i] && t->field_types[i]->kind == TY_PTR) {
@@ -1160,7 +1209,6 @@ static Type *struct_type_of(AstNode *st) {
                              t->field_types[i]);
         }
     }
-    st->ty = t;
     cur_tparams = save_tp;
     cur_ntparams = save_n;
     Gcur = save_cur;
@@ -1202,6 +1250,18 @@ static Type *make_struct_inst(AstNode *st, Type **args, size_t n, const SourceLo
             if (!type_eq(ex->params[k], args[k])) same = 0;
         if (same) return ex;
     }
+    /* `List<T>` written inside `List`'s own fields is the template itself; its
+       field types may still be resolving. */
+    if (n && n == tmpl->param_count) {
+        int self = 1;
+        for (size_t k = 0; k < n; k++)
+            if (!args[k] || args[k]->kind != TY_PARAM || !type_eq(args[k], tmpl->params[k])) self = 0;
+        if (self) return tmpl;
+    }
+    if (nstruct_insts >= LOAM_MAX_STRUCT_INSTS) {
+        err(st->loc, "too many generic struct instantiations (max %d)", LOAM_MAX_STRUCT_INSTS);
+        return tmpl;
+    }
     Type *t = type_new(TY_STRUCT);
     t->name = loam_dup(st->as.strct.name);
     t->cname = tmpl->cname;
@@ -1215,8 +1275,11 @@ static Type *make_struct_inst(AstNode *st, Type **args, size_t n, const SourceLo
     t->field_count = tmpl->field_count;
     t->field_names = calloc(t->field_count, sizeof(char *));
     t->field_types = calloc(t->field_count, sizeof(Type *));
+    for (size_t i = 0; i < t->field_count; i++) t->field_names[i] = loam_dup(tmpl->field_names[i]);
+    /* Registered before its fields, which may name this same instance
+       (`next: Option<Box<List<int>>>` inside `List<int>`). */
+    struct_insts[nstruct_insts++] = t;
     for (size_t i = 0; i < t->field_count; i++) {
-        t->field_names[i] = loam_dup(tmpl->field_names[i]);
         t->field_types[i] = subst_type(tmpl->field_types[i], st->as.strct.tparams, args, n);
         /* `Holder<&int>`: the template was fine, the argument makes a field a
            reference. A field already rejected at the decl is not reported twice. */
@@ -1229,11 +1292,6 @@ static Type *make_struct_inst(AstNode *st, Type **args, size_t n, const SourceLo
                 note_boxed(ft->elem);
         }
     }
-    if (nstruct_insts >= LOAM_MAX_STRUCT_INSTS) {
-        err(st->loc, "too many generic struct instantiations (max %d)", LOAM_MAX_STRUCT_INSTS);
-        return t;
-    }
-    struct_insts[nstruct_insts++] = t;
     return t;
 }
 
@@ -2549,7 +2607,9 @@ static Type *check_call(AstNode *n, Type *expect) {
                     AstNode **a = (AstNode **)malloc(sizeof(AstNode *));
                     a[0] = part;
                     AstNode *w = ast_call(NULL, a, 1, part->loc);
-                    w->as.call.c_builtin = t->kind == TY_INT     ? "loam_str_of_int"
+                    w->as.call.c_builtin = t->kind == TY_INT && t->is_unsigned && t->bits == 64
+                                               ? "loam_str_of_u64"
+                                           : t->kind == TY_INT   ? "loam_str_of_int"
                                            : t->kind == TY_FLOAT ? "loam_str_of_float"
                                                                  : "loam_str_of_bool";
                     w->ty = ty_string();
@@ -2806,7 +2866,12 @@ static Type *check_call(AstNode *n, Type *expect) {
                     return ty_void();
                 }
                 AstNode *arg = n->as.call.args[0];
-                Type *at = check_expr(arg);
+                /* `u64(18446744073709551615)`: a literal that took the top bit
+                   fits only the target it is converted to, so check it there. */
+                Type *at = (arg->kind == AST_NUMBER && (arg->flags & ASTF_WRAPPED_LIT) && !mode &&
+                            ct->kind == TY_INT)
+                               ? check_expr_ty(arg, ct)
+                               : check_expr(arg);
                 if (!type_is_numeric(at) && at->kind != TY_BOOL)
                     err(arg->loc, "cannot convert %s to %s", type_name(at), type_name(ct));
                 if (mode && !type_is_int_kind(at))
@@ -5092,6 +5157,10 @@ int typecheck_modules(LoamModule *mods, int nmods) {
         for (size_t i = 0; i < p->as.program.decl_count; i++) {
             AstNode *d = p->as.program.decls[i];
             if (d->kind == AST_STRUCT_DECL) struct_type_of(d);
+        }
+        for (size_t i = 0; i < p->as.program.decl_count; i++) {
+            AstNode *d = p->as.program.decls[i];
+            if (d->kind == AST_STRUCT_DECL) check_struct_size(d);
         }
         check_duplicate_decls(p);
         inject_proto_codecs(p);

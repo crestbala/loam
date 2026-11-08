@@ -1,0 +1,7 @@
+// A struct holding itself by value has no finite size.
+struct A {
+    x: int,
+    a: A,
+}
+
+fn main() {}

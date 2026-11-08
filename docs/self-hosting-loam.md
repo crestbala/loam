@@ -91,7 +91,8 @@ for the 100% self-hosted claim. They are valuable extensions that can land
 after the fixed point. Under the essentialist rule they stay out of the
 critical path.
 
-**Current status**: Not self-hosted. The items in §1 are still open.
+**Current status**: Not self-hosted. Phase 1 (§1.1, §1.4, the §1.3 `u64`
+bugs) is done; the rest of §1 is open.
 
 ---
 
@@ -110,14 +111,20 @@ A compiler is trees all the way down: `Expr` holds `Expr`s, `Type` holds
 
 Needed:
 
-- [ ] `[]T` field inside `T` (directly and through another struct).
-- [ ] `Box<T>` field inside `T`, plus an "empty" box: a recursive `Box` must be
-      able to end. Either `Option<Box<T>>` working as a field, or a nullable
-      box form.
-- [ ] Copy/drop/size analysis that terminates on cycles (the hang is almost
-      certainly a recursive walk over field types with no visited set).
-- [ ] Generated C that forward-declares the struct before the vector/box type
-      that refers to it.
+- [x] `[]T` field inside `T` (directly and through another struct).
+- [x] `Box<T>` field inside `T`, plus an "empty" box: a recursive `Box` must be
+      able to end. `Option<Box<T>>` works as a field; bare `none` needs no
+      placeholder payload.
+- [x] Copy/drop/size analysis that terminates on cycles. The hang was
+      `struct_type_of` / `make_struct_inst` publishing a type only after its
+      fields resolved; both now publish first, `type_is_copy` keeps a visited
+      set, and a struct that holds itself *inline* (by value or through
+      `[N]T`) is rejected as infinite-size before any later walk sees it.
+- [x] Generated C that forward-declares every struct typedef before any
+      definition.
+
+Tests: `compile_pass/recursive_types.loam`,
+`compile_fail/struct_infinite_size*.loam`.
 
 Workaround if this slips: an **arena of flat structs** addressed by `int`
 indices (`[]Expr` in one pool, children as `[]int`). That is how a fast
@@ -165,7 +172,9 @@ Needed:
 - [ ] Float formatting/parsing. Exact shortest round-trip is real work
       (Ryu/Grisu or `strtod` correctness); acceptable first step is a C hook
       in `loam_rt` over `snprintf("%.17g")` / `strtod`.
-- [ ] Fix unsigned printing and the `u64(<max>)` literal-in-conversion case.
+- [x] Fix unsigned printing and the `u64(<max>)` literal-in-conversion case
+      (`println` and `{{x}}` print a `u64` unsigned; a same-type integer
+      conversion is a plain copy). Test: `compile_pass/u64_print.loam`.
 
 ### 1.4 Character literals
 
@@ -173,8 +182,10 @@ Needed:
 lexer is hundreds of byte comparisons; writing `c == 97` instead of
 `c == 'a'` makes the self-hosted lexer unreadable and error-prone.
 
-- [ ] `'a'`, `'\n'`, `'\\'`, `'\''`, `'\x7f'` as an untyped integer literal
-      (byte value; a `u8` in `u8` context). No `char` type needed.
+- [x] `'a'`, `'\n'`, `'\\'`, `'\''`, `'\x7f'` as an untyped integer literal
+      (byte value; a `u8` in `u8` context). No `char` type needed. Also in
+      `loam-fmt`, the tree-sitter grammar, and the VS Code highlighter.
+      Tests: `compile_pass/char_literals.loam`, `compile_fail/char_literal_*`.
 
 ### 1.5 Process and file-system APIs the driver needs
 
@@ -472,9 +483,9 @@ unblocks the next item; do not add language features or library surface
 beyond what the checklist requires.
 
 ### Language & std fixes (must land first)
-- [ ] Recursive types work without crash or hang (§1.1)
-- [ ] Character literals `'a'`, `'\n'`, etc. (§1.4)
-- [ ] Correct `u64` printing and literal parsing (§1.3)
+- [x] Recursive types work without crash or hang (§1.1)
+- [x] Character literals `'a'`, `'\n'`, etc. (§1.4)
+- [x] Correct `u64` printing and literal parsing (§1.3)
 - [ ] String builder with O(1) append + write-bytes-to-file (§1.2)
 - [ ] `int`/`u64`/`float` ↔ string conversion in std (§1.3)
 - [ ] `fmt.eprintln` / stderr (§1.5)
