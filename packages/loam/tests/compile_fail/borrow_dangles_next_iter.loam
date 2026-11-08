@@ -1,0 +1,12 @@
+import "std:fmt"
+
+// The second iteration reads `p` before it is aimed at the new `x`.
+fn main() {
+    let z = 0
+    let mut p = &z
+    for i in 0..3 {
+        fmt.println(*p)
+        let x = i
+        p = &x
+    }
+}

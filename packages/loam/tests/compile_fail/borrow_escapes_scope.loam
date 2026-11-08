@@ -1,0 +1,11 @@
+import "std:fmt"
+
+fn main() {
+    let z = 0
+    let mut p = &z
+    if true {
+        let x = 9
+        p = &x
+    }
+    fmt.println(*p)
+}

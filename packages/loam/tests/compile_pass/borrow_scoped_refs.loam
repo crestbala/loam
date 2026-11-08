@@ -1,0 +1,31 @@
+import "std:fmt"
+
+// Caller data may be stored through `*pp`: it outlives the call.
+fn aim(pp: &mut &int, src: &int) {
+    *pp = src
+}
+
+// A reference may point into an inner scope as long as it is not read after
+// that scope ends, and reassigning it revives it.
+fn main() {
+    let z = 1
+    let mut p = &z
+    if true {
+        let x = 2
+        p = &x
+        fmt.println(*p)
+    }
+    let w = 3
+    p = &w
+    fmt.println(*p)
+    for i in 0..2 {
+        let y = i + 10
+        p = &y
+        fmt.println(*p)
+    }
+    p = &z
+    fmt.println(*p)
+    let v = 4
+    aim(&mut p, &v)
+    fmt.println(*p)
+}
