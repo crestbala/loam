@@ -355,6 +355,332 @@ int printf(const char *fmt, ...) {
     return 0;
 }
 
+
+/* --- exact float <-> decimal (BEGIN wasm-float) --------------------------
+   The wasm build has no libc of its own, so `%g` and `strtod` live here, and
+   they give the same answers as a native libc: digits are computed from the
+   double's exact value with a small base-1e9 bignum, then rounded half-even,
+   and parsing picks the nearest double by comparing against the exact
+   midpoints. Slow next to Ryu, but exact, short, and only on this path. */
+
+#define WF_LIMBS 320 /* 1e9^320: past 5^1100 * 10^800, the largest product */
+
+typedef struct {
+    uint32_t d[WF_LIMBS]; /* little-endian, base 1e9 */
+    int n;
+} wf_big;
+
+static void wf_set_u64(wf_big *b, uint64_t v) {
+    b->n = 0;
+    while (v) {
+        b->d[b->n++] = (uint32_t)(v % 1000000000u);
+        v /= 1000000000u;
+    }
+}
+
+static void wf_mul_small(wf_big *b, uint32_t f) {
+    uint64_t carry = 0;
+    for (int i = 0; i < b->n; i++) {
+        uint64_t t = (uint64_t)b->d[i] * f + carry;
+        b->d[i] = (uint32_t)(t % 1000000000u);
+        carry = t / 1000000000u;
+    }
+    while (carry && b->n < WF_LIMBS) {
+        b->d[b->n++] = (uint32_t)(carry % 1000000000u);
+        carry /= 1000000000u;
+    }
+}
+
+static void wf_mul_pow(wf_big *b, uint32_t base, int k) {
+    /* 5^13 and 2^29 are the largest powers below 2^31. */
+    uint32_t step = base == 5 ? 1220703125u : 536870912u;
+    int chunk = base == 5 ? 13 : 29;
+    while (k >= chunk) {
+        wf_mul_small(b, step);
+        k -= chunk;
+    }
+    uint32_t r = 1;
+    while (k-- > 0) r *= base;
+    if (r != 1) wf_mul_small(b, r);
+}
+
+static void wf_add_small(wf_big *b, uint32_t v) {
+    uint64_t carry = v;
+    for (int i = 0; carry && i < WF_LIMBS; i++) {
+        if (i == b->n) b->d[b->n++] = 0;
+        uint64_t t = (uint64_t)b->d[i] + carry;
+        b->d[i] = (uint32_t)(t % 1000000000u);
+        carry = t / 1000000000u;
+    }
+}
+
+static int wf_cmp(const wf_big *a, const wf_big *b) {
+    if (a->n != b->n) return a->n < b->n ? -1 : 1;
+    for (int i = a->n - 1; i >= 0; i--)
+        if (a->d[i] != b->d[i]) return a->d[i] < b->d[i] ? -1 : 1;
+    return 0;
+}
+
+/* Decimal digits of b into out (no leading zeros); returns the count. */
+static int wf_digits(const wf_big *b, char *out) {
+    int o = 0;
+    if (b->n == 0) {
+        out[0] = '0';
+        return 1;
+    }
+    char tmp[10];
+    uint32_t top = b->d[b->n - 1];
+    int t = 0;
+    do {
+        tmp[t++] = (char)('0' + top % 10);
+        top /= 10;
+    } while (top);
+    while (t) out[o++] = tmp[--t];
+    for (int i = b->n - 2; i >= 0; i--) {
+        uint32_t v = b->d[i];
+        for (int k = 8; k >= 0; k--) {
+            out[o + k] = (char)('0' + v % 10);
+            v /= 10;
+        }
+        o += 9;
+    }
+    return o;
+}
+
+static uint64_t wf_bits(double v) {
+    uint64_t u;
+    memcpy(&u, &v, 8);
+    return u;
+}
+
+static double wf_from_bits(uint64_t u) {
+    double v;
+    memcpy(&v, &u, 8);
+    return v;
+}
+
+/* `%.<prec>g` of v into out (at least 40 bytes); returns the length. */
+static int wf_fmt_g(double v, int prec, char *out) {
+    static char dig[1200];
+    wf_big n;
+    uint64_t u = wf_bits(v);
+    int o = 0, ex = (int)((u >> 52) & 0x7ff);
+    uint64_t frac = u & ((1ull << 52) - 1);
+    if (prec <= 0) prec = 1;
+    if (prec > 17) prec = 17;
+    if (u >> 63) out[o++] = '-';
+    if (ex == 0x7ff) {
+        memcpy(out + o, frac ? "nan" : "inf", 3);
+        return o + 3;
+    }
+    if (ex == 0 && frac == 0) {
+        out[o++] = '0';
+        return o;
+    }
+    uint64_t m = ex ? frac | (1ull << 52) : frac;
+    int e = ex ? ex - 1075 : -1074, k = 0;
+    wf_set_u64(&n, m);
+    if (e >= 0) wf_mul_pow(&n, 2, e);
+    else {
+        wf_mul_pow(&n, 5, -e);
+        k = -e; /* value = n / 10^k */
+    }
+    int len = wf_digits(&n, dig);
+    int x = len - 1 - k; /* decimal exponent of the first digit */
+    if (len > prec) {
+        int up = 0, d = dig[prec] - '0';
+        if (d > 5) up = 1;
+        else if (d == 5) {
+            int rest = 0;
+            for (int i = prec + 1; i < len; i++)
+                if (dig[i] != '0') rest = 1;
+            up = rest || ((dig[prec - 1] - '0') & 1);
+        }
+        len = prec;
+        if (up) {
+            int i = prec - 1;
+            while (i >= 0 && dig[i] == '9') dig[i--] = '0';
+            if (i >= 0) dig[i]++;
+            else {
+                dig[0] = '1';
+                for (int j = 1; j < prec; j++) dig[j] = '0';
+                x++;
+            }
+        }
+    }
+    while (len > 1 && dig[len - 1] == '0') len--;
+    if (x < -4 || x >= prec) {
+        out[o++] = dig[0];
+        if (len > 1) {
+            out[o++] = '.';
+            for (int i = 1; i < len; i++) out[o++] = dig[i];
+        }
+        out[o++] = 'e';
+        out[o++] = x < 0 ? '-' : '+';
+        int ax = x < 0 ? -x : x;
+        if (ax >= 100) out[o++] = (char)('0' + ax / 100);
+        out[o++] = (char)('0' + ax / 10 % 10);
+        out[o++] = (char)('0' + ax % 10);
+    } else if (x >= 0) {
+        for (int i = 0; i <= x; i++) out[o++] = i < len ? dig[i] : '0';
+        if (len > x + 1) {
+            out[o++] = '.';
+            for (int i = x + 1; i < len; i++) out[o++] = dig[i];
+        }
+    } else {
+        out[o++] = '0';
+        out[o++] = '.';
+        for (int i = 0; i < -x - 1; i++) out[o++] = '0';
+        for (int i = 0; i < len; i++) out[o++] = dig[i];
+    }
+    return o;
+}
+
+/* Compare D * 10^E (sticky: plus a little) with c * 2^f. */
+static int wf_cmp_dec_bin(const char *dig, int nd, int E, int sticky, uint64_t c, int f) {
+    static wf_big l, r;
+    l.n = 0;
+    for (int i = 0; i < nd; i += 9) {
+        int take = nd - i < 9 ? nd - i : 9;
+        uint32_t part = 0, scale = 1;
+        for (int k = 0; k < take; k++) {
+            part = part * 10 + (uint32_t)(dig[i + k] - '0');
+            scale *= 10;
+        }
+        wf_mul_small(&l, scale);
+        wf_add_small(&l, part);
+    }
+    wf_set_u64(&r, c);
+    int a2 = E - f;
+    if (a2 >= 0) wf_mul_pow(&l, 2, a2);
+    else wf_mul_pow(&r, 2, -a2);
+    if (E >= 0) wf_mul_pow(&l, 5, E);
+    else wf_mul_pow(&r, 5, -E);
+    int cmp = wf_cmp(&l, &r);
+    return cmp == 0 && sticky ? 1 : cmp;
+}
+
+static int wf_lower(int c) { return c >= 'A' && c <= 'Z' ? c + 32 : c; }
+
+static int wf_word(const char *p, const char *w) {
+    while (*w)
+        if (wf_lower(*p++) != *w++) return 0;
+    return 1;
+}
+
+double strtod(const char *s, char **end) {
+    static char dig[800];
+    const char *p = s;
+    int neg = 0, nd = 0, sticky = 0, any = 0;
+    long E = 0;
+    while (*p == ' ' || (*p >= 9 && *p <= 13)) p++;
+    if (*p == '-' || *p == '+') neg = *p++ == '-';
+    if (wf_word(p, "inf")) {
+        p += wf_word(p, "infinity") ? 8 : 3;
+        if (end) *end = (char *)p;
+        return neg ? -__builtin_inf() : __builtin_inf();
+    }
+    if (wf_word(p, "nan")) {
+        if (end) *end = (char *)(p + 3);
+        return __builtin_nan("");
+    }
+    for (; *p >= '0' && *p <= '9'; p++) {
+        any = 1;
+        if (nd == 0 && *p == '0') continue;
+        if (nd < (int)sizeof dig) dig[nd++] = *p;
+        else {
+            E++;
+            if (*p != '0') sticky = 1;
+        }
+    }
+    if (*p == '.') {
+        p++;
+        for (; *p >= '0' && *p <= '9'; p++) {
+            any = 1;
+            if (nd == 0 && *p == '0') {
+                E--;
+                continue;
+            }
+            if (nd < (int)sizeof dig) {
+                dig[nd++] = *p;
+                E--;
+            } else if (*p != '0') sticky = 1;
+        }
+    }
+    if (!any) {
+        if (end) *end = (char *)s;
+        return 0.0;
+    }
+    if (*p == 'e' || *p == 'E') {
+        const char *q = p + 1;
+        int eneg = 0;
+        long x = 0;
+        if (*q == '-' || *q == '+') eneg = *q++ == '-';
+        if (*q >= '0' && *q <= '9') {
+            for (; *q >= '0' && *q <= '9'; q++)
+                if (x < 100000) x = x * 10 + (*q - '0');
+            E += eneg ? -x : x;
+            p = q;
+        }
+    }
+    if (end) *end = (char *)p;
+    while (nd > 0 && dig[nd - 1] == '0') {
+        nd--;
+        E++;
+    }
+    double zero = neg ? -0.0 : 0.0;
+    if (nd == 0) return zero;
+    if (nd + E > 310) return neg ? -__builtin_inf() : __builtin_inf();
+    if (nd + E < -326) return zero;
+    /* A first guess from up to 19 digits, then walk to the nearest double. */
+    uint64_t lead = 0;
+    int nl = nd < 19 ? nd : 19;
+    for (int i = 0; i < nl; i++) lead = lead * 10 + (uint64_t)(dig[i] - '0');
+    double a = (double)lead;
+    long sc = E + (nd - nl);
+    while (sc > 0) {
+        int st = sc > 22 ? 22 : (int)sc;
+        double pw = 1.0;
+        for (int i = 0; i < st; i++) pw *= 10.0;
+        a *= pw;
+        sc -= st;
+    }
+    while (sc < 0) {
+        int st = -sc > 22 ? 22 : (int)-sc;
+        double pw = 1.0;
+        for (int i = 0; i < st; i++) pw *= 10.0;
+        a /= pw;
+        sc += st;
+    }
+    uint64_t u = wf_bits(a) & ~(1ull << 63);
+    if (u >= 0x7ff0000000000000ull) u = 0x7fefffffffffffffull;
+    for (int iter = 0; iter < 4096; iter++) {
+        int ex = (int)(u >> 52);
+        uint64_t m = (u & ((1ull << 52) - 1)) | (ex ? 1ull << 52 : 0);
+        int e = ex ? ex - 1075 : -1074;
+        /* Upper midpoint (2m+1) * 2^(e-1). */
+        int cu = wf_cmp_dec_bin(dig, nd, (int)E, sticky, 2 * m + 1, e - 1);
+        if (cu > 0 || (cu == 0 && (m & 1))) {
+            if (u == 0x7fefffffffffffffull) return neg ? -__builtin_inf() : __builtin_inf();
+            u++;
+            continue;
+        }
+        if (u == 0) break;
+        /* Lower midpoint: half the gap below, which is narrower at a power of two. */
+        int cl = (m == (1ull << 52) && ex > 1)
+                     ? wf_cmp_dec_bin(dig, nd, (int)E, sticky, 4 * m - 1, e - 2)
+                     : wf_cmp_dec_bin(dig, nd, (int)E, sticky, 2 * m - 1, e - 1);
+        if (cl < 0 || (cl == 0 && (m & 1))) {
+            u--;
+            continue;
+        }
+        break;
+    }
+    double r = wf_from_bits(u);
+    return neg ? -r : r;
+}
+/* --- (END wasm-float) ---------------------------------------------------- */
+
 int snprintf(char *buf, size_t n, const char *fmt, ...) {
     va_list ap;
     size_t o = 0;
@@ -413,13 +739,29 @@ int snprintf(char *buf, size_t n, const char *fmt, ...) {
                 if (neg && o + 1 < n) buf[o++] = '-';
                 while (ti && o + 1 < n) buf[o++] = tmp[--ti];
             }
-        } else if (*p == '.' && p[1] == '*' && p[2] == 's') {
-            int ln = va_arg(ap, int);
-            const char *s = va_arg(ap, const char *);
-            int i;
-            p += 2;
-            if (!s) s = "";
-            for (i = 0; i < ln && s[i] && o + 1 < n; i++) buf[o++] = s[i];
+        } else if (*p == 'g' || (*p == '.' && (p[1] == '*' || (p[1] >= '0' && p[1] <= '9')))) {
+            /* `%g`, `%.Ng`, `%.*g` (exact, see wasm-float above); `%.*s`. */
+            int prec = 6;
+            if (*p == '.') {
+                p++;
+                if (*p == '*') {
+                    prec = va_arg(ap, int);
+                    p++;
+                } else {
+                    prec = 0;
+                    while (*p >= '0' && *p <= '9') prec = prec * 10 + (*p++ - '0');
+                }
+            }
+            if (*p == 's') {
+                const char *s = va_arg(ap, const char *);
+                int i;
+                if (!s) s = "";
+                for (i = 0; i < prec && s[i] && o + 1 < n; i++) buf[o++] = s[i];
+            } else if (*p == 'g') {
+                char tmp[48];
+                int tl = wf_fmt_g(va_arg(ap, double), prec, tmp), i;
+                for (i = 0; i < tl && o + 1 < n; i++) buf[o++] = tmp[i];
+            }
         }
     }
     va_end(ap);

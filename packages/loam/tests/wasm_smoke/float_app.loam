@@ -1,0 +1,16 @@
+// Floats print and parse the same on wasm as natively: the wasm libc's `%g`
+// and `strtod` are exact (zeus_wasm_libc.c, wasm-float). Run both ways by
+// `nob`'s wasm_float stanza, which requires identical output.
+import "std:conv"
+import "std:fmt"
+import "std:result"
+
+fn main() {
+    let x = f64(0.1) + f64(0.2)
+    fmt.println(x, conv.f64_to_str(x), conv.f64_to_str(f64(1.0) / f64(3.0)))
+    let tiny = conv.parse_f64("2.4703282292062328e-324")
+    let big = conv.parse_f64("1.7976931348623157e308")
+    let half = conv.parse_f64("0.1000000000000000055511151231257827021181583404541015625")
+    fmt.println(conv.f64_to_str(tiny.val), conv.f64_to_str(big.val), conv.f64_to_str(half.val))
+    fmt.println("{{x}}", f32(2.5), f64(1e-7), f64(123456789.0) * f64(1e10))
+}

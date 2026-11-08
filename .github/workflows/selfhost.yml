@@ -1,0 +1,85 @@
+# Self-hosting platform check (docs/self-hosting-loam.md §1.6, §3): the suite on
+# Linux x86_64 and aarch64, and the non-GUI fixtures built and *run* natively on
+# Windows x86_64.
+#
+# Runs on pull requests whose branch is feat/self-hosting (any other PR skips it
+# without starting a runner) and by hand. Standard GitHub-hosted runners are free
+# for public repositories.
+#
+# `loamc` does not run on Windows yet (the C seed's driver is POSIX; Windows will
+# bootstrap from the Loam compiler's committed C), so the Linux job emits each
+# fixture's C with tools/win-bundle.sh and the Windows job builds and runs it
+# with MinGW-w64 gcc (tools/win-run.sh). See docs/platforms.md.
+
+name: selfhost
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: selfhost-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'feat/self-hosting'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libx11-dev pkg-config
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Build the seed compiler and tools
+        run: ./nob.sh
+
+      - name: Test suite
+        run: ./nob.sh test
+
+      - name: Bundle fixtures for Windows
+        if: matrix.os == 'ubuntu-24.04'
+        run: tools/win-bundle.sh out/win-bundle
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.os == 'ubuntu-24.04'
+        with:
+          name: win-bundle
+          path: out/win-bundle
+          retention-days: 3
+
+  windows:
+    needs: linux
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: mingw-w64-x86_64-gcc diffutils
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: win-bundle
+          path: win-bundle
+
+      - name: Build and run the fixtures natively
+        run: bash tools/win-run.sh win-bundle

@@ -714,6 +714,9 @@ fn case_body(j: Job, id: string) -> string {
 /** *The shell a case runs. Every branch sets `st` to 0 or 1; `pool` writes it to */
 /** *the status file and the case exits with it. Output goes to `$RES/<id>.log`. */
 fn body(j: Job, id: string) -> string {
+    if j.kind == "run" && j.want != "" {
+        return "if ! {{build_of(j, id)}}; then\n  echo \"FAIL compile {{j.desc}}\"\n  cat \"$RES/{{id}}.build\"\n  st=1\nelif ! {{exe_of(j)}} >\"$RES/{{id}}.out\" 2>/dev/null; then\n  echo \"FAIL run {{j.desc}}\"\n  st=1\nelif ! diff -u {{shq(j.want)}} \"$RES/{{id}}.out\" >\"$RES/{{id}}.diff\" 2>&1; then\n  echo \"FAIL output {{j.desc}} (differs from .expected)\"\n  cat \"$RES/{{id}}.diff\"\n  st=1\nelse\n  echo \"ok   {{j.desc}}\"\n  st=0\nfi\n"
+    }
     if j.kind == "run" {
         return "if {{build_of(j, id)}}; then\n  if {{exe_of(j)}} >/dev/null 2>&1; then\n    echo \"ok   {{j.desc}}\"\n    st=0\n  else\n    echo \"FAIL run {{j.desc}}\"\n    st=1\n  fi\nelse\n  echo \"FAIL compile {{j.desc}}\"\n  cat \"$RES/{{id}}.build\"\n  st=1\nfi\n"
     }
@@ -858,7 +861,13 @@ fn pass_jobs() -> []Job {
     let fs = pass_files()
     for i in 0..fs.len {
         if job_kept(fs[i]) != 0 {
-            push(out, run_job(fs[i], "{{TMP}}/{{stem_of(fs[i])}}"))
+            let mut j = run_job(fs[i], "{{TMP}}/{{stem_of(fs[i])}}")
+            // `<name>.expected` beside a fixture is its stdout, byte for byte.
+            let want = "{{drop_last(fs[i], 5)}}.expected"
+            if sys.exists(want) != 0 {
+                j.want = want
+            }
+            push(out, j)
         }
     }
     return out
@@ -2538,6 +2547,36 @@ fn ig_selfhost_lex() {
     ok("selfhost lexer matches lexer.c on {{trim(r)}} files")
 }
 
+/** *Floats on wasm: the wasm libc's exact `%g` / `strtod` match the host libc */
+/** *(float_diff.c over the wasm-float block), and a program printing and parsing */
+/** *floats writes the same bytes as a wasm module as it does natively. */
+fn ig_wasm_float() {
+    mark("wasm float")
+    let dir = "{{ROOT}}/packages/loam/tests/wasm_smoke"
+    let blk = tmpf("wasm_float_block.h")
+    let diff = tmpf("float_diff")
+    let o = sys.exec("sed -n '/BEGIN wasm-float/,/END wasm-float/p' {{shq(ROOT)}}/packages/loam/runtime/zeus_wasm_libc.c > {{shq(blk)}} && cc -O2 -w -DWASM_FLOAT_BLOCK='\"{{blk}}\"' {{shq(dir)}}/float_diff.c -o {{shq(diff)}} -lm 2>&1 && {{shq(diff)}} 20000 2>&1")
+    if sys.exec_status() != 0 {
+        bad("wasm float (exact %g / strtod vs host libc)", o)
+        return
+    }
+    let nat = tmpf("float_app")
+    let wasm = tmpf("float_app.wasm")
+    let deno = tmpf("deno_float")
+    let b = sys.exec("{{shq(LOAMC)}} {{shq(dir)}}/float_app.loam -o {{shq(nat)}} 2>&1 && {{shq(LOAMC)}} --target=wasm32 {{shq(dir)}}/float_app.loam -o {{shq(wasm)}} 2>&1")
+    if sys.exec_status() != 0 {
+        bad("wasm float (build)", b)
+        return
+    }
+    let want = sys.exec(shq(nat))
+    let got = sys.exec("DENO_DIR={{shq(deno)}} deno run --quiet --allow-read {{shq(dir)}}/run_plain.ts {{shq(wasm)}} 2>&1")
+    if sys.exec_status() != 0 || got != want {
+        bad("wasm float (wasm output differs from native)", "native:\n{{want}}\nwasm:\n{{got}}")
+        return
+    }
+    ok("wasm float (exact %g / strtod; {{trim(o)}}; wasm prints what native prints)")
+}
+
 fn ig_modules() {
     mark("modules")
     let tests = "{{ROOT}}/packages/loam/tests"
@@ -2681,6 +2720,8 @@ fn stanza_dispatch(name: string) -> bool {
         ig_api_freeze()
     } else if name == "modules" {
         ig_modules()
+    } else if name == "wasm_float" {
+        ig_wasm_float()
     } else if name == "selfhost_lex" {
         ig_selfhost_lex()
     } else if name == "suite_zeus" {
@@ -2731,6 +2772,7 @@ fn stanza_names() -> []string {
     push(v, "api_freeze")
     push(v, "modules")
     push(v, "selfhost_lex")
+    push(v, "wasm_float")
     return v
 }
 
@@ -2799,7 +2841,7 @@ fn integration() -> int {
 /** *app. The wasm module's entry points, the server/client split, and the */
 /** *language server all sit next to the compiler. */
 fn host_stanzas() -> []string {
-    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "api_freeze", "modules", "selfhost_lex" }
+    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "api_freeze", "modules", "selfhost_lex", "wasm_float" }
 }
 
 /** *One after another, for an `--isolated` run; a batched run pools them. */
