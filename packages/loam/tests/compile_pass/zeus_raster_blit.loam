@@ -29,6 +29,8 @@ fn main() {
     zeusraster.raster_clear(10, 20, 30)
 
     // --- PPM dump: header + w*h*3 bytes, channels in R,G,B order -----------
+    // `out/` is git-ignored, so a fresh checkout does not have it.
+    sys.mkdir("out")
     let path = "out/raster_dump_test.ppm"
     must(zeusraster.raster_dump_ppm(path) == 0, "dump wrote the file")
     let s = sys.read_file(path)
