@@ -1,0 +1,11 @@
+import "std:fmt"
+
+// `b` copies `a`, so `v` stays borrowed after `a`'s last use.
+fn main() {
+    let mut v = []int {}
+    v.push(1)
+    let a = &v[0]
+    let b = a
+    v.push(2)
+    fmt.println(*b)
+}

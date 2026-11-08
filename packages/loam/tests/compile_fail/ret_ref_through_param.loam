@@ -1,0 +1,13 @@
+fn first(xs: &[]int) -> &int {
+    return &xs[0]
+}
+
+// `p` points into `*xs`; pushing through `xs` while `p` lives would move it.
+fn bad(xs: &mut []int) -> int {
+    let p = first(xs)
+    xs.push(5)
+    return *p
+}
+
+fn main() {
+}

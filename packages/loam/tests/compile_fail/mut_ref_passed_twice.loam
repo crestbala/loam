@@ -1,0 +1,10 @@
+fn two(a: &mut int, b: &mut int) {
+}
+
+// Two `&mut` to one place in one call.
+fn bad(m: &mut int) {
+    two(m, m)
+}
+
+fn main() {
+}

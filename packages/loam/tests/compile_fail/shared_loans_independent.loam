@@ -1,0 +1,12 @@
+import "std:fmt"
+
+// Two shared borrows of `v`: the first ending must not end the second.
+fn main() {
+    let mut v = []int {}
+    v.push(1)
+    let a = &v
+    let b = &v
+    fmt.println(a.len)
+    v.push(2)
+    fmt.println(b.len)
+}

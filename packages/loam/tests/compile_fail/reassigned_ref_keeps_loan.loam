@@ -1,0 +1,12 @@
+import "std:fmt"
+
+// A borrow made by assignment is held like one made by `let`.
+fn main() {
+    let mut v = []int {}
+    v.push(1)
+    let z = 0
+    let mut p = &z
+    p = &v[0]
+    v.push(2)
+    fmt.println(*p)
+}

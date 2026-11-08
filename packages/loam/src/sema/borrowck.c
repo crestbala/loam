@@ -11,8 +11,14 @@
  * Assignment replaces what a reference points at; branches and loops join
  * by taking the deepest. See docs/reference-escape.md.
  *
+ * Loans: a reference binding owns the borrows it was made from (`let p =
+ * &v[0]`, `p = &x`, or every reference argument of `p = first(&v)`), and they
+ * last until its last use. While one is live, the place cannot be assigned,
+ * moved, or borrowed mutably. A `&mut` reference passed to a call reborrows
+ * it mutably.
+ *
  * Bindings are a stack. Temps from `&x` in a statement are cleared at
- * statement end unless stored in a `let`.
+ * statement end unless a binding takes them as loans.
  */
 #include "borrowck.h"
 #include "typecheck.h"
@@ -36,8 +42,6 @@ typedef struct Binding {
     int is_copy;
     int is_box;
     int depth;
-    char *borrow_of; /* place this binding holds a stored borrow of, or NULL */
-    int borrow_mut;
     BindKind kind;
     /* Reference binding: depth of the deepest frame binding it may point
        into (0 = caller or global data), and that binding's name (AST-owned,
@@ -66,8 +70,10 @@ typedef struct Binding {
 typedef struct Borrow {
     char *path;
     int is_mut;
-    int stored; /* held by a live let binding, not a statement temp */
+    int stored; /* held by a live binding as a loan, not a statement temp */
     int depth;
+    struct Binding *owner;  /* the binding holding this loan, if stored */
+    struct Binding *target; /* the binding the borrowed place roots in */
     struct Borrow *next;
 } Borrow;
 
@@ -139,6 +145,8 @@ static void push_b(const char *name, Type *ty) {
 }
 
 static void drop_borrows_deeper_than(int d);
+static void release_owned(Binding *b);
+static void drop_borrows_of(Binding *b);
 
 static void pop_to_depth(int d) {
     drop_borrows_deeper_than(d);
@@ -154,8 +162,9 @@ static void pop_to_depth(int d) {
                        b->name);
             errn = 1;
         }
+        release_owned(b);
+        drop_borrows_of(b);
         free(b->name);
-        free(b->borrow_of);
         for (int i = 0; i < b->nmoved; i++) free(b->moved_paths[i]);
         free(b->moved_paths);
         free(b);
@@ -204,8 +213,20 @@ static int take_borrow_path(const char *path, int is_mut, SourceLoc loc) {
     nb->path = loam_dup(path);
     nb->is_mut = is_mut;
     nb->depth = depth;
+    nb->target = v;
     nb->next = borrows;
     borrows = nb;
+    return 0;
+}
+
+/** Writing `path` (assignment, `++`) while a loan covers it. */
+static int check_write_path(const char *path, SourceLoc loc) {
+    for (Borrow *b = borrows; b; b = b->next)
+        if (b->stored && paths_conflict(b->path, path)) {
+            loam_error(loc, "cannot assign to '%s' while it is borrowed", path);
+            errn = 1;
+            return 1;
+        }
     return 0;
 }
 
@@ -357,12 +378,11 @@ static int stmt_uses(AstNode *n, const char *name) {
     }
 }
 
-/** Drop the stored borrow of `path`, if still live. */
-static void release_borrow_path(const char *path) {
+static void unlink_borrows_if(int (*pred)(Borrow *, Binding *), Binding *who) {
     Borrow **pp = &borrows;
     while (*pp) {
         Borrow *b = *pp;
-        if (b->stored && strcmp(b->path, path) == 0) {
+        if (pred(b, who)) {
             *pp = b->next;
             free(b->path);
             free(b);
@@ -372,6 +392,69 @@ static void release_borrow_path(const char *path) {
     }
 }
 
+static int owned_by(Borrow *b, Binding *who) { return b->stored && b->owner == who; }
+static int rooted_in(Borrow *b, Binding *who) { return b->target == who; }
+
+/** End every loan `b` holds. */
+static void release_owned(Binding *b) { unlink_borrows_if(owned_by, b); }
+
+/** `b` is gone: no place rooted in it can still be borrowed. */
+static void drop_borrows_of(Binding *b) { unlink_borrows_if(rooted_in, b); }
+
+static int holds_loans(Binding *b) {
+    for (Borrow *l = borrows; l; l = l->next)
+        if (l->stored && l->owner == b) return 1;
+    return 0;
+}
+
+/* --- Loan sets, saved across branches --- */
+
+static Borrow *dup_borrows(const Borrow *l) {
+    Borrow *head = NULL, **tail = &head;
+    for (; l; l = l->next) {
+        Borrow *c = (Borrow *)malloc(sizeof(Borrow));
+        *c = *l;
+        c->path = loam_dup(l->path);
+        c->next = NULL;
+        *tail = c;
+        tail = &c->next;
+    }
+    return head;
+}
+
+static void free_borrows(Borrow *l) {
+    while (l) {
+        Borrow *n = l->next;
+        free(l->path);
+        free(l);
+        l = n;
+    }
+}
+
+/** Add to `*dst` every loan of `other` it lacks (join after a branch). */
+static void union_into(Borrow **dst, const Borrow *other) {
+    for (; other; other = other->next) {
+        if (!other->stored) continue;
+        int have = 0;
+        for (Borrow *b = *dst; b && !have; b = b->next)
+            have = b->stored && b->owner == other->owner && b->is_mut == other->is_mut &&
+                   strcmp(b->path, other->path) == 0;
+        if (have) continue;
+        Borrow *c = (Borrow *)malloc(sizeof(Borrow));
+        *c = *other;
+        c->path = loam_dup(other->path);
+        c->next = *dst;
+        *dst = c;
+    }
+}
+
+static void union_borrows(const Borrow *other) { union_into(&borrows, other); }
+
+static void set_borrows(const Borrow *l) {
+    free_borrows(borrows);
+    borrows = dup_borrows(l);
+}
+
 /**
  * NLL: end the borrow held by any binding of this block whose last use is
  * before statement `at`. The borrow is dead after its holder's final read, so
@@ -379,14 +462,12 @@ static void release_borrow_path(const char *path) {
  */
 static void end_dead_borrows(AstNode **stmts, size_t count, size_t at, int block_depth) {
     for (Binding *b = binds; b; b = b->next) {
-        if (b->depth != block_depth || !b->borrow_of) continue;
+        if (b->depth != block_depth || !holds_loans(b)) continue;
         int used = 0;
         for (size_t j = at; j < count && !used; j++)
             if (stmt_uses(stmts[j], b->name)) used = 1;
         if (used) continue;
-        release_borrow_path(b->borrow_of);
-        free(b->borrow_of);
-        b->borrow_of = NULL;
+        release_owned(b);
     }
 }
 
@@ -492,6 +573,117 @@ static int check_dangling(Binding *b, SourceLoc loc) {
                    b->ref_root ? b->ref_root : "?");
     errn = 1;
     return 1;
+}
+
+/* --- Loans a reference takes on --- */
+
+typedef struct {
+    Borrow *temp;   /* a statement temp to keep, or NULL */
+    char *path;     /* otherwise: a copy of another binding's loan */
+    int is_mut;
+    Binding *target;
+} Loan;
+
+typedef struct {
+    Loan *v;
+    int n, cap;
+} Loans;
+
+static void loans_add(Loans *ls, Loan l) {
+    if (ls->n == ls->cap) {
+        ls->cap = ls->cap ? ls->cap * 2 : 4;
+        ls->v = (Loan *)realloc(ls->v, (size_t)ls->cap * sizeof(Loan));
+        if (!ls->v) loam_fatal("out of memory");
+    }
+    ls->v[ls->n++] = l;
+}
+
+/** The unkept temp borrow of `path` made by this statement, or NULL. */
+static Borrow *find_temp(const char *path) {
+    for (Borrow *b = borrows; b; b = b->next)
+        if (!b->stored && strcmp(b->path, path) == 0) return b;
+    return NULL;
+}
+
+/**
+ * The loans a reference made from `e` must hold: the place of `&place`; every
+ * loan of a reference it copies, plus a reborrow of that reference itself;
+ * and, for a call returning a reference, those of each reference argument.
+ * `result_mut`: the reference is `&mut` (a `&T` keeps only shared loans).
+ */
+static int gather_loans(AstNode *e, int result_mut, Loans *ls, SourceLoc loc) {
+    if (!e) return 0;
+    switch (e->kind) {
+        case AST_ADDR: {
+            char *p = path_of(e->as.access.target);
+            if (!p) return 0;
+            Borrow *t = find_temp(p);
+            free(p);
+            if (t) {
+                Loan l = { t, NULL, t->is_mut && result_mut, NULL };
+                loans_add(ls, l);
+            }
+            return 0;
+        }
+        case AST_IDENT: {
+            Binding *q = find_b(e->as.ident.name);
+            if (!q || q->kind == BK_GLOBAL || !is_ref_ty(e->ty)) return 0;
+            for (Borrow *b = borrows; b; b = b->next) {
+                if (!b->stored || b->owner != q) continue;
+                Loan l = { NULL, loam_dup(b->path), b->is_mut && result_mut, b->target };
+                loans_add(ls, l);
+            }
+            /* Through `q` itself: while the result lives, `q` may not be
+               used to write what it points at. */
+            int m = result_mut && e->ty->is_mut;
+            if (take_borrow_path(e->as.ident.name, m, loc)) return 1;
+            Loan l = { borrows, NULL, m, NULL };
+            loans_add(ls, l);
+            return 0;
+        }
+        case AST_CALL:
+            if (!is_ref_ty(e->ty)) return 0;
+            for (size_t i = 0; i < e->as.call.arg_count; i++) {
+                AstNode *a = e->as.call.args[i];
+                if (a && is_ref_ty(a->ty) && gather_loans(a, result_mut, ls, loc)) return 1;
+            }
+            return 0;
+        default:
+            return 0;
+    }
+}
+
+static void loans_free(Loans *ls) {
+    for (int i = 0; i < ls->n; i++) free(ls->v[i].path);
+    free(ls->v);
+    ls->v = NULL;
+    ls->n = ls->cap = 0;
+}
+
+/** Hand `ls` to `b`. `replace`: drop the loans `b` held before. */
+static void attach_loans(Binding *b, Loans *ls, int replace) {
+    if (replace) release_owned(b);
+    for (int i = 0; i < ls->n; i++) {
+        Loan *l = &ls->v[i];
+        if (l->temp) {
+            l->temp->stored = 1;
+            l->temp->owner = b;
+            l->temp->depth = b->depth;
+            l->temp->is_mut = l->is_mut;
+            continue;
+        }
+        Borrow *c = (Borrow *)calloc(1, sizeof(Borrow));
+        c->path = l->path;
+        l->path = NULL;
+        c->is_mut = l->is_mut;
+        c->stored = 1;
+        c->depth = b->depth;
+        c->owner = b;
+        c->target = l->target;
+        c->next = borrows;
+        borrows = c;
+    }
+    loans_free(ls);
 }
 
 /**
@@ -663,9 +855,14 @@ static int check_expr(AstNode *n, int as_move) {
             return check_expr(n->as.binary.right, 0);
         case AST_UNARY:
             return check_expr(n->as.unary.operand, 0);
-        case AST_INCDEC:
+        case AST_INCDEC: {
             /* Reads and writes the operand place (like an assignment). */
-            return check_expr(n->as.incdec.operand, 0);
+            if (check_expr(n->as.incdec.operand, 0)) return 1;
+            char *wp = path_of(n->as.incdec.operand);
+            int rc = wp ? check_write_path(wp, n->loc) : 0;
+            free(wp);
+            return rc;
+        }
         case AST_CAST:
             return check_expr(n->as.cast.expr, 0);
         case AST_TRY:
@@ -735,6 +932,30 @@ static int check_expr(AstNode *n, int as_move) {
                 }
                 if (check_expr(a, move_arg)) return 1;
             }
+            /* A `&mut` reference handed on is reborrowed mutably at the call,
+               after every argument is read (`grow(m, m.cap)` is fine): it
+               conflicts with a live loan through it, or a second `&mut`. */
+            Type *cft = n->as.call.callee ? n->as.call.callee->ty : NULL;
+            if (cft && cft->kind != TY_PROC) cft = NULL;
+            Borrow *before_reborrows = borrows;
+            for (size_t i = 0; i < n->as.call.arg_count; i++) {
+                AstNode *a = n->as.call.args[i];
+                /* Only into a `&mut` parameter: a `&` one reborrows shared. */
+                Type *pt = cft && i < cft->param_count ? cft->params[i] : NULL;
+                if (pt && !(is_ref_ty(pt) && pt->is_mut)) continue;
+                if (a && a->kind == AST_IDENT && is_ref_ty(a->ty) && a->ty->is_mut &&
+                    find_b(a->as.ident.name) &&
+                    take_borrow_path(a->as.ident.name, 1, a->loc))
+                    return 1;
+            }
+            /* They last for the call only: a result that keeps one gets its
+               own loan from gather_loans. */
+            while (borrows && borrows != before_reborrows) {
+                Borrow *b = borrows;
+                borrows = b->next;
+                free(b->path);
+                free(b);
+            }
             if (n->as.call.callee && n->as.call.callee->kind != AST_FIELD)
                 check_expr(n->as.call.callee, 0);
             /* `aim(&mut p, &v)` with `p` a reference: the callee may store any
@@ -747,12 +968,20 @@ static int check_expr(AstNode *n, int as_move) {
                 Binding *b = find_b(t->as.ident.name);
                 if (!b || b->kind == BK_GLOBAL) continue;
                 Root r = { b->ref_depth, b->ref_root };
+                Loans ls = { 0 };
                 for (size_t k = 0; k < n->as.call.arg_count; k++) {
                     AstNode *o = n->as.call.args[k];
-                    if (k != i && o && is_ref_ty(o->ty)) r = deeper(r, ref_root(o));
+                    if (k == i || !o || !is_ref_ty(o->ty)) continue;
+                    r = deeper(r, ref_root(o));
+                    if (gather_loans(o, t->ty->is_mut, &ls, o->loc)) {
+                        loans_free(&ls);
+                        return 1;
+                    }
                 }
                 b->ref_depth = r.depth;
                 b->ref_root = r.name;
+                /* What `p` may now point at stays borrowed while `p` lives. */
+                attach_loans(b, &ls, 0);
             }
             return 0;
         }
@@ -790,43 +1019,60 @@ static int check_stmt(AstNode *n) {
             if (n->as.var.init && n->as.var.init->kind == AST_CLOSURE) mv = 0;
             if (n->as.var.init && check_expr(n->as.var.init, mv)) return 1;
             /* Resolved before the push, so `let x = &x` sees the outer x. */
-            Root rr = is_ref_ty(n->ty) && n->as.var.init ? ref_root(n->as.var.init) : NO_ROOT;
+            int is_ref = is_ref_ty(n->ty) && n->as.var.init;
+            Root rr = is_ref ? ref_root(n->as.var.init) : NO_ROOT;
+            Loans ls = { 0 };
+            if (is_ref && gather_loans(n->as.var.init, n->ty->is_mut, &ls, n->loc)) {
+                loans_free(&ls);
+                return 1;
+            }
             push_b(n->as.var.name, n->ty);
             set_ref(binds, rr);
+            /* The loans outlive the statement and end at the binding's last
+               use (end_dead_borrows) or its scope. */
+            attach_loans(binds, &ls, 1);
             if (n->ty && n->ty->kind == TY_STRUCT && n->ty->must_check) {
                 binds->must_check = 1;
                 binds->loc = n->loc;
-            }
-            /* A borrow stored in a binding outlives the statement that made it,
-               so it survives release_temps and dies with its scope instead. */
-            if (n->as.var.init && n->as.var.init->kind == AST_ADDR && borrows) {
-                borrows->stored = 1;
-                borrows->depth = depth;
-                char *bp = path_of(n->as.var.init->as.access.target);
-                if (bp) {
-                    free(binds->borrow_of);
-                    binds->borrow_of = bp;
-                }
             }
             if (type_needs_drop(n->ty)) n->flags |= ASTF_NEEDS_DROP;
             release_temps();
             return 0;
         }
         case AST_ASSIGN: {
-            if (check_expr(n->as.assign.right,
-                           n->as.assign.right->ty && !type_is_copy(n->as.assign.right->ty) &&
-                               n->as.assign.right->kind != AST_ADDR))
-                return 1;
             AstNode *L = n->as.assign.left;
+            AstNode *R = n->as.assign.right;
             int stores_ref = L && is_ref_ty(L->ty);
-            Root rr = stores_ref ? ref_root(n->as.assign.right) : NO_ROOT;
             Binding *lb = L && L->kind == AST_IDENT ? find_b(L->as.ident.name) : NULL;
             /* Rebinding a local reference: its old target no longer matters. */
             int rebind = stores_ref && lb && lb->kind != BK_GLOBAL;
+            /* `p = &mut x` again: the old loan ends before the new one starts,
+               unless the right side reads `p`. */
+            if (rebind && !expr_uses(R, lb->name)) release_owned(lb);
+            if (check_expr(R, R->ty && !type_is_copy(R->ty) && R->kind != AST_ADDR)) return 1;
+            Root rr = stores_ref ? ref_root(R) : NO_ROOT;
+            Loans ls = { 0 };
+            if (stores_ref && gather_loans(R, L->ty->is_mut, &ls, n->loc)) {
+                loans_free(&ls);
+                return 1;
+            }
             if (rebind) lb->dangling = 0;
-            if (check_expr(L, 0)) return 1;
+            if (check_expr(L, 0)) {
+                loans_free(&ls);
+                return 1;
+            }
+            if (!rebind) {
+                char *wp = path_of(L);
+                int bad = wp && check_write_path(wp, n->loc);
+                free(wp);
+                if (bad) {
+                    loans_free(&ls);
+                    return 1;
+                }
+            }
             if (rebind) {
                 set_ref(lb, rr);
+                attach_loans(lb, &ls, 1);
             } else if (stores_ref) {
                 /* `*pp = &x`, or a global: the place is not tracked, so what
                    it receives must outlive it now. */
@@ -841,7 +1087,19 @@ static int check_stmt(AstNode *n) {
                     errn = 1;
                     return 1;
                 }
+                /* `*pp = &x` with `pp` aimed at a local reference `q`: `q`
+                   holds the loan now. */
+                Root h = place_root(L);
+                Binding *q = h.name && h.name != TEMP_ROOT ? find_b(h.name) : NULL;
+                if (q && q->depth == h.depth && q->kind != BK_GLOBAL) {
+                    if (rr.depth > q->ref_depth) {
+                        q->ref_depth = rr.depth;
+                        q->ref_root = rr.name;
+                    }
+                    attach_loans(q, &ls, 0);
+                }
             }
+            loans_free(&ls);
             release_temps();
             return 0;
         }
@@ -901,16 +1159,22 @@ static int check_stmt(AstNode *n) {
                same value in both is one move, not two. */
             BSnap *pre = NULL, *post_then = NULL;
             int npre = snapshot(&pre), nthen = 0;
+            Borrow *pre_loans = dup_borrows(borrows), *then_loans = NULL;
             int rc = check_stmt(n->as.if_stmt.then_block);
             if (!rc) {
                 nthen = snapshot(&post_then);
+                then_loans = dup_borrows(borrows);
                 restore(pre, npre);
+                set_borrows(pre_loans);
                 if (n->as.if_stmt.else_block) rc = check_stmt(n->as.if_stmt.else_block);
                 if (!rc) {
                     join_moved(post_then, nthen);
                     join_refs(post_then, nthen);
+                    union_borrows(then_loans);
                 }
             }
+            free_borrows(pre_loans);
+            free_borrows(then_loans);
             free(pre);
             free(post_then);
             return rc;
@@ -958,6 +1222,9 @@ static int check_stmt(AstNode *n) {
             release_temps();
             BSnap *pre = NULL;
             int npre = snapshot(&pre);
+            /* Loans: each case starts from those before the switch, plus the
+               case above's by fallthrough; after it, any case's (or none). */
+            Borrow *pre_loans = dup_borrows(borrows), *all_loans = dup_borrows(borrows);
             int rc = 0;
             BSnap **snaps = NULL;
             int *nsn = NULL;
@@ -970,7 +1237,12 @@ static int check_stmt(AstNode *n) {
                 /* A case is entered from the dispatch, and by falling out of
                    the case above: what that one moved is moved here too. */
                 restore(pre, npre);
-                if (i && case_falls_through(n->as.switch_stmt.cases[i - 1])) {
+                int fell = i && case_falls_through(n->as.switch_stmt.cases[i - 1]);
+                Borrow *above = fell ? dup_borrows(borrows) : NULL;
+                set_borrows(pre_loans);
+                union_borrows(above);
+                free_borrows(above);
+                if (fell) {
                     join_moved(snaps[i - 1], nsn[i - 1]);
                     join_refs(snaps[i - 1], nsn[i - 1]);
                 }
@@ -978,6 +1250,7 @@ static int check_stmt(AstNode *n) {
                 if (cs && cs->kind == AST_CASE)
                     rc = check_stmt(cs->as.switch_case.body);
                 if (rc) break;
+                union_into(&all_loans, borrows);
                 nsn[i] = snapshot(&snaps[i]);
             }
             if (!rc) {
@@ -987,7 +1260,10 @@ static int check_stmt(AstNode *n) {
                 }
                 /* No case may match. */
                 join_refs(pre, npre);
+                set_borrows(all_loans);
             }
+            free_borrows(pre_loans);
+            free_borrows(all_loans);
             for (size_t i = 0; i < na; i++)
                 if (snaps) free(snaps[i]);
             free(snaps);
