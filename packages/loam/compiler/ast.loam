@@ -1,0 +1,163 @@
+// ast — the syntax tree as an arena. The self-hosted twin of src/ast.h.
+//
+// Every node lives in one `[]Node`, and a node names another by its index, so
+// the tree holds no references (Loam keeps them out of data structures). A node
+// is one wide struct: `kind` says which of its slots mean what (the table at
+// `Node`). Pieces that are structs inside a C node (a parameter, a field, a
+// struct-literal init, an enum variant, a selective-import name, a `#![c_*]`
+// directive) are nodes of their own kind here, listed in their parent's `kids`.
+//
+// `NONE` (-1) is an absent child. A parse error yields an `Error` node, never
+// an invalid index, so the parser can keep going without checking every slot.
+
+/** *An absent child. */
+const NONE: int = -1
+
+enum Kind {
+    Program = 0,
+    Import = 1,
+    Fn = 2,
+    Struct = 3,
+    Enum = 4,
+    Var = 5,
+    Block = 6,
+    If = 7,
+    For = 8,
+    While = 9,
+    Switch = 10,
+    Case = 11,
+    Return = 12,
+    Break = 13,
+    Continue = 14,
+    ExprStmt = 15,
+    Assign = 16,
+    Binary = 17,
+    Unary = 18,
+    Cast = 19,
+    Call = 20,
+    Index = 21,
+    Field = 22,
+    Ident = 23,
+    Number = 24,
+    Float = 25,
+    String = 26,
+    Bool = 27,
+    StructLit = 28,
+    ArrayLit = 29,
+    Tuple = 30,
+    Deref = 31,
+    Addr = 32,
+    Type = 33,
+    Closure = 34,
+    IncDec = 35,
+    Try = 36,
+    // Parts of a node, not expressions or statements.
+    Param = 37,
+    FieldDecl = 38,
+    Init = 39,
+    Variant = 40,
+    ImportName = 41,
+    CDir = 42,
+    // What a failed parse returns.
+    Error = 43,
+}
+
+// `flags`, as src/ast.h.
+const F_AWAIT: int = 32
+const F_WRAPPED_LIT: int = 128
+
+/** *A source span: 1-based line and byte column, start and end. */
+struct Loc {
+    line: int,
+    col: int,
+    end_line: int,
+    end_col: int,
+}
+
+/** *One node. What the slots hold, by kind (anything unlisted is unused): */
+/** * */
+/** *- Program: `kids` the `CDir`s, `Import`s and decls in source order (their */
+/** *  kinds tell them apart), `text` the module doc. */
+/** *- Import: `name` alias, `text` path, `kids` `ImportName`s. */
+/** *- ImportName: `name` source name, `text` local name. */
+/** *- Fn / Closure: `name` (fn only), `strs` type params, `kids` `Param`s, */
+/** *  `a` return type, `b` body, `text` C symbol; `op` bits 1 async, 2 test, */
+/** *  4 server. */
+/** *- Param: `name`, `a` type, `b` default. */
+/** *- Struct: `name`, `strs` type params, `kids` `FieldDecl`s; `op` bits 1 */
+/** *  proto, 2 json, 4 must_check, 8 no_send. */
+/** *- FieldDecl: `name`, `a` type, `b` default, doc. */
+/** *- Enum: `name`, `kids` `Variant`s. Variant: `name`, `num` value. */
+/** *- Var: `name`, `op` mut, `a` type, `b` init. */
+/** *- Block: `kids` statements. */
+/** *- If / While: `a` cond, `b` then, `c` else. For: `name` var, `a` iter, */
+/** *  `b` body. */
+/** *- Switch: `a` scrutinee, `kids` cases. Case: `op` default, `kids` */
+/** *  labels, `a` body. */
+/** *- Return / ExprStmt / Try: `a` expr. */
+/** *- Assign / Binary: `op` token kind, `a` left, `b` right. Unary: `op`, `a`. */
+/** *- Cast: `a` expr, `b` type. Call: `a` callee, `kids` args. */
+/** *- Index: `a` target, `b` index. Field: `name`, `op` via `::`, `a` target. */
+/** *- Deref: `a`. Addr: `op` mut, `a`. */
+/** *- Ident: `name`. Number: `num`. Float: `fnum`. String: `text`. Bool: `op`. */
+/** *- StructLit: `name` (absent for named arguments), `kids2` type args, */
+/** *  `kids` `Init`s. Init: `name`, `a` value. */
+/** *- ArrayLit: `num` length (-1 for `[]T`), `a` element type, `kids` elems. */
+/** *  Tuple: `kids` elems. */
+/** *- Type: `op` tag (0 `&T`, 1 `&mut T`, 2 named, 3 array, 4 `Box<T>`, 5 */
+/** *  `fn(...)`), `name` when named, `num` array length, `a` element / return */
+/** *  type, `kids` fn params, `kids2` type args. */
+/** *- IncDec: `op` dec, `aux` post, `a` operand. */
+/** *- CDir: `op` link, `strs` args. */
+struct Node {
+    kind: int,
+    loc: Loc,
+    flags: int,
+    op: int,
+    aux: int,
+    /** *Whether `name` / `text` / `doc` are present (C's non-NULL). */
+    has_name: bool,
+    has_text: bool,
+    has_doc: bool,
+    name: string,
+    text: string,
+    doc: string,
+    num: i64,
+    fnum: f64,
+    a: int,
+    b: int,
+    c: int,
+    kids: []int,
+    kids2: []int,
+    strs: []string,
+}
+
+/** *A diagnostic: where, and what. */
+struct Diag {
+    loc: Loc,
+    msg: string,
+}
+
+fn node(kind: int, loc: Loc) -> Node {
+    return Node {
+        kind: kind,
+        loc: loc,
+        flags: 0,
+        op: 0,
+        aux: 0,
+        has_name: false,
+        has_text: false,
+        has_doc: false,
+        name: "",
+        text: "",
+        doc: "",
+        num: i64(0),
+        fnum: 0.0,
+        a: NONE,
+        b: NONE,
+        c: NONE,
+        kids: []int {},
+        kids2: []int {},
+        strs: []string {},
+    }
+}

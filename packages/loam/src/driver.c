@@ -1572,6 +1572,7 @@ static int dump_tokens(const char *path) {
 
 int main(int argc, char **argv) {
     if (argc == 3 && strcmp(argv[1], "--dump-tokens") == 0) return dump_tokens(argv[2]);
+    if (argc == 3 && strcmp(argv[1], "--dump-ast") == 0) return ast_dump_file(argv[2]);
     const char *in_path = NULL;
     const char *out_path = NULL;
     int emit_c = 0;

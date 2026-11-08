@@ -356,4 +356,7 @@ AstNode *ast_deref(AstNode *target, SourceLoc loc);
 AstNode *ast_addr(AstNode *target, int is_mut, SourceLoc loc);
 AstNode *ast_type(const char *name, int tag, AstNode *elem, int64_t alen, SourceLoc loc);
 
+/** `loamc --dump-ast file.loam` (ast_dump.c): the parsed tree as text. */
+int ast_dump_file(const char *path);
+
 #endif

@@ -1,0 +1,2400 @@
+// parser — tokens to the arena AST. The self-hosted twin of src/parser.c, and
+// it must agree with it node for node and diagnostic for diagnostic
+// (`nob integration selfhost_parse` diffs `astdump` against
+// `loamc --dump-ast` over every .loam file in the repo).
+//
+// Recursive descent with one token of lookahead (`cur` / `peek`), a Pratt loop
+// for binary operators, and the same desugarings as the C parser: a trailing
+// block becomes `slot(call, || { ... })`, a component body opens a view frame,
+// `"{{x}}"` becomes `__interp(...)`, `await e` becomes `async.await_value(e)`,
+// `let (a, b) = (x, y)` splits into one `let` per name, and named arguments
+// become an unnamed struct literal.
+//
+// Like the C parser it reports the first error and then unwinds, and the
+// functions keep its control flow so later diagnostics (an interpolation hole
+// parses on its own) come out the same. Where C returns NULL after an error
+// this returns an `Error` node: no slot ever holds an invalid index.
+
+import "std:buf"
+import "std:conv"
+import "lexer.loam"
+import "ast.loam"
+
+struct Parser {
+    lx: Lexer,
+    cur: Token,
+    prev: Token,
+    peek: Token,
+    had_error: bool,
+    allow_struct_lit: bool,
+    /** *Statements a `let` tuple split off, for `push_stmt`. */
+    spill: []int,
+    /** *Numbers the hidden locals of `let` tuples. */
+    hidden_id: int,
+    nodes: []Node,
+    diags: []Diag,
+}
+
+/** *What `take_docs` found: C's NULL is `has` false. */
+struct Doc {
+    has: bool,
+    text: string,
+}
+
+fn no_doc() -> Doc {
+    return Doc { has: false, text: "" }
+}
+
+fn zero_token() -> Token {
+    return Token { kind: Tok.Eof, start: 0, len: 0, line: 0, col: 0, end_line: 0, end_col: 0 }
+}
+
+fn parser_new(src: string) -> Parser {
+    let mut lx = lexer.lexer_new(src)
+    let cur = lexer.next(&mut lx)
+    let peek = lexer.next(&mut lx)
+    return Parser {
+        lx: lx,
+        cur: cur,
+        prev: zero_token(),
+        peek: peek,
+        had_error: false,
+        allow_struct_lit: true,
+        spill: []int {},
+        hidden_id: 0,
+        nodes: []Node {},
+        diags: []Diag {},
+    }
+}
+
+// --- tokens ------------------------------------------------------------------
+
+fn tloc(t: Token) -> Loc {
+    return Loc { line: t.line, col: t.col, end_line: t.end_line, end_col: t.end_col }
+}
+
+fn bump(p: &mut Parser) {
+    p.prev = p.cur
+    p.cur = p.peek
+    p.peek = lexer.next(&mut p.lx)
+}
+
+fn check(p: &Parser, k: int) -> bool {
+    return p.cur.kind == k
+}
+
+/** *Consume the current token if it is `k`. */
+fn eat(p: &mut Parser, k: int) -> bool {
+    if p.cur.kind == k {
+        bump(p)
+        return true
+    }
+    return false
+}
+
+fn diag(p: &mut Parser, loc: Loc, msg: string) {
+    push(p.diags, Diag { loc: loc, msg: msg })
+}
+
+fn error(p: &mut Parser, m: string) {
+    if p.had_error {
+        return
+    }
+    diag(p, tloc(p.cur), "{{m}} (got {{lexer.kind_name(p.cur.kind)}})")
+    p.had_error = true
+}
+
+fn consume(p: &mut Parser, k: int, m: string) {
+    if eat(p, k) {
+        return
+    }
+    error(p, m)
+}
+
+fn optional_semi(p: &mut Parser) {
+    eat(p, Tok.Semicolon)
+}
+
+/** *Close a type-argument list. `Option<Signal<int>>` lexes its two closers */
+/** *as one `>>`: take the first `>` and leave the second as the current token. */
+fn consume_gt(p: &mut Parser) {
+    if check(p, Tok.Shr) {
+        p.cur.kind = Tok.Gt
+        p.cur.start = p.cur.start + 1
+        p.cur.len = 1
+        p.cur.col = p.cur.col + 1
+        return
+    }
+    consume(p, Tok.Gt, "expected >")
+}
+
+/** *Bytes `a..b` of `s`. */
+fn substr(s: string, a: int, b: int) -> string {
+    let mut out = []u8 {}
+    let mut i = a
+    while i < b {
+        push(out, u8(s[i]))
+        i = i + 1
+    }
+    return buf.to_string(&out)
+}
+
+fn tok_text(p: &Parser, t: Token) -> string {
+    return substr(p.lx.src, t.start, t.start + t.len)
+}
+
+fn cur_is_word(p: &Parser, w: string) -> bool {
+    return p.cur.kind == Tok.Ident && tok_text(p, p.cur) == w
+}
+
+// --- nodes -------------------------------------------------------------------
+
+fn add(p: &mut Parser, n: Node) -> int {
+    push(p.nodes, n)
+    return p.nodes.len - 1
+}
+
+/** *The `Error` node a failed parse returns (C's NULL). */
+fn fail(p: &mut Parser) -> int {
+    return add(p, ast.node(Kind.Error, tloc(p.cur)))
+}
+
+/** *C's `!x` on a parse result: absent, or an error. */
+fn bad(p: &Parser, i: int) -> bool {
+    return i == ast.NONE || p.nodes[i].kind == Kind.Error
+}
+
+fn ident_node(p: &mut Parser, name: string, loc: Loc) -> int {
+    let mut n = ast.node(Kind.Ident, loc)
+    n.name = name
+    n.has_name = true
+    return add(p, n)
+}
+
+fn string_node(p: &mut Parser, s: string, loc: Loc) -> int {
+    let mut n = ast.node(Kind.String, loc)
+    n.text = s
+    n.has_text = true
+    return add(p, n)
+}
+
+fn call_node(p: &mut Parser, callee: int, args: []int, loc: Loc) -> int {
+    let mut n = ast.node(Kind.Call, loc)
+    n.a = callee
+    n.kids = args
+    return add(p, n)
+}
+
+fn field_node(p: &mut Parser, target: int, name: string, colon: int, loc: Loc) -> int {
+    let mut n = ast.node(Kind.Field, loc)
+    n.a = target
+    n.name = name
+    n.has_name = true
+    n.op = colon
+    return add(p, n)
+}
+
+fn var_node(p: &mut Parser, name: string, ty: int, init: int, is_mut: int, loc: Loc) -> int {
+    let mut n = ast.node(Kind.Var, loc)
+    n.name = name
+    n.has_name = true
+    n.a = ty
+    n.b = init
+    n.op = is_mut
+    return add(p, n)
+}
+
+fn block_node(p: &mut Parser, stmts: []int, loc: Loc) -> int {
+    let mut n = ast.node(Kind.Block, loc)
+    n.kids = stmts
+    return add(p, n)
+}
+
+fn one_stmt_block(p: &mut Parser, e: int, loc: Loc) -> int {
+    let mut es = ast.node(Kind.ExprStmt, loc)
+    es.a = e
+    let s = add(p, es)
+    return block_node(p, []int { s }, loc)
+}
+
+fn closure_node(p: &mut Parser, params: []int, ret: int, body: int, loc: Loc) -> int {
+    let mut n = ast.node(Kind.Closure, loc)
+    n.kids = params
+    n.a = ret
+    n.b = body
+    return add(p, n)
+}
+
+fn param_node(p: &mut Parser, name: string, ty: int, def: int, loc: Loc) -> int {
+    let mut n = ast.node(Kind.Param, loc)
+    n.name = name
+    n.has_name = true
+    n.a = ty
+    n.b = def
+    return add(p, n)
+}
+
+fn type_node(p: &mut Parser, tag: int, elem: int, alen: i64, loc: Loc) -> int {
+    let mut n = ast.node(Kind.Type, loc)
+    n.op = tag
+    n.a = elem
+    n.num = alen
+    return add(p, n)
+}
+
+fn init_node(p: &mut Parser, name: string, value: int) -> int {
+    let mut n = ast.node(Kind.Init, tloc(p.prev))
+    n.name = name
+    n.has_name = true
+    n.a = value
+    return add(p, n)
+}
+
+fn set_doc(p: &mut Parser, i: int, d: Doc) {
+    p.nodes[i].doc = d.text
+    p.nodes[i].has_doc = d.has
+}
+
+// --- literal text ------------------------------------------------------------
+
+fn hex_val(c: int) -> int {
+    if c >= '0' && c <= '9' {
+        return c - '0'
+    }
+    if c >= 'a' && c <= 'f' {
+        return c - 'a' + 10
+    }
+    if c >= 'A' && c <= 'F' {
+        return c - 'A' + 10
+    }
+    return -1
+}
+
+/** *A character literal's byte value, or -1 when the token is not exactly */
+/** *one byte between quotes. */
+fn char_lit_value(s: string) -> int {
+    let n = s.len
+    if n < 3 || s[0] != '\'' || s[n - 1] != '\'' {
+        return -1
+    }
+    if s[1] != '\\' {
+        if n == 3 && s[1] < 128 {
+            return s[1]
+        }
+        return -1
+    }
+    if n == 4 {
+        let e = s[2]
+        if e == 'n' {
+            return '\n'
+        }
+        if e == 't' {
+            return '\t'
+        }
+        if e == 'r' {
+            return '\r'
+        }
+        if e == '0' {
+            return 0
+        }
+        if e == '\\' || e == '\'' || e == '"' {
+            return e
+        }
+        return -1
+    }
+    if n == 6 && s[2] == 'x' && hex_val(s[3]) >= 0 && hex_val(s[4]) >= 0 {
+        return hex_val(s[3]) * 16 + hex_val(s[4])
+    }
+    return -1
+}
+
+/** *`strtoull(s + from, radix)` over a digit run: saturates at the u64 maximum. */
+fn digits_u64(s: string, from: int, radix: int) -> u64 {
+    let max: u64 = 18446744073709551615
+    let r = u64(radix)
+    let mut v = u64(0)
+    let mut i = from
+    while i < s.len {
+        let d = hex_val(s[i])
+        if d < 0 || d >= radix {
+            break
+        }
+        if v > (max - u64(d)) / r {
+            return max
+        }
+        v = v * r + u64(d)
+        i = i + 1
+    }
+    return v
+}
+
+/** *`strtoll(s, 10)`: the leading decimal digits, saturating at the i64 max. */
+fn decimal_i64(s: string) -> i64 {
+    let max: u64 = 9223372036854775807
+    let v = digits_u64(s, 0, 10)
+    if v > max {
+        return i64(max)
+    }
+    return i64(v)
+}
+
+/** *A number lexeme's value: decimal, `0x` hex, or a character literal, read */
+/** *unsigned and kept as its bits (C's `(int64_t)strtoull`). */
+fn tok_int(s: string) -> i64 {
+    if s.len > 0 && s[0] == '\'' {
+        let v = char_lit_value(s)
+        if v < 0 {
+            return i64(0)
+        }
+        return i64(v)
+    }
+    if s.len > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X') {
+        return wrapping_i64(digits_u64(s, 2, 16))
+    }
+    return wrapping_i64(digits_u64(s, 0, 10))
+}
+
+fn num_node(p: &mut Parser, t: Token, loc: Loc) -> int {
+    let v = tok_int(tok_text(p, t))
+    let mut n = ast.node(Kind.Number, loc)
+    n.num = v
+    if v < i64(0) {
+        n.flags = ast.F_WRAPPED_LIT
+    }
+    return add(p, n)
+}
+
+/** *A quoted token's text with `\n` `\t` `\r` `\"` `\\` decoded (any other */
+/** *escaped byte stands for itself). */
+fn unescape(s: string) -> string {
+    let mut out = []u8 {}
+    let len = s.len
+    let mut i = 1
+    while i < len - 1 {
+        if s[i] == '\\' && i + 1 < len - 1 {
+            i = i + 1
+            let n = s[i]
+            if n == 'n' {
+                push(out, u8('\n'))
+            } else if n == 't' {
+                push(out, u8('\t'))
+            } else if n == 'r' {
+                push(out, u8('\r'))
+            } else {
+                push(out, u8(n))
+            }
+        } else {
+            push(out, u8(s[i]))
+        }
+        i = i + 1
+    }
+    return buf.to_string(&out)
+}
+
+fn has_braces(s: string) -> bool {
+    let mut i = 0
+    while i + 1 < s.len {
+        if s[i] == '{' && s[i + 1] == '{' {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+/** *`"{{" + mid + "}}"` without writing a hole. */
+fn braces(pre: string, post: string) -> string {
+    let lb = "{"
+    return "{{pre}}{{lb}}{ }}{{post}}"
+}
+
+// --- docs --------------------------------------------------------------------
+
+fn doc_append(acc: Doc, line: string) -> Doc {
+    if !acc.has {
+        return Doc { has: true, text: line }
+    }
+    return Doc { has: true, text: "{{acc.text}}\n{{line}}" }
+}
+
+fn is_blank_line(s: string, a: int, b: int) -> bool {
+    let mut k = a
+    while k < b {
+        if s[k] != ' ' && s[k] != '\t' {
+            return false
+        }
+        k = k + 1
+    }
+    return true
+}
+
+/** *Body of a doc comment. One line drops one padding space on each side and */
+/** *a leading star; several lines drop a blank opener line, a star leader, and */
+/** *the closer. */
+fn doc_block_text(t: string) -> string {
+    let mut s = 0
+    let mut n = t.len
+    if n >= 3 {
+        s = 3
+        n = n - 3
+    }
+    if n >= 2 && t[s + n - 2] == '*' && t[s + n - 1] == '/' {
+        n = n - 2
+    }
+    let mut multiline = false
+    for i in 0..n {
+        if t[s + i] == '\n' {
+            multiline = true
+            break
+        }
+    }
+    if !multiline {
+        if n >= 2 && t[s] == ' ' && t[s + n - 1] == ' ' {
+            s = s + 1
+            n = n - 2
+        } else if n > 0 && t[s] == ' ' {
+            s = s + 1
+            n = n - 1
+        }
+        if n > 0 && t[s] == '*' {
+            s = s + 1
+            n = n - 1
+            if n > 0 && t[s] == ' ' {
+                s = s + 1
+                n = n - 1
+            }
+        }
+        if n < 0 {
+            n = 0
+        }
+        return substr(t, s, s + n)
+    }
+    while n > 0 && (t[s + n - 1] == ' ' || t[s + n - 1] == '\t' || t[s + n - 1] == '\r') {
+        n = n - 1
+    }
+    if n > 0 && t[s + n - 1] == '\n' {
+        n = n - 1
+    }
+    let mut acc = no_doc()
+    let mut i = 0
+    let mut first = true
+    while i < n {
+        let start = i
+        while i < n && t[s + i] != '\n' {
+            i = i + 1
+        }
+        let mut end = i
+        if i < n && t[s + i] == '\n' {
+            i = i + 1
+        }
+        if end > start && t[s + end - 1] == '\r' {
+            end = end - 1
+        }
+        let mut a = s + start
+        let b = s + end
+        if first {
+            first = false
+            if is_blank_line(t, a, b) {
+                continue
+            }
+            if a < b && t[a] == ' ' {
+                a = a + 1
+            }
+        } else {
+            while a < b && (t[a] == ' ' || t[a] == '\t') {
+                a = a + 1
+            }
+        }
+        if a < b && t[a] == '*' {
+            a = a + 1
+            if a < b && t[a] == ' ' {
+                a = a + 1
+            }
+        }
+        acc = doc_append(acc, substr(t, a, b))
+    }
+    if !acc.has {
+        return ""
+    }
+    return acc.text
+}
+
+fn take_docs_of(p: &mut Parser, kind: int) -> Doc {
+    let mut acc = no_doc()
+    while check(p, kind) {
+        acc = doc_append(acc, doc_block_text(tok_text(p, p.cur)))
+        bump(p)
+    }
+    return acc
+}
+
+/** *Consecutive item doc comments. */
+fn take_docs(p: &mut Parser) -> Doc {
+    return take_docs_of(p, Tok.Doc)
+}
+
+fn doc_join(a: Doc, b: Doc) -> Doc {
+    if !a.has {
+        return b
+    }
+    if !b.has {
+        return a
+    }
+    return doc_append(a, b.text)
+}
+
+/** *Import alias for a path: the file name with `.loam` / `.loa` removed. */
+fn file_stem(path: string) -> string {
+    let mut base = 0
+    for i in 0..path.len {
+        if path[i] == '/' {
+            base = i + 1
+        }
+    }
+    let name = substr(path, base, path.len)
+    let n = name.len
+    if n > 5 && substr(name, n - 5, n) == ".loam" {
+        return substr(name, 0, n - 5)
+    }
+    if n > 4 && substr(name, n - 4, n) == ".loa" {
+        return substr(name, 0, n - 4)
+    }
+    return name
+}
+
+// --- interpolation -------------------------------------------------------------
+
+/** *One `{{ expr }}` hole, parsed by this parser over the hole's text (the */
+/** *lexer and tokens are swapped out and back, so the arena is shared). */
+/** *`NONE` when it does not parse. */
+fn parse_sub_expr(p: &mut Parser, src: string, loc: Loc) -> int {
+    let lx = p.lx
+    let cur = p.cur
+    let prev = p.prev
+    let peek = p.peek
+    let had = p.had_error
+    let allow = p.allow_struct_lit
+    let mut sub = lexer.lexer_new(src)
+    sub.line = loc.line
+    p.cur = lexer.next(&mut sub)
+    p.peek = lexer.next(&mut sub)
+    p.lx = sub
+    p.prev = zero_token()
+    p.had_error = false
+    p.allow_struct_lit = true
+    let e = parse_expr(p)
+    let sub_err = p.had_error
+    let at_eof = p.cur.kind == Tok.Eof
+    p.lx = lx
+    p.cur = cur
+    p.prev = prev
+    p.peek = peek
+    p.had_error = had
+    p.allow_struct_lit = allow
+    if sub_err || !at_eof {
+        if !sub_err {
+            diag(p, loc, braces("unexpected token in ", " interpolation"))
+        }
+        return ast.NONE
+    }
+    return e
+}
+
+struct Interp {
+    node: int,
+    holes: bool,
+}
+
+/** *A string with `{{ ... }}` becomes `__interp(part, ...)`: literal chunks and */
+/** *parsed holes, in order. `node` is `NONE` when there is nothing to fold. */
+fn interp_node(p: &mut Parser, text: string, loc: Loc) -> Interp {
+    if !has_braces(text) {
+        return Interp { node: ast.NONE, holes: false }
+    }
+    let mut parts = []int {}
+    let mut holes = false
+    let n = text.len
+    let mut i = 0
+    let mut lit = 0
+    while true {
+        if i + 1 < n && text[i] == '{' && text[i + 1] == '{' {
+            let mut close = i + 2
+            let mut depth = 1
+            while close + 1 < n && depth > 0 {
+                if text[close] == '{' && text[close + 1] == '{' {
+                    depth = depth + 1
+                    close = close + 2
+                    continue
+                }
+                if text[close] == '}' && text[close + 1] == '}' {
+                    depth = depth - 1
+                    if depth == 0 {
+                        break
+                    }
+                    close = close + 2
+                    continue
+                }
+                close = close + 1
+            }
+            if depth > 0 {
+                break
+            }
+            if i > lit {
+                let s = string_node(p, substr(text, lit, i), loc)
+                push(parts, s)
+            }
+            let e = parse_sub_expr(p, substr(text, i + 2, close), loc)
+            if e == ast.NONE {
+                return Interp { node: ast.NONE, holes: holes }
+            }
+            push(parts, e)
+            i = close + 2
+            lit = i
+            holes = true
+            continue
+        }
+        if i >= n {
+            break
+        }
+        i = i + 1
+    }
+    if !holes {
+        return Interp { node: ast.NONE, holes: false }
+    }
+    if n > lit {
+        let s = string_node(p, substr(text, lit, n), loc)
+        push(parts, s)
+    }
+    let callee = ident_node(p, "__interp", loc)
+    return Interp { node: call_node(p, callee, parts, loc), holes: true }
+}
+
+// --- types and closures --------------------------------------------------------
+
+/** *A type: `&`/`&mut`, `Box<T>`, `[N]T`, `[]T`, `fn(...)`, or a name. */
+fn parse_type(p: &mut Parser) -> int {
+    let loc = tloc(p.cur)
+    if eat(p, Tok.Amp) {
+        let m = eat(p, Tok.Mut)
+        let e = parse_type(p)
+        return type_node(p, if m { 1 } else { 0 }, e, i64(0), loc)
+    }
+    if eat(p, Tok.Lbracket) {
+        if eat(p, Tok.Rbracket) {
+            let e = parse_type(p)
+            return type_node(p, 3, e, i64(-1), loc)
+        }
+        if !check(p, Tok.Number) {
+            error(p, "expected array length or []T")
+            return fail(p)
+        }
+        let n = decimal_i64(tok_text(p, p.cur))
+        bump(p)
+        consume(p, Tok.Rbracket, "expected ]")
+        let e = parse_type(p)
+        return type_node(p, 3, e, n, loc)
+    }
+    if eat(p, Tok.Fn) {
+        consume(p, Tok.Lparen, "expected ( after fn")
+        let mut ps = []int {}
+        if !check(p, Tok.Rparen) {
+            while true {
+                let t = parse_type(p)
+                push(ps, t)
+                if !eat(p, Tok.Comma) {
+                    break
+                }
+            }
+        }
+        consume(p, Tok.Rparen, "expected )")
+        let mut ret = ast.NONE
+        if eat(p, Tok.Arrow) {
+            ret = parse_type(p)
+        }
+        let t = type_node(p, 5, ret, i64(0), loc)
+        p.nodes[t].kids = ps
+        return t
+    }
+    if !eat(p, Tok.Ident) {
+        error(p, "expected type")
+        return fail(p)
+    }
+    let nm = tok_text(p, p.prev)
+    if nm == "Box" && eat(p, Tok.Lt) {
+        let e = parse_type(p)
+        consume_gt(p)
+        return type_node(p, 4, e, i64(0), loc)
+    }
+    let t = type_node(p, 2, ast.NONE, i64(0), loc)
+    p.nodes[t].name = nm
+    p.nodes[t].has_name = true
+    if eat(p, Tok.Lt) {
+        let mut targs = []int {}
+        if !check(p, Tok.Gt) {
+            while true {
+                let a = parse_type(p)
+                push(targs, a)
+                if !eat(p, Tok.Comma) {
+                    break
+                }
+            }
+        }
+        consume_gt(p)
+        p.nodes[t].kids2 = targs
+    }
+    return t
+}
+
+/** *`name` or `name: T` parameters, comma-separated, for closures. Stops (with */
+/** *an error) at anything that is not a name. */
+fn closure_params(p: &mut Parser) -> []int {
+    let mut ps = []int {}
+    while true {
+        if !eat(p, Tok.Ident) {
+            error(p, "expected closure parameter name")
+            break
+        }
+        let name = tok_text(p, p.prev)
+        let nloc = tloc(p.prev)
+        let mut ty = ast.NONE
+        if eat(p, Tok.Colon) {
+            ty = parse_type(p)
+        }
+        let q = param_node(p, name, ty, ast.NONE, nloc)
+        push(ps, q)
+        if !eat(p, Tok.Comma) {
+            break
+        }
+    }
+    return ps
+}
+
+/** *`|x| { ... }` or `|| { ... }`. The opening `|` / `||` is consumed. */
+fn parse_closure(p: &mut Parser, loc: Loc, zero_arg: bool) -> int {
+    let mut ps = []int {}
+    if !zero_arg {
+        if !check(p, Tok.Pipe) {
+            ps = closure_params(p)
+        }
+        consume(p, Tok.Pipe, "expected | after closure parameters")
+    }
+    let mut ret = ast.NONE
+    if eat(p, Tok.Arrow) {
+        ret = parse_type(p)
+    }
+    if !check(p, Tok.Lbrace) {
+        error(p, "expected { after closure — bodies use braces, e.g. |x| { x + 1 }")
+        return fail(p)
+    }
+    let body = parse_block(p)
+    return closure_node(p, ps, ret, body, loc)
+}
+
+/** *Pure lookahead: does the current `(` start `(x, y) => { ... }`? */
+fn arrow_closure_ahead(p: &Parser) -> bool {
+    if p.cur.kind != Tok.Lparen {
+        return false
+    }
+    if p.peek.kind == Tok.Rparen {
+        let mut probe = p.lx
+        return lexer.next(&mut probe).kind == Tok.FatArrow
+    }
+    if p.peek.kind != Tok.Ident {
+        return false
+    }
+    let mut probe = p.lx
+    let mut t = lexer.next(&mut probe)
+    while true {
+        if t.kind == Tok.Comma {
+            t = lexer.next(&mut probe)
+            if t.kind != Tok.Ident {
+                return false
+            }
+            t = lexer.next(&mut probe)
+            continue
+        }
+        if t.kind == Tok.Rparen {
+            return lexer.next(&mut probe).kind == Tok.FatArrow
+        }
+        return false
+    }
+    return false
+}
+
+/** *`(x, y) => { ... }` / `() => { ... }`. The `(` is not consumed yet. */
+fn parse_arrow_closure(p: &mut Parser, loc: Loc) -> int {
+    bump(p)
+    let mut ps = []int {}
+    if !check(p, Tok.Rparen) {
+        while true {
+            eat(p, Tok.Ident)
+            let name = tok_text(p, p.prev)
+            let nloc = tloc(p.prev)
+            let q = param_node(p, name, ast.NONE, ast.NONE, nloc)
+            push(ps, q)
+            if !eat(p, Tok.Comma) {
+                break
+            }
+        }
+    }
+    consume(p, Tok.Rparen, "expected )")
+    consume(p, Tok.FatArrow, "expected =>")
+    if !check(p, Tok.Lbrace) {
+        error(p, "expected { after => — bodies use braces, e.g. (x) => { x + 1 }")
+        return fail(p)
+    }
+    let body = parse_block(p)
+    return closure_node(p, ps, ast.NONE, body, loc)
+}
+
+/** *`fn(a: T, b) -> R => expr` or `fn(...) { ... }`; `fn` is consumed. */
+fn parse_fn_closure(p: &mut Parser, loc: Loc) -> int {
+    consume(p, Tok.Lparen, "expected ( after fn")
+    let mut ps = []int {}
+    if !check(p, Tok.Rparen) {
+        ps = closure_params(p)
+    }
+    consume(p, Tok.Rparen, "expected ) after closure parameters")
+    let mut ret = ast.NONE
+    if eat(p, Tok.Arrow) {
+        ret = parse_type(p)
+    }
+    let mut body = ast.NONE
+    if eat(p, Tok.FatArrow) {
+        let bloc = tloc(p.cur)
+        let e = parse_expr(p)
+        body = one_stmt_block(p, e, bloc)
+    } else if check(p, Tok.Lbrace) {
+        body = parse_block(p)
+    } else {
+        error(p, "expected => or { after fn(...) closure")
+        return fail(p)
+    }
+    return closure_node(p, ps, ret, body, loc)
+}
+
+/** *`if c { a } else { b }` as a value; `else if` nests as a one-statement */
+/** *block. */
+fn parse_if_expr(p: &mut Parser) -> int {
+    let loc = tloc(p.cur)
+    consume(p, Tok.If, "expected if")
+    let cond = parse_cond_expr(p)
+    let thenb = parse_block(p)
+    if !eat(p, Tok.Else) {
+        error(p, "an `if` used as a value needs an `else` branch")
+        return fail(p)
+    }
+    let mut elseb = ast.NONE
+    if check(p, Tok.If) {
+        let nloc = tloc(p.cur)
+        let nested = parse_if_expr(p)
+        elseb = one_stmt_block(p, nested, nloc)
+    } else {
+        elseb = parse_block(p)
+    }
+    let mut n = ast.node(Kind.If, loc)
+    n.a = cond
+    n.b = thenb
+    n.c = elseb
+    return add(p, n)
+}
+
+/** *Does the current `<` open type arguments that a `{` follows (a generic */
+/** *struct literal), rather than a comparison? Scans a copy of the lexer. */
+fn ident_targs_then_brace(p: &Parser) -> bool {
+    let mut scan = p.lx
+    let mut cur = p.cur
+    let mut nxt = p.peek
+    let mut depth = 0
+    let mut guard = 0
+    while true {
+        let k = cur.kind
+        if k == Tok.Lt {
+            depth = depth + 1
+        } else if k == Tok.Gt || k == Tok.Shr {
+            if k == Tok.Shr {
+                depth = depth - 2
+            } else {
+                depth = depth - 1
+            }
+            if depth <= 0 {
+                return depth == 0 && nxt.kind == Tok.Lbrace
+            }
+        } else if k == Tok.Lbrace || k == Tok.Semicolon || k == Tok.Eof || k == Tok.Rparen ||
+            k == Tok.EqEq || k == Tok.BangEq || k == Tok.Comma {
+            return false
+        }
+        guard = guard + 1
+        if guard > 256 {
+            return false
+        }
+        cur = nxt
+        nxt = lexer.next(&mut scan)
+    }
+    return false
+}
+
+/** *`name: value, ...` up to the `}` of a struct literal. */
+fn struct_lit_fields(p: &mut Parser) -> []int {
+    let mut fs = []int {}
+    while !check(p, Tok.Rbrace) && !check(p, Tok.Eof) {
+        if !eat(p, Tok.Ident) {
+            error(p, "expected field name")
+            break
+        }
+        let fname = tok_text(p, p.prev)
+        consume(p, Tok.Colon, "expected : in struct literal")
+        let v = parse_expr(p)
+        let f = init_node(p, fname, v)
+        push(fs, f)
+        if !eat(p, Tok.Comma) {
+            break
+        }
+    }
+    consume(p, Tok.Rbrace, "expected }")
+    return fs
+}
+
+fn struct_lit_node(p: &mut Parser, name: string, fields: []int, targs: []int, loc: Loc) -> int {
+    let mut n = ast.node(Kind.StructLit, loc)
+    n.name = name
+    n.has_name = true
+    n.kids = fields
+    n.kids2 = targs
+    return add(p, n)
+}
+
+/** *Literals, a name, a parenthesized expression or tuple, an array literal, */
+/** *or a closure. */
+fn parse_primary(p: &mut Parser) -> int {
+    let loc = tloc(p.cur)
+    if eat(p, Tok.Ident) {
+        let nm = tok_text(p, p.prev)
+        if p.allow_struct_lit && check(p, Tok.Lt) && ident_targs_then_brace(p) {
+            let mut targs = []int {}
+            consume(p, Tok.Lt, "expected <")
+            while true {
+                let a = parse_type(p)
+                push(targs, a)
+                if !eat(p, Tok.Comma) {
+                    break
+                }
+            }
+            consume_gt(p)
+            eat(p, Tok.Lbrace)
+            let fs = struct_lit_fields(p)
+            return struct_lit_node(p, nm, fs, targs, loc)
+        }
+        if p.allow_struct_lit && eat(p, Tok.Lbrace) {
+            let fs = struct_lit_fields(p)
+            return struct_lit_node(p, nm, fs, []int {}, loc)
+        }
+        return ident_node(p, nm, loc)
+    }
+    if eat(p, Tok.Float) {
+        let mut n = ast.node(Kind.Float, loc)
+        n.fnum = conv.strtod(tok_text(p, p.prev))
+        return add(p, n)
+    }
+    if eat(p, Tok.Number) {
+        let text = tok_text(p, p.prev)
+        if text[0] == '\'' && char_lit_value(text) < 0 {
+            if !p.had_error {
+                diag(p, loc, "bad character literal {{text}} — one ASCII byte, or an escape \\n \\t \\r \\0 \\\\ \\' \\\" \\xHH")
+            }
+            p.had_error = true
+            return fail(p)
+        }
+        return num_node(p, p.prev, loc)
+    }
+    if eat(p, Tok.String) {
+        let raw = unescape(tok_text(p, p.prev))
+        let it = interp_node(p, raw, loc)
+        if it.node != ast.NONE {
+            return it.node
+        }
+        if it.holes {
+            error(p, braces("bad ", " interpolation"))
+            return fail(p)
+        }
+        return string_node(p, raw, loc)
+    }
+    if eat(p, Tok.True) {
+        let mut n = ast.node(Kind.Bool, loc)
+        n.op = 1
+        return add(p, n)
+    }
+    if eat(p, Tok.False) {
+        return add(p, ast.node(Kind.Bool, loc))
+    }
+    if check(p, Tok.Fn) && p.peek.kind == Tok.Lparen {
+        bump(p)
+        return parse_fn_closure(p, loc)
+    }
+    if check(p, Tok.If) {
+        return parse_if_expr(p)
+    }
+    if eat(p, Tok.PipePipe) {
+        return parse_closure(p, loc, true)
+    }
+    if eat(p, Tok.Pipe) {
+        return parse_closure(p, loc, false)
+    }
+    if check(p, Tok.Lparen) && arrow_closure_ahead(p) {
+        return parse_arrow_closure(p, loc)
+    }
+    if eat(p, Tok.Lparen) {
+        if eat(p, Tok.Rparen) {
+            error(p, "empty tuple")
+            return fail(p)
+        }
+        let e = parse_expr(p)
+        if !eat(p, Tok.Comma) {
+            consume(p, Tok.Rparen, "expected )")
+            return e
+        }
+        let mut elems = []int { e }
+        if !check(p, Tok.Rparen) {
+            while true {
+                let x = parse_expr(p)
+                push(elems, x)
+                if !(eat(p, Tok.Comma) && !check(p, Tok.Rparen)) {
+                    break
+                }
+            }
+        }
+        consume(p, Tok.Rparen, "expected )")
+        let mut t = ast.node(Kind.Tuple, loc)
+        t.kids = elems
+        return add(p, t)
+    }
+    if eat(p, Tok.Lbracket) {
+        let mut n = i64(-1)
+        if !eat(p, Tok.Rbracket) {
+            if !check(p, Tok.Number) {
+                error(p, "expected array literal [N]T{...} or []T{...}")
+                return fail(p)
+            }
+            n = decimal_i64(tok_text(p, p.cur))
+            bump(p)
+            consume(p, Tok.Rbracket, "expected ]")
+        }
+        let et = parse_type(p)
+        consume(p, Tok.Lbrace, "expected {")
+        let mut elems = []int {}
+        if !check(p, Tok.Rbrace) {
+            while true {
+                let e = parse_expr(p)
+                push(elems, e)
+                if !(eat(p, Tok.Comma) && !check(p, Tok.Rbrace)) {
+                    break
+                }
+            }
+        }
+        consume(p, Tok.Rbrace, "expected }")
+        let mut a = ast.node(Kind.ArrayLit, loc)
+        a.num = n
+        a.a = et
+        a.kids = elems
+        return add(p, a)
+    }
+    error(p, "expected expression")
+    return fail(p)
+}
+
+/** *Is the current token on the line the previous one ended on? A newline */
+/** *ends a statement, so `(`, `[`, `++`, `--` and a `{` on the next line start */
+/** *a new one. */
+fn same_line(p: &Parser) -> bool {
+    return p.cur.line == p.prev.end_line
+}
+
+/** *Calls (with named arguments and a trailing block), `.field`, `::path`, */
+/** *`[index]`, `as T`, postfix `++` / `--`, and `?` after a primary. */
+fn parse_postfix(p: &mut Parser, first: int) -> int {
+    let mut left = first
+    while true {
+        let mut loc = tloc(p.cur)
+        if same_line(p) && eat(p, Tok.Lparen) {
+            let mut args = []int {}
+            let mut props = []int {}
+            if !check(p, Tok.Rparen) {
+                while true {
+                    if check(p, Tok.Ident) && p.peek.kind == Tok.Eq {
+                        let pname = tok_text(p, p.cur)
+                        bump(p)
+                        bump(p)
+                        let v = parse_expr(p)
+                        let f = init_node(p, pname, v)
+                        push(props, f)
+                    } else {
+                        if props.len > 0 {
+                            error(p, "positional argument after a named one")
+                            break
+                        }
+                        let a = parse_expr(p)
+                        push(args, a)
+                    }
+                    if !(eat(p, Tok.Comma) && !check(p, Tok.Rparen)) {
+                        break
+                    }
+                }
+            }
+            consume(p, Tok.Rparen, "expected )")
+            loc.end_line = p.prev.end_line
+            loc.end_col = p.prev.end_col
+            if p.nodes[left].loc.line > 0 {
+                loc.line = p.nodes[left].loc.line
+                loc.col = p.nodes[left].loc.col
+            }
+            if props.len > 0 {
+                let mut lit = ast.node(Kind.StructLit, loc)
+                lit.kids = props
+                let li = add(p, lit)
+                push(args, li)
+            }
+            left = call_node(p, left, args, loc)
+            if p.allow_struct_lit && check(p, Tok.Lbrace) && same_line(p) {
+                let bloc = tloc(p.cur)
+                let body = parse_block(p)
+                let clos = closure_node(p, []int {}, ast.NONE, body, bloc)
+                let slot = ident_node(p, "slot", loc)
+                left = call_node(p, slot, []int { left, clos }, loc)
+            }
+            continue
+        }
+        if eat(p, Tok.Dot) {
+            if !eat(p, Tok.Ident) {
+                error(p, "expected field name")
+                break
+            }
+            left = field_node(p, left, tok_text(p, p.prev), 0, tloc(p.prev))
+            continue
+        }
+        if eat(p, Tok.ColonColon) {
+            if !eat(p, Tok.Ident) {
+                error(p, "expected identifier after ::")
+                break
+            }
+            left = field_node(p, left, tok_text(p, p.prev), 1, tloc(p.prev))
+            continue
+        }
+        if same_line(p) && eat(p, Tok.Lbracket) {
+            let idx = parse_expr(p)
+            consume(p, Tok.Rbracket, "expected ]")
+            let mut n = ast.node(Kind.Index, loc)
+            n.a = left
+            n.b = idx
+            left = add(p, n)
+            continue
+        }
+        if eat(p, Tok.As) {
+            let ty = parse_type(p)
+            let mut n = ast.node(Kind.Cast, loc)
+            n.a = left
+            n.b = ty
+            left = add(p, n)
+            continue
+        }
+        if same_line(p) && (eat(p, Tok.PlusPlus) || eat(p, Tok.MinusMinus)) {
+            let mut n = ast.node(Kind.IncDec, loc)
+            n.a = left
+            n.op = if p.prev.kind == Tok.MinusMinus { 1 } else { 0 }
+            n.aux = 1
+            left = add(p, n)
+            continue
+        }
+        if eat(p, Tok.Question) {
+            let mut n = ast.node(Kind.Try, loc)
+            n.a = left
+            left = add(p, n)
+            continue
+        }
+        break
+    }
+    return left
+}
+
+/** *Unary `&`, `&mut`, `*`, `!`, `-`, `~`, prefix `++` / `--`, and `await`. */
+fn parse_unary(p: &mut Parser) -> int {
+    let loc = tloc(p.cur)
+    if cur_is_word(p, "await") {
+        bump(p)
+        let opnd = parse_unary(p)
+        if bad(p, opnd) {
+            return opnd
+        }
+        let base = ident_node(p, "async", loc)
+        let callee = field_node(p, base, "await_value", 0, loc)
+        let call = call_node(p, callee, []int { opnd }, loc)
+        p.nodes[call].flags = p.nodes[call].flags | ast.F_AWAIT
+        return call
+    }
+    if eat(p, Tok.Amp) {
+        let m = eat(p, Tok.Mut)
+        let t = parse_unary(p)
+        let mut n = ast.node(Kind.Addr, loc)
+        n.a = t
+        n.op = if m { 1 } else { 0 }
+        return add(p, n)
+    }
+    if eat(p, Tok.Star) {
+        let t = parse_unary(p)
+        let mut n = ast.node(Kind.Deref, loc)
+        n.a = t
+        return add(p, n)
+    }
+    if eat(p, Tok.Bang) || eat(p, Tok.Minus) || eat(p, Tok.Tilde) {
+        let op = p.prev.kind
+        let t = parse_unary(p)
+        let mut n = ast.node(Kind.Unary, loc)
+        n.op = op
+        n.a = t
+        return add(p, n)
+    }
+    if eat(p, Tok.PlusPlus) || eat(p, Tok.MinusMinus) {
+        let dec = p.prev.kind == Tok.MinusMinus
+        let t = parse_unary(p)
+        let mut n = ast.node(Kind.IncDec, loc)
+        n.a = t
+        n.op = if dec { 1 } else { 0 }
+        return add(p, n)
+    }
+    let prim = parse_primary(p)
+    return parse_postfix(p, prim)
+}
+
+/** *Binding power, C order (low to high): `..`, `||`, `&&`, `|`, `^`, `&`, */
+/** *equality, relational, shifts, additive, multiplicative. */
+fn precedence(k: int) -> int {
+    if k == Tok.DotDot {
+        return 1
+    }
+    if k == Tok.PipePipe {
+        return 2
+    }
+    if k == Tok.AmpAmp {
+        return 3
+    }
+    if k == Tok.Pipe {
+        return 4
+    }
+    if k == Tok.Caret {
+        return 5
+    }
+    if k == Tok.Amp {
+        return 6
+    }
+    if k == Tok.EqEq || k == Tok.BangEq {
+        return 7
+    }
+    if k == Tok.Lt || k == Tok.Gt || k == Tok.LtEq || k == Tok.GtEq {
+        return 8
+    }
+    if k == Tok.Shl || k == Tok.Shr {
+        return 9
+    }
+    if k == Tok.Plus || k == Tok.Minus {
+        return 10
+    }
+    if k == Tok.Star || k == Tok.Slash || k == Tok.Percent {
+        return 11
+    }
+    return 0
+}
+
+fn parse_binary(p: &mut Parser, min_prec: int) -> int {
+    let mut left = parse_unary(p)
+    while true {
+        let op = p.cur.kind
+        let pr = precedence(op)
+        if pr < min_prec || pr == 0 {
+            break
+        }
+        // A line-leading operator does not continue the previous expression.
+        if p.cur.line > p.prev.line {
+            break
+        }
+        bump(p)
+        let right = parse_binary(p, pr + 1)
+        let mut n = ast.node(Kind.Binary, p.nodes[left].loc)
+        n.op = op
+        n.a = left
+        n.b = right
+        left = add(p, n)
+    }
+    return left
+}
+
+fn parse_expr(p: &mut Parser) -> int {
+    return parse_binary(p, 1)
+}
+
+/** *An `if` / `for` / `while` / `switch` head: a `{` there opens the block. */
+fn parse_cond_expr(p: &mut Parser) -> int {
+    let saved = p.allow_struct_lit
+    p.allow_struct_lit = false
+    let e = parse_expr(p)
+    p.allow_struct_lit = saved
+    return e
+}
+
+// --- statements ------------------------------------------------------------------
+
+/** *Append `s` (unless it failed), then whatever it left in `spill`. */
+fn push_stmt(p: &mut Parser, list: &mut []int, s: int) {
+    if !bad(p, s) {
+        push(list, s)
+        for i in 0..p.spill.len {
+            push(list, p.spill[i])
+        }
+    }
+    p.spill = []int {}
+}
+
+fn is_word_byte(c: int) -> bool {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+}
+
+/** *Does `name` appear as a whole word in source bytes `a..b`? Raw text, so a */
+/** *`{{name}}` hole in a string counts too. */
+fn text_mentions(s: string, a: int, b: int, name: string) -> bool {
+    let len = name.len
+    let mut q = a
+    while q + len <= b {
+        let mut same = true
+        for k in 0..len {
+            if s[q + k] != name[k] {
+                same = false
+                break
+            }
+        }
+        if same {
+            let word_l = q > a && is_word_byte(s[q - 1])
+            let word_r = q + len < b && is_word_byte(s[q + len])
+            if !word_l && !word_r {
+                return true
+            }
+        }
+        q = q + 1
+    }
+    return false
+}
+
+fn spill_stmt(p: &mut Parser, s: int) {
+    push(p.spill, s)
+}
+
+/** *`let (a, mut b): (T, U) = (x, y)`: one `let` per name, the first returned */
+/** *and the rest left in `spill`. When the right side mentions a pattern name, */
+/** *each value goes through a hidden local first, so `(x, y) = (y, x)` swaps. */
+fn parse_let_tuple(p: &mut Parser, loc: Loc, is_const: bool) -> int {
+    bump(p)
+    let mut names = []string {}
+    let mut muts = []int {}
+    let mut locs = []Loc {}
+    while true {
+        if check(p, Tok.Rparen) {
+            break
+        }
+        let m = eat(p, Tok.Mut)
+        if m && is_const {
+            error(p, "a `const` cannot be `mut`")
+            return fail(p)
+        }
+        if !eat(p, Tok.Ident) {
+            error(p, "expected a name in the `let` tuple")
+            return fail(p)
+        }
+        push(names, tok_text(p, p.prev))
+        push(muts, if m { 1 } else { 0 })
+        push(locs, tloc(p.prev))
+        if !eat(p, Tok.Comma) {
+            break
+        }
+    }
+    consume(p, Tok.Rparen, "expected ) after the `let` names")
+    if p.had_error {
+        return fail(p)
+    }
+    let n = names.len
+    if n == 0 {
+        error(p, "a `let` tuple needs at least one name")
+        return fail(p)
+    }
+    let mut types = []int {}
+    for i in 0..n {
+        push(types, ast.NONE)
+    }
+    if eat(p, Tok.Colon) {
+        consume(p, Tok.Lparen, "expected ( before the `let` tuple types")
+        let mut nt = 0
+        while true {
+            if check(p, Tok.Rparen) {
+                break
+            }
+            let t = parse_type(p)
+            if p.had_error {
+                return fail(p)
+            }
+            if nt < n {
+                types[nt] = t
+            }
+            nt = nt + 1
+            if !eat(p, Tok.Comma) {
+                break
+            }
+        }
+        consume(p, Tok.Rparen, "expected ) after the `let` tuple types")
+        if p.had_error {
+            return fail(p)
+        }
+        if nt != n {
+            diag(p, loc, "`let` tuple has {{n}} name(s) but {{nt}} type(s)")
+            p.had_error = true
+            return fail(p)
+        }
+    }
+    consume(p, Tok.Eq, "expected =")
+    if p.had_error {
+        return fail(p)
+    }
+    let rhs_start = p.cur.start
+    let rhs_loc = tloc(p.cur)
+    let rhs = parse_expr(p)
+    if p.had_error || bad(p, rhs) {
+        return fail(p)
+    }
+    let rhs_end = p.prev.start + p.prev.len
+    optional_semi(p)
+    if p.nodes[rhs].kind != Kind.Tuple {
+        diag(p, rhs_loc, "a `let` tuple takes a tuple of values on the right, like `let (a, b) = (1, 2)`")
+        p.had_error = true
+        return fail(p)
+    }
+    let mut vals = p.nodes[rhs].kids
+    let nv = vals.len
+    if nv != n {
+        diag(p, rhs_loc, "`let` tuple has {{n}} name(s) but {{nv}} value(s)")
+        p.had_error = true
+        return fail(p)
+    }
+    let mut hide = false
+    for i in 0..n {
+        if hide {
+            break
+        }
+        if names[i] != "_" {
+            hide = text_mentions(p.lx.src, rhs_start, rhs_end, names[i])
+        }
+    }
+    if hide {
+        for i in 0..n {
+            let hidden = "__let{{p.hidden_id}}"
+            p.hidden_id = p.hidden_id + 1
+            let vloc = p.nodes[vals[i]].loc
+            let h = var_node(p, hidden, types[i], vals[i], 0, vloc)
+            spill_stmt(p, h)
+            vals[i] = ident_node(p, hidden, vloc)
+            types[i] = ast.NONE
+        }
+    }
+    for i in 0..n {
+        let v = var_node(p, names[i], types[i], vals[i], muts[i], locs[i])
+        spill_stmt(p, v)
+    }
+    let head = p.spill[0]
+    let mut rest = []int {}
+    for i in 1..p.spill.len {
+        push(rest, p.spill[i])
+    }
+    p.spill = rest
+    return head
+}
+
+/** *`let` / `let mut` / `const` (the keyword is consumed). */
+fn parse_let(p: &mut Parser) -> int {
+    let mut loc = tloc(p.prev)
+    let is_const = p.prev.kind == Tok.Const
+    if is_const && check(p, Tok.Mut) {
+        error(p, "a `const` cannot be `mut`")
+        return fail(p)
+    }
+    if check(p, Tok.Lparen) {
+        return parse_let_tuple(p, loc, is_const)
+    }
+    let is_mut = eat(p, Tok.Mut)
+    if is_mut && check(p, Tok.Lparen) {
+        error(p, "write `mut` on each name: `let (mut a, mut b) = ...`")
+        return fail(p)
+    }
+    if !eat(p, Tok.Ident) {
+        error(p, "expected identifier after let")
+        return fail(p)
+    }
+    let name = tok_text(p, p.prev)
+    loc.end_line = p.prev.end_line
+    loc.end_col = p.prev.end_col
+    let mut ty = ast.NONE
+    if eat(p, Tok.Colon) {
+        ty = parse_type(p)
+    }
+    consume(p, Tok.Eq, "expected =")
+    let init = parse_expr(p)
+    optional_semi(p)
+    return var_node(p, name, ty, init, if is_mut { 1 } else { 0 }, loc)
+}
+
+fn is_assign_op(k: int) -> bool {
+    return k == Tok.Eq || k == Tok.PlusEq || k == Tok.MinusEq || k == Tok.StarEq ||
+        k == Tok.SlashEq || k == Tok.PercentEq || k == Tok.AmpEq || k == Tok.PipeEq ||
+        k == Tok.CaretEq || k == Tok.ShlEq || k == Tok.ShrEq
+}
+
+/** *One case label: an integer constant, `true` / `false`, or `Enum.Member`. */
+fn parse_case_pat(p: &mut Parser) -> int {
+    let mut loc = tloc(p.cur)
+    if eat(p, Tok.Ident) {
+        let nm = tok_text(p, p.prev)
+        if eat(p, Tok.Dot) {
+            if !eat(p, Tok.Ident) {
+                error(p, "expected a name after `.` in a case label")
+                return fail(p)
+            }
+            let field = tok_text(p, p.prev)
+            loc.end_line = p.prev.end_line
+            loc.end_col = p.prev.end_col
+            let base = ident_node(p, nm, loc)
+            return field_node(p, base, field, 0, loc)
+        }
+        if nm == "_" {
+            error(p, "`_` is not a case label; write `default:`")
+        } else {
+            error(p, "case labels are integer constants or `Enum.Member`")
+        }
+        return fail(p)
+    }
+    if eat(p, Tok.Minus) {
+        if !eat(p, Tok.Number) {
+            error(p, "expected a number after `-` in a case label")
+            return fail(p)
+        }
+        let v = num_node(p, p.prev, loc)
+        let mut n = ast.node(Kind.Unary, loc)
+        n.op = Tok.Minus
+        n.a = v
+        return add(p, n)
+    }
+    if eat(p, Tok.Number) {
+        return num_node(p, p.prev, loc)
+    }
+    if eat(p, Tok.True) {
+        let mut n = ast.node(Kind.Bool, loc)
+        n.op = 1
+        return add(p, n)
+    }
+    if eat(p, Tok.False) {
+        return add(p, ast.node(Kind.Bool, loc))
+    }
+    error(p, "case labels are integer constants or `Enum.Member`")
+    return fail(p)
+}
+
+/** *`case A, B:` or `default:`, then statements up to the next label or `}`. */
+fn parse_case(p: &mut Parser) -> int {
+    let loc = tloc(p.cur)
+    let mut pats = []int {}
+    let mut is_default = false
+    if eat(p, Tok.Default) {
+        is_default = true
+    } else if eat(p, Tok.Case) {
+        while true {
+            let q = parse_case_pat(p)
+            if bad(p, q) {
+                break
+            }
+            push(pats, q)
+            if !eat(p, Tok.Comma) {
+                break
+            }
+        }
+        if check(p, Tok.Pipe) {
+            error(p, "separate case labels with `,`, not `|`")
+            return fail(p)
+        }
+    } else {
+        error(p, "expected `case` or `default` in a switch")
+        return fail(p)
+    }
+    if p.had_error {
+        return fail(p)
+    }
+    consume(p, Tok.Colon, if is_default { "expected : after default" } else { "expected : after case label" })
+    let bloc = tloc(p.cur)
+    let mut stmts = []int {}
+    while !check(p, Tok.Case) && !check(p, Tok.Default) && !check(p, Tok.Rbrace) && !check(p, Tok.Eof) {
+        let s = parse_stmt(p)
+        push_stmt(p, &mut stmts, s)
+        if p.had_error {
+            break
+        }
+    }
+    let body = block_node(p, stmts, bloc)
+    let mut n = ast.node(Kind.Case, loc)
+    n.op = if is_default { 1 } else { 0 }
+    n.kids = pats
+    n.a = body
+    return add(p, n)
+}
+
+/** *One statement. */
+fn parse_stmt(p: &mut Parser) -> int {
+    let doc = take_docs(p)
+    let loc = tloc(p.cur)
+    if eat(p, Tok.If) {
+        let cond = parse_cond_expr(p)
+        let thenb = parse_block(p)
+        let mut elseb = ast.NONE
+        if eat(p, Tok.Else) {
+            if check(p, Tok.If) {
+                elseb = parse_stmt(p)
+            } else {
+                elseb = parse_block(p)
+            }
+        }
+        let mut n = ast.node(Kind.If, loc)
+        n.a = cond
+        n.b = thenb
+        n.c = elseb
+        return add(p, n)
+    }
+    if eat(p, Tok.For) {
+        if !eat(p, Tok.Ident) {
+            error(p, "expected loop variable")
+            return fail(p)
+        }
+        let var = tok_text(p, p.prev)
+        consume(p, Tok.In, "expected in")
+        let iter = parse_cond_expr(p)
+        let body = parse_block(p)
+        let mut n = ast.node(Kind.For, loc)
+        n.name = var
+        n.has_name = true
+        n.a = iter
+        n.b = body
+        return add(p, n)
+    }
+    if eat(p, Tok.While) {
+        let cond = parse_cond_expr(p)
+        let body = parse_block(p)
+        let mut n = ast.node(Kind.While, loc)
+        n.a = cond
+        n.b = body
+        return add(p, n)
+    }
+    if eat(p, Tok.Switch) {
+        let scrut = parse_cond_expr(p)
+        consume(p, Tok.Lbrace, "expected { after switch")
+        let mut cases = []int {}
+        while !check(p, Tok.Rbrace) && !check(p, Tok.Eof) {
+            let c = parse_case(p)
+            if !bad(p, c) {
+                push(cases, c)
+            }
+            if p.had_error {
+                break
+            }
+        }
+        consume(p, Tok.Rbrace, "expected }")
+        let mut n = ast.node(Kind.Switch, loc)
+        n.a = scrut
+        n.kids = cases
+        return add(p, n)
+    }
+    // `match` was replaced by `switch`; say so rather than fail on `x {`.
+    if cur_is_word(p, "match") && p.peek.line == p.cur.line &&
+        (p.peek.kind == Tok.Ident || p.peek.kind == Tok.Number || p.peek.kind == Tok.String) {
+        error(p, "`match` was replaced by `switch`: `switch x { case A, B: ... default: ... }`")
+        return fail(p)
+    }
+    if eat(p, Tok.Break) {
+        optional_semi(p)
+        return add(p, ast.node(Kind.Break, loc))
+    }
+    if eat(p, Tok.Continue) {
+        optional_semi(p)
+        return add(p, ast.node(Kind.Continue, loc))
+    }
+    if eat(p, Tok.Return) {
+        let mut e = ast.NONE
+        if !check(p, Tok.Semicolon) && !check(p, Tok.Rbrace) {
+            e = parse_expr(p)
+        }
+        optional_semi(p)
+        let mut n = ast.node(Kind.Return, loc)
+        n.a = e
+        return add(p, n)
+    }
+    if eat(p, Tok.Let) || eat(p, Tok.Const) {
+        let v = parse_let(p)
+        if !bad(p, v) {
+            set_doc(p, v, doc)
+        }
+        return v
+    }
+    // `fn name(a: T) -> R { ... }` in a body is `let name = fn(a: T) ...`.
+    if check(p, Tok.Fn) && p.peek.kind == Tok.Ident {
+        bump(p)
+        bump(p)
+        let name = tok_text(p, p.prev)
+        let nloc = tloc(p.prev)
+        let clos = parse_fn_closure(p, loc)
+        optional_semi(p)
+        if bad(p, clos) {
+            return clos
+        }
+        let ps = p.nodes[clos].kids
+        for i in 0..ps.len {
+            if p.nodes[ps[i]].a == ast.NONE && !p.had_error {
+                let pname = p.nodes[ps[i]].name
+                diag(p, p.nodes[ps[i]].loc, "local fn '{{name}}' needs a type on parameter '{{pname}}'")
+                p.had_error = true
+                break
+            }
+        }
+        let v = var_node(p, name, ast.NONE, clos, 0, nloc)
+        set_doc(p, v, doc)
+        return v
+    }
+    let e = parse_expr(p)
+    if is_assign_op(p.cur.kind) {
+        let op = p.cur.kind
+        bump(p)
+        let r = parse_expr(p)
+        optional_semi(p)
+        let mut n = ast.node(Kind.Assign, loc)
+        n.op = op
+        n.a = e
+        n.b = r
+        return add(p, n)
+    }
+    optional_semi(p)
+    let mut n = ast.node(Kind.ExprStmt, loc)
+    n.a = e
+    return add(p, n)
+}
+
+/** *`{` statements `}`; a comma may follow a statement (UI child lists). */
+fn parse_block(p: &mut Parser) -> int {
+    let loc = tloc(p.cur)
+    consume(p, Tok.Lbrace, "expected {")
+    let mut stmts = []int {}
+    while !check(p, Tok.Rbrace) && !check(p, Tok.Eof) {
+        let s = parse_stmt(p)
+        push_stmt(p, &mut stmts, s)
+        if p.had_error {
+            break
+        }
+        eat(p, Tok.Comma)
+    }
+    consume(p, Tok.Rbrace, "expected }")
+    return block_node(p, stmts, loc)
+}
+
+fn parse_params(p: &mut Parser) -> []int {
+    let mut ps = []int {}
+    if !check(p, Tok.Rparen) {
+        while true {
+            if !eat(p, Tok.Ident) {
+                error(p, "expected parameter name")
+                break
+            }
+            let name = tok_text(p, p.prev)
+            let nloc = tloc(p.prev)
+            consume(p, Tok.Colon, "expected :")
+            let ty = parse_type(p)
+            let mut def = ast.NONE
+            if eat(p, Tok.Eq) {
+                def = parse_expr(p)
+            }
+            let q = param_node(p, name, ty, def, nloc)
+            push(ps, q)
+            if !eat(p, Tok.Comma) {
+                break
+            }
+        }
+    }
+    return ps
+}
+
+/** *A component (a fn whose tail returns `slot(...)`) opens a view frame: */
+/** *`let __zv = __view_begin()` first, `return __view_end(__zv, || { slot(...) })` */
+/** *last. */
+fn frame_component(p: &mut Parser, body: int, loc: Loc) {
+    if p.nodes[body].kind != Kind.Block || p.nodes[body].kids.len == 0 {
+        return
+    }
+    let stmts = p.nodes[body].kids
+    let last = stmts[stmts.len - 1]
+    if p.nodes[last].kind != Kind.Return || p.nodes[last].a == ast.NONE {
+        return
+    }
+    let e = p.nodes[last].a
+    if p.nodes[e].kind != Kind.Call || p.nodes[e].a == ast.NONE {
+        return
+    }
+    let callee = p.nodes[e].a
+    if p.nodes[callee].kind != Kind.Ident || p.nodes[callee].name != "slot" {
+        return
+    }
+    let bblk = one_stmt_block(p, e, loc)
+    let clos = closure_node(p, []int {}, ast.NONE, bblk, loc)
+    let zv = ident_node(p, "__zv", loc)
+    let end_fn = ident_node(p, "__view_end", loc)
+    p.nodes[last].a = call_node(p, end_fn, []int { zv, clos }, loc)
+    let begin_fn = ident_node(p, "__view_begin", loc)
+    let begin = call_node(p, begin_fn, []int {}, loc)
+    let decl = var_node(p, "__zv", ast.NONE, begin, 0, loc)
+    let mut st = []int { decl }
+    for i in 0..stmts.len {
+        push(st, stmts[i])
+    }
+    p.nodes[body].kids = st
+}
+
+/** *`<A, B>` after a fn or struct name (the `<` is consumed). */
+fn type_params(p: &mut Parser) -> []string {
+    let mut ts = []string {}
+    while true {
+        if !eat(p, Tok.Ident) {
+            error(p, "expected type parameter name")
+            break
+        }
+        push(ts, tok_text(p, p.prev))
+        if !eat(p, Tok.Comma) {
+            break
+        }
+    }
+    consume_gt(p)
+    return ts
+}
+
+/** *A `fn` item (the keyword is consumed). */
+fn parse_fn(p: &mut Parser) -> int {
+    let mut loc = tloc(p.prev)
+    if !eat(p, Tok.Ident) {
+        error(p, "expected function name")
+        return fail(p)
+    }
+    let name = tok_text(p, p.prev)
+    loc.end_line = p.prev.end_line
+    loc.end_col = p.prev.end_col
+    let mut tps = []string {}
+    if eat(p, Tok.Lt) {
+        tps = type_params(p)
+    }
+    consume(p, Tok.Lparen, "expected (")
+    let ps = parse_params(p)
+    consume(p, Tok.Rparen, "expected )")
+    let mut ret = ast.NONE
+    if eat(p, Tok.Arrow) {
+        ret = parse_type(p)
+    }
+    let body = parse_block(p)
+    frame_component(p, body, loc)
+    let mut n = ast.node(Kind.Fn, loc)
+    n.name = name
+    n.has_name = true
+    n.strs = tps
+    n.kids = ps
+    n.a = ret
+    n.b = body
+    return add(p, n)
+}
+
+/** *`struct Name<T> { field: Type = default, ... }`. */
+fn parse_struct(p: &mut Parser) -> int {
+    let mut loc = tloc(p.prev)
+    if !eat(p, Tok.Ident) {
+        error(p, "expected struct name")
+        return fail(p)
+    }
+    let name = tok_text(p, p.prev)
+    loc.end_line = p.prev.end_line
+    loc.end_col = p.prev.end_col
+    let mut tps = []string {}
+    if eat(p, Tok.Lt) {
+        tps = type_params(p)
+    }
+    consume(p, Tok.Lbrace, "expected {")
+    let mut fields = []int {}
+    while !check(p, Tok.Rbrace) && !check(p, Tok.Eof) {
+        let fdoc = take_docs(p)
+        if !eat(p, Tok.Ident) {
+            error(p, "expected field name")
+            break
+        }
+        let fname = tok_text(p, p.prev)
+        let floc = tloc(p.prev)
+        consume(p, Tok.Colon, "expected :")
+        let ty = parse_type(p)
+        let mut def = ast.NONE
+        if eat(p, Tok.Eq) {
+            def = parse_expr(p)
+        }
+        let mut f = ast.node(Kind.FieldDecl, floc)
+        f.name = fname
+        f.has_name = true
+        f.a = ty
+        f.b = def
+        f.doc = fdoc.text
+        f.has_doc = fdoc.has
+        let fi = add(p, f)
+        push(fields, fi)
+        eat(p, Tok.Comma)
+        eat(p, Tok.Semicolon)
+    }
+    consume(p, Tok.Rbrace, "expected }")
+    let mut n = ast.node(Kind.Struct, loc)
+    n.name = name
+    n.has_name = true
+    n.strs = tps
+    n.kids = fields
+    return add(p, n)
+}
+
+/** *`enum Name { A, B = 7, C }`: numbered from 0, or on from the last value. */
+fn parse_enum(p: &mut Parser) -> int {
+    let mut loc = tloc(p.prev)
+    if !eat(p, Tok.Ident) {
+        error(p, "expected enum name")
+        return fail(p)
+    }
+    let name = tok_text(p, p.prev)
+    loc.end_line = p.prev.end_line
+    loc.end_col = p.prev.end_col
+    consume(p, Tok.Lbrace, "expected {")
+    let mut vs = []int {}
+    let mut next = i64(0)
+    while !check(p, Tok.Rbrace) && !check(p, Tok.Eof) {
+        if !eat(p, Tok.Ident) {
+            error(p, "expected enum variant name")
+            break
+        }
+        let vname = tok_text(p, p.prev)
+        let mut v = next
+        if eat(p, Tok.Eq) {
+            let neg = eat(p, Tok.Minus)
+            if !eat(p, Tok.Number) {
+                error(p, "enum variant value must be an integer literal")
+                break
+            }
+            v = tok_int(tok_text(p, p.prev))
+            // C negates with wraparound; i64's minimum stays itself.
+            if neg && v != i64(-9223372036854775807) - i64(1) {
+                v = i64(0) - v
+            }
+        }
+        if v == i64(9223372036854775807) {
+            next = i64(-9223372036854775807) - i64(1)
+        } else {
+            next = v + i64(1)
+        }
+        let mut vn = ast.node(Kind.Variant, tloc(p.prev))
+        vn.name = vname
+        vn.has_name = true
+        vn.num = v
+        let vi = add(p, vn)
+        push(vs, vi)
+        eat(p, Tok.Comma)
+        eat(p, Tok.Semicolon)
+    }
+    consume(p, Tok.Rbrace, "expected }")
+    let mut n = ast.node(Kind.Enum, loc)
+    n.name = name
+    n.has_name = true
+    n.kids = vs
+    return add(p, n)
+}
+
+fn has_byte(s: string, c: int) -> bool {
+    for i in 0..s.len {
+        if s[i] == c {
+            return true
+        }
+    }
+    return false
+}
+
+/** *The alias an import spec binds: the `std:` / `pkg:` name, the module */
+/** *after `package:`, or the file stem. Empty (with an error) when bad. */
+fn alias_from_path(p: &mut Parser, path: string) -> string {
+    let n = path.len
+    if n >= 4 && (substr(path, 0, 4) == "std:" || substr(path, 0, 4) == "pkg:") {
+        let name = substr(path, 4, n)
+        if name.len == 0 || has_byte(name, '/') || has_byte(name, '\\') || has_byte(name, ':') {
+            if path[0] == 's' {
+                error(p, "std import must be import \"std:name\"")
+            } else {
+                error(p, "package import must be import \"pkg:name\"")
+            }
+            return ""
+        }
+        return name
+    }
+    for i in 0..n {
+        if path[i] == ':' {
+            let alias = file_stem(substr(path, i + 1, n))
+            if alias.len == 0 {
+                error(p, "import spec needs a module after ':'")
+            }
+            return alias
+        }
+    }
+    let alias = file_stem(path)
+    if alias.len == 0 {
+        error(p, "import path has no module name")
+    }
+    return alias
+}
+
+fn import_node(p: &mut Parser, alias: string, path: string, loc: Loc) -> int {
+    let mut n = ast.node(Kind.Import, loc)
+    n.name = alias
+    n.has_name = true
+    n.text = path
+    n.has_text = true
+    return add(p, n)
+}
+
+/** *`import { A, B as C } "path"` (the `{` is consumed). No `from`. */
+fn parse_named_import(p: &mut Parser, start: Loc) -> int {
+    let mut loc = start
+    let mut names = []int {}
+    if !check(p, Tok.Rbrace) {
+        while true {
+            if !eat(p, Tok.Ident) {
+                error(p, "expected a name in the import list")
+                break
+            }
+            let src = tok_text(p, p.prev)
+            let mut local = src
+            if eat(p, Tok.As) {
+                if eat(p, Tok.Ident) {
+                    local = tok_text(p, p.prev)
+                } else {
+                    error(p, "expected a local name after 'as'")
+                }
+            }
+            let mut nn = ast.node(Kind.ImportName, tloc(p.prev))
+            nn.name = src
+            nn.has_name = true
+            nn.text = local
+            nn.has_text = true
+            let ni = add(p, nn)
+            push(names, ni)
+            if !eat(p, Tok.Comma) {
+                break
+            }
+        }
+    }
+    consume(p, Tok.Rbrace, "expected } to close the import list")
+    if cur_is_word(p, "from") {
+        error(p, "selective import has no 'from'; write import { Name } \"path\"")
+        bump(p)
+    }
+    if !eat(p, Tok.String) {
+        error(p, "expected import path string")
+        return fail(p)
+    }
+    loc.end_line = p.prev.end_line
+    loc.end_col = p.prev.end_col
+    let path = unescape(tok_text(p, p.prev))
+    let alias = alias_from_path(p, path)
+    if alias.len == 0 {
+        return fail(p)
+    }
+    let im = import_node(p, alias, path, loc)
+    p.nodes[im].kids = names
+    return im
+}
+
+/** *`import "spec"` (optionally `as name`), or a selective import. */
+fn parse_import(p: &mut Parser) -> int {
+    let mut loc = tloc(p.prev)
+    if eat(p, Tok.Lbrace) {
+        return parse_named_import(p, loc)
+    }
+    if eat(p, Tok.Ident) {
+        error(p, "import requires a quoted path, e.g. import \"std:fmt\" or import \"zeus\"")
+        return fail(p)
+    }
+    if !eat(p, Tok.String) {
+        error(p, "expected import path string after import")
+        return fail(p)
+    }
+    loc.end_line = p.prev.end_line
+    loc.end_col = p.prev.end_col
+    let path = unescape(tok_text(p, p.prev))
+    let mut alias = alias_from_path(p, path)
+    if alias.len == 0 {
+        return fail(p)
+    }
+    if eat(p, Tok.As) {
+        if !eat(p, Tok.Ident) {
+            error(p, "expected a module name after 'as'")
+            return fail(p)
+        }
+        alias = tok_text(p, p.prev)
+    }
+    return import_node(p, alias, path, loc)
+}
+
+/** *C's `snprintf(msg, 96, ...)`: at most 95 bytes. */
+fn clip95(s: string) -> string {
+    if s.len > 95 {
+        return substr(s, 0, 95)
+    }
+    return s
+}
+
+/** *`#![c_source("x.c", flags...)]` / `#![c_link(flags...)]`, after the `#!`. */
+/** *The `CDir` node, or an `Error` node. */
+fn parse_c_directive(p: &mut Parser) -> int {
+    let loc = tloc(p.prev)
+    consume(p, Tok.Lbracket, "expected [ after #!")
+    if !eat(p, Tok.Ident) {
+        error(p, "expected c_source or c_link after #![")
+        return fail(p)
+    }
+    let attr = tok_text(p, p.prev)
+    let is_link = attr == "c_link"
+    if !is_link && attr != "c_source" {
+        error(p, clip95("unknown file attribute '{{attr}}'"))
+        return fail(p)
+    }
+    consume(p, Tok.Lparen, "expected ( after the attribute name")
+    let mut args = []string {}
+    while true {
+        if !eat(p, Tok.String) {
+            error(p, "expected a string in #![c_source] or #![c_link]")
+            return fail(p)
+        }
+        push(args, unescape(tok_text(p, p.prev)))
+        if !(eat(p, Tok.Comma) && !check(p, Tok.Rparen)) {
+            break
+        }
+    }
+    consume(p, Tok.Rparen, "expected ) after the attribute's strings")
+    consume(p, Tok.Rbracket, "expected ] after the attribute")
+    let mut n = ast.node(Kind.CDir, loc)
+    n.op = if is_link { 1 } else { 0 }
+    n.strs = args
+    return add(p, n)
+}
+
+// `op` bits on Fn and Struct nodes.
+const FN_ASYNC: int = 1
+const FN_TEST: int = 2
+const FN_SERVER: int = 4
+const ST_PROTO: int = 1
+const ST_JSON: int = 2
+const ST_MUST_CHECK: int = 4
+const ST_NO_SEND: int = 8
+
+/** *The module: docs, imports, then items, until EOF or the first error. */
+/** *Returns the `Program` node. */
+fn parse_program(p: &mut Parser) -> int {
+    let loc = tloc(p.cur)
+    let mut kids = []int {}
+    let mut decl_count = 0
+    let mut mod_doc = take_docs_of(p, Tok.ModDoc)
+    while true {
+        let more = take_docs_of(p, Tok.ModDoc)
+        mod_doc = doc_join(mod_doc, more)
+        if check(p, Tok.Eof) || p.had_error {
+            break
+        }
+        let doc = take_docs(p)
+        if eat(p, Tok.Import) {
+            if decl_count > 0 {
+                error(p, "import must appear at the top of the file")
+                break
+            }
+            let im = parse_import(p)
+            optional_semi(p)
+            if !bad(p, im) {
+                set_doc(p, im, doc)
+                push(kids, im)
+            }
+            continue
+        }
+        let mut st_bits = 0
+        let mut is_test = false
+        let mut is_server = false
+        let mut c_sym = ""
+        let mut has_c_sym = false
+        if eat(p, Tok.Hash) {
+            if eat(p, Tok.Bang) {
+                let cd = parse_c_directive(p)
+                if bad(p, cd) {
+                    break
+                }
+                push(kids, cd)
+                continue
+            }
+            consume(p, Tok.Lbracket, "expected [ after #")
+            if !eat(p, Tok.Ident) {
+                error(p, "expected attribute name")
+                break
+            }
+            let attr = tok_text(p, p.prev)
+            if attr == "proto" {
+                st_bits = ST_PROTO
+            } else if attr == "test" {
+                is_test = true
+            } else if attr == "server" {
+                is_server = true
+            } else if attr == "json" {
+                st_bits = ST_JSON
+            } else if attr == "must_check" {
+                st_bits = ST_MUST_CHECK
+            } else if attr == "no_send" {
+                st_bits = ST_NO_SEND
+            } else if attr == "c" {
+                consume(p, Tok.Lparen, "expected ( after #[c")
+                if !eat(p, Tok.String) {
+                    error(p, "#[c] expects a C symbol name: #[c(\"sym\")]")
+                    break
+                }
+                c_sym = unescape(tok_text(p, p.prev))
+                has_c_sym = true
+                consume(p, Tok.Rparen, "expected ) after #[c symbol")
+            } else {
+                error(p, clip95("unknown attribute '{{attr}}'"))
+                break
+            }
+            consume(p, Tok.Rbracket, "expected ] after attribute")
+            if st_bits == ST_PROTO && !check(p, Tok.Struct) {
+                error(p, "#[proto] can only be applied to a struct")
+                break
+            }
+            if is_test && !check(p, Tok.Fn) {
+                error(p, "#[test] can only be applied to a fn")
+                break
+            }
+            if is_server && !check(p, Tok.Fn) {
+                error(p, "#[server] can only be applied to a fn")
+                break
+            }
+            if st_bits == ST_JSON && !check(p, Tok.Struct) {
+                error(p, "#[json] can only be applied to a struct")
+                break
+            }
+            if st_bits == ST_MUST_CHECK && !check(p, Tok.Struct) {
+                error(p, "#[must_check] can only be applied to a struct")
+                break
+            }
+            if st_bits == ST_NO_SEND && !check(p, Tok.Struct) {
+                error(p, "#[no_send] can only be applied to a struct")
+                break
+            }
+            if has_c_sym && !check(p, Tok.Fn) {
+                error(p, "#[c] can only be applied to a fn")
+                break
+            }
+        }
+        if eat(p, Tok.Fn) {
+            let f = parse_fn(p)
+            if !bad(p, f) {
+                set_doc(p, f, doc)
+                let mut bits = 0
+                if is_test {
+                    bits = bits | FN_TEST
+                }
+                if is_server {
+                    bits = bits | FN_SERVER
+                }
+                p.nodes[f].op = bits
+                p.nodes[f].text = c_sym
+                p.nodes[f].has_text = has_c_sym
+                push(kids, f)
+                decl_count = decl_count + 1
+            }
+            continue
+        }
+        if check(p, Tok.Ident) && p.peek.kind == Tok.Fn && cur_is_word(p, "async") {
+            bump(p)
+            if !eat(p, Tok.Fn) {
+                error(p, "expected fn after async")
+                continue
+            }
+            let f = parse_fn(p)
+            if !bad(p, f) {
+                p.nodes[f].op = FN_ASYNC
+                set_doc(p, f, doc)
+                push(kids, f)
+                decl_count = decl_count + 1
+            }
+            continue
+        }
+        if eat(p, Tok.Enum) {
+            let e = parse_enum(p)
+            if !bad(p, e) {
+                set_doc(p, e, doc)
+                push(kids, e)
+                decl_count = decl_count + 1
+            }
+            continue
+        }
+        if eat(p, Tok.Struct) {
+            let s = parse_struct(p)
+            if !bad(p, s) {
+                set_doc(p, s, doc)
+                p.nodes[s].op = st_bits
+                push(kids, s)
+                decl_count = decl_count + 1
+            }
+            continue
+        }
+        if st_bits == ST_PROTO || is_test || is_server {
+            if is_test {
+                error(p, "#[test] can only be applied to a fn")
+            } else if is_server {
+                error(p, "#[server] can only be applied to a fn")
+            } else {
+                error(p, "#[proto] can only be applied to a struct")
+            }
+            break
+        }
+        if st_bits == ST_JSON {
+            error(p, "#[json] can only be applied to a struct")
+            break
+        }
+        if st_bits == ST_MUST_CHECK {
+            error(p, "#[must_check] can only be applied to a struct")
+            break
+        }
+        if st_bits == ST_NO_SEND {
+            error(p, "#[no_send] can only be applied to a struct")
+            break
+        }
+        if eat(p, Tok.Let) || eat(p, Tok.Const) {
+            let v = parse_let(p)
+            if !bad(p, v) {
+                set_doc(p, v, doc)
+            }
+            let before = kids.len
+            push_stmt(p, &mut kids, v)
+            decl_count = decl_count + kids.len - before
+            continue
+        }
+        error(p, "expected fn, struct, enum, let, or const")
+        break
+    }
+    let mut prog = ast.node(Kind.Program, loc)
+    prog.kids = kids
+    prog.text = mod_doc.text
+    prog.has_text = mod_doc.has
+    return add(p, prog)
+}
