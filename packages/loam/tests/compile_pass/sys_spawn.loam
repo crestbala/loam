@@ -1,0 +1,53 @@
+// std:sys process and stdin surface: spawn / wait / run without a shell,
+// read_line / read_stdin (the fixture pipes input into a copy of itself),
+// os and is_abs.
+import "std:fmt"
+import "std:str"
+import "std:sys"
+
+fn child() {
+    let l1 = sys.read_line()
+    let rest = sys.read_stdin(5)
+    let l2 = sys.read_line()
+    let eof = sys.read_line()
+    fmt.println("child:", l1.len, rest, l2.len, eof.len)
+}
+
+fn main() {
+    if sys.argc() > 1 && sys.arg(1) == "child" {
+        child()
+        return
+    }
+    let os = sys.os()
+    fmt.println(os == "macos" || os == "linux" || os == "windows")
+    fmt.println(
+        sys.is_abs("/a"),
+        sys.is_abs("C:/x"),
+        sys.is_abs("c:\\x"),
+        sys.is_abs("rel/x"),
+        sys.is_abs("C:"),
+        sys.is_abs(""),
+    )
+
+    let three = []string { "sh", "-c", "exit 3" }
+    fmt.println(sys.run(&three))
+    // Arguments reach the child verbatim: no globbing, quoting or `$` expansion.
+    let lit = []string { "sh", "-c", "test \"$1\" = 'a b $HOME *'", "sh", "a b $HOME *" }
+    fmt.println(sys.run(&lit))
+    let missing = []string { "no-such-program-for-loam-tests" }
+    fmt.println(sys.run(&missing))
+
+    let mut hs = []int {}
+    for i in 0..4 {
+        let a = []string { "sh", "-c", "exit {{i}}" }
+        push(hs, sys.spawn(&a))
+    }
+    for i in 0..4 {
+        fmt.println(sys.wait(hs[i]))
+    }
+    fmt.println(sys.wait(hs[0]))
+
+    let me = str.shell_quote(sys.arg(0))
+    let out = sys.exec("printf 'hello\\nABCDEtail\\n' | {{me}} child")
+    fmt.println(out)
+}

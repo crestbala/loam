@@ -11,7 +11,39 @@
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
+#ifdef _WIN32
+/* Windows host shim (MinGW-w64 / clang targeting *-windows-gnu). The runtime
+   is written against POSIX; this block supplies the few pieces Windows lacks
+   so the same CLI surface builds there. `/` works as a separator in every
+   Win32 file API, so paths stay `/` on the Loam side. */
+#include <io.h>
+#include <direct.h>
+#include <process.h>
+struct iovec {
+    void *iov_base;
+    size_t iov_len;
+};
+static inline ssize_t writev(int fd, const struct iovec *iov, int n) {
+    ssize_t total = 0;
+    for (int i = 0; i < n; i++) {
+        if (!iov[i].iov_len) continue;
+        int w = _write(fd, iov[i].iov_base, (unsigned)iov[i].iov_len);
+        if (w < 0) return total ? total : -1;
+        total += w;
+        if ((size_t)w < iov[i].iov_len) break;
+    }
+    return total;
+}
+/* `_pclose` / `_cwait` hand back the exit code itself, not a wait status. */
+#define WIFEXITED(st) 1
+#define WEXITSTATUS(st) (st)
+#define popen _popen
+#define pclose _pclose
+#define lstat stat
+#define mkdir(path, mode) _mkdir(path)
+#else
 #include <sys/uio.h>
+#endif
 #ifndef __wasm32__
 #include <time.h>
 #include <setjmp.h>
@@ -1316,6 +1348,27 @@ static inline double loam_conv_strtod(loam_str s) {
     return strtod(buf, NULL);
 }
 
+/** The operating system: "macos" | "linux" | "windows" | "ios" | "android" |
+ *  "wasm" | "other". The driver picks executable suffixes and the C compiler
+ *  from this. */
+static inline loam_str loam_sys_os(void) {
+#if defined(__wasm32__)
+    return (loam_str){"wasm", 4};
+#elif defined(LOAM_ANDROID) || defined(__ANDROID__)
+    return (loam_str){"android", 7};
+#elif defined(LOAM_IOS)
+    return (loam_str){"ios", 3};
+#elif defined(_WIN32)
+    return (loam_str){"windows", 7};
+#elif defined(__APPLE__)
+    return (loam_str){"macos", 5};
+#elif defined(__linux__)
+    return (loam_str){"linux", 5};
+#else
+    return (loam_str){"other", 5};
+#endif
+}
+
 /** Compile target: "wasm" | "ios" | "android" | "native". Used by
  *  `http.client()` to pick a default RPC address. */
 static inline loam_str loam_sys_target(void) {
@@ -1403,6 +1456,19 @@ static inline int64_t loam_sys_mtime(loam_str path) {
     (void)path;
     return -1;
 }
+static inline int64_t loam_sys_spawn(const loam_vec *argv) {
+    (void)argv;
+    return -1;
+}
+static inline int64_t loam_sys_wait(int64_t h) {
+    (void)h;
+    return -1;
+}
+static inline loam_str loam_sys_read_stdin(int64_t n) {
+    (void)n;
+    return (loam_str){"", 0};
+}
+static inline loam_str loam_sys_read_line(void) { return (loam_str){"", 0}; }
 static inline int64_t loam_sys_mkdir(loam_str path) {
     (void)path;
     return 1;
@@ -1431,7 +1497,9 @@ static inline int64_t loam_sys_watch_close(int64_t fd) {
     return 0;
 }
 #else
+#ifndef _WIN32
 #include <sys/wait.h>
+#endif
 
 static int loam_sys_last_status = 1;
 
@@ -1786,7 +1854,9 @@ static inline int64_t loam_sys_mkdir(loam_str path) {
     n = (size_t)path.len;
     for (i = 1; i <= n; i++) {
         char save;
-        if (i != n && buf[i] != '/') continue;
+        if (i != n && buf[i] != '/' && buf[i] != '\\') continue;
+        /* `C:` is a drive, not a directory to create. */
+        if (i == 2 && buf[1] == ':') continue;
         save = buf[i];
         buf[i] = 0;
         if (buf[0] && mkdir(buf, 0755) != 0 && errno != EEXIST) return 1;
@@ -1798,6 +1868,11 @@ static inline int64_t loam_sys_mkdir(loam_str path) {
 static inline int64_t loam_sys_rename(loam_str from, loam_str to) {
     char a[4096], b[4096];
     if (loam_sys_cpath(from, a, sizeof a) || loam_sys_cpath(to, b, sizeof b)) return 1;
+#ifdef _WIN32
+    /* POSIX rename replaces the target; Windows refuses an existing one. */
+    if (rename(a, b) == 0) return 0;
+    remove(b);
+#endif
     return rename(a, b) == 0 ? 0 : 1;
 }
 
@@ -1807,7 +1882,186 @@ static inline loam_str loam_sys_cwd(void) {
     size_t n;
     if (!getcwd(buf, sizeof buf)) return (loam_str){"", 0};
     n = strlen(buf);
+#ifdef _WIN32
+    /* Paths are `/` on the Loam side (every Win32 file API accepts it). */
+    for (size_t i = 0; i < n; i++)
+        if (buf[i] == '\\') buf[i] = '/';
+#endif
     return loam_str_copy(buf, (int64_t)n);
+}
+
+/* --- sys.spawn / sys.wait: run a program without a shell ---
+   `argv[0]` is looked up on PATH. Children live in a small table so a handle
+   is an int on every platform (a pid on POSIX, a process HANDLE on Windows).
+   -1 = could not start. */
+#define LOAM_SPAWN_MAX 256
+#ifdef _WIN32
+static intptr_t loam_spawn_tab[LOAM_SPAWN_MAX];
+#else
+#include <spawn.h>
+extern char **environ;
+static pid_t loam_spawn_tab[LOAM_SPAWN_MAX];
+#endif
+static unsigned char loam_spawn_live[LOAM_SPAWN_MAX];
+
+static char *loam_cstr_dup(loam_str s) {
+    char *p = (char *)malloc((size_t)(s.len > 0 ? s.len : 0) + 1);
+    if (!p) return NULL;
+    if (s.len > 0) memcpy(p, s.ptr, (size_t)s.len);
+    p[s.len > 0 ? s.len : 0] = 0;
+    return p;
+}
+
+#ifdef _WIN32
+/* The MS C runtime joins argv with spaces, so each argument is quoted the
+   way `CommandLineToArgvW` splits it back: backslashes double only before a
+   quote, and a quote is escaped. */
+static char *loam_win_quote(const char *a) {
+    size_t n = strlen(a), i, o = 0;
+    int plain = n > 0;
+    for (i = 0; i < n; i++)
+        if (a[i] == ' ' || a[i] == '\t' || a[i] == '"') plain = 0;
+    char *q = (char *)malloc(2 * n + 3);
+    if (!q) return NULL;
+    if (plain) {
+        memcpy(q, a, n + 1);
+        return q;
+    }
+    q[o++] = '"';
+    for (i = 0; i < n; i++) {
+        size_t bs = 0;
+        while (i < n && a[i] == '\\') {
+            bs++;
+            i++;
+        }
+        if (i == n) {
+            while (bs--) { q[o++] = '\\'; q[o++] = '\\'; }
+            break;
+        }
+        if (a[i] == '"') {
+            while (bs--) { q[o++] = '\\'; q[o++] = '\\'; }
+            q[o++] = '\\';
+            q[o++] = '"';
+        } else {
+            while (bs--) q[o++] = '\\';
+            q[o++] = a[i];
+        }
+    }
+    q[o++] = '"';
+    q[o] = 0;
+    return q;
+}
+#endif
+
+static inline int64_t loam_sys_spawn(const loam_vec *argv) {
+    int64_t n = argv ? argv->len : 0, i;
+    int slot = -1, ok = 0;
+    char **av;
+    if (n <= 0) return -1;
+    for (i = 0; i < LOAM_SPAWN_MAX; i++)
+        if (!loam_spawn_live[i]) {
+            slot = (int)i;
+            break;
+        }
+    if (slot < 0) return -1;
+    av = (char **)calloc((size_t)n + 1, sizeof(char *));
+    if (!av) return -1;
+    for (i = 0; i < n; i++) {
+        char *c = loam_cstr_dup(((const loam_str *)argv->ptr)[i]);
+#ifdef _WIN32
+        av[i] = c ? loam_win_quote(c) : NULL;
+        free(c);
+#else
+        av[i] = c;
+#endif
+    }
+#ifdef _WIN32
+    {
+        intptr_t h = _spawnvp(_P_NOWAIT, av[0], (const char *const *)av);
+        if (h != -1) {
+            loam_spawn_tab[slot] = h;
+            ok = 1;
+        }
+    }
+#else
+    {
+        pid_t pid;
+        if (posix_spawnp(&pid, av[0], NULL, NULL, av, environ) == 0) {
+            loam_spawn_tab[slot] = pid;
+            ok = 1;
+        }
+    }
+#endif
+    for (i = 0; i < n; i++) free(av[i]);
+    free(av);
+    if (!ok) return -1;
+    loam_spawn_live[slot] = 1;
+    return slot + 1;
+}
+
+/** Block until the child exits: its exit code, or -1 for a bad handle or a
+ *  child killed by a signal. Each handle is waited for once. */
+static inline int64_t loam_sys_wait(int64_t h) {
+    int slot = (int)h - 1, st = 0;
+    if (slot < 0 || slot >= LOAM_SPAWN_MAX || !loam_spawn_live[slot]) return -1;
+    loam_spawn_live[slot] = 0;
+#ifdef _WIN32
+    if (_cwait(&st, loam_spawn_tab[slot], 0) == -1) return -1;
+    return st;
+#else
+    while (waitpid(loam_spawn_tab[slot], &st, 0) < 0)
+        if (errno != EINTR) return -1;
+    return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+#endif
+}
+
+/* --- sys.read_stdin / sys.read_line: unbuffered, for a JSON-RPC peer --- */
+static inline void loam_stdin_binary(void) {
+#ifdef _WIN32
+    static int done;
+    if (!done) {
+        _setmode(0, 0x8000 /* _O_BINARY */);
+        done = 1;
+    }
+#endif
+}
+
+/** Exactly `n` bytes, fewer only at end of input. */
+static inline loam_str loam_sys_read_stdin(int64_t n) {
+    char *p;
+    int64_t got = 0;
+    loam_stdin_binary();
+    if (n <= 0) return (loam_str){"", 0};
+    p = loam_str_bytes(n);
+    while (got < n) {
+        ssize_t r = read(0, p + got, (size_t)(n - got));
+        if (r < 0 && errno == EINTR) continue;
+        if (r <= 0) break;
+        got += r;
+    }
+    p[got] = 0;
+    if (got == 0) {
+        loam_str e = loam_str_owned(p, 0);
+        loam_str_release(&e);
+        return (loam_str){"", 0};
+    }
+    return loam_str_owned(p, got);
+}
+
+/** One line *with* its `\n`, so `""` means end of input and `"\n"` a blank line. */
+static inline loam_str loam_sys_read_line(void) {
+    char buf[8192];
+    int64_t n = 0;
+    loam_stdin_binary();
+    while (n < (int64_t)sizeof buf) {
+        char c;
+        ssize_t r = read(0, &c, 1);
+        if (r < 0 && errno == EINTR) continue;
+        if (r <= 0) break;
+        buf[n++] = c;
+        if (c == '\n') break;
+    }
+    return loam_str_copy(buf, n);
 }
 
 /* --- sys.watch_*: the kernel half of change-driven reload ---

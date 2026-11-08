@@ -92,9 +92,10 @@ after the fixed point. Under the essentialist rule they stay out of the
 critical path.
 
 **Current status**: Not self-hosted. Phase 1 (§1.1, §1.4, the §1.3 `u64`
-bugs) and phase 2 (§1.2, the rest of §1.3, stderr / `mtime` / read errors
-from §1.5, §2.3) are done. Open: process spawn/wait, stdin, and the
-cross-platform surface (§1.5, §1.6), then the compiler port.
+bugs), phase 2 (§1.2, the rest of §1.3, stderr / `mtime` / read errors
+from §1.5, §2.3) and phase 3 (spawn/wait, stdin, paths, the Linux/Windows
+runtime shim — §1.5, §1.6; cross-compiled, not yet run on those OSes) are
+done. Next: the compiler port, starting with the lexer.
 
 ---
 
@@ -213,17 +214,19 @@ Needed:
 - [x] `sys.mtime(path) -> i64` (milliseconds; `-1` when missing).
 - [x] `fmt.ewrite` / `fmt.eprintln` (stderr; `eprintln` is `println`'s
       compile-time expansion with the stderr writers).
-- [ ] `sys.read_stdin(n) -> []u8` and a line read (needed for the LSP only;
-      `loamc` itself can ship without it).
-- [ ] Spawn without the shell + wait, or at least `exec` with argv quoting
-      (`str.shell_quote` exists) and a background/parallel form. Optional for
-      a first self-host — serial `cc` is correct, just slower. Must work on
-      Windows (no `fork`).
+- [x] `sys.read_stdin(n) -> string` (exactly `n` bytes, fewer at EOF) and
+      `sys.read_line()` (with its `\n`; `""` is EOF), unbuffered.
+- [x] Spawn without the shell + wait: `sys.spawn(&argv) -> handle`,
+      `sys.wait(handle) -> exit code`, `sys.run(&argv)`. `posix_spawnp` on
+      POSIX, `_spawnvp` with `CommandLineToArgvW`-style quoting on Windows;
+      up to 256 children in flight, so `cc` can run in parallel.
+      Test: `compile_pass/sys_spawn.loam`.
 - [x] Read a file with an explicit error: `sys.read(path) -> Result<string>`
       (and `sys.io_error()` after a `read_file`); an empty file is `Ok("")`.
-- [ ] Path separators and absolute-path rules that work on Windows
-      (`\` vs `/`, drive letters). Prefer `/` everywhere in the language
-      and normalize in the runtime.
+- [x] Path separators and absolute-path rules that work on Windows: `/`
+      everywhere on the Loam side (`sys.cwd()` normalizes), `sys.is_abs`
+      knows drive letters and UNC, `sys.mkdir` skips the drive, and
+      `sys.os()` names the platform.
 
 ### 1.6 Cross-platform runtime and host shims (Linux + Windows)
 
@@ -233,14 +236,20 @@ language must not regress.
 
 Needed:
 
-- [ ] Windows host shim: console I/O, process spawn, file timestamps, and
-      basic path handling without requiring WSL.
-- [ ] Linux path that does not assume X11 for non-GUI tools (the compiler
-      and `nob` must build and run headless).
-- [ ] Consistent `sys` surface so the same Loam source for `loamc` and
-      `nob` works on macOS, Linux, and Windows.
-- [ ] Document which C compilers are supported on each platform
-      (clang, gcc, MSVC cl.exe) and how `loamc` locates them.
+- [x] Windows host shim (`_WIN32` block in `loam_rt.h`): console I/O
+      (`writev` over `_write`), process spawn, `mtime`, `mkdir`, replacing
+      `rename`, binary stdin — MinGW-w64, no WSL.
+- [x] Linux path that does not assume X11 for non-GUI tools: the runtime,
+      `nob`, and the seed compiler build headless.
+- [x] Consistent `sys` surface: `nob.loam` and every non-GUI `compile_pass`
+      fixture build and link unchanged for x86_64/aarch64 Linux and Windows
+      (`tools/cross-check.sh`, `zig cc`). **Compile-and-link verified only:**
+      running on Linux/Windows still needs a real runner (§3 CI).
+- [x] Document which C compilers are supported and how `loamc` finds them:
+      [platforms.md](platforms.md). MSVC `cl.exe` is out (GNU extensions in
+      the generated C). The seed `driver.c` is deliberately not ported to
+      Windows: Windows bootstraps from the committed generated C of the Loam
+      compiler, whose driver uses `sys.spawn`.
 
 ### 1.7 C FFI: import C source and headers
 
@@ -497,7 +506,8 @@ beyond what the checklist requires.
 - [x] `int`/`u64`/`float` ↔ string conversion in std (§1.3)
 - [x] `fmt.eprintln` / stderr (§1.5)
 - [x] `sys.mtime` and file-read that returns an error (§1.5)
-- [ ] Portable process spawn/wait and path handling for Linux + Windows (§1.5, §1.6)
+- [x] Portable process spawn/wait and path handling for Linux + Windows (§1.5, §1.6)
+      — built and linked for both via `tools/cross-check.sh`; not yet run there
 
 ### Compiler port
 - [ ] Lexer in Loam, differential-tested against `lexer.c`
