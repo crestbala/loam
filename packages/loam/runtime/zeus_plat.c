@@ -2021,14 +2021,15 @@ int64_t loam_platform_plat_fullscreen(int64_t on) {
 }
 
 /* 1 when shortcuts follow Apple conventions (⌘ rather than Ctrl): macOS and
-   iOS builds, and a browser on an Apple platform. */
+   iOS builds, and a browser on an Apple platform. A headless run (snapshots,
+   draw goldens) answers 1 on every OS, so its output is host-independent. */
 int64_t loam_platform_plat_apple_keys(void) {
 #ifdef __wasm32__
     return zeus_js_apple_keys();
 #elif defined(__APPLE__)
     return 1;
 #else
-    return 0;
+    return loam_zeus_plat_headless() ? 1 : 0;
 #endif
 }
 

@@ -3,10 +3,13 @@
 // empty queue (no player start-up, nothing opened). Keep this file free of
 // prints: stdout is the golden.
 
+import "std:log"
 import "zeus"
 import "../../../../examples/zeus/vidy/app_routes.loam" as approutes
 
 fn main() {
+    // The route table turns app logs on (zeus.toml `logs`); they go to stdout.
+    log.set_print(false)
     zeus.window_chrome(zeus.CHROME_CUSTOM)
     zeus.App("Vidy", fn() {
         approutes.app()

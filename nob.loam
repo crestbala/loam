@@ -1005,12 +1005,34 @@ fn ztests_jobs() -> []Job {
 
 // --- commands ------------------------------------------------------------
 
+/** *Regenerate the git-ignored fixtures tests import: the route tables of the */
+/** *example apps that do not commit theirs (draw goldens import them) and */
+/** *pkg_app's vendored tree (the modules stanza). Runs once, before any pool, */
+/** *so a fresh checkout passes and stale local copies never mask a change. */
+fn gen_fixtures() -> int {
+    let l = tmpf("gen_fixtures.log")
+    let script = cat(
+        "cd {{shq(ROOT)}} && for d in examples/zeus/*/; do [ -d \"$d/routes\" ] && git check-ignore -q \"$d/app_routes.loam\" || continue; ",
+        cat("{{shq(ZELI)}} routes \"$d\" || exit 1; done && ",
+            "{{shq(ZELI)}} pkg sync packages/loam/tests/pkg_app"))
+    sys.exec("{ {{script}}; } > {{shq(l)}} 2>&1")
+    if sys.exec_status() != 0 {
+        fmt.println("nob: generating ignored fixtures failed")
+        catlog(l)
+        return 1
+    }
+    return 0
+}
+
 fn test() -> int {
     sys.mkdir(TMP)
     sys.mkdir(EXB)
     sys.mkdir(NOB)
     if build("all") != 0 {
         fmt.println("nob: build failed; tests not run")
+        return 1
+    }
+    if gen_fixtures() != 0 {
         return 1
     }
     N_PASS = 0
@@ -2872,6 +2894,9 @@ fn run_integration_only() -> int {
     sys.mkdir(NOB)
     if build("all") != 0 {
         fmt.println("nob: build failed; checks not run")
+        return 1
+    }
+    if gen_fixtures() != 0 {
         return 1
     }
     N_PASS = 0

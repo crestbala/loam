@@ -2,10 +2,13 @@
 // the root path, without the host-side start-up (loaders, stores, servers).
 // Keep this file free of prints: stdout is the golden.
 
+import "std:log"
 import "zeus"
 import "../../../../examples/zeus/vidget/app_routes.loam" as approutes
 
 fn main() {
+    // The route table turns app logs on (zeus.toml `logs`); they go to stdout.
+    log.set_print(false)
     zeus.App("vidget", fn() -> Node {
         return approutes.app()
     })
