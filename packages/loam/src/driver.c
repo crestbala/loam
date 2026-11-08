@@ -15,6 +15,7 @@
  *   zeus/web/wasm.c        Canvas2D
  */
 #include "compile.h"
+#include "lexer.h"
 #include "codegen_c.h"
 #include "dce.h"
 #include "ext.h"
@@ -1527,7 +1528,50 @@ static void cost_report(const IrModule *m, long c_bytes, LoamModule *mods, int n
 }
 
 /** Parse flags, run the frontend, emit C, optionally invoke cc and run. */
+/* `loamc --dump-tokens file.loam`: one line per token, the reference the
+   self-hosted lexer is diffed against (packages/loam/compiler/lexer.loam):
+   `line:col end_line:end_col kind lexeme`, the lexeme with `\\`, `\n`, `\t`,
+   `\r` and other control bytes (`\xHH`) escaped. */
+static int dump_tokens(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        fprintf(stderr, "loam: cannot read %s\n", path);
+        return 1;
+    }
+    size_t cap = 1 << 16, n = 0;
+    char *src = (char *)malloc(cap);
+    for (;;) {
+        if (n + 4096 > cap) src = (char *)realloc(src, cap *= 2);
+        size_t r = fread(src + n, 1, 4096, f);
+        n += r;
+        if (r == 0) break;
+    }
+    fclose(f);
+    src[n] = 0;
+    Lexer l;
+    lexer_init(&l, src, path);
+    for (;;) {
+        Token t = lexer_next(&l);
+        printf("%d:%d %d:%d %s ", t.loc.line, t.loc.col, t.loc.end_line, t.loc.end_col,
+               token_kind_name(t.kind));
+        for (int i = 0; i < t.len; i++) {
+            unsigned char c = (unsigned char)t.start[i];
+            if (c == '\\') fputs("\\\\", stdout);
+            else if (c == '\n') fputs("\\n", stdout);
+            else if (c == '\t') fputs("\\t", stdout);
+            else if (c == '\r') fputs("\\r", stdout);
+            else if (c < 0x20 || c == 0x7f) printf("\\x%02x", c);
+            else putchar(c);
+        }
+        putchar('\n');
+        if (t.kind == TOK_EOF) break;
+    }
+    free(src);
+    return 0;
+}
+
 int main(int argc, char **argv) {
+    if (argc == 3 && strcmp(argv[1], "--dump-tokens") == 0) return dump_tokens(argv[2]);
     const char *in_path = NULL;
     const char *out_path = NULL;
     int emit_c = 0;

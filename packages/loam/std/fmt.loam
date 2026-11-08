@@ -1,5 +1,4 @@
-// `fmt` — write to stdout (and stderr: `ewrite`, `eprintln`). No heap, no
-// printf, no C strings.
+// `fmt` — write to stdout, or stderr (`eprintln`). No heap, no printf, no C strings.
 //
 // Import it, then call `fmt.println` with any mix of `string`, `int`, `bool`, and `float`.
 //

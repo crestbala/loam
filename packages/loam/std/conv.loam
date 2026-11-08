@@ -6,7 +6,8 @@
 // octal, or `0b` binary, with `_` allowed between digits. Floats go through
 // the C library (`loam_conv_*` in loam_rt.h): `f64_to_str` is the shortest
 // text that reads back to the same value, and `parse_f64` is `strtod` over a
-// syntax checked here first.
+// syntax checked here first. Exact float parsing is a native guarantee: wasm
+// has no `strtod`, and its fallback can be off in the last bit.
 //
 // ```
 // conv.u64_to_radix(u64(255), 16)   // "ff"

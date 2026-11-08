@@ -1,0 +1,71 @@
+// tokdump — print the tokens of a .loam file, one per line, in the format of
+// `loamc --dump-tokens`: `line:col end_line:end_col kind lexeme`, with `\\`,
+// `\n`, `\t`, `\r` and other control bytes (`\xHH`) escaped. `nob
+// selfhost-lex` diffs the two over every .loam file in the repo.
+import "std:buf"
+import "std:fmt"
+import "std:result"
+import "std:sys"
+import "lexer.loam"
+
+fn hex_digit(d: int) -> int {
+    if d < 10 {
+        return '0' + d
+    }
+    return 'a' + d - 10
+}
+
+fn push_escaped(b: &mut []u8, src: string, start: int, len: int) {
+    for k in 0..len {
+        let c = src[start + k]
+        if c == '\\' {
+            buf.push_str(b, "\\\\")
+        } else if c == '\n' {
+            buf.push_str(b, "\\n")
+        } else if c == '\t' {
+            buf.push_str(b, "\\t")
+        } else if c == '\r' {
+            buf.push_str(b, "\\r")
+        } else if c < 32 || c == 127 {
+            buf.push_str(b, "\\x")
+            push(b, u8(hex_digit(c / 16)))
+            push(b, u8(hex_digit(c % 16)))
+        } else {
+            push(b, u8(c))
+        }
+    }
+}
+
+fn main() {
+    if sys.argc() != 2 {
+        fmt.eprintln("usage: tokdump file.loam")
+        sys.exit(2)
+    }
+    let r = sys.read(sys.arg(1))
+    if r.tag == ResultTag.Err {
+        fmt.eprintln("tokdump: cannot read", sys.arg(1), "-", r.err)
+        sys.exit(1)
+    }
+    let src = r.val
+    let mut l = lexer.lexer_new(src)
+    let mut b = []u8 {}
+    while true {
+        let t = lexer.next(&mut l)
+        buf.push_int(&mut b, t.line)
+        push(b, u8(':'))
+        buf.push_int(&mut b, t.col)
+        push(b, u8(' '))
+        buf.push_int(&mut b, t.end_line)
+        push(b, u8(':'))
+        buf.push_int(&mut b, t.end_col)
+        push(b, u8(' '))
+        buf.push_str(&mut b, lexer.kind_name(t.kind))
+        push(b, u8(' '))
+        push_escaped(&mut b, src, t.start, t.len)
+        push(b, u8('\n'))
+        if t.kind == lexer.Tok.Eof {
+            break
+        }
+    }
+    fmt.write(buf.to_string(&b))
+}

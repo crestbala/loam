@@ -1,0 +1,577 @@
+// lexer — Loam source to tokens. The self-hosted twin of src/lexer.c, and it
+// must agree with it token for token (`nob selfhost-lex` diffs the two over
+// every .loam file in the repo).
+//
+// A token is a span of the source (`start`, `len`) plus 1-based byte
+// positions; nothing is copied. Whitespace and comments are skipped, except a
+// doc comment (slash, two stars, then a star before the text), which is a
+// token. A NUL byte ends the input, as it does for the C lexer.
+
+enum Tok {
+    Eof = 0,
+    Ident = 1,
+    Number = 2,
+    Float = 3,
+    String = 4,
+    ColonColon = 5,
+    Colon = 6,
+    Semicolon = 7,
+    Comma = 8,
+    Dot = 9,
+    DotDot = 10,
+    Lparen = 11,
+    Rparen = 12,
+    Lbrace = 13,
+    Rbrace = 14,
+    Lbracket = 15,
+    Rbracket = 16,
+    Eq = 17,
+    Plus = 18,
+    Minus = 19,
+    Star = 20,
+    Slash = 21,
+    Percent = 22,
+    PlusEq = 23,
+    MinusEq = 24,
+    StarEq = 25,
+    SlashEq = 26,
+    PercentEq = 27,
+    PlusPlus = 28,
+    MinusMinus = 29,
+    AmpEq = 30,
+    PipeEq = 31,
+    CaretEq = 32,
+    ShlEq = 33,
+    ShrEq = 34,
+    Shl = 35,
+    Shr = 36,
+    Caret = 37,
+    Tilde = 38,
+    EqEq = 39,
+    BangEq = 40,
+    Lt = 41,
+    Gt = 42,
+    LtEq = 43,
+    GtEq = 44,
+    Amp = 45,
+    AmpAmp = 46,
+    Pipe = 47,
+    PipePipe = 48,
+    Bang = 49,
+    Question = 50,
+    Hash = 51,
+    Arrow = 52,
+    FatArrow = 53,
+    Unknown = 54,
+    Fn = 55,
+    Let = 56,
+    Const = 57,
+    Mut = 58,
+    Struct = 59,
+    Enum = 60,
+    Import = 61,
+    If = 62,
+    Else = 63,
+    For = 64,
+    While = 65,
+    In = 66,
+    Return = 67,
+    Break = 68,
+    Continue = 69,
+    Switch = 70,
+    Case = 71,
+    Default = 72,
+    As = 73,
+    True = 74,
+    False = 75,
+    Doc = 76,
+    ModDoc = 77,
+}
+
+struct Token {
+    kind: int,
+    start: int,
+    len: int,
+    line: int,
+    col: int,
+    end_line: int,
+    end_col: int,
+}
+
+struct Lexer {
+    src: string,
+    pos: int,
+    line: int,
+    col: int,
+}
+
+fn lexer_new(src: string) -> Lexer {
+    return Lexer { src: src, pos: 0, line: 1, col: 1 }
+}
+
+/** *The byte at `i`, or 0 past the end (the C lexer's NUL terminator). */
+fn at(l: &Lexer, i: int) -> int {
+    if i < l.src.len {
+        return l.src[i]
+    }
+    return 0
+}
+
+/** *Step `n` bytes, tracking line and byte column. */
+fn advance(l: &mut Lexer, n: int) {
+    for k in 0..n {
+        if at(l, l.pos) == '\n' {
+            l.line = l.line + 1
+            l.col = 1
+        } else {
+            l.col = l.col + 1
+        }
+        l.pos = l.pos + 1
+    }
+}
+
+fn make(l: &Lexer, kind: int, start: int, sl: int, sc: int) -> Token {
+    let mut sc1 = sc
+    if sc1 < 1 {
+        sc1 = 1
+    }
+    let mut ec = l.col
+    if ec < 1 {
+        ec = 1
+    }
+    return Token {
+        kind: kind,
+        start: start,
+        len: l.pos - start,
+        line: sl,
+        col: sc1,
+        end_line: l.line,
+        end_col: ec,
+    }
+}
+
+/** *C `isspace`: space, \t \n \v \f \r. */
+fn is_space(c: int) -> bool {
+    return c == ' ' || (c >= 9 && c <= 13)
+}
+
+fn is_alpha(c: int) -> bool {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+fn is_digit(c: int) -> bool {
+    return c >= '0' && c <= '9'
+}
+
+fn is_xdigit(c: int) -> bool {
+    return is_digit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+}
+
+/** *The source bytes `[start, start + len)` spell `kw`. */
+fn word_is(l: &Lexer, start: int, len: int, kw: string) -> bool {
+    if len != kw.len {
+        return false
+    }
+    for k in 0..len {
+        if l.src[start + k] != kw[k] {
+            return false
+        }
+    }
+    return true
+}
+
+fn keyword(l: &Lexer, start: int, len: int) -> int {
+    if word_is(l, start, len, "fn") { return Tok.Fn }
+    if word_is(l, start, len, "let") { return Tok.Let }
+    if word_is(l, start, len, "const") { return Tok.Const }
+    if word_is(l, start, len, "mut") { return Tok.Mut }
+    if word_is(l, start, len, "struct") { return Tok.Struct }
+    if word_is(l, start, len, "enum") { return Tok.Enum }
+    if word_is(l, start, len, "import") { return Tok.Import }
+    if word_is(l, start, len, "if") { return Tok.If }
+    if word_is(l, start, len, "else") { return Tok.Else }
+    if word_is(l, start, len, "for") { return Tok.For }
+    if word_is(l, start, len, "while") { return Tok.While }
+    if word_is(l, start, len, "in") { return Tok.In }
+    if word_is(l, start, len, "return") { return Tok.Return }
+    if word_is(l, start, len, "break") { return Tok.Break }
+    if word_is(l, start, len, "continue") { return Tok.Continue }
+    if word_is(l, start, len, "switch") { return Tok.Switch }
+    if word_is(l, start, len, "case") { return Tok.Case }
+    if word_is(l, start, len, "default") { return Tok.Default }
+    if word_is(l, start, len, "as") { return Tok.As }
+    if word_is(l, start, len, "true") { return Tok.True }
+    if word_is(l, start, len, "false") { return Tok.False }
+    return Tok.Ident
+}
+
+/** *A two-byte operator starting with `c` then `d`, or -1. */
+fn op2(c: int, d: int) -> int {
+    if d == '=' {
+        switch c {
+            case '+': return Tok.PlusEq
+            case '-': return Tok.MinusEq
+            case '*': return Tok.StarEq
+            case '/': return Tok.SlashEq
+            case '%': return Tok.PercentEq
+            case '&': return Tok.AmpEq
+            case '|': return Tok.PipeEq
+            case '^': return Tok.CaretEq
+            case '=': return Tok.EqEq
+            case '!': return Tok.BangEq
+            case '<': return Tok.LtEq
+            case '>': return Tok.GtEq
+            default: return 0 - 1
+        }
+    }
+    if c == ':' && d == ':' { return Tok.ColonColon }
+    if c == '-' && d == '>' { return Tok.Arrow }
+    if c == '=' && d == '>' { return Tok.FatArrow }
+    if c == '+' && d == '+' { return Tok.PlusPlus }
+    if c == '-' && d == '-' { return Tok.MinusMinus }
+    if c == '<' && d == '<' { return Tok.Shl }
+    if c == '>' && d == '>' { return Tok.Shr }
+    if c == '&' && d == '&' { return Tok.AmpAmp }
+    if c == '|' && d == '|' { return Tok.PipePipe }
+    if c == '.' && d == '.' { return Tok.DotDot }
+    return 0 - 1
+}
+
+fn op1(c: int) -> int {
+    switch c {
+        case ':': return Tok.Colon
+        case ';': return Tok.Semicolon
+        case ',': return Tok.Comma
+        case '.': return Tok.Dot
+        case '(': return Tok.Lparen
+        case ')': return Tok.Rparen
+        case '{': return Tok.Lbrace
+        case '}': return Tok.Rbrace
+        case '[': return Tok.Lbracket
+        case ']': return Tok.Rbracket
+        case '=': return Tok.Eq
+        case '+': return Tok.Plus
+        case '-': return Tok.Minus
+        case '*': return Tok.Star
+        case '/': return Tok.Slash
+        case '%': return Tok.Percent
+        case '<': return Tok.Lt
+        case '>': return Tok.Gt
+        case '&': return Tok.Amp
+        case '|': return Tok.Pipe
+        case '!': return Tok.Bang
+        case '?': return Tok.Question
+        case '#': return Tok.Hash
+        case '^': return Tok.Caret
+        case '~': return Tok.Tilde
+        default: return Tok.Unknown
+    }
+    return Tok.Unknown
+}
+
+/** *Skip whitespace and comments; the next token, or `Tok.Eof` at the end. */
+fn next(l: &mut Lexer) -> Token {
+    while true {
+        while is_space(at(l, l.pos)) {
+            advance(l, 1)
+        }
+        let p = l.pos
+        if at(l, p) == '/' && at(l, p + 1) == '*' {
+            // A doc is slash-star-star, then a star and the text. Three stars,
+            // or a star that closes at once, stays an ordinary comment.
+            let is_doc = at(l, p + 2) == '*' && at(l, p + 3) != '/' && at(l, p + 3) != '*'
+            let sl = l.line
+            let sc = l.col
+            advance(l, 2)
+            while at(l, l.pos) != 0 && !(at(l, l.pos) == '*' && at(l, l.pos + 1) == '/') {
+                advance(l, 1)
+            }
+            let mut closed = false
+            if at(l, l.pos) != 0 {
+                advance(l, 2)
+                closed = true
+            }
+            if is_doc && closed {
+                return make(l, Tok.Doc, p, sl, sc)
+            }
+            continue
+        }
+        if at(l, p) == '/' && at(l, p + 1) == '/' {
+            while at(l, l.pos) != 0 && at(l, l.pos) != '\n' {
+                advance(l, 1)
+            }
+            continue
+        }
+        break
+    }
+
+    let start = l.pos
+    let sl = l.line
+    let sc = l.col
+    let c = at(l, start)
+    if c == 0 {
+        return make(l, Tok.Eof, start, sl, sc)
+    }
+
+    if is_alpha(c) || c == '_' {
+        while is_alpha(at(l, l.pos)) || is_digit(at(l, l.pos)) || at(l, l.pos) == '_' {
+            advance(l, 1)
+        }
+        return make(l, keyword(l, start, l.pos - start), start, sl, sc)
+    }
+
+    if is_digit(c) {
+        let x = at(l, start + 1)
+        if c == '0' && (x == 'x' || x == 'X') && is_xdigit(at(l, start + 2)) {
+            advance(l, 2)
+            while is_xdigit(at(l, l.pos)) {
+                advance(l, 1)
+            }
+            return make(l, Tok.Number, start, sl, sc)
+        }
+        while is_digit(at(l, l.pos)) {
+            advance(l, 1)
+        }
+        let mut is_float = false
+        if at(l, l.pos) == '.' && at(l, l.pos + 1) != '.' && is_digit(at(l, l.pos + 1)) {
+            is_float = true
+            advance(l, 1)
+            while is_digit(at(l, l.pos)) {
+                advance(l, 1)
+            }
+        }
+        let e = at(l, l.pos)
+        if e == 'e' || e == 'E' {
+            let mut r = l.pos + 1
+            if at(l, r) == '+' || at(l, r) == '-' {
+                r = r + 1
+            }
+            if is_digit(at(l, r)) {
+                is_float = true
+                advance(l, 1)
+                if at(l, l.pos) == '+' || at(l, l.pos) == '-' {
+                    advance(l, 1)
+                }
+                while is_digit(at(l, l.pos)) {
+                    advance(l, 1)
+                }
+            }
+        }
+        if is_float {
+            return make(l, Tok.Float, start, sl, sc)
+        }
+        return make(l, Tok.Number, start, sl, sc)
+    }
+
+    // A character literal is a number whose lexeme keeps its quotes; the
+    // parser decodes it. The scan stops at the closing quote or the line end.
+    if c == '\'' {
+        advance(l, 1)
+        while at(l, l.pos) != 0 && at(l, l.pos) != '\'' && at(l, l.pos) != '\n' {
+            if at(l, l.pos) == '\\' && at(l, l.pos + 1) != 0 && at(l, l.pos + 1) != '\n' {
+                advance(l, 2)
+            } else {
+                advance(l, 1)
+            }
+        }
+        if at(l, l.pos) == '\'' {
+            advance(l, 1)
+        }
+        return make(l, Tok.Number, start, sl, sc)
+    }
+
+    if c == '"' {
+        advance(l, 1)
+        while at(l, l.pos) != 0 && at(l, l.pos) != '"' {
+            if at(l, l.pos) == '\\' && at(l, l.pos + 1) != 0 {
+                advance(l, 2)
+            } else {
+                advance(l, 1)
+            }
+        }
+        if at(l, l.pos) == '"' {
+            advance(l, 1)
+        }
+        return make(l, Tok.String, start, sl, sc)
+    }
+
+    let d = at(l, start + 1)
+    if (c == '<' || c == '>') && d == c && at(l, start + 2) == '=' {
+        advance(l, 3)
+        if c == '<' {
+            return make(l, Tok.ShlEq, start, sl, sc)
+        }
+        return make(l, Tok.ShrEq, start, sl, sc)
+    }
+    let k2 = op2(c, d)
+    if k2 >= 0 {
+        advance(l, 2)
+        return make(l, k2, start, sl, sc)
+    }
+    advance(l, 1)
+    return make(l, op1(c), start, sl, sc)
+}
+
+fn kind_name(k: int) -> string {
+    switch k {
+        case Tok.Eof:
+            return "EOF"
+        case Tok.Ident:
+            return "identifier"
+        case Tok.Number:
+            return "number"
+        case Tok.Float:
+            return "float"
+        case Tok.String:
+            return "string"
+        case Tok.ColonColon:
+            return "::"
+        case Tok.Colon:
+            return ":"
+        case Tok.Semicolon:
+            return ";"
+        case Tok.Comma:
+            return ","
+        case Tok.Dot:
+            return "."
+        case Tok.DotDot:
+            return ".."
+        case Tok.Lparen:
+            return "("
+        case Tok.Rparen:
+            return ")"
+        case Tok.Lbrace:
+            return "{"
+        case Tok.Rbrace:
+            return "}"
+        case Tok.Lbracket:
+            return "["
+        case Tok.Rbracket:
+            return "]"
+        case Tok.Eq:
+            return "="
+        case Tok.Plus:
+            return "+"
+        case Tok.Minus:
+            return "-"
+        case Tok.Star:
+            return "*"
+        case Tok.Slash:
+            return "/"
+        case Tok.Percent:
+            return "%"
+        case Tok.PlusEq:
+            return "+="
+        case Tok.MinusEq:
+            return "-="
+        case Tok.StarEq:
+            return "*="
+        case Tok.SlashEq:
+            return "/="
+        case Tok.PercentEq:
+            return "%="
+        case Tok.PlusPlus:
+            return "++"
+        case Tok.MinusMinus:
+            return "--"
+        case Tok.AmpEq:
+            return "&="
+        case Tok.PipeEq:
+            return "|="
+        case Tok.CaretEq:
+            return "^="
+        case Tok.ShlEq:
+            return "<<="
+        case Tok.ShrEq:
+            return ">>="
+        case Tok.Shl:
+            return "<<"
+        case Tok.Shr:
+            return ">>"
+        case Tok.Caret:
+            return "^"
+        case Tok.Tilde:
+            return "~"
+        case Tok.EqEq:
+            return "=="
+        case Tok.BangEq:
+            return "!="
+        case Tok.Lt:
+            return "<"
+        case Tok.Gt:
+            return ">"
+        case Tok.LtEq:
+            return "<="
+        case Tok.GtEq:
+            return ">="
+        case Tok.Amp:
+            return "&"
+        case Tok.AmpAmp:
+            return "&&"
+        case Tok.Pipe:
+            return "|"
+        case Tok.PipePipe:
+            return "||"
+        case Tok.Bang:
+            return "!"
+        case Tok.Question:
+            return "?"
+        case Tok.Hash:
+            return "#"
+        case Tok.Arrow:
+            return "->"
+        case Tok.FatArrow:
+            return "=>"
+        case Tok.Unknown:
+            return "unknown"
+        case Tok.Fn:
+            return "fn"
+        case Tok.Let:
+            return "let"
+        case Tok.Const:
+            return "const"
+        case Tok.Mut:
+            return "mut"
+        case Tok.Struct:
+            return "struct"
+        case Tok.Enum:
+            return "enum"
+        case Tok.Import:
+            return "import"
+        case Tok.If:
+            return "if"
+        case Tok.Else:
+            return "else"
+        case Tok.For:
+            return "for"
+        case Tok.While:
+            return "while"
+        case Tok.In:
+            return "in"
+        case Tok.Return:
+            return "return"
+        case Tok.Break:
+            return "break"
+        case Tok.Continue:
+            return "continue"
+        case Tok.Switch:
+            return "switch"
+        case Tok.Case:
+            return "case"
+        case Tok.Default:
+            return "default"
+        case Tok.As:
+            return "as"
+        case Tok.True:
+            return "true"
+        case Tok.False:
+            return "false"
+        case Tok.Doc:
+            return "doc comment"
+        case Tok.ModDoc:
+            return "module doc comment"
+        default:
+            return "?"
+    }
+    return "?"
+}
