@@ -1,4 +1,5 @@
-// `fmt` — write to stdout. No heap, no printf, no C strings.
+// `fmt` — write to stdout (and stderr: `ewrite`, `eprintln`). No heap, no
+// printf, no C strings.
 //
 // Import it, then call `fmt.println` with any mix of `string`, `int`, `bool`, and `float`.
 //
@@ -47,6 +48,18 @@ fn writeln() {}
 /** *fmt.println("count:", 3, true) */
 /** *``` */
 fn println() {}
+
+/** *Write `s` to stderr. Diagnostics go here, so they never mix with what a */
+/** *program prints to stdout. */
+fn ewrite(s: string) {}
+
+/** *`println` to stderr: the same mix of `string` / `int` / `bool` / `float`. */
+/** */
+/** *Example: */
+/** *``` */
+/** *fmt.eprintln("error:", path, "not found") */
+/** *``` */
+fn eprintln() {}
 
 /** *Length-based string equality. Loam strings are not C `strcmp` / NUL-terminated. */
 /** */

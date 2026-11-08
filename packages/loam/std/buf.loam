@@ -1,0 +1,34 @@
+// buf — build bytes in a `[]u8` with amortized O(1) appends.
+//
+// Concatenating strings copies both sides every time, so N pieces cost O(N^2)
+// bytes. A `[]u8` grows by doubling and each append is one memcpy, so a whole
+// generated file costs O(total bytes). Finish with `to_string` (a copy), or
+// skip the string entirely with `sys.write_bytes(path, &b)`.
+//
+// ```
+// let mut b = []u8 {}
+// buf.push_str(&mut b, "x = ")
+// buf.push_int(&mut b, 42)
+// push(b, u8('\n'))
+// sys.write_bytes("out.txt", &b)
+// ```
+//
+// Empty bodies are runtime hooks (`loam_buf_*` in loam_rt.h).
+
+/** *Append the bytes of `s`. */
+fn push_str(b: &mut []u8, s: string) {}
+
+/** *Append the bytes of `src`. */
+fn push_bytes(b: &mut []u8, src: &[]u8) {}
+
+/** *Append `n` in decimal. */
+fn push_int(b: &mut []u8, n: int) {}
+
+/** *Append an `i64` in decimal. */
+fn push_i64(b: &mut []u8, n: i64) {}
+
+/** *Append a `u64` in decimal, over its whole unsigned range. */
+fn push_u64(b: &mut []u8, n: u64) {}
+
+/** *The bytes as a string. Copies; `b` stays usable. */
+fn to_string(b: &[]u8) -> string {}

@@ -2,6 +2,8 @@
 //
 // Bodyless `fn`s resolve to `loam_sys_<name>` in `loam_rt`. No protocol here.
 
+import "std:result"
+
 /** *Compile `--target`: `"wasm"`, `"ios"`, `"android"`, or `"native"`. */
 fn target() -> string {}
 
@@ -31,6 +33,29 @@ fn stdout_tty() -> int {}
 /** *Read the whole file. Empty if missing or over 1 GiB. Native only; wasm */
 /** *returns empty. */
 fn read_file(path: string) -> string {}
+
+/** *Why the last `read_file` came back empty: `""` when it succeeded (the file */
+/** *may just be empty), otherwise a message such as `"No such file or directory"`. */
+fn io_error() -> string {}
+
+/** *Read the whole file, or an error saying why not. Unlike `read_file`, an empty */
+/** *file and a missing one are told apart. */
+fn read(path: string) -> Result<string> {
+    let body = read_file(path)
+    let e = io_error()
+    if e.len > 0 {
+        return res_err(e, "")
+    }
+    return res_ok(body)
+}
+
+/** *Write the bytes of `b` to `path` without building a string first (see */
+/** *`std:buf`). `0` on success. Native only; wasm returns `1`. */
+fn write_bytes(path: string, b: &[]u8) -> int {}
+
+/** *Last modification time of `path` in milliseconds since the epoch, or `-1` */
+/** *when it does not exist. Sub-second where the file system records it. */
+fn mtime(path: string) -> i64 {}
 
 /** *Create `path` and parents (`mkdir -p`). `0` on success. Native only; */
 /** *wasm returns `1`. */

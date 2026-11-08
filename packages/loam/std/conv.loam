@@ -1,0 +1,260 @@
+// conv — numbers to text and back.
+//
+// Integers are pure Loam: `*_to_str`, radix forms, and `parse_*` returning a
+// `Result` that says why a parse failed. Parsing reads what a Loam literal
+// reads: an optional sign (signed parses only), then decimal, `0x` hex, `0o`
+// octal, or `0b` binary, with `_` allowed between digits. Floats go through
+// the C library (`loam_conv_*` in loam_rt.h): `f64_to_str` is the shortest
+// text that reads back to the same value, and `parse_f64` is `strtod` over a
+// syntax checked here first.
+//
+// ```
+// conv.u64_to_radix(u64(255), 16)   // "ff"
+// conv.parse_i64("-0x1f")            // Ok(-31)
+// conv.parse_int("12x")              // Err("invalid digit 'x' in \"12x\"")
+// ```
+
+import "std:result"
+
+fn int_to_str(n: int) -> string {
+    return "{{n}}"
+}
+
+fn i64_to_str(n: i64) -> string {
+    return "{{n}}"
+}
+
+fn u64_to_str(n: u64) -> string {
+    return "{{n}}"
+}
+
+/** *`n` in base `radix` (2..36, lowercase digits), no prefix. */
+fn u64_to_radix(n: u64, radix: int) -> string {
+    if radix < 2 || radix > 36 {
+        panic("conv.u64_to_radix: radix must be 2..36")
+    }
+    if n == u64(0) {
+        return "0"
+    }
+    let r = u64(radix)
+    let mut rev = []u8 {}
+    let mut v = n
+    while v > u64(0) {
+        let d = i32(v % r)
+        if d < 10 {
+            push(rev, u8('0' + d))
+        } else {
+            push(rev, u8('a' + d - 10))
+        }
+        v = v / r
+    }
+    let mut out = []u8 {}
+    let mut i = rev.len - 1
+    while i >= 0 {
+        push(out, rev[i])
+        i = i - 1
+    }
+    return string_from_bytes(out)
+}
+
+/** *`n` in base `radix` (2..36), with a leading `-` when negative. */
+fn i64_to_radix(n: i64, radix: int) -> string {
+    if n >= i64(0) {
+        return u64_to_radix(u64(n), radix)
+    }
+    // -(n + 1) + 1 cannot overflow, even for the i64 minimum.
+    let mag = u64(0 - (n + i64(1))) + u64(1)
+    return "-{{u64_to_radix(mag, radix)}}"
+}
+
+fn digit_of(c: int) -> int {
+    if c >= '0' && c <= '9' {
+        return c - '0'
+    }
+    if c >= 'a' && c <= 'z' {
+        return c - 'a' + 10
+    }
+    if c >= 'A' && c <= 'Z' {
+        return c - 'A' + 10
+    }
+    return 99
+}
+
+/** *Digits of `s[from..]` in base `radix` (`_` between digits allowed). */
+fn parse_digits(s: string, from: int, radix: int) -> Result<u64> {
+    let zero = u64(0)
+    if from >= s.len {
+        return res_err("no digits in \"{{s}}\"", zero)
+    }
+    let max: u64 = 18446744073709551615
+    let r = u64(radix)
+    let mut v = zero
+    let mut seen = false
+    let mut i = from
+    while i < s.len {
+        let c = s[i]
+        if c == '_' {
+            if !seen || i + 1 >= s.len || s[i + 1] == '_' {
+                return res_err("misplaced '_' in \"{{s}}\"", zero)
+            }
+        } else {
+            let d = digit_of(c)
+            if d >= radix {
+                let bad = string_from_bytes([]u8 { u8(c) })
+                return res_err("invalid digit '{{bad}}' in \"{{s}}\"", zero)
+            }
+            let ud = u64(d)
+            if v > (max - ud) / r {
+                return res_err("\"{{s}}\" is out of range", zero)
+            }
+            v = v * r + ud
+            seen = true
+        }
+        i = i + 1
+    }
+    return res_ok(v)
+}
+
+/** *The base a literal at `s[at..]` is written in, from its prefix. */
+fn radix_at(s: string, at: int) -> int {
+    if at + 1 < s.len && s[at] == '0' {
+        let p = s[at + 1]
+        if p == 'x' || p == 'X' {
+            return 16
+        }
+        if p == 'o' || p == 'O' {
+            return 8
+        }
+        if p == 'b' || p == 'B' {
+            return 2
+        }
+    }
+    return 10
+}
+
+/** *An unsigned integer (no sign), with an optional base prefix. */
+fn parse_u64(s: string) -> Result<u64> {
+    let radix = radix_at(s, 0)
+    let mut from = 0
+    if radix != 10 {
+        from = 2
+    }
+    return parse_digits(s, from, radix)
+}
+
+/** *Digits only, in base `radix` (2..36): no sign and no prefix. */
+fn parse_u64_radix(s: string, radix: int) -> Result<u64> {
+    if radix < 2 || radix > 36 {
+        return res_err("radix {{radix}} is not 2..36", u64(0))
+    }
+    return parse_digits(s, 0, radix)
+}
+
+/** *A signed integer: optional `+`/`-`, then what `parse_u64` reads. */
+fn parse_i64(s: string) -> Result<i64> {
+    let zero = i64(0)
+    let mut at = 0
+    let mut neg = false
+    if s.len > 0 && (s[0] == '-' || s[0] == '+') {
+        neg = s[0] == '-'
+        at = 1
+    }
+    let radix = radix_at(s, at)
+    if radix != 10 {
+        at = at + 2
+    }
+    let r = parse_digits(s, at, radix)
+    if r.tag == ResultTag.Err {
+        return res_err(r.err, zero)
+    }
+    let lim: u64 = 9223372036854775808
+    if r.val > lim || (r.val == lim && !neg) {
+        return res_err("\"{{s}}\" is out of range for i64", zero)
+    }
+    if r.val == lim {
+        let min: i64 = -9223372036854775808
+        return res_ok(min)
+    }
+    let v = i64(r.val)
+    if neg {
+        return res_ok(0 - v)
+    }
+    return res_ok(v)
+}
+
+/** *A signed `int` (i32): what `parse_i64` reads, checked against the i32 range. */
+fn parse_int(s: string) -> Result<int> {
+    let r = parse_i64(s)
+    if r.tag == ResultTag.Err {
+        return res_err(r.err, 0)
+    }
+    if r.val < i64(-2147483648) || r.val > i64(2147483647) {
+        return res_err("\"{{s}}\" is out of range for int", 0)
+    }
+    return res_ok(i32(r.val))
+}
+
+/** *The shortest decimal text that reads back as exactly `x` (`%.17g` at most). */
+fn f64_to_str(x: f64) -> string {}
+
+/** *`strtod` over text already checked by `parse_f64`. */
+fn strtod(s: string) -> f64 {}
+
+fn digits_from(s: string, at: int) -> int {
+    let mut i = at
+    while i < s.len && s[i] >= '0' && s[i] <= '9' {
+        i = i + 1
+    }
+    return i
+}
+
+/** *True when `s[at..]` is exactly `word`. */
+fn rest_is(s: string, at: int, word: string) -> bool {
+    if s.len - at != word.len {
+        return false
+    }
+    for k in 0..word.len {
+        if s[at + k] != word[k] {
+            return false
+        }
+    }
+    return true
+}
+
+/** *A decimal float: `[+-]digits[.digits][e[+-]digits]`, where either digit run */
+/** *may be empty but not both, or `inf` / `nan` with an optional sign. */
+fn parse_f64(s: string) -> Result<f64> {
+    let zero = f64(0.0)
+    let mut i = 0
+    if s.len > 0 && (s[0] == '-' || s[0] == '+') {
+        i = 1
+    }
+    if rest_is(s, i, "inf") || rest_is(s, i, "nan") {
+        return res_ok(strtod(s))
+    }
+    let a = digits_from(s, i)
+    let mut j = a
+    let mut frac = 0
+    if j < s.len && s[j] == '.' {
+        j = digits_from(s, a + 1)
+        frac = j - (a + 1)
+    }
+    if (a - i) + frac == 0 {
+        return res_err("\"{{s}}\" is not a number", zero)
+    }
+    if j < s.len && (s[j] == 'e' || s[j] == 'E') {
+        let mut k = j + 1
+        if k < s.len && (s[k] == '-' || s[k] == '+') {
+            k = k + 1
+        }
+        let e = digits_from(s, k)
+        if e == k {
+            return res_err("\"{{s}}\" has an empty exponent", zero)
+        }
+        j = e
+    }
+    if j != s.len {
+        return res_err("\"{{s}}\" is not a number", zero)
+    }
+    return res_ok(strtod(s))
+}

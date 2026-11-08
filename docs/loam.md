@@ -151,9 +151,9 @@ shipped app is the entry file, `vendor/`, and `loam.lock`. A `std:` import of
 zeus is an error; the package is `import "zeus"`. `import "fmt"` is not the
 language module; that is `import "std:fmt"`.
 
-`packages/loam/std/` holds the language core (`async`, `date`, `fmt`, `font`,
-`json`, `kv`, `log`, `map`, `math`, `net`, `result`, `str`, `sys`, `test`,
-`thread`, `unicode`). `zeus`, `zui`, `http`, and `maya` are packages. Their
+`packages/loam/std/` holds the language core (`async`, `buf`, `conv`, `date`,
+`fmt`, `font`, `intmap`, `json`, `kv`, `log`, `map`, `math`, `net`, `result`,
+`str`, `sys`, `test`, `thread`, `unicode`). `zeus`, `zui`, `http`, and `maya` are packages. Their
 manifests point at `src/<name>.loam`. Relative imports are for a module's own
 siblings (`packages/zeus/src/router.loam` → `"zeuscore/platform.loam"`).
 
@@ -626,6 +626,13 @@ There is no `char` type. Three std modules sit above that:
   calls rewrite to it, so `url.trim().ends_with(".m3u8")` works after
   `import "std:str"`. Tests: `packages/loam/tests/inlang/str_tests.loam`.
 
+- `std:buf` — build bytes in a `[]u8` with amortized O(1) appends
+  (`push_str`, `push_bytes`, `push_int` / `push_i64` / `push_u64`,
+  `to_string`); `sys.write_bytes(path, &b)` writes one without making a string.
+- `std:conv` — `int_to_str` / `i64_to_str` / `u64_to_str`, radix forms, and
+  `parse_int` / `parse_i64` / `parse_u64` returning a `Result` (sign, `0x` /
+  `0o` / `0b`, `_` between digits, overflow is an error); `f64_to_str` (the
+  shortest text that reads back exactly) and `parse_f64`.
 - `std:unicode` — UTF-8 decode and **extended grapheme clusters** (UAX #29):
   `codepoint`, `next_cp`, `prev_cp`, `next_grapheme`, `prev_grapheme`,
   `grapheme_count`, `grapheme_start`. `Input` caret movement, backspace, and

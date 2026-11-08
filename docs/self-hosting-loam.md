@@ -92,7 +92,9 @@ after the fixed point. Under the essentialist rule they stay out of the
 critical path.
 
 **Current status**: Not self-hosted. Phase 1 (§1.1, §1.4, the §1.3 `u64`
-bugs) is done; the rest of §1 is open.
+bugs) and phase 2 (§1.2, the rest of §1.3, stderr / `mtime` / read errors
+from §1.5, §2.3) are done. Open: process spawn/wait, stdin, and the
+cross-platform surface (§1.5, §1.6), then the compiler port.
 
 ---
 
@@ -145,12 +147,11 @@ compiler would be written anyway, and it fits second-class references
 
 Needed:
 
-- [ ] A builder: `std:strbuf` (or `[]u8` with `push_str(&mut buf, s)` /
-      `push_byte`) with amortized O(1) append and one final
-      `string_from_bytes`.
-- [ ] Write a builder straight to a file without first materializing one
-      giant `string` (`sys.write_file` takes a `string`; add a
-      `write_bytes(path, &[]u8)` or an append/stream API).
+- [x] A builder: `std:buf` over `[]u8` — `push_str`, `push_bytes`,
+      `push_int` / `push_i64` / `push_u64` (one memcpy each, amortized O(1)
+      growth), `push(b, u8(c))` for a byte, `to_string` at the end.
+- [x] Write a builder straight to a file: `sys.write_bytes(path, &b)`.
+      Test: `compile_pass/std_buf_conv.loam`.
 
 ### 1.3 No number ↔ text conversion in the library
 
@@ -167,11 +168,13 @@ The lexer must parse literals and codegen must print them exactly.
 
 Needed:
 
-- [ ] `std:conv` (or in `std:str`): `int_to_str`, `i64_to_str`, `u64_to_str`,
-      `parse_int`/`parse_u64` returning `Result`, radix variants.
-- [ ] Float formatting/parsing. Exact shortest round-trip is real work
-      (Ryu/Grisu or `strtod` correctness); acceptable first step is a C hook
-      in `loam_rt` over `snprintf("%.17g")` / `strtod`.
+- [x] `std:conv`: `int_to_str`, `i64_to_str`, `u64_to_str`,
+      `u64_to_radix` / `i64_to_radix`, and `parse_int` / `parse_i64` /
+      `parse_u64` / `parse_u64_radix` returning `Result` (sign, `0x`/`0o`/`0b`,
+      `_` separators, overflow reported). Pure Loam.
+- [x] Float formatting/parsing: `f64_to_str` is the shortest of
+      `%.15g`/`%.16g`/`%.17g` that reads back exactly (C hook);
+      `parse_f64` checks the syntax in Loam, then `strtod`.
 - [x] Fix unsigned printing and the `u64(<max>)` literal-in-conversion case
       (`println` and `{{x}}` print a `u64` unsigned; a same-type integer
       conversion is a plain copy). Test: `compile_pass/u64_print.loam`.
@@ -207,16 +210,17 @@ must also be portable to Linux and Windows (CreateProcess / WaitForSingleObject,
 
 Needed:
 
-- [ ] `sys.mtime(path) -> i64`.
-- [ ] `fmt.ewrite` / `fmt.eprintln` (stderr).
+- [x] `sys.mtime(path) -> i64` (milliseconds; `-1` when missing).
+- [x] `fmt.ewrite` / `fmt.eprintln` (stderr; `eprintln` is `println`'s
+      compile-time expansion with the stderr writers).
 - [ ] `sys.read_stdin(n) -> []u8` and a line read (needed for the LSP only;
       `loamc` itself can ship without it).
 - [ ] Spawn without the shell + wait, or at least `exec` with argv quoting
       (`str.shell_quote` exists) and a background/parallel form. Optional for
       a first self-host — serial `cc` is correct, just slower. Must work on
       Windows (no `fork`).
-- [ ] Read a file as bytes with an explicit error (today `read_file` returns
-      `""` on failure, indistinguishable from an empty file).
+- [x] Read a file with an explicit error: `sys.read(path) -> Result<string>`
+      (and `sys.io_error()` after a `read_file`); an empty file is `Ok("")`.
 - [ ] Path separators and absolute-path rules that work on Windows
       (`\` vs `/`, drive letters). Prefer `/` everywhere in the language
       and normalize in the runtime.
@@ -339,10 +343,13 @@ or a `kind` + index into a per-kind side table. `switch` on the kind works
 
 `std:map` is `Map<T>` with `string` keys only (`hash_str` returns `int`).
 
-- [ ] Integer-keyed map (`IntMap<T>`) for type-id / node-id lookups;
-      building a decimal string per lookup is a large constant cost.
-- [ ] Confirm `Map<T>` with a non-Copy `T` (e.g. `Map<[]int>`) works and
-      mutating a value in place is possible without get/put copies.
+- [x] Integer-keyed map: `std:intmap` (`IntMap<T>`, `imap_*`), the same
+      table as `std:map` with an int key and a multiplicative hash. Kept a
+      separate module on purpose: a generic key would need `==`/hash on a type
+      parameter, i.e. new language machinery.
+- [x] `Map<[]int>` / `IntMap<[]int>` work, and a value is mutated in place
+      through its slot: `push(m.entries[map_find(&mut m, k)].value, x)`.
+      Test: `compile_pass/std_intmap.loam`.
 
 ### 2.4 Memory and speed
 
@@ -486,10 +493,10 @@ beyond what the checklist requires.
 - [x] Recursive types work without crash or hang (§1.1)
 - [x] Character literals `'a'`, `'\n'`, etc. (§1.4)
 - [x] Correct `u64` printing and literal parsing (§1.3)
-- [ ] String builder with O(1) append + write-bytes-to-file (§1.2)
-- [ ] `int`/`u64`/`float` ↔ string conversion in std (§1.3)
-- [ ] `fmt.eprintln` / stderr (§1.5)
-- [ ] `sys.mtime` and file-read that returns an error (§1.5)
+- [x] String builder with O(1) append + write-bytes-to-file (§1.2)
+- [x] `int`/`u64`/`float` ↔ string conversion in std (§1.3)
+- [x] `fmt.eprintln` / stderr (§1.5)
+- [x] `sys.mtime` and file-read that returns an error (§1.5)
 - [ ] Portable process spawn/wait and path handling for Linux + Windows (§1.5, §1.6)
 
 ### Compiler port

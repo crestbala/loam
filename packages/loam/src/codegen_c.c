@@ -1009,7 +1009,10 @@ static void emit_println(FILE *o, AstNode *n, int ind) {
                     i, i);
         } else {
             indent(o, ind + 1);
-            fprintf(o, "char _ib%zu[24]; loam_str _is%zu = loam_fmt_itoa(_ib%zu, ", i, i, i);
+            fprintf(o, "char _ib%zu[24]; loam_str _is%zu = %s(_ib%zu, ", i, i,
+                    t && t->kind == TY_INT && t->is_unsigned && t->bits == 64 ? "loam_fmt_utoa"
+                                                                               : "loam_fmt_itoa",
+                    i);
             emit_expr(o, a);
             fprintf(o, ");\n");
             indent(o, ind + 1);
@@ -1020,7 +1023,8 @@ static void emit_println(FILE *o, AstNode *n, int ind) {
     indent(o, ind + 1);
     fprintf(o, "_iov[_ni].iov_base = (void *)\"\\n\"; _iov[_ni].iov_len = 1; _ni++;\n");
     indent(o, ind + 1);
-    fprintf(o, "loam_writev_all(_iov, _ni);\n");
+    fprintf(o, "loam_writev_fd(%s, _iov, _ni);\n",
+            n->as.call.is_println == 2 ? "STDERR_FILENO" : "STDOUT_FILENO");
     indent(o, ind);
     fprintf(o, "}\n");
 }

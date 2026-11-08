@@ -1,0 +1,30 @@
+line 0
+line 1
+line 2
+18446744073709551615-5
+0 true -1
+true 43
+true No such file or directory
+true 0
+ff 64 -ff -7
+ok -31
+ok 1000000
+ok -9223372036854775808
+err "9223372036854775808" is out of range for i64
+err invalid digit 'x' in "12x"
+err misplaced '_' in "1__0"
+err no digits in ""
+ok 18446744073709551615
+err "18446744073709551616" is out of range
+ok 11
+ok 511
+ok 1295
+true "2147483648" is out of range for int
+ok 0.1
+ok -1500
+ok 0.5
+err "1e" has an empty exponent
+err "." is not a number
+ok inf
+0.3333333333333333 100
+hihi
