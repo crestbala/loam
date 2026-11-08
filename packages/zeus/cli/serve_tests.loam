@@ -690,6 +690,70 @@ fn hashes_come_back_in_the_order_asked() {
     sys.remove_path(dir)
 }
 
+#[test]
+fn a_command_keeps_only_its_own_cache() {
+    /* The old layout left every generation as a loose file in `.zeus/cc`, and */
+    /* serve, build, and preview each left a wasm under `.zeus/out`. A new */
+    /* command keeps the slots it will compile and the wasm kind it publishes. */
+    let root = "/tmp/zeli_retire_cache"
+    sys.remove_path(root)
+    sys.mkdir("{{root}}/.zeus/cc/serve-web")
+    sys.mkdir("{{root}}/.zeus/cc/build")
+    sys.mkdir("{{root}}/.zeus/cc/meta")
+    sys.mkdir("{{root}}/.zeus/out/serve")
+    sys.mkdir("{{root}}/.zeus/out/build")
+    sys.mkdir("{{root}}/.zeus/out/release")
+    sys.write_file("{{root}}/.zeus/cc/old.o", "stale")
+    sys.write_file("{{root}}/.zeus/cc/serve-web/unit.o", "live")
+    sys.write_file("{{root}}/.zeus/cc/build/unit.o", "other")
+    sys.write_file("{{root}}/.zeus/out/serve/app.wasm", "serve")
+    sys.write_file("{{root}}/.zeus/out/release/app.wasm", "release")
+    sys.write_file("{{root}}/.zeus/meta_dump", "dump")
+    zeli.retire_caches(root, []string { "serve-web", "meta", "server" }, "serve")
+    test.assert(sys.exists("{{root}}/.zeus/cc/serve-web/unit.o") == 1)
+    test.assert(sys.exists("{{root}}/.zeus/cc/meta") == 1)
+    test.assert(sys.exists("{{root}}/.zeus/cc/build") == 0)
+    test.assert(sys.exists("{{root}}/.zeus/cc/old.o") == 0)
+    test.assert(sys.exists("{{root}}/.zeus/out/serve/app.wasm") == 1)
+    test.assert(sys.exists("{{root}}/.zeus/out/release") == 0)
+    test.assert(sys.exists("{{root}}/.zeus/out/build") == 0)
+    test.assert(sys.exists("{{root}}/.zeus/meta_dump") == 1)
+    sys.mkdir("{{root}}/.zeus/out/serve")
+    sys.mkdir("{{root}}/.zeus/out/release")
+    sys.write_file("{{root}}/.zeus/out/serve/app.wasm", "serve")
+    sys.write_file("{{root}}/.zeus/out/release/app.wasm", "release")
+    zeli.retire_caches(root, []string { "meta" }, "release")
+    test.assert(sys.exists("{{root}}/.zeus/cc/serve-web") == 0)
+    test.assert(sys.exists("{{root}}/.zeus/out/serve") == 0)
+    test.assert(sys.exists("{{root}}/.zeus/out/release/app.wasm") == 1)
+    test.assert(sys.exists("{{root}}/.zeus/cc/meta") == 1)
+    sys.remove_path(root)
+}
+
+#[test]
+fn serve_and_build_do_not_share_a_shard_slot() {
+    let root = "/tmp/zeli_shard_slot"
+    test.assert(has(zeli.shard_env(root, "serve-web"), "/.zeus/cc/serve-web"))
+    test.assert(has(zeli.shard_env(root, "build"), "/.zeus/cc/build"))
+    test.assert(has(zeli.shard_env(root, "meta"), "/.zeus/cc/meta"))
+    test.assert(has(zeli.server_build_env(root), "/.zeus/cc/server"))
+    test.assert(has(zeli.serve_build_env(root, "web"), "/.zeus/cc/serve-web"))
+    test.assert(has(zeli.serve_build_env(root, "macos"), "/.zeus/cc/serve-macos"))
+    test.assert(has(zeli.serve_build_env(root, "macos"), "LOAM_DEV=1 "))
+    let plain = "/tmp/zeli_shard_app"
+    sys.remove_path(plain)
+    sys.mkdir(plain)
+    let slots = zeli.serve_cache_slots(plain, "web")
+    test.assert(zeli.index_of(slots, "serve-web") >= 0)
+    test.assert(zeli.index_of(slots, "server") >= 0)
+    test.assert(zeli.index_of(slots, "meta") < 0)
+    sys.mkdir("{{plain}}/routes")
+    let routed = zeli.serve_cache_slots(plain, "web")
+    test.assert(zeli.index_of(routed, "meta") >= 0)
+    test.assert_eq_str(zeli.serve_out_kind(plain, "macos"), "")
+    sys.remove_path(plain)
+}
+
 // A route with no `meta` ends in `build`, right before the closing brace.
 #[test]
 fn route_builders_stop_at_the_closing_brace() {

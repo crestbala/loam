@@ -392,6 +392,12 @@ static int ios_obj(const char *cc, const char *src, const char *obj) {
    only what it changed. The shared header goes through a precompiled header,
    which is what keeps each unit's cost close to the size of its own code.
 
+   When the link list is written, every file in <dir> this compile did not use
+   is removed. The next edit still hits the units it left alone, and a unit
+   whose text changed does not leave the old object behind. One directory is
+   one compile at a time: a second loamc in the same directory can delete the
+   first's objects out from under its link.
+
    Units are cut where a function's name hashes a certain way, not every N bytes:
    a fixed size would move every later boundary when one function grows, and
    every unit after the edit would miss. */
@@ -399,7 +405,6 @@ static int ios_obj(const char *cc, const char *src, const char *obj) {
 #define SHARD_MIN 96000
 #define SHARD_MAX 384000
 #define SHARD_CUT 8
-#define SHARD_KEEP_SECS (24 * 60 * 60)
 
 static uint64_t fnv(const void *data, size_t n, uint64_t h) {
     const unsigned char *p = (const unsigned char *)data;
@@ -490,29 +495,6 @@ static int run_parallel(char **cmds, int n, int total) {
     return failed;
 }
 
-/* Keep what a recent build used. Hits refresh an entry's time (`utimes`), so a
-   cache only outlives its files by a day. A header goes when its PCH has. */
-static void shard_prune(const char *dir) {
-    DIR *d = opendir(dir);
-    if (!d) return;
-    time_t now = time(NULL);
-    struct dirent *e;
-    while ((e = readdir(d)) != NULL) {
-        char path[1536], pch[1600];
-        struct stat st;
-        size_t n = strlen(e->d_name);
-        snprintf(path, sizeof path, "%s/%s", dir, e->d_name);
-        if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) continue;
-        if (n > 2 && strcmp(e->d_name + n - 2, ".h") == 0) {
-            snprintf(pch, sizeof pch, "%s.pch", path);
-            if (access(pch, F_OK) != 0) unlink(path);
-        } else if (now - st.st_mtime > SHARD_KEEP_SECS) {
-            unlink(path);
-        }
-    }
-    closedir(d);
-}
-
 /* The objects of one shard build, and the compiles still needed to have them. */
 typedef struct {
     char **objs;
@@ -552,6 +534,63 @@ static void shard_list_free(ShardList *l) {
     for (int i = 0; i < l->ncmds; i++) free(l->cmds[i]);
     free(l->objs);
     free(l->cmds);
+}
+
+/* Drop every cached file this compile did not just link. Names are collected
+   before anything is removed: unlinking during readdir skips entries on some
+   hosts. The header stays even though its mtime is never refreshed — clang
+   checks that file against the precompiled header. */
+static void shard_prune(const char *dir, const ShardList *l, const char *hpath, const char *rsp) {
+    const char *hbase = strrchr(hpath, '/');
+    const char *rbase = strrchr(rsp, '/');
+    char pch_base[96];
+    char **drop = NULL;
+    int ndrop = 0, cap = 0;
+    DIR *d;
+    struct dirent *e;
+    hbase = hbase ? hbase + 1 : hpath;
+    rbase = rbase ? rbase + 1 : rsp;
+    snprintf(pch_base, sizeof pch_base, "%s.pch", hbase);
+    d = opendir(dir);
+    if (!d) return;
+    while ((e = readdir(d)) != NULL) {
+        int keep, i;
+        char **next;
+        if (e->d_name[0] == '.' &&
+            (e->d_name[1] == '\0' || (e->d_name[1] == '.' && e->d_name[2] == '\0')))
+            continue;
+        keep = strcmp(e->d_name, hbase) == 0 || strcmp(e->d_name, pch_base) == 0 ||
+               strcmp(e->d_name, rbase) == 0;
+        for (i = 0; !keep && i < l->nobjs; i++) {
+            const char *base = strrchr(l->objs[i], '/');
+            base = base ? base + 1 : l->objs[i];
+            if (strcmp(e->d_name, base) == 0) keep = 1;
+        }
+        if (keep) continue;
+        if (ndrop == cap) {
+            cap = cap ? cap * 2 : 32;
+            next = (char **)realloc(drop, sizeof(char *) * (size_t)cap);
+            if (!next) {
+                closedir(d);
+                for (i = 0; i < ndrop; i++) free(drop[i]);
+                free(drop);
+                return;
+            }
+            drop = next;
+        }
+        drop[ndrop++] = strdup(e->d_name);
+    }
+    closedir(d);
+    for (int i = 0; i < ndrop; i++) {
+        char path[1536];
+        struct stat st;
+        if (drop[i]) {
+            snprintf(path, sizeof path, "%s/%s", dir, drop[i]);
+            if (stat(path, &st) == 0 && S_ISREG(st.st_mode)) unlink(path);
+            free(drop[i]);
+        }
+    }
+    free(drop);
 }
 
 /* Cut the bodies between `first` and `end` into units and add each to `l`. */
@@ -657,7 +696,7 @@ static int shard_compile(const char *cpath, const char *cc, const char *dir,
         for (int i = 0; i < l.nobjs; i++) fprintf(f, "\"%s\"\n", l.objs[i]);
         if (fclose(f) != 0) goto done;
     }
-    shard_prune(dir);
+    shard_prune(dir, &l, hpath, rsp);
     rc = 0;
 done:
     shard_list_free(&l);
