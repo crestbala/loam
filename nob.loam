@@ -2512,6 +2512,32 @@ fn ig_myapp() {
 }
 
 /** *Package resolution, selective imports, and a reproducible vendor tree. */
+/** *Self-hosting: the Loam lexer (`packages/loam/compiler/lexer.loam`) must agree */
+/** *with `src/lexer.c` token for token — kind, span, and positions — on every */
+/** *`.loam` file in the repo. `loamc --dump-tokens` is the reference. */
+fn ig_selfhost_lex() {
+    mark("selfhost lexer")
+    let exe = tmpf("tokdump")
+    let o = sys.exec("{{shq(LOAMC)}} {{shq(ROOT)}}/packages/loam/compiler/tokdump.loam -o {{shq(exe)}} 2>&1")
+    if sys.exec_status() != 0 {
+        bad("selfhost lexer (build tokdump)", o)
+        return
+    }
+    let a = tmpf("tok.c")
+    let b = tmpf("tok.loam")
+    let script = cat(
+        "cd {{shq(ROOT)}} && n=0; bad=''; for f in $(find packages examples nob.loam -name '*.loam' ",
+        cat("-not -path '*/tmp/*' -not -path '*/build/*' -not -path '*/node_modules/*'); do n=$((n+1)); ",
+            cat("{{shq(LOAMC)}} --dump-tokens \"$f\" > {{shq(a)}} 2>&1; {{shq(exe)}} \"$f\" > {{shq(b)}} 2>&1; ",
+                "cmp -s {{shq(a)}} {{shq(b)}} || bad=\"$bad $f\"; done; echo \"$n\"; [ -z \"$bad\" ] || { echo \"differ:$bad\"; exit 1; }")))
+    let r = sys.exec(script)
+    if sys.exec_status() != 0 {
+        bad("selfhost lexer (token streams differ)", r)
+        return
+    }
+    ok("selfhost lexer matches lexer.c on {{trim(r)}} files")
+}
+
 fn ig_modules() {
     mark("modules")
     let tests = "{{ROOT}}/packages/loam/tests"
@@ -2655,6 +2681,8 @@ fn stanza_dispatch(name: string) -> bool {
         ig_api_freeze()
     } else if name == "modules" {
         ig_modules()
+    } else if name == "selfhost_lex" {
+        ig_selfhost_lex()
     } else if name == "suite_zeus" {
         ig_suite("zeus")
     } else if name == "suite_plain" {
@@ -2702,6 +2730,7 @@ fn stanza_names() -> []string {
     push(v, "arena_lint")
     push(v, "api_freeze")
     push(v, "modules")
+    push(v, "selfhost_lex")
     return v
 }
 
@@ -2770,7 +2799,7 @@ fn integration() -> int {
 /** *app. The wasm module's entry points, the server/client split, and the */
 /** *language server all sit next to the compiler. */
 fn host_stanzas() -> []string {
-    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "api_freeze", "modules" }
+    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "api_freeze", "modules", "selfhost_lex" }
 }
 
 /** *One after another, for an `--isolated` run; a batched run pools them. */

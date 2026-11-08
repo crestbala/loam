@@ -1328,7 +1328,11 @@ static inline loam_str loam_buf_to_string(const loam_vec *b) {
 
 /* --- std:conv — the float halves (the integer halves are Loam) -------------
    Shortest of %.15g / %.16g / %.17g that reads back to the same double, so
-   0.1 prints as "0.1" and every finite value round-trips exactly. */
+   0.1 prints as "0.1" and every finite value round-trips exactly. The wasm
+   libc has no strtod and no float formatting, so there `f64_to_str` is what
+   float interpolation prints and `strtod` is a plain decimal reader that can
+   be off in the last bit — exact parsing is a native guarantee only. */
+#ifndef __wasm32__
 static inline loam_str loam_conv_f64_to_str(double v) {
     char buf[40];
     int prec;
@@ -1347,6 +1351,38 @@ static inline double loam_conv_strtod(loam_str s) {
     buf[s.len] = 0;
     return strtod(buf, NULL);
 }
+#else
+static inline loam_str loam_conv_f64_to_str(double v) {
+    char buf[64];
+    loam_str t = loam_fmt_ftoa(buf, v);
+    return loam_str_copy(t.ptr, t.len);
+}
+
+static inline double loam_conv_strtod(loam_str s) {
+    const char *p = s.ptr;
+    const char *e = s.ptr + (s.len > 0 ? s.len : 0);
+    double v = 0.0, scale = 1.0;
+    int neg = 0, ex = 0, eneg = 0;
+    if (p < e && (*p == '-' || *p == '+')) neg = *p++ == '-';
+    if (e - p == 3 && p[0] == 'i') return neg ? -__builtin_inf() : __builtin_inf();
+    if (e - p == 3 && p[0] == 'n') return __builtin_nan("");
+    while (p < e && *p >= '0' && *p <= '9') v = v * 10.0 + (*p++ - '0');
+    if (p < e && *p == '.') {
+        p++;
+        while (p < e && *p >= '0' && *p <= '9') {
+            scale /= 10.0;
+            v += (*p++ - '0') * scale;
+        }
+    }
+    if (p < e && (*p == 'e' || *p == 'E')) {
+        p++;
+        if (p < e && (*p == '-' || *p == '+')) eneg = *p++ == '-';
+        while (p < e && *p >= '0' && *p <= '9' && ex < 400) ex = ex * 10 + (*p++ - '0');
+    }
+    while (ex-- > 0) v = eneg ? v / 10.0 : v * 10.0;
+    return neg ? -v : v;
+}
+#endif
 
 /** The operating system: "macos" | "linux" | "windows" | "ios" | "android" |
  *  "wasm" | "other". The driver picks executable suffixes and the C compiler

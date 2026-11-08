@@ -95,7 +95,8 @@ critical path.
 bugs), phase 2 (§1.2, the rest of §1.3, stderr / `mtime` / read errors
 from §1.5, §2.3) and phase 3 (spawn/wait, stdin, paths, the Linux/Windows
 runtime shim — §1.5, §1.6; cross-compiled, not yet run on those OSes) are
-done. Next: the compiler port, starting with the lexer.
+done. Phase 4 (the lexer in Loam, §4 step 3) is done. Next: the parser
+(arena AST), diffed via an AST dump.
 
 ---
 
@@ -510,7 +511,12 @@ beyond what the checklist requires.
       — built and linked for both via `tools/cross-check.sh`; not yet run there
 
 ### Compiler port
-- [ ] Lexer in Loam, differential-tested against `lexer.c`
+- [x] Lexer in Loam, differential-tested against `lexer.c`:
+      `packages/loam/compiler/lexer.loam` (+ `tokdump.loam`) matches
+      `loamc --dump-tokens` token for token (kind, span, start/end position)
+      on all 917 `.loam` files in the repo and 400 fuzzed byte soups (NUL,
+      high bytes, unterminated strings/comments). Gated by the `selfhost_lex`
+      host stanza in `nob test`. Speed: 2 MB in 0.084 s vs 0.098 s for C.
 - [ ] Parser in Loam (arena AST), differential-tested via formatter or AST dump
 - [ ] Typecheck, borrowck, boundscheck, IR, and codegen ported
 - [ ] Driver (module loading, package resolution, `cc` invocation) in Loam
