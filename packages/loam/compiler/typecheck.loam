@@ -1,0 +1,37 @@
+// typecheck — names, types, auto-borrow, generics, closures. The self-hosted
+// twin of src/sema/typecheck.c, ported in slices (docs/self-hosting-loam.md,
+// phase 6). Until every construct is ported, reaching one that is not calls
+// `unported`, and the run stops with that name instead of a guess: the
+// `selfhost_typecheck` stanza counts those files as pending, not as passes.
+
+import "ast.loam"
+import "types.loam"
+
+/** *One module of the session, as the loader resolved it. */
+struct Module {
+    name: string,
+    path: string,
+    /** *Load post-order: every import finished loading before this. */
+    rank: int,
+    /** *The `Program` node. */
+    root: int,
+}
+
+let mut MODS: []Module = []Module {}
+/** *The runtime header, whose `loam_*` names user C names must avoid. */
+let mut RT_PATH: string = ""
+
+/** *The first construct reached that is not ported yet, or "". */
+let mut UNPORTED: string = ""
+
+fn unported(what: string) {
+    if UNPORTED.len == 0 {
+        UNPORTED = what
+    }
+}
+
+/** *Typecheck every module (`MODS[0]` is main). The number of errors. */
+fn typecheck_modules() -> int {
+    unported("typecheck_modules")
+    return 0
+}

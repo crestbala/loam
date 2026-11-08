@@ -75,6 +75,9 @@ typedef struct {
 } LoamSession;
 
 void loam_session_init(LoamSession *s);
+/** Load, and with `check` typecheck, only; diagnostics printed as they
+    occur. 0 ok, 1 load error, 2 type error. */
+int loam_session_typecheck(LoamSession *s, const char *path, int check);
 void loam_session_free(LoamSession *s);
 
 /**

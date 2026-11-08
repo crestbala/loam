@@ -1,0 +1,751 @@
+// types — Loam types as an arena. The self-hosted twin of src/sema/type.c.
+//
+// A type is an `int` index into `TYPES`. Every `type_new` in the C compiler is
+// one new entry here, and the scalars are fixed singletons at the first ids,
+// so where C compares `Type *` pointers this compares ids, and where it
+// compares structurally (`type_eq`) so does this.
+
+import "std:buf"
+
+const NO_TYPE: int = -1
+
+enum TK {
+    Unknown = 0,
+    Void = 1,
+    Int = 2,
+    Float = 3,
+    Bool = 4,
+    String = 5,
+    Ptr = 6,
+    Box = 7,
+    Struct = 8,
+    Proc = 9,
+    Array = 10,
+    Vec = 11,
+    Param = 12,
+}
+
+struct Ty {
+    kind: int,
+    /** *Ptr: 1 = `&mut T`. */
+    is_mut: int,
+    /** *Int: 8/16/32/64; Float: 32/64. */
+    bits: int,
+    is_unsigned: int,
+    /** *Struct or type-parameter name; `has_name` is C's non-NULL. */
+    name: string,
+    has_name: bool,
+    elem: int,
+    ret: int,
+    /** *Proc params, or a generic struct's type arguments. */
+    params: []int,
+    field_names: []string,
+    field_types: []int,
+    must_check: int,
+    no_send: int,
+    array_len: i64,
+    /** *The C name when it differs from `name` (see type.h). */
+    cname: string,
+    has_cname: bool,
+}
+
+let mut TYPES: []Ty = []Ty {}
+
+// The scalar singletons, in this order at ids 0..12.
+const T_VOID: int = 0
+const T_I8: int = 1
+const T_I16: int = 2
+const T_I32: int = 3
+const T_I64: int = 4
+const T_U8: int = 5
+const T_U16: int = 6
+const T_U32: int = 7
+const T_U64: int = 8
+const T_F32: int = 9
+const T_F64: int = 10
+const T_BOOL: int = 11
+const T_STRING: int = 12
+
+/** *`int` / `float` are i64 / f64 (instead of i32 / f32) under */
+/** *`--int64-compat`. */
+let mut int64_compat: bool = false
+let mut string_owns: bool = true
+
+fn blank(kind: int) -> Ty {
+    return Ty {
+        kind: kind,
+        is_mut: 0,
+        bits: 0,
+        is_unsigned: 0,
+        name: "",
+        has_name: false,
+        elem: NO_TYPE,
+        ret: NO_TYPE,
+        params: []int {},
+        field_names: []string {},
+        field_types: []int {},
+        must_check: 0,
+        no_send: 0,
+        array_len: i64(0),
+        cname: "",
+        has_cname: false,
+    }
+}
+
+fn scalar(kind: int, bits: int, uns: int) -> Ty {
+    let mut t = blank(kind)
+    t.bits = bits
+    t.is_unsigned = uns
+    return t
+}
+
+/** *Fill the scalar singletons. Call once, before any other type exists. */
+fn types_init() {
+    TYPES = []Ty {}
+    push(TYPES, scalar(TK.Void, 0, 0))
+    push(TYPES, scalar(TK.Int, 8, 0))
+    push(TYPES, scalar(TK.Int, 16, 0))
+    push(TYPES, scalar(TK.Int, 32, 0))
+    push(TYPES, scalar(TK.Int, 64, 0))
+    push(TYPES, scalar(TK.Int, 8, 1))
+    push(TYPES, scalar(TK.Int, 16, 1))
+    push(TYPES, scalar(TK.Int, 32, 1))
+    push(TYPES, scalar(TK.Int, 64, 1))
+    push(TYPES, scalar(TK.Float, 32, 0))
+    push(TYPES, scalar(TK.Float, 64, 0))
+    push(TYPES, scalar(TK.Bool, 0, 0))
+    push(TYPES, scalar(TK.String, 0, 0))
+}
+
+fn ty_void() -> int {
+    return T_VOID
+}
+
+fn ty_int() -> int {
+    if int64_compat {
+        return T_I64
+    }
+    return T_I32
+}
+
+fn ty_float() -> int {
+    if int64_compat {
+        return T_F64
+    }
+    return T_F32
+}
+
+fn ty_bool() -> int {
+    return T_BOOL
+}
+
+fn ty_string() -> int {
+    return T_STRING
+}
+
+/** *The integer singleton for a width; unknown widths fall back to i64. */
+fn ty_int_bits(bits: int, is_unsigned: bool) -> int {
+    let u = if is_unsigned { 1 } else { 0 }
+    switch bits * 2 + u {
+        case 16:
+            return T_I8
+        case 32:
+            return T_I16
+        case 64:
+            return T_I32
+        case 128:
+            return T_I64
+        case 17:
+            return T_U8
+        case 33:
+            return T_U16
+        case 65:
+            return T_U32
+        case 129:
+            return T_U64
+        default:
+            return T_I64
+    }
+}
+
+fn ty_float_bits(bits: int) -> int {
+    if bits == 32 {
+        return T_F32
+    }
+    return T_F64
+}
+
+/** *A fresh type of kind `k`. */
+fn type_new(k: int) -> int {
+    push(TYPES, blank(k))
+    return TYPES.len - 1
+}
+
+fn type_ptr(elem: int, is_mut: int) -> int {
+    let t = type_new(TK.Ptr)
+    TYPES[t].elem = elem
+    TYPES[t].is_mut = is_mut
+    return t
+}
+
+fn type_box(elem: int) -> int {
+    let t = type_new(TK.Box)
+    TYPES[t].elem = elem
+    return t
+}
+
+fn type_array(elem: int, n: i64) -> int {
+    let t = type_new(TK.Array)
+    TYPES[t].elem = elem
+    TYPES[t].array_len = n
+    return t
+}
+
+fn type_vec(elem: int) -> int {
+    let t = type_new(TK.Vec)
+    TYPES[t].elem = elem
+    return t
+}
+
+fn type_proc(params: []int, ret: int) -> int {
+    let t = type_new(TK.Proc)
+    TYPES[t].params = params
+    TYPES[t].ret = if ret == NO_TYPE { ty_void() } else { ret }
+    return t
+}
+
+fn type_param(name: string) -> int {
+    let t = type_new(TK.Param)
+    TYPES[t].name = name
+    TYPES[t].has_name = true
+    return t
+}
+
+fn kind_of(t: int) -> int {
+    if t == NO_TYPE {
+        return TK.Unknown
+    }
+    return TYPES[t].kind
+}
+
+fn ret_or_void(t: int) -> int {
+    if t == NO_TYPE {
+        return ty_void()
+    }
+    return t
+}
+
+/** *Structural equality; named structs compare by name, C name and type */
+/** *arguments. */
+fn type_eq(a: int, b: int) -> bool {
+    if a == NO_TYPE || b == NO_TYPE {
+        return false
+    }
+    let x = TYPES[a]
+    let y = TYPES[b]
+    if x.kind != y.kind {
+        return false
+    }
+    switch x.kind {
+        case TK.Int:
+            return x.bits == y.bits && x.is_unsigned == y.is_unsigned
+        case TK.Float:
+            return x.bits == y.bits
+        case TK.Ptr:
+            return x.is_mut == y.is_mut && type_eq(x.elem, y.elem)
+        case TK.Box, TK.Vec:
+            return type_eq(x.elem, y.elem)
+        case TK.Array:
+            return x.array_len == y.array_len && type_eq(x.elem, y.elem)
+        case TK.Struct:
+            if !x.has_name || !y.has_name || x.name != y.name {
+                return false
+            }
+            if (x.has_cname || y.has_cname) && (!x.has_cname || !y.has_cname || x.cname != y.cname) {
+                return false
+            }
+            if x.params.len != y.params.len {
+                return false
+            }
+            for i in 0..x.params.len {
+                if !type_eq(x.params[i], y.params[i]) {
+                    return false
+                }
+            }
+            return true
+        case TK.Proc:
+            if x.params.len != y.params.len {
+                return false
+            }
+            if !type_eq(ret_or_void(x.ret), ret_or_void(y.ret)) {
+                return false
+            }
+            for i in 0..x.params.len {
+                if !type_eq(x.params[i], y.params[i]) {
+                    return false
+                }
+            }
+            return true
+        case TK.Param:
+            return x.has_name && y.has_name && x.name == y.name
+        default:
+            return true
+    }
+}
+
+fn is_int_kind(t: int) -> bool {
+    return kind_of(t) == TK.Int
+}
+
+fn is_float_kind(t: int) -> bool {
+    return kind_of(t) == TK.Float
+}
+
+fn is_numeric(t: int) -> bool {
+    let k = kind_of(t)
+    return k == TK.Int || k == TK.Float
+}
+
+fn width_key(t: int) -> int {
+    return TYPES[t].bits * 2 + TYPES[t].is_unsigned
+}
+
+/** *`i8`..`u64` for an integer width, "" when `t` is not an integer. */
+fn int_suffix(t: int) -> string {
+    if kind_of(t) != TK.Int {
+        return ""
+    }
+    switch width_key(t) {
+        case 16:
+            return "i8"
+        case 32:
+            return "i16"
+        case 64:
+            return "i32"
+        case 128:
+            return "i64"
+        case 17:
+            return "u8"
+        case 33:
+            return "u16"
+        case 65:
+            return "u32"
+        case 129:
+            return "u64"
+        default:
+            return "i64"
+    }
+}
+
+/** *C scalar name for a numeric type, "" for anything else. */
+fn c_scalar(t: int) -> string {
+    let k = kind_of(t)
+    if k == TK.Float {
+        if TYPES[t].bits == 32 {
+            return "float"
+        }
+        return "double"
+    }
+    if k != TK.Int {
+        return ""
+    }
+    switch width_key(t) {
+        case 16:
+            return "int8_t"
+        case 32:
+            return "int16_t"
+        case 64:
+            return "int32_t"
+        case 128:
+            return "int64_t"
+        case 17:
+            return "uint8_t"
+        case 33:
+            return "uint16_t"
+        case 65:
+            return "uint32_t"
+        case 129:
+            return "uint64_t"
+        default:
+            return "int64_t"
+    }
+}
+
+// Structs being asked about by `is_copy` (C's `walking`, at most 64 deep).
+let mut copy_walking: []int = []int {}
+
+/** *Copied on use, not moved. */
+fn is_copy(t: int) -> bool {
+    if t == NO_TYPE {
+        return false
+    }
+    let k = TYPES[t].kind
+    if k == TK.Int || k == TK.Float || k == TK.Bool || k == TK.String || k == TK.Void {
+        return true
+    }
+    if k == TK.Param || k == TK.Proc {
+        return true
+    }
+    if k == TK.Ptr {
+        return TYPES[t].is_mut == 0
+    }
+    if k == TK.Array || k == TK.Vec {
+        return is_copy(TYPES[t].elem)
+    }
+    if k == TK.Struct {
+        // A struct reaching itself through `[]T` is assumed Copy while asked
+        // about: Copy exactly when every other field is.
+        for i in 0..copy_walking.len {
+            if copy_walking[i] == t {
+                return true
+            }
+        }
+        if copy_walking.len >= 64 {
+            return false
+        }
+        push(copy_walking, t)
+        let mut copy = true
+        let fts = TYPES[t].field_types
+        for i in 0..fts.len {
+            if !is_copy(fts[i]) {
+                copy = false
+                break
+            }
+        }
+        let mut rest = []int {}
+        for i in 0..copy_walking.len - 1 {
+            push(rest, copy_walking[i])
+        }
+        copy_walking = rest
+        return copy
+    }
+    return false
+}
+
+/** *May cross an OS-thread boundary: plain data only. */
+fn is_send(t: int) -> bool {
+    if t == NO_TYPE {
+        return false
+    }
+    let k = TYPES[t].kind
+    if k == TK.Int || k == TK.Float || k == TK.Bool || k == TK.String || k == TK.Void || k == TK.Param {
+        return true
+    }
+    if k == TK.Array {
+        return is_send(TYPES[t].elem)
+    }
+    if k == TK.Struct {
+        if TYPES[t].no_send != 0 {
+            return false
+        }
+        let fts = TYPES[t].field_types
+        for i in 0..fts.len {
+            if !is_send(fts[i]) {
+                return false
+            }
+        }
+        return true
+    }
+    return false
+}
+
+/** *Can carry a fn out of a call. */
+fn can_hold_fn(t: int) -> bool {
+    if t == NO_TYPE {
+        return true
+    }
+    let k = TYPES[t].kind
+    if k == TK.Proc || k == TK.Box || k == TK.Ptr || k == TK.Struct || k == TK.Param || k == TK.Unknown {
+        return true
+    }
+    if k == TK.Array || k == TK.Vec {
+        return can_hold_fn(TYPES[t].elem)
+    }
+    return false
+}
+
+fn needs_drop(t: int) -> bool {
+    if t == NO_TYPE {
+        return false
+    }
+    let k = TYPES[t].kind
+    if k == TK.Box || k == TK.Vec {
+        return true
+    }
+    if k == TK.String {
+        return string_owns
+    }
+    if k == TK.Array {
+        return needs_drop(TYPES[t].elem)
+    }
+    if k == TK.Struct {
+        let fts = TYPES[t].field_types
+        for i in 0..fts.len {
+            if needs_drop(fts[i]) {
+                return true
+            }
+        }
+    }
+    return false
+}
+
+fn owns_string(t: int) -> bool {
+    if t == NO_TYPE {
+        return false
+    }
+    let k = TYPES[t].kind
+    if k == TK.String {
+        return true
+    }
+    if k == TK.Array {
+        return owns_string(TYPES[t].elem)
+    }
+    if k == TK.Struct {
+        let fts = TYPES[t].field_types
+        for i in 0..fts.len {
+            if owns_string(fts[i]) {
+                return true
+            }
+        }
+    }
+    return false
+}
+
+fn arg_transfers(t: int) -> bool {
+    if t == NO_TYPE {
+        return false
+    }
+    let k = TYPES[t].kind
+    if k == TK.Box || k == TK.Proc {
+        return true
+    }
+    if k == TK.Vec || k == TK.String {
+        return false
+    }
+    if k == TK.Array {
+        return arg_transfers(TYPES[t].elem)
+    }
+    if k == TK.Struct {
+        let fts = TYPES[t].field_types
+        for i in 0..fts.len {
+            if !needs_drop(fts[i]) {
+                continue
+            }
+            if !arg_transfers(fts[i]) {
+                return false
+            }
+        }
+        return true
+    }
+    return false
+}
+
+// --- names -----------------------------------------------------------------------
+
+/** *C's `snprintf` into a 160-byte buffer: at most 159 bytes kept. */
+fn clip(s: string) -> string {
+    if s.len <= 159 {
+        return s
+    }
+    let mut b = []u8 {}
+    for i in 0..159 {
+        push(b, u8(s[i]))
+    }
+    return buf.to_string(&b)
+}
+
+/** *Diagnostic spelling (`&mut int`, `fn(int) -> bool`), as type.c's */
+/** *`type_name`, 160-byte buffers included. */
+fn type_name(t: int) -> string {
+    return name_of(t, false)
+}
+
+/** *`type_name`, except a struct two modules declare keeps its C name. */
+fn type_symbol_name(t: int) -> string {
+    return name_of(t, true)
+}
+
+fn name_of(t: int, symbol: bool) -> string {
+    if t == NO_TYPE {
+        return "<unknown>"
+    }
+    let x = TYPES[t]
+    switch x.kind {
+        case TK.Void:
+            return "void"
+        case TK.Int:
+            switch width_key(t) {
+                case 16:
+                    return "i8"
+                case 32:
+                    return "i16"
+                case 64:
+                    return if int64_compat { "i32" } else { "int" }
+                case 128:
+                    return if int64_compat { "int" } else { "i64" }
+                case 17:
+                    return "u8"
+                case 33:
+                    return "u16"
+                case 65:
+                    return "u32"
+                case 129:
+                    return "u64"
+                default:
+                    return if int64_compat { "int" } else { "i32" }
+            }
+        case TK.Float:
+            if x.bits == 32 {
+                return if int64_compat { "f32" } else { "float" }
+            }
+            return if int64_compat { "float" } else { "f64" }
+        case TK.Bool:
+            return "bool"
+        case TK.String:
+            return "string"
+        case TK.Ptr:
+            let m = if x.is_mut != 0 { "mut " } else { "" }
+            return clip("&{{m}}{{name_of(x.elem, symbol)}}")
+        case TK.Box:
+            return clip("Box<{{name_of(x.elem, symbol)}}>")
+        case TK.Array:
+            return clip("[{{x.array_len}}]{{name_of(x.elem, symbol)}}")
+        case TK.Vec:
+            return clip("[]{{name_of(x.elem, symbol)}}")
+        case TK.Struct:
+            let nm = if x.has_name { x.name } else { "struct" }
+            if x.params.len == 0 {
+                if symbol && x.has_cname {
+                    return x.cname
+                }
+                return nm
+            }
+            // `used` counts what snprintf would have written, as in C.
+            let mut s = "{{nm}}<"
+            let mut used = s.len
+            let mut i = 0
+            while i < x.params.len && used < 150 {
+                let sep = if i > 0 { ", " } else { "" }
+                let piece = "{{sep}}{{name_of(x.params[i], symbol)}}"
+                s = "{{s}}{{piece}}"
+                used = used + piece.len
+                i = i + 1
+            }
+            return clip("{{s}}>")
+        case TK.Param:
+            return if x.has_name { x.name } else { "T" }
+        case TK.Proc:
+            let mut s = "fn("
+            let mut used = 3
+            let mut i = 0
+            while i < x.params.len && used < 150 {
+                let sep = if i > 0 { ", " } else { "" }
+                let piece = "{{sep}}{{name_of(x.params[i], symbol)}}"
+                s = "{{s}}{{piece}}"
+                used = used + piece.len
+                i = i + 1
+            }
+            if x.ret != NO_TYPE && TYPES[x.ret].kind != TK.Void {
+                return clip("{{s}}) -> {{name_of(x.ret, symbol)}}")
+            }
+            return clip("{{s}})")
+        default:
+            return "<unknown>"
+    }
+}
+
+fn is_alnum(c: int) -> bool {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+}
+
+/** *C identifier of a struct type (`Pair__int` for `Pair<int>`). */
+fn type_c_name(t: int) -> string {
+    if t == NO_TYPE || TYPES[t].kind != TK.Struct {
+        return "int64_t"
+    }
+    let x = TYPES[t]
+    let mut b = []u8 {}
+    if x.has_cname {
+        buf.push_str(&mut b, x.cname)
+    } else if x.has_name {
+        buf.push_str(&mut b, x.name)
+    } else {
+        buf.push_str(&mut b, "struct")
+    }
+    // Signal / Future / Chan are typed handles: always `{ id }` in C.
+    if x.has_name && (x.name == "Signal" || x.name == "Future" || x.name == "Chan") {
+        return buf.to_string(&b)
+    }
+    for i in 0..x.params.len {
+        buf.push_str(&mut b, "__")
+        let nm = type_symbol_name(x.params[i])
+        for k in 0..nm.len {
+            let c = nm[k]
+            if is_alnum(c) {
+                push(b, u8(c))
+            } else if c == '[' {
+                push(b, u8('L'))
+            } else if c == ']' {
+                push(b, u8('R'))
+            } else if b.len > 0 && b[b.len - 1] != u8('_') {
+                push(b, u8('_'))
+            }
+        }
+    }
+    return buf.to_string(&b)
+}
+
+// Numeric builtins whose width comes from the operand (type.h's NumericBuiltin).
+enum Numb {
+    None = 0,
+    WrapAdd = 1,
+    WrapSub = 2,
+    WrapMul = 3,
+    WrapNeg = 4,
+    WrapShl = 5,
+    WrapShr = 6,
+    WrapAnd = 7,
+    WrapOr = 8,
+    WrapXor = 9,
+    SatAdd = 10,
+    SatSub = 11,
+    SatMul = 12,
+}
+
+fn numeric_builtin_base(b: int) -> string {
+    switch b {
+        case Numb.WrapSub:
+            return "wrapping_sub"
+        case Numb.WrapMul:
+            return "wrapping_mul"
+        case Numb.WrapNeg:
+            return "wrapping_neg"
+        case Numb.WrapShl:
+            return "wrapping_shl"
+        case Numb.WrapShr:
+            return "wrapping_shr"
+        case Numb.WrapAnd:
+            return "wrapping_and"
+        case Numb.WrapOr:
+            return "wrapping_or"
+        case Numb.WrapXor:
+            return "wrapping_xor"
+        case Numb.SatAdd:
+            return "saturating_add"
+        case Numb.SatSub:
+            return "saturating_sub"
+        case Numb.SatMul:
+            return "saturating_mul"
+        default:
+            return "wrapping_add"
+    }
+}
+
+/** *Runtime helper for `b` at width `t` (`loam_wrapping_add_u8`). */
+fn numeric_builtin_cname(b: int, t: int) -> string {
+    let mut sfx = int_suffix(t)
+    if sfx.len == 0 {
+        sfx = "i64"
+    }
+    return "loam_{{numeric_builtin_base(b)}}_{{sfx}}"
+}

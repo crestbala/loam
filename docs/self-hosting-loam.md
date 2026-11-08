@@ -97,8 +97,8 @@ from §1.5, §2.3) and phase 3 (spawn/wait, stdin, paths, the Linux/Windows
 runtime shim — §1.5, §1.6; cross-compiled, and run by the `selfhost` CI
 workflow) are done. Phase 4 (the lexer in Loam, §4 step 3) and phase 5 (the
 parser in Loam, arena AST, diffed via `--dump-ast`; §4 step 4) are done; the
-`selfhost` workflow ran green on Linux x86_64/aarch64 and Windows x86_64. Next:
-typecheck.
+`selfhost` workflow ran green on Linux x86_64/aarch64 and Windows x86_64.
+Phase 6 (typecheck in Loam) is in progress; see the compiler-port checklist.
 
 ---
 
@@ -538,6 +538,18 @@ beyond what the checklist requires.
       the `selfhost_parse` host stanza. Speed: on par with C (0.018 s vs
       0.020 s parse + dump of a 250 KB file).
 - [ ] Typecheck, borrowck, boundscheck, IR, and codegen ported
+      - Typecheck (phase 6), in progress. 6a done: `loamc --dump-modules`
+        (what the C loader resolved; loading and package resolution stay C
+        until the driver phase) and `--dump-typed` (every module's tree
+        with types, C names, resolved targets and call markers, then the
+        mono / struct-instance / global tables); the Loam side has
+        `types.loam` (type arena, `type.c`'s naming byte for byte),
+        typecheck slots on the node arena, `tcdump.loam` (parses the listed
+        modules and replays the loader's edits) and the
+        `selfhost_typecheck` stanza: a file the Loam checker stops on
+        (`unported:`) is pending, any real difference fails. Next: 6b the
+        core checker, 6c generics, 6d closures, 6e Zeus call sugar, 6f
+        codecs and attributes, then the gate goes strict.
 - [ ] Driver (module loading, package resolution, `cc` invocation) in Loam
 - [ ] Compiler itself uses only safe Loam (arenas + integer indices; §2.7)
 

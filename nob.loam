@@ -2584,6 +2584,50 @@ fn selfhost_diff(what: string, tool: string, flag: string, ok_msg: string) {
     ok("selfhost {{what}} matches {{ok_msg}} on {{trim(r)}} files")
 }
 
+/** *The checker: `tcdump` (fed the module list C's loader resolved) against */
+/** *`loamc --dump-typed` over every compile_pass / compile_fail / draw_golden */
+/** *examples/language entry. While the port is in progress a file the Loam */
+/** *checker stops on (`unported:`, exit 3) is pending, not a pass; any real */
+/** *difference fails. Files C cannot load (parse errors: selfhost_parse) are */
+/** *counted apart. */
+fn ig_selfhost_typecheck() {
+    mark("selfhost typecheck")
+    let tmpl = tmpf("selfhost_tc.XXXXXX")
+    let d = trim(sys.exec("mkdir -p {{shq(TMP)}} && mktemp -d {{shq(tmpl)}}"))
+    if sys.exec_status() != 0 || d.len == 0 {
+        bad("selfhost typecheck (mktemp)", d)
+        return
+    }
+    let exe = "{{d}}/tcdump"
+    let o = sys.exec("{{shq(LOAMC)}} {{shq(ROOT)}}/packages/loam/compiler/tcdump.loam -o {{shq(exe)}} 2>&1")
+    if sys.exec_status() != 0 {
+        sys.exec("rm -rf {{shq(d)}}")
+        bad("selfhost typecheck (build tcdump)", o)
+        return
+    }
+    // One verdict line per entry file, eight at a time: `match`, `pend`,
+    // `load` (C cannot load it) or `diff`, then the path.
+    let worker = "{{d}}/one.sh"
+    write_text(worker, cat(
+        "f=$1; w=$(mktemp -d {{shq(d)}}/w.XXXXXX); ",
+        cat("{{shq(LOAMC)}} --dump-modules \"$f\" > $w/mods 2>/dev/null || { echo \"load $f\"; rm -rf $w; exit 0; }; ",
+            cat("{{shq(exe)}} $w/mods > $w/b 2>&1; st=$?; if [ $st -eq 3 ]; then echo \"pend $f\"; rm -rf $w; exit 0; fi; echo \"exit $st\" >> $w/b; ",
+                cat("{{shq(LOAMC)}} --dump-typed \"$f\" > $w/a 2>&1; echo \"exit $?\" >> $w/a; ",
+                    "if cmp -s $w/a $w/b; then echo \"match $f\"; else echo \"diff $f\"; fi; rm -rf $w\n")))))
+    let script = cat(
+        "cd {{shq(ROOT)}} && ls packages/loam/tests/compile_pass/*.loam packages/loam/tests/compile_fail/*.loam packages/loam/tests/draw_golden/*.loam examples/language/*.loam ",
+        cat("| xargs -P 8 -n 1 sh {{shq(worker)}} > {{shq(d)}}/verdicts; v={{shq(d)}}/verdicts; ",
+            "echo \"$(grep -c '^match' $v) match, $(grep -c '^pend' $v) pending, $(grep -c '^load' $v) not loadable\"; ! grep '^diff' $v"))
+    let r = sys.exec(script)
+    let st = sys.exec_status()
+    sys.exec("rm -rf {{shq(d)}}")
+    if st != 0 {
+        bad("selfhost typecheck (dumps differ)", r)
+        return
+    }
+    ok("selfhost typecheck vs typecheck.c: {{trim(r)}}")
+}
+
 fn ig_selfhost_lex() {
     selfhost_diff("lexer", "tokdump", "--dump-tokens", "lexer.c")
 }
@@ -2773,6 +2817,8 @@ fn stanza_dispatch(name: string) -> bool {
         ig_selfhost_lex()
     } else if name == "selfhost_parse" {
         ig_selfhost_parse()
+    } else if name == "selfhost_typecheck" {
+        ig_selfhost_typecheck()
     } else if name == "suite_zeus" {
         ig_suite("zeus")
     } else if name == "suite_plain" {
@@ -2822,6 +2868,7 @@ fn stanza_names() -> []string {
     push(v, "modules")
     push(v, "selfhost_lex")
     push(v, "selfhost_parse")
+    push(v, "selfhost_typecheck")
     push(v, "wasm_float")
     return v
 }
@@ -2891,7 +2938,7 @@ fn integration() -> int {
 /** *app. The wasm module's entry points, the server/client split, and the */
 /** *language server all sit next to the compiler. */
 fn host_stanzas() -> []string {
-    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "api_freeze", "modules", "selfhost_lex", "selfhost_parse", "wasm_float" }
+    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "api_freeze", "modules", "selfhost_lex", "selfhost_parse", "selfhost_typecheck", "wasm_float" }
 }
 
 /** *One after another, for an `--isolated` run; a batched run pools them. */

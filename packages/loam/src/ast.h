@@ -358,5 +358,9 @@ AstNode *ast_type(const char *name, int tag, AstNode *elem, int64_t alen, Source
 
 /** `loamc --dump-ast file.loam` (ast_dump.c): the parsed tree as text. */
 int ast_dump_file(const char *path);
+/** `--dump-modules` / `--dump-typed` (ast_dump.c): the loader's module list,
+    and the typechecked trees with typecheck's tables. */
+int ast_dump_modules(const char *path);
+int ast_dump_typed(const char *path);
 
 #endif

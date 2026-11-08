@@ -66,8 +66,11 @@ enum Kind {
 const F_AWAIT: int = 32
 const F_WRAPPED_LIT: int = 128
 
-/** *A source span: 1-based line and byte column, start and end. */
+/** *A source span: the module it is in (an index into the session's module */
+/** *list; C's `SourceLoc.file`), and 1-based line and byte column, start and */
+/** *end. */
 struct Loc {
+    file: int,
     line: int,
     col: int,
     end_line: int,
@@ -130,13 +133,60 @@ struct Node {
     kids: []int,
     kids2: []int,
     strs: []string,
+    // What typecheck sets (src/ast.h's fields of the same names).
+    /** *The node's type, an index into `types.TYPES`, or -1. */
+    ty: int,
+    place_mut: int,
+    /** *The declaration a name or field resolved to, or `NONE`. */
+    res: int,
+    /** *Ident: where the definition is (`def_loc`), 0 when unknown. */
+    def_line: int,
+    def_col: int,
+    /** *Fn / Closure: C name. Program: module name. Import: resolved path. */
+    /** *Try: the fn's return type name. Call: the resolved callee's C name. */
+    sname: string,
+    has_sname: bool,
+    /** *Call: the C symbol a builtin emits. */
+    cbuiltin: string,
+    has_cbuiltin: bool,
+    /** *`M_*` bits below. */
+    marks: int,
+    /** *Call: `NumericBuiltin`, signal / future / channel cell ops. */
+    numb: int,
+    sig: int,
+    fut: int,
+    ch: int,
+    /** *Closure id; Cast conversion mode. */
+    clos_id: int,
+    conv: int,
+    /** *Closure captures: names and types. */
+    caps: []string,
+    cap_types: []int,
 }
+
+// `marks` bits: the typecheck booleans of src/ast.h.
+const M_PRINTLN: int = 1
+const M_BOX_NEW: int = 2
+const M_VEC_PUSH: int = 4
+const M_VEC_POP: int = 8
+const M_SIZEOF: int = 16
+const M_PANIC: int = 32
+const M_FN_VAL: int = 64
+const M_VALUE_KEY: int = 128
+const M_INTRINSIC: int = 256
+const M_AS_VALUE: int = 512
+const M_ZERO_REST: int = 1024
 
 /** *A diagnostic: where, and what. */
 struct Diag {
     loc: Loc,
     msg: string,
 }
+
+/** *Every node of the session, all modules. */
+let mut NODES: []Node = []Node {}
+/** *Diagnostics in the order they were reported. */
+let mut DIAGS: []Diag = []Diag {}
 
 fn node(kind: int, loc: Loc) -> Node {
     return Node {
@@ -159,5 +209,23 @@ fn node(kind: int, loc: Loc) -> Node {
         kids: []int {},
         kids2: []int {},
         strs: []string {},
+        ty: -1,
+        place_mut: 0,
+        res: NONE,
+        def_line: 0,
+        def_col: 0,
+        sname: "",
+        has_sname: false,
+        cbuiltin: "",
+        has_cbuiltin: false,
+        marks: 0,
+        numb: 0,
+        sig: 0,
+        fut: 0,
+        ch: 0,
+        clos_id: 0,
+        conv: 0,
+        caps: []string {},
+        cap_types: []int {},
     }
 }

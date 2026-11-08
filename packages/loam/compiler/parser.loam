@@ -31,8 +31,8 @@ struct Parser {
     spill: []int,
     /** *Numbers the hidden locals of `let` tuples. */
     hidden_id: int,
-    nodes: []Node,
-    diags: []Diag,
+    /** *The module being parsed: stamped on every `Loc` (`loc.file`). */
+    file: int,
 }
 
 /** *What `take_docs` found: C's NULL is `has` false. */
@@ -62,15 +62,28 @@ fn parser_new(src: string) -> Parser {
         allow_struct_lit: true,
         spill: []int {},
         hidden_id: 0,
-        nodes: []Node {},
-        diags: []Diag {},
+        file: 0,
     }
+}
+
+/** *Point `p` at another module's source, keeping the arena: parse module */
+/** *`file` next. */
+fn parser_load(p: &mut Parser, src: string, file: int) {
+    p.lx = lexer.lexer_new(src)
+    p.cur = lexer.next(&mut p.lx)
+    p.peek = lexer.next(&mut p.lx)
+    p.prev = zero_token()
+    p.had_error = false
+    p.allow_struct_lit = true
+    p.spill = []int {}
+    p.hidden_id = 0
+    p.file = file
 }
 
 // --- tokens ------------------------------------------------------------------
 
-fn tloc(t: Token) -> Loc {
-    return Loc { line: t.line, col: t.col, end_line: t.end_line, end_col: t.end_col }
+fn tloc(p: &Parser, t: Token) -> Loc {
+    return Loc { file: p.file, line: t.line, col: t.col, end_line: t.end_line, end_col: t.end_col }
 }
 
 fn bump(p: &mut Parser) {
@@ -93,14 +106,14 @@ fn eat(p: &mut Parser, k: int) -> bool {
 }
 
 fn diag(p: &mut Parser, loc: Loc, msg: string) {
-    push(p.diags, Diag { loc: loc, msg: msg })
+    push(ast.DIAGS, Diag { loc: loc, msg: msg })
 }
 
 fn error(p: &mut Parser, m: string) {
     if p.had_error {
         return
     }
-    diag(p, tloc(p.cur), "{{m}} (got {{lexer.kind_name(p.cur.kind)}})")
+    diag(p, tloc(p, p.cur), "{{m}} (got {{lexer.kind_name(p.cur.kind)}})")
     p.had_error = true
 }
 
@@ -150,18 +163,18 @@ fn cur_is_word(p: &Parser, w: string) -> bool {
 // --- nodes -------------------------------------------------------------------
 
 fn add(p: &mut Parser, n: Node) -> int {
-    push(p.nodes, n)
-    return p.nodes.len - 1
+    push(ast.NODES, n)
+    return ast.NODES.len - 1
 }
 
 /** *The `Error` node a failed parse returns (C's NULL). */
 fn fail(p: &mut Parser) -> int {
-    return add(p, ast.node(Kind.Error, tloc(p.cur)))
+    return add(p, ast.node(Kind.Error, tloc(p, p.cur)))
 }
 
 /** *C's `!x` on a parse result: absent, or an error. */
 fn bad(p: &Parser, i: int) -> bool {
-    return i == ast.NONE || p.nodes[i].kind == Kind.Error
+    return i == ast.NONE || ast.NODES[i].kind == Kind.Error
 }
 
 fn ident_node(p: &mut Parser, name: string, loc: Loc) -> int {
@@ -243,7 +256,7 @@ fn type_node(p: &mut Parser, tag: int, elem: int, alen: i64, loc: Loc) -> int {
 }
 
 fn init_node(p: &mut Parser, name: string, value: int) -> int {
-    let mut n = ast.node(Kind.Init, tloc(p.prev))
+    let mut n = ast.node(Kind.Init, tloc(p, p.prev))
     n.name = name
     n.has_name = true
     n.a = value
@@ -251,8 +264,8 @@ fn init_node(p: &mut Parser, name: string, value: int) -> int {
 }
 
 fn set_doc(p: &mut Parser, i: int, d: Doc) {
-    p.nodes[i].doc = d.text
-    p.nodes[i].has_doc = d.has
+    ast.NODES[i].doc = d.text
+    ast.NODES[i].has_doc = d.has
 }
 
 // --- literal text ------------------------------------------------------------
@@ -673,7 +686,7 @@ fn interp_node(p: &mut Parser, text: string, loc: Loc) -> Interp {
 
 /** *A type: `&`/`&mut`, `Box<T>`, `[N]T`, `[]T`, `fn(...)`, or a name. */
 fn parse_type(p: &mut Parser) -> int {
-    let loc = tloc(p.cur)
+    let loc = tloc(p, p.cur)
     if eat(p, Tok.Amp) {
         let m = eat(p, Tok.Mut)
         let e = parse_type(p)
@@ -712,7 +725,7 @@ fn parse_type(p: &mut Parser) -> int {
             ret = parse_type(p)
         }
         let t = type_node(p, 5, ret, i64(0), loc)
-        p.nodes[t].kids = ps
+        ast.NODES[t].kids = ps
         return t
     }
     if !eat(p, Tok.Ident) {
@@ -726,8 +739,8 @@ fn parse_type(p: &mut Parser) -> int {
         return type_node(p, 4, e, i64(0), loc)
     }
     let t = type_node(p, 2, ast.NONE, i64(0), loc)
-    p.nodes[t].name = nm
-    p.nodes[t].has_name = true
+    ast.NODES[t].name = nm
+    ast.NODES[t].has_name = true
     if eat(p, Tok.Lt) {
         let mut targs = []int {}
         if !check(p, Tok.Gt) {
@@ -740,7 +753,7 @@ fn parse_type(p: &mut Parser) -> int {
             }
         }
         consume_gt(p)
-        p.nodes[t].kids2 = targs
+        ast.NODES[t].kids2 = targs
     }
     return t
 }
@@ -755,7 +768,7 @@ fn closure_params(p: &mut Parser) -> []int {
             break
         }
         let name = tok_text(p, p.prev)
-        let nloc = tloc(p.prev)
+        let nloc = tloc(p, p.prev)
         let mut ty = ast.NONE
         if eat(p, Tok.Colon) {
             ty = parse_type(p)
@@ -829,7 +842,7 @@ fn parse_arrow_closure(p: &mut Parser, loc: Loc) -> int {
         while true {
             eat(p, Tok.Ident)
             let name = tok_text(p, p.prev)
-            let nloc = tloc(p.prev)
+            let nloc = tloc(p, p.prev)
             let q = param_node(p, name, ast.NONE, ast.NONE, nloc)
             push(ps, q)
             if !eat(p, Tok.Comma) {
@@ -861,7 +874,7 @@ fn parse_fn_closure(p: &mut Parser, loc: Loc) -> int {
     }
     let mut body = ast.NONE
     if eat(p, Tok.FatArrow) {
-        let bloc = tloc(p.cur)
+        let bloc = tloc(p, p.cur)
         let e = parse_expr(p)
         body = one_stmt_block(p, e, bloc)
     } else if check(p, Tok.Lbrace) {
@@ -876,7 +889,7 @@ fn parse_fn_closure(p: &mut Parser, loc: Loc) -> int {
 /** *`if c { a } else { b }` as a value; `else if` nests as a one-statement */
 /** *block. */
 fn parse_if_expr(p: &mut Parser) -> int {
-    let loc = tloc(p.cur)
+    let loc = tloc(p, p.cur)
     consume(p, Tok.If, "expected if")
     let cond = parse_cond_expr(p)
     let thenb = parse_block(p)
@@ -886,7 +899,7 @@ fn parse_if_expr(p: &mut Parser) -> int {
     }
     let mut elseb = ast.NONE
     if check(p, Tok.If) {
-        let nloc = tloc(p.cur)
+        let nloc = tloc(p, p.cur)
         let nested = parse_if_expr(p)
         elseb = one_stmt_block(p, nested, nloc)
     } else {
@@ -967,7 +980,7 @@ fn struct_lit_node(p: &mut Parser, name: string, fields: []int, targs: []int, lo
 /** *Literals, a name, a parenthesized expression or tuple, an array literal, */
 /** *or a closure. */
 fn parse_primary(p: &mut Parser) -> int {
-    let loc = tloc(p.cur)
+    let loc = tloc(p, p.cur)
     if eat(p, Tok.Ident) {
         let nm = tok_text(p, p.prev)
         if p.allow_struct_lit && check(p, Tok.Lt) && ident_targs_then_brace(p) {
@@ -1114,7 +1127,7 @@ fn same_line(p: &Parser) -> bool {
 fn parse_postfix(p: &mut Parser, first: int) -> int {
     let mut left = first
     while true {
-        let mut loc = tloc(p.cur)
+        let mut loc = tloc(p, p.cur)
         if same_line(p) && eat(p, Tok.Lparen) {
             let mut args = []int {}
             let mut props = []int {}
@@ -1143,9 +1156,9 @@ fn parse_postfix(p: &mut Parser, first: int) -> int {
             consume(p, Tok.Rparen, "expected )")
             loc.end_line = p.prev.end_line
             loc.end_col = p.prev.end_col
-            if p.nodes[left].loc.line > 0 {
-                loc.line = p.nodes[left].loc.line
-                loc.col = p.nodes[left].loc.col
+            if ast.NODES[left].loc.line > 0 {
+                loc.line = ast.NODES[left].loc.line
+                loc.col = ast.NODES[left].loc.col
             }
             if props.len > 0 {
                 let mut lit = ast.node(Kind.StructLit, loc)
@@ -1155,7 +1168,7 @@ fn parse_postfix(p: &mut Parser, first: int) -> int {
             }
             left = call_node(p, left, args, loc)
             if p.allow_struct_lit && check(p, Tok.Lbrace) && same_line(p) {
-                let bloc = tloc(p.cur)
+                let bloc = tloc(p, p.cur)
                 let body = parse_block(p)
                 let clos = closure_node(p, []int {}, ast.NONE, body, bloc)
                 let slot = ident_node(p, "slot", loc)
@@ -1168,7 +1181,7 @@ fn parse_postfix(p: &mut Parser, first: int) -> int {
                 error(p, "expected field name")
                 break
             }
-            left = field_node(p, left, tok_text(p, p.prev), 0, tloc(p.prev))
+            left = field_node(p, left, tok_text(p, p.prev), 0, tloc(p, p.prev))
             continue
         }
         if eat(p, Tok.ColonColon) {
@@ -1176,7 +1189,7 @@ fn parse_postfix(p: &mut Parser, first: int) -> int {
                 error(p, "expected identifier after ::")
                 break
             }
-            left = field_node(p, left, tok_text(p, p.prev), 1, tloc(p.prev))
+            left = field_node(p, left, tok_text(p, p.prev), 1, tloc(p, p.prev))
             continue
         }
         if same_line(p) && eat(p, Tok.Lbracket) {
@@ -1217,7 +1230,7 @@ fn parse_postfix(p: &mut Parser, first: int) -> int {
 
 /** *Unary `&`, `&mut`, `*`, `!`, `-`, `~`, prefix `++` / `--`, and `await`. */
 fn parse_unary(p: &mut Parser) -> int {
-    let loc = tloc(p.cur)
+    let loc = tloc(p, p.cur)
     if cur_is_word(p, "await") {
         bump(p)
         let opnd = parse_unary(p)
@@ -1227,7 +1240,7 @@ fn parse_unary(p: &mut Parser) -> int {
         let base = ident_node(p, "async", loc)
         let callee = field_node(p, base, "await_value", 0, loc)
         let call = call_node(p, callee, []int { opnd }, loc)
-        p.nodes[call].flags = p.nodes[call].flags | ast.F_AWAIT
+        ast.NODES[call].flags = ast.NODES[call].flags | ast.F_AWAIT
         return call
     }
     if eat(p, Tok.Amp) {
@@ -1317,7 +1330,7 @@ fn parse_binary(p: &mut Parser, min_prec: int) -> int {
         }
         bump(p)
         let right = parse_binary(p, pr + 1)
-        let mut n = ast.node(Kind.Binary, p.nodes[left].loc)
+        let mut n = ast.node(Kind.Binary, ast.NODES[left].loc)
         n.op = op
         n.a = left
         n.b = right
@@ -1408,7 +1421,7 @@ fn parse_let_tuple(p: &mut Parser, loc: Loc, is_const: bool) -> int {
         }
         push(names, tok_text(p, p.prev))
         push(muts, if m { 1 } else { 0 })
-        push(locs, tloc(p.prev))
+        push(locs, tloc(p, p.prev))
         if !eat(p, Tok.Comma) {
             break
         }
@@ -1460,19 +1473,19 @@ fn parse_let_tuple(p: &mut Parser, loc: Loc, is_const: bool) -> int {
         return fail(p)
     }
     let rhs_start = p.cur.start
-    let rhs_loc = tloc(p.cur)
+    let rhs_loc = tloc(p, p.cur)
     let rhs = parse_expr(p)
     if p.had_error || bad(p, rhs) {
         return fail(p)
     }
     let rhs_end = p.prev.start + p.prev.len
     optional_semi(p)
-    if p.nodes[rhs].kind != Kind.Tuple {
+    if ast.NODES[rhs].kind != Kind.Tuple {
         diag(p, rhs_loc, "a `let` tuple takes a tuple of values on the right, like `let (a, b) = (1, 2)`")
         p.had_error = true
         return fail(p)
     }
-    let mut vals = p.nodes[rhs].kids
+    let mut vals = ast.NODES[rhs].kids
     let nv = vals.len
     if nv != n {
         diag(p, rhs_loc, "`let` tuple has {{n}} name(s) but {{nv}} value(s)")
@@ -1492,7 +1505,7 @@ fn parse_let_tuple(p: &mut Parser, loc: Loc, is_const: bool) -> int {
         for i in 0..n {
             let hidden = "__let{{p.hidden_id}}"
             p.hidden_id = p.hidden_id + 1
-            let vloc = p.nodes[vals[i]].loc
+            let vloc = ast.NODES[vals[i]].loc
             let h = var_node(p, hidden, types[i], vals[i], 0, vloc)
             spill_stmt(p, h)
             vals[i] = ident_node(p, hidden, vloc)
@@ -1514,7 +1527,7 @@ fn parse_let_tuple(p: &mut Parser, loc: Loc, is_const: bool) -> int {
 
 /** *`let` / `let mut` / `const` (the keyword is consumed). */
 fn parse_let(p: &mut Parser) -> int {
-    let mut loc = tloc(p.prev)
+    let mut loc = tloc(p, p.prev)
     let is_const = p.prev.kind == Tok.Const
     if is_const && check(p, Tok.Mut) {
         error(p, "a `const` cannot be `mut`")
@@ -1553,7 +1566,7 @@ fn is_assign_op(k: int) -> bool {
 
 /** *One case label: an integer constant, `true` / `false`, or `Enum.Member`. */
 fn parse_case_pat(p: &mut Parser) -> int {
-    let mut loc = tloc(p.cur)
+    let mut loc = tloc(p, p.cur)
     if eat(p, Tok.Ident) {
         let nm = tok_text(p, p.prev)
         if eat(p, Tok.Dot) {
@@ -1602,7 +1615,7 @@ fn parse_case_pat(p: &mut Parser) -> int {
 
 /** *`case A, B:` or `default:`, then statements up to the next label or `}`. */
 fn parse_case(p: &mut Parser) -> int {
-    let loc = tloc(p.cur)
+    let loc = tloc(p, p.cur)
     let mut pats = []int {}
     let mut is_default = false
     if eat(p, Tok.Default) {
@@ -1630,7 +1643,7 @@ fn parse_case(p: &mut Parser) -> int {
         return fail(p)
     }
     consume(p, Tok.Colon, if is_default { "expected : after default" } else { "expected : after case label" })
-    let bloc = tloc(p.cur)
+    let bloc = tloc(p, p.cur)
     let mut stmts = []int {}
     while !check(p, Tok.Case) && !check(p, Tok.Default) && !check(p, Tok.Rbrace) && !check(p, Tok.Eof) {
         let s = parse_stmt(p)
@@ -1650,7 +1663,7 @@ fn parse_case(p: &mut Parser) -> int {
 /** *One statement. */
 fn parse_stmt(p: &mut Parser) -> int {
     let doc = take_docs(p)
-    let loc = tloc(p.cur)
+    let loc = tloc(p, p.cur)
     if eat(p, Tok.If) {
         let cond = parse_cond_expr(p)
         let thenb = parse_block(p)
@@ -1747,17 +1760,17 @@ fn parse_stmt(p: &mut Parser) -> int {
         bump(p)
         bump(p)
         let name = tok_text(p, p.prev)
-        let nloc = tloc(p.prev)
+        let nloc = tloc(p, p.prev)
         let clos = parse_fn_closure(p, loc)
         optional_semi(p)
         if bad(p, clos) {
             return clos
         }
-        let ps = p.nodes[clos].kids
+        let ps = ast.NODES[clos].kids
         for i in 0..ps.len {
-            if p.nodes[ps[i]].a == ast.NONE && !p.had_error {
-                let pname = p.nodes[ps[i]].name
-                diag(p, p.nodes[ps[i]].loc, "local fn '{{name}}' needs a type on parameter '{{pname}}'")
+            if ast.NODES[ps[i]].a == ast.NONE && !p.had_error {
+                let pname = ast.NODES[ps[i]].name
+                diag(p, ast.NODES[ps[i]].loc, "local fn '{{name}}' needs a type on parameter '{{pname}}'")
                 p.had_error = true
                 break
             }
@@ -1786,7 +1799,7 @@ fn parse_stmt(p: &mut Parser) -> int {
 
 /** *`{` statements `}`; a comma may follow a statement (UI child lists). */
 fn parse_block(p: &mut Parser) -> int {
-    let loc = tloc(p.cur)
+    let loc = tloc(p, p.cur)
     consume(p, Tok.Lbrace, "expected {")
     let mut stmts = []int {}
     while !check(p, Tok.Rbrace) && !check(p, Tok.Eof) {
@@ -1810,7 +1823,7 @@ fn parse_params(p: &mut Parser) -> []int {
                 break
             }
             let name = tok_text(p, p.prev)
-            let nloc = tloc(p.prev)
+            let nloc = tloc(p, p.prev)
             consume(p, Tok.Colon, "expected :")
             let ty = parse_type(p)
             let mut def = ast.NONE
@@ -1831,27 +1844,27 @@ fn parse_params(p: &mut Parser) -> []int {
 /** *`let __zv = __view_begin()` first, `return __view_end(__zv, || { slot(...) })` */
 /** *last. */
 fn frame_component(p: &mut Parser, body: int, loc: Loc) {
-    if p.nodes[body].kind != Kind.Block || p.nodes[body].kids.len == 0 {
+    if ast.NODES[body].kind != Kind.Block || ast.NODES[body].kids.len == 0 {
         return
     }
-    let stmts = p.nodes[body].kids
+    let stmts = ast.NODES[body].kids
     let last = stmts[stmts.len - 1]
-    if p.nodes[last].kind != Kind.Return || p.nodes[last].a == ast.NONE {
+    if ast.NODES[last].kind != Kind.Return || ast.NODES[last].a == ast.NONE {
         return
     }
-    let e = p.nodes[last].a
-    if p.nodes[e].kind != Kind.Call || p.nodes[e].a == ast.NONE {
+    let e = ast.NODES[last].a
+    if ast.NODES[e].kind != Kind.Call || ast.NODES[e].a == ast.NONE {
         return
     }
-    let callee = p.nodes[e].a
-    if p.nodes[callee].kind != Kind.Ident || p.nodes[callee].name != "slot" {
+    let callee = ast.NODES[e].a
+    if ast.NODES[callee].kind != Kind.Ident || ast.NODES[callee].name != "slot" {
         return
     }
     let bblk = one_stmt_block(p, e, loc)
     let clos = closure_node(p, []int {}, ast.NONE, bblk, loc)
     let zv = ident_node(p, "__zv", loc)
     let end_fn = ident_node(p, "__view_end", loc)
-    p.nodes[last].a = call_node(p, end_fn, []int { zv, clos }, loc)
+    ast.NODES[last].a = call_node(p, end_fn, []int { zv, clos }, loc)
     let begin_fn = ident_node(p, "__view_begin", loc)
     let begin = call_node(p, begin_fn, []int {}, loc)
     let decl = var_node(p, "__zv", ast.NONE, begin, 0, loc)
@@ -1859,7 +1872,7 @@ fn frame_component(p: &mut Parser, body: int, loc: Loc) {
     for i in 0..stmts.len {
         push(st, stmts[i])
     }
-    p.nodes[body].kids = st
+    ast.NODES[body].kids = st
 }
 
 /** *`<A, B>` after a fn or struct name (the `<` is consumed). */
@@ -1881,7 +1894,7 @@ fn type_params(p: &mut Parser) -> []string {
 
 /** *A `fn` item (the keyword is consumed). */
 fn parse_fn(p: &mut Parser) -> int {
-    let mut loc = tloc(p.prev)
+    let mut loc = tloc(p, p.prev)
     if !eat(p, Tok.Ident) {
         error(p, "expected function name")
         return fail(p)
@@ -1914,7 +1927,7 @@ fn parse_fn(p: &mut Parser) -> int {
 
 /** *`struct Name<T> { field: Type = default, ... }`. */
 fn parse_struct(p: &mut Parser) -> int {
-    let mut loc = tloc(p.prev)
+    let mut loc = tloc(p, p.prev)
     if !eat(p, Tok.Ident) {
         error(p, "expected struct name")
         return fail(p)
@@ -1935,7 +1948,7 @@ fn parse_struct(p: &mut Parser) -> int {
             break
         }
         let fname = tok_text(p, p.prev)
-        let floc = tloc(p.prev)
+        let floc = tloc(p, p.prev)
         consume(p, Tok.Colon, "expected :")
         let ty = parse_type(p)
         let mut def = ast.NONE
@@ -1965,7 +1978,7 @@ fn parse_struct(p: &mut Parser) -> int {
 
 /** *`enum Name { A, B = 7, C }`: numbered from 0, or on from the last value. */
 fn parse_enum(p: &mut Parser) -> int {
-    let mut loc = tloc(p.prev)
+    let mut loc = tloc(p, p.prev)
     if !eat(p, Tok.Ident) {
         error(p, "expected enum name")
         return fail(p)
@@ -2000,7 +2013,7 @@ fn parse_enum(p: &mut Parser) -> int {
         } else {
             next = v + i64(1)
         }
-        let mut vn = ast.node(Kind.Variant, tloc(p.prev))
+        let mut vn = ast.node(Kind.Variant, tloc(p, p.prev))
         vn.name = vname
         vn.has_name = true
         vn.num = v
@@ -2086,7 +2099,7 @@ fn parse_named_import(p: &mut Parser, start: Loc) -> int {
                     error(p, "expected a local name after 'as'")
                 }
             }
-            let mut nn = ast.node(Kind.ImportName, tloc(p.prev))
+            let mut nn = ast.node(Kind.ImportName, tloc(p, p.prev))
             nn.name = src
             nn.has_name = true
             nn.text = local
@@ -2115,13 +2128,13 @@ fn parse_named_import(p: &mut Parser, start: Loc) -> int {
         return fail(p)
     }
     let im = import_node(p, alias, path, loc)
-    p.nodes[im].kids = names
+    ast.NODES[im].kids = names
     return im
 }
 
 /** *`import "spec"` (optionally `as name`), or a selective import. */
 fn parse_import(p: &mut Parser) -> int {
-    let mut loc = tloc(p.prev)
+    let mut loc = tloc(p, p.prev)
     if eat(p, Tok.Lbrace) {
         return parse_named_import(p, loc)
     }
@@ -2161,7 +2174,7 @@ fn clip95(s: string) -> string {
 /** *`#![c_source("x.c", flags...)]` / `#![c_link(flags...)]`, after the `#!`. */
 /** *The `CDir` node, or an `Error` node. */
 fn parse_c_directive(p: &mut Parser) -> int {
-    let loc = tloc(p.prev)
+    let loc = tloc(p, p.prev)
     consume(p, Tok.Lbracket, "expected [ after #!")
     if !eat(p, Tok.Ident) {
         error(p, "expected c_source or c_link after #![")
@@ -2205,7 +2218,7 @@ const ST_NO_SEND: int = 8
 /** *The module: docs, imports, then items, until EOF or the first error. */
 /** *Returns the `Program` node. */
 fn parse_program(p: &mut Parser) -> int {
-    let loc = tloc(p.cur)
+    let loc = tloc(p, p.cur)
     let mut kids = []int {}
     let mut decl_count = 0
     let mut mod_doc = take_docs_of(p, Tok.ModDoc)
@@ -2315,9 +2328,9 @@ fn parse_program(p: &mut Parser) -> int {
                 if is_server {
                     bits = bits | FN_SERVER
                 }
-                p.nodes[f].op = bits
-                p.nodes[f].text = c_sym
-                p.nodes[f].has_text = has_c_sym
+                ast.NODES[f].op = bits
+                ast.NODES[f].text = c_sym
+                ast.NODES[f].has_text = has_c_sym
                 push(kids, f)
                 decl_count = decl_count + 1
             }
@@ -2331,7 +2344,7 @@ fn parse_program(p: &mut Parser) -> int {
             }
             let f = parse_fn(p)
             if !bad(p, f) {
-                p.nodes[f].op = FN_ASYNC
+                ast.NODES[f].op = FN_ASYNC
                 set_doc(p, f, doc)
                 push(kids, f)
                 decl_count = decl_count + 1
@@ -2351,7 +2364,7 @@ fn parse_program(p: &mut Parser) -> int {
             let s = parse_struct(p)
             if !bad(p, s) {
                 set_doc(p, s, doc)
-                p.nodes[s].op = st_bits
+                ast.NODES[s].op = st_bits
                 push(kids, s)
                 decl_count = decl_count + 1
             }
