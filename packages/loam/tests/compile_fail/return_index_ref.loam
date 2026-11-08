@@ -1,0 +1,8 @@
+fn bad() -> &int {
+    let mut v = []int {}
+    v.push(1)
+    return &v[0]
+}
+
+fn main() {
+}

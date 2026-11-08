@@ -3758,13 +3758,8 @@ static void check_stmt(AstNode *n) {
             Type *t = n->as.ret.expr
                 ? check_expr_ty(n->as.ret.expr, clos_infer ? NULL : want)
                 : ty_void();
-            if (n->as.ret.expr && want->kind == TY_PTR) {
-                if (n->as.ret.expr->kind == AST_ADDR &&
-                    n->as.ret.expr->as.access.target &&
-                    n->as.ret.expr->as.access.target->kind == AST_IDENT)
-                    err(n->loc, "cannot return borrow of local '%s'",
-                        n->as.ret.expr->as.access.target->as.ident.name);
-            }
+            /* A returned reference into the frame is rejected in borrowck,
+               which knows locals from parameters and follows every path. */
             if (clos_infer) {
                 if (!clos_infer_ty) clos_infer_ty = t;
                 else if (!type_eq(t, clos_infer_ty))

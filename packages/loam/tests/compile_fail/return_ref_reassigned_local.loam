@@ -1,0 +1,12 @@
+// Any assignment that aimed `p` at a local counts, even inside a branch.
+fn bad(a: &int, c: bool) -> &int {
+    let x = 1
+    let mut p = a
+    if c {
+        p = &x
+    }
+    return p
+}
+
+fn main() {
+}

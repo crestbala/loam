@@ -1,0 +1,8 @@
+fn bad() -> &int {
+    let x = 1
+    let p = &x
+    return p
+}
+
+fn main() {
+}

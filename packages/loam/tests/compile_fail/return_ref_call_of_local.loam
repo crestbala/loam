@@ -1,0 +1,12 @@
+// A returned reference borrows from its reference arguments.
+fn id(a: &int) -> &int {
+    return a
+}
+
+fn bad() -> &int {
+    let x = 1
+    return id(&x)
+}
+
+fn main() {
+}
