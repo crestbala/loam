@@ -2,7 +2,6 @@
 // read_line / read_stdin (the fixture pipes input into a copy of itself),
 // os and is_abs.
 import "std:fmt"
-import "std:str"
 import "std:sys"
 
 fn child() {
@@ -47,7 +46,8 @@ fn main() {
     }
     fmt.println(sys.wait(hs[0]))
 
-    let me = str.shell_quote(sys.arg(0))
-    let out = sys.exec("printf 'hello\\nABCDEtail\\n' | {{me}} child")
-    fmt.println(out)
+    // Pipe input into a copy of this program through `sh` (spawned, so no
+    // platform shell quoting is involved); the child prints its own line.
+    let pipe = []string { "sh", "-c", "printf 'hello\\nABCDEtail\\n' | \"$0\" child", sys.arg(0) }
+    fmt.println(sys.run(&pipe))
 }

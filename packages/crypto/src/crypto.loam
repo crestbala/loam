@@ -74,7 +74,7 @@ fn c_argon2id(
     ad_size: int
 ) {}
 
-#[c("getentropy")]
+#[c("shim_crypto_entropy")]
 fn c_getentropy(out: []u8, n: i64) -> i32 {}
 
 #[c("malloc")]

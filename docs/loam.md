@@ -591,7 +591,9 @@ The repository's own suite is [`nob.loam`](../nob.loam). `nob test` (or `make
 test`) builds the compiler and runs the language suites — `compile_pass`,
 `compile_fail`, the golden programs and DRAW goldens, `inlang`, and the
 `argv`/`fs`/`watch` probes — plus the host checks that sit next to the compiler
-(wasm entry points, server/client split, LSP). The `zeli`-driven suite (routes,
+(wasm entry points and floats, server/client split, LSP, the self-hosted
+lexer). A `compile_pass` fixture must exit 0, and when a `<name>.expected`
+sits beside it, print exactly that to stdout. The `zeli`-driven suite (routes,
 build, pkg, fmt, serve) is `nob integration`, deliberately not part of `test`:
 it is the slow and most environment-sensitive part. Both take `-j N` (default
 4) and print each result as it finishes.

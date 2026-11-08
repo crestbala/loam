@@ -1,0 +1,31 @@
+#!/bin/sh
+# Emit what tools/win-run.sh needs to build and run the non-GUI compile_pass
+# fixtures on Windows, where `loamc` itself does not run (see
+# docs/platforms.md): for each fixture, its generated C (`<name>.c`), the
+# extra C it links (`<name>.deps`, lines `dir|path|flags` or `link||flags`),
+# and its `.expected` output when it has one.
+#
+#   tools/win-bundle.sh OUTDIR
+#
+# Fixtures that call into std:net are left out: runtime/net.c has no Windows
+# port yet (a known gap, not needed to self-host).
+set -e
+ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+cd "$ROOT"
+OUT=${1:?usage: win-bundle.sh OUTDIR}
+mkdir -p "$OUT"
+. "$ROOT/tools/fixture-deps.sh"
+n=0; gap=""
+for f in packages/loam/tests/compile_pass/*.loam; do
+    b=$(basename "$f" .loam)
+    echo "$b" | grep -qE "$skip" && continue
+    grep -qE "$gui" "$f" && continue
+    bin/loamc "$f" --emit-c -o "$OUT/$b.c" >/dev/null 2>&1 || { rm -f "$OUT/$b.c"; continue; }
+    if grep -q 'loam_net_' "$OUT/$b.c"; then rm -f "$OUT/$b.c"; gap="$gap $b"; continue; fi
+    deps_of "$f" | sort -u > "$OUT/$b.deps"
+    [ -f "packages/loam/tests/compile_pass/$b.expected" ] && cp "packages/loam/tests/compile_pass/$b.expected" "$OUT/"
+    n=$((n+1))
+done
+echo "win-bundle: $n fixtures in $OUT"
+[ -n "$gap" ] && echo "  left out (std:net has no Windows port):$gap"
+exit 0

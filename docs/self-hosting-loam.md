@@ -94,8 +94,8 @@ critical path.
 **Current status**: Not self-hosted. Phase 1 (§1.1, §1.4, the §1.3 `u64`
 bugs), phase 2 (§1.2, the rest of §1.3, stderr / `mtime` / read errors
 from §1.5, §2.3) and phase 3 (spawn/wait, stdin, paths, the Linux/Windows
-runtime shim — §1.5, §1.6; cross-compiled, not yet run on those OSes) are
-done. Phase 4 (the lexer in Loam, §4 step 3) is done. Next: the parser
+runtime shim — §1.5, §1.6; cross-compiled, and run by the `selfhost` CI
+workflow) are done. Phase 4 (the lexer in Loam, §4 step 3) is done. Next: the parser
 (arena AST), diffed via an AST dump.
 
 ---
@@ -244,8 +244,10 @@ Needed:
       `nob`, and the seed compiler build headless.
 - [x] Consistent `sys` surface: `nob.loam` and every non-GUI `compile_pass`
       fixture build and link unchanged for x86_64/aarch64 Linux and Windows
-      (`tools/cross-check.sh`, `zig cc`). **Compile-and-link verified only:**
-      running on Linux/Windows still needs a real runner (§3 CI).
+      (`tools/cross-check.sh`, `zig cc`), and CI (`selfhost.yml`) runs the
+      full suite on Linux x86_64/aarch64 and the non-GUI fixtures natively
+      on Windows x86_64. Known gap: `std:net` has no Windows port (not
+      needed to self-host).
 - [x] Document which C compilers are supported and how `loamc` finds them:
       [platforms.md](platforms.md). MSVC `cl.exe` is out (GNU extensions in
       the generated C). The seed `driver.c` is deliberately not ported to
@@ -439,7 +441,10 @@ Needed (can land after the fixed-point, but design the hooks early):
       later; the formatter is an easy early port (lexer + printer only).
 - [ ] **Windows CI**: at minimum a GitHub Actions or equivalent job that
       builds the C seed, runs the self-host stages, and executes the
-      language tests.
+      language tests. *Partly done:* `selfhost.yml` runs the suite on Linux
+      and the fixtures natively on Windows (from C emitted on Linux, since
+      the seed is POSIX-only by design); the self-host stages join it once
+      they exist.
 
 ---
 
@@ -508,7 +513,7 @@ beyond what the checklist requires.
 - [x] `fmt.eprintln` / stderr (§1.5)
 - [x] `sys.mtime` and file-read that returns an error (§1.5)
 - [x] Portable process spawn/wait and path handling for Linux + Windows (§1.5, §1.6)
-      — built and linked for both via `tools/cross-check.sh`; not yet run there
+      — built for both via `tools/cross-check.sh`, run on both in CI
 
 ### Compiler port
 - [x] Lexer in Loam, differential-tested against `lexer.c`:

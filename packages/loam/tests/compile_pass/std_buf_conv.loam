@@ -32,16 +32,16 @@ fn main() {
     buf.push_i64(&mut b, i64(-5))
     fmt.println(buf.to_string(&b))
     fmt.println(
-        sys.write_bytes("/tmp/loam_std_buf_conv.out", &b),
-        sys.mtime("/tmp/loam_std_buf_conv.out") > i64(0),
+        sys.write_bytes("loam_std_buf_conv_test.out", &b),
+        sys.mtime("loam_std_buf_conv_test.out") > i64(0),
         sys.mtime("/nope"),
     )
-    let r = sys.read("/tmp/loam_std_buf_conv.out")
+    let r = sys.read("loam_std_buf_conv_test.out")
     fmt.println(r.tag == ResultTag.Ok, r.val.len)
-    let r2 = sys.read("/tmp/loam_std_buf_conv.missing")
+    let r2 = sys.read("loam_std_buf_conv_test.missing")
     fmt.println(r2.tag == ResultTag.Err, r2.err)
-    sys.write_file("/tmp/loam_std_buf_conv.empty", "")
-    let r3 = sys.read("/tmp/loam_std_buf_conv.empty")
+    sys.write_file("loam_std_buf_conv_test.empty", "")
+    let r3 = sys.read("loam_std_buf_conv_test.empty")
     fmt.println(r3.tag == ResultTag.Ok, r3.val.len)
 
     fmt.println(
@@ -72,6 +72,8 @@ fn main() {
     show_f(conv.parse_f64("inf"))
     fmt.println(conv.f64_to_str(f64(1.0) / f64(3.0)), conv.f64_to_str(f64(100.0)))
 
+    sys.remove_path("loam_std_buf_conv_test.out")
+    sys.remove_path("loam_std_buf_conv_test.empty")
     fmt.eprintln("to stderr", 1)
     extra()
 }

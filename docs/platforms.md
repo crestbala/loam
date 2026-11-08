@@ -6,18 +6,30 @@ out of scope here; this is the path `loamc`, `nob`, and any CLI program take.
 
 ## Support matrix
 
-| Platform                  | Runtime (`loam_rt.h`) + `std:sys` | Seed compiler (`packages/loam/src`) | Verified by                               |
-| ------------------------- | --------------------------------- | ----------------------------------- | ----------------------------------------- |
-| macOS (arm64, x86_64)     | yes                               | yes                                 | `./nob.sh test` (built and run)           |
-| Linux x86_64, aarch64     | yes, headless (no X11 needed)     | yes                                 | `tools/cross-check.sh` (built and linked) |
-| Windows x86_64, aarch64   | yes (MinGW-w64 headers)           | no — see below                      | `tools/cross-check.sh` (built and linked) |
-| WASM, iOS, Android        | as before (secondary)             | —                                   | their own suites                          |
+| Platform                  | Runtime (`loam_rt.h`) + `std:sys` | Seed compiler (`packages/loam/src`) | Verified by                                         |
+| ------------------------- | --------------------------------- | ----------------------------------- | --------------------------------------------------- |
+| macOS (arm64, x86_64)     | yes                               | yes                                 | `./nob.sh test` (built and run)                     |
+| Linux x86_64, aarch64     | yes, headless (no X11 needed)     | yes                                 | CI `selfhost` (full suite, run); `cross-check.sh`   |
+| Windows x86_64            | yes (MinGW-w64), except `std:net` | no — see below                      | CI `selfhost` (fixtures run natively); `cross-check.sh` |
+| Windows aarch64           | same as x86_64                    | no                                  | `cross-check.sh` (built and linked only)            |
+| WASM, iOS, Android        | as before (secondary)             | —                                   | their own suites                                    |
 
-`tools/cross-check.sh` cross-compiles with `zig cc` from a macOS machine: the
-generated C of `nob.loam` and of every non-GUI `compile_pass` fixture, linked
-for each target, plus the seed sources for Linux. It proves the code builds
-and links; it does not run it. Running there needs the platform itself (a CI
-runner or a VM), which is the remaining step for the multi-platform claim.
+**CI** (`.github/workflows/selfhost.yml`) runs on pull requests from
+`feat/self-hosting` and by hand. Linux runs `./nob.sh test` on x86_64 and
+aarch64. `loamc` does not run on Windows, so the Linux job emits each non-GUI
+fixture's C (`tools/win-bundle.sh`) and the Windows job builds it with
+MinGW-w64 gcc and runs it, comparing stdout with the fixture's `.expected`
+byte for byte (`tools/win-run.sh`).
+
+**Cross-check** (`tools/cross-check.sh`, needs `zig`) builds and links the
+same set for all four targets from a macOS machine — the quick local check,
+no runner needed. Each fixture links what the driver adds: `runtime/net.c`
+for std:net and every `#![c_source]` / `#![c_link]` of it and its packages.
+
+**Known gap: `std:net` on Windows.** `runtime/net.c` is BSD sockets plus the
+platform TLS, with no Winsock/SChannel port, so the `http` / `net` fixtures
+are listed and skipped there. The compiler needs no networking, so this is
+outside the self-hosting work.
 
 ## C compilers
 
@@ -42,8 +54,10 @@ and otherwise use `cc`, then `clang`, then `gcc`, invoking it through
   argument the way `CommandLineToArgvW` splits it back, so an argument
   arrives verbatim. `sys.exec` still goes through `cmd.exe` (`_popen`).
 - `sys.rename` replaces an existing target, as POSIX `rename` does.
-- `sys.read_stdin` / `sys.read_line` put stdin in binary mode, so `\r\n` is
-  not rewritten under a JSON-RPC peer.
+- stdout and stderr are binary from startup, and `sys.read_stdin` /
+  `sys.read_line` put stdin in binary mode: bytes out are the bytes written
+  (no `\n` → `\r\n`), which byte-identical generated C depends on.
+- `crypto.random` uses `rand_s` (the OS CSPRNG) where POSIX has `getentropy`.
 
 **Why the seed compiler is not ported to Windows.** `driver.c` builds shell
 command lines (`sh -c`, `2>/dev/null`, `fork`/`execl`, `mkstemp`). The
