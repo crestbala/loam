@@ -362,5 +362,6 @@ int ast_dump_file(const char *path);
     and the typechecked trees with typecheck's tables. */
 int ast_dump_modules(const char *path);
 int ast_dump_typed(const char *path);
+int ast_dump_checked(const char *path);
 
 #endif

@@ -25,6 +25,11 @@
  * call markers, captures and conversion modes; then the monomorphized
  * instances, struct instances and module globals. On a load or type error
  * only the diagnostics are printed (exit 1 / 2).
+ *
+ * `--dump-checked` is `--dump-typed` after threadcheck, borrowck and
+ * boundscheck as well: the same format, with their node flags (moved,
+ * needs-drop, index-safe) in ` flags=`. An error from those passes prints only
+ * the diagnostics (exit 3).
  */
 #include "ast.h"
 #include "compile.h"
@@ -562,8 +567,11 @@ int ast_dump_modules(const char *path) {
     return 0;
 }
 
-int ast_dump_typed(const char *path) {
-    int rc = loam_session_typecheck(&g_sess, path, 1);
+/** `--dump-typed` (`passes` 1) or `--dump-checked` (2: the passes after
+ *  typecheck ran too, so the tree carries their flags: moved, needs-drop,
+ *  index-safe). On an error from any pass only the diagnostics are printed. */
+static int dump_checked_session(const char *path, int passes) {
+    int rc = loam_session_typecheck(&g_sess, path, passes);
     if (rc) return rc;
     g_typed = 1;
     for (int m = 0; m < g_sess.nmods; m++) {
@@ -598,3 +606,7 @@ int ast_dump_typed(const char *path) {
     }
     return 0;
 }
+
+int ast_dump_typed(const char *path) { return dump_checked_session(path, 1); }
+
+int ast_dump_checked(const char *path) { return dump_checked_session(path, 2); }

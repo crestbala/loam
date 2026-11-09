@@ -1575,6 +1575,7 @@ int main(int argc, char **argv) {
     if (argc == 3 && strcmp(argv[1], "--dump-ast") == 0) return ast_dump_file(argv[2]);
     if (argc == 3 && strcmp(argv[1], "--dump-modules") == 0) return ast_dump_modules(argv[2]);
     if (argc == 3 && strcmp(argv[1], "--dump-typed") == 0) return ast_dump_typed(argv[2]);
+    if (argc == 3 && strcmp(argv[1], "--dump-checked") == 0) return ast_dump_checked(argv[2]);
     const char *in_path = NULL;
     const char *out_path = NULL;
     int emit_c = 0;

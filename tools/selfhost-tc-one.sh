@@ -1,6 +1,7 @@
 #!/bin/sh
-# One entry file of nob's `selfhost_typecheck` gate: the Loam checker (tcdump)
-# against `loamc --dump-typed`. Prints one verdict line, then the path:
+# One entry file of nob's `selfhost_typecheck` / `selfhost_check` gates: the
+# Loam compiler's dump (tcdump, run with $EXE_FLAGS) against `loamc $DUMP_FLAG`
+# (`--dump-typed` or `--dump-checked`). Prints one verdict line, then the path:
 #   match  the dumps are byte-identical
 #   load   C cannot load the file (parse errors: selfhost_parse covers those)
 #   hang   tcdump ran past 60 s (a watchdog subshell kills it; plain sh, so no
@@ -16,8 +17,8 @@
 # C dump. A mismatch always redoes the C dump before it calls the file a diff,
 # so a stale entry cannot fail a run, and only a real match is recorded.
 #
-# Run from the repo root. Env: LOAMC, EXE (tcdump), SCRATCH, REF, LOAMC_SUM,
-# EXE_SUM (`cksum` of each binary).
+# Run from the repo root. Env: LOAMC, EXE (tcdump), EXE_FLAGS, DUMP_FLAG,
+# SCRATCH, REF, LOAMC_SUM, EXE_SUM (`cksum` of each binary).
 entry_file=$1
 work_dir=$(mktemp -d "$SCRATCH/w.XXXXXX") || exit 1
 trap 'rm -rf "$work_dir"' EXIT
@@ -32,7 +33,7 @@ hung_marker="$work_dir/hung"
 }
 
 input_key=$({
-    echo "$LOAMC_SUM"
+    echo "$LOAMC_SUM $DUMP_FLAG"
     cat "$module_list"
     sed -n -e 's/^rt "\(.*\)"$/\1/p' -e 's/^module .* path="\(.*\)"$/\1/p' "$module_list" |
         while IFS= read -r source_path; do cksum < "$source_path"; done
@@ -44,7 +45,7 @@ if [ -f "$match_cache" ]; then
     exit 0
 fi
 
-"$EXE" "$module_list" > "$loam_dump" 2>&1 &
+"$EXE" $EXE_FLAGS "$module_list" > "$loam_dump" 2>&1 &
 checker_pid=$!
 ( sleep 60; kill $checker_pid 2>/dev/null && : > "$hung_marker" ) > /dev/null 2>&1 &
 watchdog_pid=$!
@@ -64,7 +65,7 @@ if [ -f "$c_sum_cache" ] && [ "$(cat "$c_sum_cache")" = "$loam_dump_sum" ]; then
     echo "match $entry_file"
     exit 0
 fi
-"$LOAMC" --dump-typed "$entry_file" > "$c_dump" 2>&1
+"$LOAMC" "$DUMP_FLAG" "$entry_file" > "$c_dump" 2>&1
 echo "exit $?" >> "$c_dump"
 c_dump_sum=$(cksum < "$c_dump")
 echo "$c_dump_sum" > "$work_dir/c_sum" && mv "$work_dir/c_sum" "$c_sum_cache"
