@@ -111,8 +111,7 @@ static const char *const c_roots_metrics[] = {
    `engine_history_back` (an OS back button) from C, so they must survive DCE
    even when the app never calls them directly. */
 static const char *const c_roots_router[] = {
-    "engine_open_url", "engine_history_back",
-    "engine_open_url", "engine_chunks_done", "engine_chunks_slow",
+    "engine_open_url", "engine_history_back", "engine_chunks_done", "engine_chunks_slow",
     NULL,
 };
 
@@ -225,78 +224,6 @@ static void walk(AstNode *n) {
             break;
         default:
             break; /* types, literals, enums, structs: nothing to call */
-    }
-}
-
-/** 1 if `n` contains any closure node (i.e. a generic decl may emit
- *  substituted closure bodies from the IR even when the decl is pruned). */
-static int has_closure(AstNode *n) {
-    if (!n) return 0;
-    if (n->kind == AST_CLOSURE) return 1;
-    switch (n->kind) {
-        case AST_FN_DECL:
-            return has_closure(n->as.fn.body);
-        case AST_BLOCK:
-            for (size_t i = 0; i < n->as.block.stmt_count; i++)
-                if (has_closure(n->as.block.stmts[i])) return 1;
-            return 0;
-        case AST_IF:
-            return has_closure(n->as.if_stmt.cond) ||
-                   has_closure(n->as.if_stmt.then_block) ||
-                   has_closure(n->as.if_stmt.else_block);
-        case AST_FOR:
-            return has_closure(n->as.for_stmt.iter) ||
-                   has_closure(n->as.for_stmt.body);
-        case AST_WHILE:
-            return has_closure(n->as.if_stmt.cond) ||
-                   has_closure(n->as.if_stmt.then_block);
-        case AST_SWITCH: {
-            int any = has_closure(n->as.switch_stmt.scrut);
-            for (size_t i = 0; i < n->as.switch_stmt.case_count && !any; i++)
-                any = has_closure(n->as.switch_stmt.cases[i]);
-            return any;
-        }
-        case AST_CASE:
-            return has_closure(n->as.switch_case.body);
-        case AST_RETURN:
-            return has_closure(n->as.ret.expr);
-        case AST_EXPR_STMT:
-            return has_closure(n->as.expr_stmt.expr);
-        case AST_VAR_DECL:
-            return has_closure(n->as.var.init);
-        case AST_ASSIGN:
-            return has_closure(n->as.assign.left) ||
-                   has_closure(n->as.assign.right);
-        case AST_BINARY:
-            return has_closure(n->as.binary.left) ||
-                   has_closure(n->as.binary.right);
-        case AST_UNARY:
-            return has_closure(n->as.unary.operand);
-        case AST_CAST:
-            return has_closure(n->as.cast.expr);
-        case AST_TRY:
-            return has_closure(n->as.try_expr.expr);
-        case AST_CALL:
-            if (has_closure(n->as.call.callee)) return 1;
-            for (size_t i = 0; i < n->as.call.arg_count; i++)
-                if (has_closure(n->as.call.args[i])) return 1;
-            return 0;
-        case AST_INDEX:
-        case AST_DEREF:
-        case AST_ADDR:
-            return has_closure(n->as.access.target) ||
-                   has_closure(n->as.access.index);
-        case AST_STRUCT_LIT:
-            for (size_t i = 0; i < n->as.struct_lit.field_count; i++)
-                if (has_closure(n->as.struct_lit.fields[i].init)) return 1;
-            return 0;
-        case AST_ARRAY_LIT:
-        case AST_TUPLE:
-            for (size_t i = 0; i < n->as.array_lit.count; i++)
-                if (has_closure(n->as.array_lit.elems[i])) return 1;
-            return 0;
-        default:
-            return 0;
     }
 }
 

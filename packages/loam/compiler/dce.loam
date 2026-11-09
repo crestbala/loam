@@ -1,0 +1,318 @@
+// dce — which fn declarations codegen emits: reachability over the resolved
+// call graph. The self-hosted twin of src/dce.c, diffed against
+// `loamc --dump-dce`.
+//
+// Roots: every fn of the entry module (but a `#[c]` one, kept by its
+// callers), every `#[test]` fn, every module `let` initializer (codegen runs
+// them all from `__init`), the fns the C runtime and hosts call by name, and
+// every fn of a user package the entry imports whole. Then a worklist walks
+// each kept fn's body and parameter defaults, keeping what a name resolves to.
+// A generic fn with instances has its body walked even when the generic
+// itself is not kept: the instances are emitted from the IR and call what it
+// calls.
+//
+// Sets are flags per node, not lists searched: the C keeps them as arrays and
+// scans them on every insert.
+
+import "ast.loam"
+import "typecheck.loam"
+
+const NONE: int = -1
+
+// `Fn` node `op` bits (parser.loam).
+const FN_TEST: int = 2
+const FN_SERVER: int = 4
+
+/** *The `loam test` runner calls the `test` module's fns from C. */
+let mut TEST_MODE: bool = false
+/** *`#[server]` bodies are dropped from this build, so what only they call */
+/** *is not reachable. */
+let mut SERVER_SPLIT: bool = false
+
+/** *Per node: kept (its C is emitted), and its body already walked. */
+let mut KEPT: []bool = []bool {}
+let mut DONE: []bool = []bool {}
+/** *Kept fns, in the order they were kept: the worklist. */
+let mut TODO: []int = []int {}
+
+/** *What the runtime and hosts call, by module: `loam_<module>_<name>`. */
+fn c_roots(module_name: string) -> []string {
+    if module_name == "zeus" {
+        return []string {
+            "engine_layout", "engine_paint", "engine_step", "engine_step_dt", "engine_set_reduced_motion",
+            "engine_next_ms", "engine_fonts_changed", "engine_click", "engine_grab", "engine_scroll",
+            "engine_scroll_latch", "engine_scroll_step", "engine_scroll_smooth", "engine_drag", "engine_hover",
+            "engine_mouseup", "engine_over_button", "engine_cursor", "engine_a11y_dump", "engine_a11y_bytes",
+            "engine_layout_gen", "engine_signals_dump", "engine_state_load", "engine_a11y_activate",
+            "engine_a11y_focus", "engine_focus_id", "engine_key_apply", "engine_fill_focus", "engine_focus_depth",
+            "engine_focus_node", "engine_focus_ctx", "engine_focus_step", "engine_focus_captures_text",
+            "engine_key", "engine_key_up", "engine_set_mods", "engine_insert", "engine_marked",
+            "engine_picked_image", "engine_context_click", "engine_window_drag_at", "engine_recover",
+            "engine_trap_seq", "on_action", "on_action_global", "on_range", "map_key", "remap_key", "get", "set",
+            "signal",
+        }
+    }
+    if module_name == "maya" {
+        return []string {
+            "engine_cam_orbit", "engine_cam_pan", "engine_cam_reset", "engine_fixed_update", "engine_frame",
+            "engine_hud", "engine_input_key", "engine_cam_zoom", "engine_fb_at", "engine_fb_h", "engine_fb_w",
+            "engine_is_map", "engine_note_present", "engine_set_viewport", "engine_sprite_count",
+            "engine_sprite_is_sun", "engine_sprite_name", "engine_sprite_orbit_r", "engine_sprite_r",
+            "engine_sprite_rgb", "engine_sprite_x", "engine_sprite_y",
+        }
+    }
+    // The web host binds fonts through `loam_metrics_bind`.
+    if module_name == "metrics" {
+        return []string { "bind" }
+    }
+    // Hosts deliver deep links, the OS back button and chunk loads.
+    if module_name == "router" {
+        return []string { "engine_open_url", "engine_history_back", "engine_chunks_done", "engine_chunks_slow" }
+    }
+    return []string {}
+}
+
+fn kind(n: int) -> int {
+    if n == NONE {
+        return -1
+    }
+    return ast.NODES[n].kind
+}
+
+fn mark_fn(f: int) {
+    if kind(f) != Kind.Fn || KEPT[f] {
+        return
+    }
+    KEPT[f] = true
+    push(TODO, f)
+}
+
+fn walk_list(nodes: &[]int) {
+    for i in 0..nodes.len {
+        walk(nodes[i])
+    }
+}
+
+/** *Each parameter's default value. */
+fn walk_params(f: int) {
+    let params = &ast.NODES[f].kids
+    for i in 0..params.len {
+        walk(ast.NODES[params[i]].b)
+    }
+}
+
+fn walk(n: int) {
+    if n == NONE {
+        return
+    }
+    let x = &ast.NODES[n]
+    switch x.kind {
+        case Kind.Ident:
+            mark_fn(x.res)
+            break
+        case Kind.Field:
+            mark_fn(x.res)
+            walk(x.a)
+            break
+        case Kind.Fn, Kind.Closure:
+            walk(x.b)
+            walk_params(n)
+            break
+        case Kind.Block, Kind.StructLit, Kind.ArrayLit, Kind.Tuple:
+            walk_list(&x.kids)
+            break
+        case Kind.If:
+            walk(x.a)
+            walk(x.b)
+            walk(x.c)
+            break
+        case Kind.For, Kind.While, Kind.Assign, Kind.Binary, Kind.Index:
+            walk(x.a)
+            walk(x.b)
+            break
+        case Kind.Switch, Kind.Call:
+            walk(x.a)
+            walk_list(&x.kids)
+            break
+        case Kind.Case:
+            walk_list(&x.kids)
+            walk(x.a)
+            break
+        case Kind.Return, Kind.ExprStmt, Kind.Unary, Kind.Cast, Kind.Try, Kind.Deref, Kind.Addr:
+            walk(x.a)
+            break
+        case Kind.Var:
+            walk(x.b)
+            break
+        default:
+            // Types, literals, enums, structs: nothing to call. (`++` / `--`
+            // are not walked, as in dce.c: their operand is a place.)
+            return
+    }
+}
+
+/** *A generic fn some instance was recorded for. */
+fn has_mono_instance(f: int) -> bool {
+    for i in 0..typecheck.MONOS.len {
+        if typecheck.MONOS[i].fn_ == f {
+            return true
+        }
+    }
+    return false
+}
+
+/** *A bare package spec: `wide`, not `wide.loam`, `./wide` or `zeus:router`. */
+fn entry_full_package(spec: string) -> bool {
+    if spec.len == 0 {
+        return false
+    }
+    for i in 0..spec.len {
+        let c = spec[i]
+        if c == '/' || c == '\\' || c == ':' {
+            return false
+        }
+    }
+    if spec.len >= 5 && str_suffix(spec, ".loam") {
+        return false
+    }
+    if spec.len >= 4 && str_suffix(spec, ".loa") {
+        return false
+    }
+    return true
+}
+
+fn str_suffix(s: string, suffix: string) -> bool {
+    let off = s.len - suffix.len
+    for k in 0..suffix.len {
+        if s[off + k] != suffix[k] {
+            return false
+        }
+    }
+    return true
+}
+
+/** *Keep every fn of a user (non-std) package the entry imported whole. */
+fn root_full_package_imports() {
+    if typecheck.MODS.len == 0 || typecheck.MODS[0].root == NONE {
+        return
+    }
+    let entry_kids = ast.NODES[typecheck.MODS[0].root].kids
+    for i in 0..entry_kids.len {
+        let im = entry_kids[i]
+        if kind(im) != Kind.Import || ast.NODES[im].kids.len != 0 {
+            continue
+        }
+        let x = ast.ex(im)
+        if !ast.EXTRA[x].has_text || !entry_full_package(ast.EXTRA[x].text) || !ast.EXTRA[x].has_sname {
+            continue
+        }
+        let resolved = ast.EXTRA[x].sname
+        for m in 1..typecheck.MODS.len {
+            if typecheck.MODS[m].path != resolved {
+                continue
+            }
+            let root = typecheck.MODS[m].root
+            if typecheck.MODS[m].is_std || root == NONE {
+                break
+            }
+            let decls = ast.NODES[root].kids
+            for d in 0..decls.len {
+                mark_fn(decls[d])
+            }
+            break
+        }
+    }
+}
+
+/** *Find what codegen keeps; then `keep(f)` answers per fn declaration. */
+fn run() {
+    KEPT = []bool {}
+    DONE = []bool {}
+    for i in 0..ast.NODES.len {
+        push(KEPT, false)
+        push(DONE, false)
+    }
+    TODO = []int {}
+    let nmods = typecheck.MODS.len
+    for m in 0..nmods {
+        let root = typecheck.MODS[m].root
+        if root == NONE {
+            continue
+        }
+        let module_name = typecheck.MODS[m].name
+        let test_mod = TEST_MODE && module_name == "test"
+        let roots = c_roots(module_name)
+        let decls = ast.NODES[root].kids
+        for i in 0..decls.len {
+            let d = decls[i]
+            let k = kind(d)
+            if test_mod && k == Kind.Fn {
+                mark_fn(d)
+                continue
+            }
+            if k == Kind.Var {
+                walk(ast.NODES[d].b)
+                continue
+            }
+            if k != Kind.Fn {
+                continue
+            }
+            // A `#[test]` fn is called by the generated runner, in any module.
+            if (ast.NODES[d].op & FN_TEST) != 0 {
+                mark_fn(d)
+                continue
+            }
+            let x = ast.ex(d)
+            // A `#[c]` fn is kept by its callers: it decides what C gets linked.
+            if m == 0 && !ast.EXTRA[x].has_text {
+                mark_fn(d)
+                continue
+            }
+            if !ast.EXTRA[x].has_sname {
+                continue
+            }
+            for r in 0..roots.len {
+                if ast.EXTRA[x].sname == "loam_{{module_name}}_{{roots[r]}}" {
+                    mark_fn(d)
+                    break
+                }
+            }
+        }
+    }
+    root_full_package_imports()
+    // An instantiated generic that is not kept: its instances are emitted
+    // from the IR, so what its body calls must be kept.
+    for m in 0..nmods {
+        let root = typecheck.MODS[m].root
+        if root == NONE {
+            continue
+        }
+        let decls = ast.NODES[root].kids
+        for i in 0..decls.len {
+            let d = decls[i]
+            if kind(d) != Kind.Fn || ast.EXTRA[ast.ex(d)].strs.len == 0 || KEPT[d] || !has_mono_instance(d) {
+                continue
+            }
+            walk(ast.NODES[d].b)
+            walk_params(d)
+        }
+    }
+    // Each kept fn's body once, to a fixed point (the list grows as it goes).
+    let mut i = 0
+    while i < TODO.len {
+        let f = TODO[i]
+        i = i + 1
+        if DONE[f] {
+            continue
+        }
+        DONE[f] = true
+        if !(SERVER_SPLIT && (ast.NODES[f].op & FN_SERVER) != 0) {
+            walk(ast.NODES[f].b)
+        }
+        walk_params(f)
+    }
+}
+
+fn keep(f: int) -> bool {
+    return f != NONE && f < KEPT.len && KEPT[f]
+}

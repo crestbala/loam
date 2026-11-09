@@ -714,6 +714,14 @@ beyond what the checklist requires.
         compile. Every such name now goes through one helper, `cid`, which
         spells a reserved name `loam_kw_<name>`
         (`compile_pass/c_reserved_names.loam`; 20 C errors before).
+      - 9a done: `loamc --dump-dce` lists the fn declarations the dead-code
+        pass keeps, per module in declaration order (default build: no test
+        runner, no server split). `compiler/dce.loam` ports `dce.c` and
+        matches on all 520 loadable entries, gated by the strict
+        `selfhost_dce` stanza. Its sets are flags per node, where `dce.c`
+        scans an array on every insert: 2–3 ms against 9 ms on a Zeus entry.
+        Two cleanups in `dce.c`: `has_closure` was dead (it only called
+        itself), and a host root was listed twice.
 - [ ] Driver (module loading, package resolution, `cc` invocation) in Loam
 - [ ] Compiler itself uses only safe Loam (arenas + integer indices; §2.7)
 

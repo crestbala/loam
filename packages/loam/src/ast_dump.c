@@ -31,6 +31,11 @@
  * needs-drop, index-safe) in ` flags=`. An error from those passes prints only
  * the diagnostics (exit 3).
  *
+ * `--dump-dce` checks as `--dump-checked` does, runs the dead-code pass
+ * (dce.c, default build: no test runner, no server split) and lists every fn
+ * declaration it keeps, per module in declaration order: the reference the
+ * self-hosted DCE is diffed against.
+ *
  * `--dump-ir` checks as `--dump-checked` does, then lowers to IR (no DCE, as
  * `--emit-ir`) and prints all of it that codegen reads (`ir_dump` in ir.c):
  * the reference the self-hosted IR lowering is diffed against.
@@ -38,6 +43,7 @@
 #include "ast.h"
 #include "compile.h"
 #include "parser.h"
+#include "dce.h"
 #include "ir.h"
 #include "sema/typecheck.h"
 #include <stdio.h>
@@ -623,6 +629,26 @@ int ast_dump_typed(const char *path) { return dump_checked_session(path, 1); }
 void ast_dump_put_str(const char *s) { put_str(s); }
 void ast_dump_put_type(const Type *t) { put_type(t); }
 void ast_dump_put_f64(double v) { put_f64(v); }
+
+int ast_dump_dce(const char *path) {
+    int rc = loam_session_typecheck(&g_sess, path, 2);
+    if (rc) return rc;
+    loam_dce_run(g_sess.mods, g_sess.nmods);
+    for (int m = 0; m < g_sess.nmods; m++) {
+        printf("module %d", m);
+        put_attr_str("name", g_sess.mods[m].name);
+        putchar('\n');
+        AstNode *p = g_sess.mods[m].ast;
+        for (size_t i = 0; p && i < p->as.program.decl_count; i++) {
+            AstNode *d = p->as.program.decls[i];
+            if (d->kind != AST_FN_DECL || !loam_dce_keep(d)) continue;
+            fputs("  keep", stdout);
+            put_ref("fn", d);
+            putchar('\n');
+        }
+    }
+    return 0;
+}
 
 int ast_dump_ir(const char *path) {
     int rc = loam_session_typecheck(&g_sess, path, 2);
