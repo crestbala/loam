@@ -2614,7 +2614,7 @@ fn ig_selfhost_typecheck() {
     let entry_count = int_of(trim(sys.exec(cat(
         "cd {{shq(ROOT)}} && mkdir -p {{shq(cache_dir)}} && ls packages/loam/tests/compile_pass/*.loam packages/loam/tests/compile_fail/*.loam packages/loam/tests/draw_golden/*.loam examples/language/*.loam ",
         "> {{shq(entry_list)}}; : > {{shq(verdicts)}}; wc -l < {{shq(entry_list)}}"))))
-    let worker_env = cat("LOAMC={{shq(LOAMC)}} EXE={{shq(tcdump_exe)}} SCRATCH={{shq(scratch_dir)}} REF={{shq(cache_dir)}} ",
+    let worker_env = cat("LOAMC={{shq(LOAMC)}} EXE={{shq(tcdump_exe)}} EXE_FLAGS= DUMP_FLAG=--dump-typed SCRATCH={{shq(scratch_dir)}} REF={{shq(cache_dir)}} ",
         "LOAMC_SUM=\"$(cksum < {{shq(LOAMC)}})\" EXE_SUM=\"$(cksum < {{shq(tcdump_exe)}})\"")
     sys.exec(cat("cd {{shq(ROOT)}} && ( export {{worker_env}}; xargs -P 8 -n 1 sh tools/selfhost-tc-one.sh < {{shq(entry_list)}} > {{shq(verdicts)}} 2>/dev/null; ",
         ": > {{shq(done_marker)}} ) > /dev/null 2>&1 &"))

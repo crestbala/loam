@@ -98,9 +98,9 @@ runtime shim — §1.5, §1.6; cross-compiled, and run by the `selfhost` CI
 workflow) are done. Phase 4 (the lexer in Loam, §4 step 3) and phase 5 (the
 parser in Loam, arena AST, diffed via `--dump-ast`; §4 step 4) are done; the
 `selfhost` workflow ran green on Linux x86_64/aarch64 and Windows x86_64.
-Phase 6 (typecheck in Loam) is done and diffed against `typecheck.c`; the
-remaining sema passes, IR and codegen are next (see the compiler-port
-checklist).
+Phase 6 (typecheck in Loam) is done and diffed against `typecheck.c`;
+phase 7 (borrowck, threadcheck, boundscheck) is in progress, then IR and
+codegen (see the compiler-port checklist).
 
 ---
 
@@ -539,8 +539,8 @@ beyond what the checklist requires.
       line-deleted copies (~930 with parse errors) during the port. Gated by
       the `selfhost_parse` host stanza. Speed: on par with C (0.018 s vs
       0.020 s parse + dump of a 250 KB file).
-- [ ] Typecheck, borrowck, boundscheck, IR, and codegen ported
-      - Typecheck (phase 6), in progress. 6a done: `loamc --dump-modules`
+- [x] Typecheck ported
+      - Typecheck (phase 6). 6a done: `loamc --dump-modules`
         (what the C loader resolved; loading and package resolution stay C
         until the driver phase) and `--dump-typed` (every module's tree
         with types, C names, resolved targets and call markers, then the
@@ -562,7 +562,24 @@ beyond what the checklist requires.
         vec (`push(NODES[n].kids, new_node())`) took the address first and
         wrote through it after the reallocation; such borrows are now
         lowered last (`compile_pass/borrow_arg_realloc.loam`).
-      - Next: borrowck, boundscheck, IR, codegen.
+      - Typecheck speed: the Loam checker beats C on a Zeus entry (0.42 s
+        vs 0.60 s for `--dump-typed`); the gate caches results by checksum
+        of both binaries and every input, so a warm run re-checks nothing
+        that did not change (~25 s, from ~70 s).
+      - The port surfaced a memory-safety hole: a borrow of a global did
+        not survive a call that grows the global, another module's global
+        was not tracked, and a reference into a global could be returned.
+        Fixed in `borrowck.c` (reference-escape.md, rules 5–6, phase 9);
+        no existing program needed a change.
+- [ ] Borrowck, threadcheck, boundscheck (phase 7), in progress. 7a:
+      `loamc --dump-checked` (`--dump-typed` after threadcheck, borrowck
+      and boundscheck: their diagnostics, exit 3, and node flags) and
+      `tcdump --checked`; the gate worker takes the dump mode. 7b:
+      `compiler/boundscheck.loam` matches on all 396 entries C checks
+      cleanly (78 index-safe marks on a Zeus entry, none without the pass).
+      Next: 7c threadcheck, 7d borrowck, then a strict `selfhost_check`
+      stanza.
+- [ ] IR and codegen ported
 - [ ] Driver (module loading, package resolution, `cc` invocation) in Loam
 - [ ] Compiler itself uses only safe Loam (arenas + integer indices; §2.7)
 

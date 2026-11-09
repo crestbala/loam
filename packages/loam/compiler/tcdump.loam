@@ -5,8 +5,11 @@
 // each module itself, and replays the loader's edits to the tree (module
 // names, the implicit `http` / `std:json` imports, resolved import paths).
 //
+// With `--checked`, the passes after typecheck run too (`loamc
+// --dump-checked`); ported so far: boundscheck.
+//
 // Exit status: 0 typed, 1 a parse error, 2 a type error (diagnostics on
-// stderr, as C), 4 a bad module list.
+// stderr, as C), 3 an error from a later pass, 4 a bad module list.
 import "std:buf"
 import "std:fmt"
 import "std:result"
@@ -17,6 +20,7 @@ import "types.loam"
 import "parser.loam"
 import "dump.loam"
 import "typecheck.loam"
+import "boundscheck.loam"
 
 /** *An import line of the module list. */
 struct ListImport {
@@ -125,13 +129,16 @@ fn loader_edits(root: int, name: string) {
 }
 
 fn main() {
-    if sys.argc() != 2 {
-        fmt.eprintln("usage: tcdump modules.txt   (from loamc --dump-modules main.loam)")
+    // `--checked`: also the passes after typecheck, as `loamc --dump-checked`.
+    let run_later_passes = sys.argc() == 3 && sys.arg(1) == "--checked"
+    if sys.argc() != 2 && !run_later_passes {
+        fmt.eprintln("usage: tcdump [--checked] modules.txt   (from loamc --dump-modules main.loam)")
         sys.exit(2)
     }
-    let lr = sys.read(sys.arg(1))
+    let module_list_path = sys.arg(sys.argc() - 1)
+    let lr = sys.read(module_list_path)
     if lr.tag == ResultTag.Err {
-        fail("cannot read {{sys.arg(1)}}")
+        fail("cannot read {{module_list_path}}")
     }
     let lines = str.lines(lr.val)
     let mut imports: [][]ListImport = [][]ListImport {}
@@ -213,6 +220,13 @@ fn main() {
     dump.print_diags()
     if errors > 0 {
         sys.exit(2)
+    }
+    if run_later_passes {
+        let mut module_roots = []int {}
+        for m in 0..typecheck.MODS.len {
+            push(module_roots, typecheck.MODS[m].root)
+        }
+        boundscheck.boundscheck_modules(module_roots)
     }
     dump.TYPED = true
     let mut b = []u8 {}

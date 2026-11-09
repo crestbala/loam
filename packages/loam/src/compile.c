@@ -538,9 +538,12 @@ void loam_session_free(LoamSession *s) {
     typecheck_cleanup();
 }
 
-/** Load (and with `check`, typecheck) only, printing diagnostics as they occur (no capture):
-    `--dump-modules` / `--dump-typed`, the references the self-hosted checker is
-    diffed against. Returns 0 on success, 1 on a load error, 2 on a type error. */
+/** Load only (`check` 0), also typecheck (1), or also run the passes after it as
+    loam_session_check does (2: threadcheck, borrowck, boundscheck), printing
+    diagnostics as they occur (no capture): `--dump-modules` / `--dump-typed` /
+    `--dump-checked`, the references the self-hosted compiler is diffed against.
+    Returns 0 on success, 1 on a load error, 2 on a type error, 3 on an error
+    from a later pass. */
 int loam_session_typecheck(LoamSession *s, const char *path, int check) {
     loam_session_free(s);
     loam_session_init(s);
@@ -551,6 +554,12 @@ int loam_session_typecheck(LoamSession *s, const char *path, int check) {
     free(stem);
     int rc = load_err ? 1 : 0;
     if (check && !load_err && s->nmods > 0 && typecheck_modules(s->mods, s->nmods) != 0) rc = 2;
+    if (check == 2 && rc == 0 && s->nmods > 0) {
+        int later_errors = threadcheck_modules(s->mods, s->nmods);
+        later_errors |= borrowck_modules(s->mods, s->nmods);
+        later_errors |= boundscheck_modules(s->mods, s->nmods);
+        if (later_errors) rc = 3;
+    }
     CUR = NULL;
     return rc;
 }
