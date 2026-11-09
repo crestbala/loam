@@ -456,14 +456,11 @@ fn dump(b: &mut []u8, i: int, depth: int, role: string) {
             nl(b)
             dump_list(b, nx.kids2, d, "targ")
             for k in 0..n.kids.len {
-                let c = &ast.NODES[n.kids[k]]
-                let ci = &ast.INFO[n.kids[k]]
-                let cx = &ast.EXTRA[ast.ex(n.kids[k])]
                 indent(b, d)
                 buf.push_str(b, "init")
-                attr_str(b, "name", true, ci.name)
+                attr_str(b, "name", true, ast.LIT_NAMES[n.c + k])
                 nl(b)
-                dump(b, c.a, d + 1, "value")
+                dump(b, n.kids[k], d + 1, "value")
             }
             break
         case Kind.ArrayLit:

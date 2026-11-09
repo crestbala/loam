@@ -3,9 +3,11 @@
 // Every node lives in one `[]Node`, and a node names another by its index, so
 // the tree holds no references (Loam keeps them out of data structures). A node
 // is one wide struct: `kind` says which of its slots mean what (the table at
-// `Node`). Pieces that are structs inside a C node (a parameter, a field, a
-// struct-literal init, an enum variant, a selective-import name, a `#![c_*]`
-// directive) are nodes of their own kind here, listed in their parent's `kids`.
+// `Node`). Pieces that are structs inside a C node (a parameter, a field, an
+// enum variant, a selective-import name, a `#![c_*]` directive) are nodes of
+// their own kind here, listed in their parent's `kids`. A struct literal's
+// fields are not: its `kids` are the values and `LIT_NAMES` the names, as C's
+// `FieldInit` array keeps them in the literal.
 //
 // `NONE` (-1) is an absent child. A parse error yields an `Error` node, never
 // an invalid index, so the parser can keep going without checking every slot.
@@ -54,7 +56,7 @@ enum Kind {
     // Parts of a node, not expressions or statements.
     Param = 37,
     FieldDecl = 38,
-    Init = 39,
+    // 39 was `Init`, one node per struct-literal field (see `LIT_NAMES`).
     Variant = 40,
     ImportName = 41,
     CDir = 42,
@@ -104,7 +106,8 @@ struct Loc {
 /** *- Deref: `a`. Addr: `op` mut, `a`. */
 /** *- Ident: `name`. Number: `num`. Float: `fnum`. String: `text`. Bool: `op`. */
 /** *- StructLit: `name` (absent for named arguments), `kids2` type args, */
-/** *  `kids` `Init`s. Init: `name`, `a` value. */
+/** *  `kids` the field values, `c` their names' list in `LIT_NAMES` (same */
+/** *  order). */
 /** *- ArrayLit: `num` length (-1 for `[]T`), `a` element type, `kids` elems. */
 /** *  Tuple: `kids` elems. */
 /** *- Type: `op` tag (0 `&T`, 1 `&mut T`, 2 named, 3 array, 4 `Box<T>`, 5 */
@@ -261,6 +264,13 @@ let mut INFO: []NodeInfo = []NodeInfo {}
 /** *`EXTRA[0]` is the empty one every node without extras reads; nothing */
 /** *writes it (`ex_mut` gives a node its own first). */
 let mut EXTRA: []NodeExtra = []NodeExtra { empty_extra() }
+/** *Struct-literal field names, every literal's in one pool: the value */
+/** *`NODES[lit].kids[k]` is named `LIT_NAMES[NODES[lit].c + k]`. A literal's */
+/** *names are contiguous and no two literals share any (`append_inits` moves */
+/** *a literal's names to the end before it appends, `copy_node` gives the */
+/** *copy its own). One pool, not a list per literal: a small `[]string` */
+/** *starts at 8 slots (200 bytes), more than most literals' fields. */
+let mut LIT_NAMES: []string = []string {}
 /** *Diagnostics in the order they were reported. */
 let mut DIAGS: []Diag = []Diag {}
 
@@ -459,12 +469,68 @@ fn full(i: int) -> NodeBuild {
     }
 }
 
-/** *Node `dst` becomes a copy of node `src` (its extras copied, not shared). */
+/** *Node `dst` becomes a copy of node `src` (its extras and literal field */
+/** *names copied, not shared). */
 fn copy_node(dst: int, src: int) {
     NODES[dst] = NODES[src]
     INFO[dst] = INFO[src]
     if INFO[src].extra != 0 {
         push(EXTRA, EXTRA[INFO[src].extra])
         INFO[dst].extra = EXTRA.len - 1
+    }
+    if NODES[src].kind == Kind.StructLit {
+        NODES[dst].c = new_lit_names(lit_names(src))
+    }
+}
+
+/** *Put a struct literal's field names in the pool; returns what its `c` */
+/** *holds. */
+fn new_lit_names(names: []string) -> int {
+    let start = LIT_NAMES.len
+    for k in 0..names.len {
+        push(LIT_NAMES, names[k])
+    }
+    return start
+}
+
+/** *The name of struct literal `lit`'s `k`th field. */
+fn init_name(lit: int, k: int) -> string {
+    return LIT_NAMES[NODES[lit].c + k]
+}
+
+/** *A copy of struct literal `lit`'s field names, in order. */
+fn lit_names(lit: int) -> []string {
+    let mut names = []string {}
+    let start = NODES[lit].c
+    for k in 0..NODES[lit].kids.len {
+        push(names, LIT_NAMES[start + k])
+    }
+    return names
+}
+
+/** *Struct literal `lit` becomes `names[k]: values[k]`. */
+fn set_inits(lit: int, names: []string, values: []int) {
+    NODES[lit].c = new_lit_names(names)
+    NODES[lit].kids = values
+}
+
+/** *Append fields `names[k]: values[k]` to struct literal `lit`. Its names */
+/** *move to the end of the pool first unless they are there already, so */
+/** *append a literal's fields in one call, not one at a time around code */
+/** *that makes other literals (each call would move them again). */
+fn append_inits(lit: int, names: []string, values: []int) {
+    let start = NODES[lit].c
+    let count = NODES[lit].kids.len
+    if start + count != LIT_NAMES.len {
+        // Another literal's names follow these: move these to the end.
+        let moved = LIT_NAMES.len
+        for k in 0..count {
+            push(LIT_NAMES, LIT_NAMES[start + k])
+        }
+        NODES[lit].c = moved
+    }
+    for k in 0..names.len {
+        push(LIT_NAMES, names[k])
+        push(NODES[lit].kids, values[k])
     }
 }

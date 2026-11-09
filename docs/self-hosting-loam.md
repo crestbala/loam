@@ -623,9 +623,32 @@ beyond what the checklist requires.
         push(b, y)` gave `a[1] == y`, and an owning element was overwritten
         unreleased). `loam_vec_reserve*` now take their own buffer first
         (`compile_pass/vec_cow_push.loam`).
-      - Open (green, not speed): peak memory is 237 MB against C's 68 MB on
-        that entry, mostly `NodeInfo` (~320 bytes a node); trimming it is
-        the next memory step.
+      - 7f, memory: peak memory of `tcdump --checked` on that entry went
+        from 237 MB to about 63 MB, below C's 65 MB (median of 10 runs,
+        `/usr/bin/time -l`). The dump is byte-identical, every gate matches,
+        and the run got a bit faster (0.37 s vs 0.39 s; C 0.64 s):
+        - The dump streams out in 64 KB pieces (`dump.flush_big`) instead of
+          building its 28 MB text and copying it before the write.
+        - `NodeInfo` keeps only the fields most nodes use (88 bytes). Text,
+          docs, C names, call cells and captures live in `NodeExtra`
+          (`EXTRA`), made only for the ~5% of nodes that set one.
+        - No node per struct-literal field. A `StructLit`'s `kids` are the
+          values, and the names sit in one pool, `ast.LIT_NAMES`, as C keeps
+          a `FieldInit` array in the literal. This removed 97k `Init` nodes;
+          260k nodes remain.
+        - All literals share one names pool instead of a `[]string` each,
+          because a small vec starts at 8 slots (200 bytes), which was 9 MB
+          over 43k literals.
+        - Typecheck appends a literal's default fields in one step. One at a
+          time, each default made an `Option` literal in between, which moved
+          the literal's names to the end of the pool again: quadratic in the
+          field count.
+        - Arena growth was not the cause, so chunked arenas are not needed.
+          Sampling the footprint every 0.2 ms shows it rising steadily to its
+          peak at the end of the run, with no spike when an arena doubles. A
+          large `realloc` frees the old block as it moves, and pages past
+          `len` are never touched, so reserving up front could not help. The
+          arenas end over 99% full.
 - [ ] IR and codegen ported
 - [ ] Driver (module loading, package resolution, `cc` invocation) in Loam
 - [ ] Compiler itself uses only safe Loam (arenas + integer indices; §2.7)
