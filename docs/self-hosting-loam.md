@@ -577,8 +577,10 @@ beyond what the checklist requires.
       `tcdump --checked`; the gate worker takes the dump mode. 7b:
       `compiler/boundscheck.loam` matches on all 396 entries C checks
       cleanly (78 index-safe marks on a Zeus entry, none without the pass).
-      Next: 7c threadcheck, 7d borrowck, then a strict `selfhost_check`
-      stanza.
+      7c: `compiler/threadcheck.loam` matches all 15 thread fixtures (the 9
+      it rejects: diagnostics and exit 3). `threadcheck.c` now counts its
+      errors with `loam_error_count`, so `--dump-checked` (no capture) sees
+      them too. Next: 7d borrowck, then a strict `selfhost_check` stanza.
 - [ ] IR and codegen ported
 - [ ] Driver (module loading, package resolution, `cc` invocation) in Loam
 - [ ] Compiler itself uses only safe Loam (arenas + integer indices; §2.7)

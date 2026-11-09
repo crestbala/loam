@@ -60,6 +60,8 @@ int loam_diag_capturing(void);
 void loam_diag_clear(void);
 
 int loam_diag_count(void);
+/** Errors reported so far, printed or captured. */
+int loam_error_count(void);
 
 /** Steal the capture buffer; caller must loam_diag_free. */
 void loam_diag_take(LoamDiag **out, int *n);

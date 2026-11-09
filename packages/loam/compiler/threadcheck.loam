@@ -1,0 +1,431 @@
+// threadcheck — the Send discipline for std:thread. The self-hosted twin of
+// src/threadcheck.c, function for function (its header has the rules): a
+// `thread.spawn` callback is a closure or a fn name, its captures are Send,
+// and it and everything it calls touch no module global and no C-seam symbol
+// outside the allowlist.
+
+import "std:buf"
+import "std:intmap"
+import "ast.loam"
+import "types.loam"
+import "dump.loam"
+
+/** *C symbols a worker may call; everything else in the seam stays on the */
+/** *UI thread. */
+let WORKER_SEAM_OK: []string = []string {
+    "loam_thread_spawn", "loam_thread_running",
+    "loam_ch_alloc", "loam_ch_send", "loam_ch_try_send", "loam_ch_recv",
+    "loam_ch_pop", "loam_ch_ready",
+    "loam_fmt_write", "loam_fmt_writeln", "loam_fmt_write_int", "loam_fmt_write_u64",
+    "loam_fmt_write_bool", "loam_fmt_write_float", "loam_fmt_eq",
+    "loam_fmt_ewrite", "loam_fmt_ewriteln", "loam_fmt_ewrite_int", "loam_fmt_ewrite_u64",
+    "loam_fmt_ewrite_bool", "loam_fmt_ewrite_float",
+    "loam_str_of_int", "loam_str_of_u64", "loam_str_of_float", "loam_str_of_bool",
+    "loam_str_of_string", "loam_str_concat", "loam_string_from_bytes",
+    "loam_string_from_u8",
+    "loam_async_now_ms", "loam_async_sleep",
+    "loam_wrapping_add", "loam_wrapping_shr", "loam_wrapping_shl",
+    "loam_wrapping_or", "loam_wrapping_and", "loam_saturating_add",
+}
+
+const NOT_STATICALLY_VISIBLE: string = "spawned fn calls a fn value whose code is not statically visible (pass a fn name or call the closure directly)"
+
+/** *Program-level `let` nodes: the state a worker must not touch. */
+let mut MODULE_GLOBALS: IntMap<int> = intmap.imap_new(0)
+/** *Fn decls whose bodies were already checked in worker mode. */
+let mut WALKED: IntMap<int> = intmap.imap_new(0)
+/** *The spawn site errors are attributed to: file path and line. */
+let mut SPAWN_FILE: string = ""
+let mut HAS_SPAWN: bool = false
+let mut SPAWN_LINE: int = 0
+
+/** *The first `limit - 1` bytes of `text`: what C's `snprintf` into a */
+/** *`char[limit]` keeps. */
+fn clip(text: string, limit: int) -> string {
+    if text.len < limit {
+        return text
+    }
+    let mut kept = []u8 {}
+    for i in 0..limit - 1 {
+        push(kept, u8(text[i]))
+    }
+    return buf.to_string(&kept)
+}
+
+fn report(loc: Loc, message: string) {
+    let mut full = message
+    if HAS_SPAWN {
+        full = "{{message}} (thread.spawn at {{SPAWN_FILE}}:{{SPAWN_LINE}})"
+    }
+    push(ast.DIAGS, Diag { loc: loc, msg: clip(full, 512) })
+}
+
+fn in_worker_seam_ok(cname: string) -> bool {
+    for i in 0..WORKER_SEAM_OK.len {
+        if WORKER_SEAM_OK[i] == cname {
+            return true
+        }
+    }
+    return false
+}
+
+fn is_module_global(decl: int) -> bool {
+    return decl != ast.NONE && intmap.imap_get(&mut MODULE_GLOBALS, decl) != 0
+}
+
+/** *A bodyless fn of the std seam: its body is C. */
+fn decl_is_seam(fn_decl: int) -> bool {
+    return fn_decl != ast.NONE && ast.NODES[fn_decl].kind == Kind.Fn &&
+        (ast.NODES[fn_decl].marks & ast.M_INTRINSIC) != 0
+}
+
+fn is_generic(fn_decl: int) -> bool {
+    return ast.NODES[fn_decl].strs.len > 0
+}
+
+/** *The fn decl an `Ident` / `Field` names, or `ast.NONE`. */
+fn resolved_of(node: int) -> int {
+    if node == ast.NONE {
+        return ast.NONE
+    }
+    let node_kind = ast.NODES[node].kind
+    if node_kind == Kind.Ident || node_kind == Kind.Field {
+        return ast.NODES[node].res
+    }
+    return ast.NONE
+}
+
+/** *The C symbol a call resolves to, or "". */
+fn callee_cname(call: int) -> string {
+    let fn_decl = resolved_of(ast.NODES[call].a)
+    if fn_decl != ast.NONE && ast.NODES[fn_decl].kind == Kind.Fn && ast.NODES[fn_decl].has_sname {
+        return ast.NODES[fn_decl].sname
+    }
+    return ""
+}
+
+fn walk_args(call: int) {
+    for i in 0..ast.NODES[call].kids.len {
+        worker_walk(ast.NODES[call].kids[i])
+    }
+}
+
+/** *Check a fn decl's body in worker mode, once. */
+fn walk_fn_once(fn_decl: int) {
+    if intmap.imap_get(&mut WALKED, fn_decl) == 0 {
+        intmap.imap_put(&mut WALKED, fn_decl, 1)
+        worker_walk(ast.NODES[fn_decl].b)
+    }
+}
+
+/** *Follow one call site in worker mode. */
+fn worker_call(call: int) {
+    let callee = ast.NODES[call].a
+    let marks = ast.NODES[call].marks
+    // Vec and interpolation builtins operate on worker-local storage only.
+    if (marks & (ast.M_VEC_PUSH | ast.M_VEC_POP | ast.M_PRINTLN | ast.M_SIZEOF | ast.M_PANIC | ast.M_VALUE_KEY)) != 0 ||
+        ast.NODES[call].numb != Numb.None {
+        walk_args(call)
+        return
+    }
+    // Pure value helpers wired by name in typecheck.
+    if ast.NODES[call].has_cbuiltin {
+        let builtin = ast.NODES[call].cbuiltin
+        if !in_worker_seam_ok(builtin) {
+            report(ast.NODES[call].loc, clip("spawned fn calls the C seam '{{builtin}}'", 128))
+        }
+        walk_args(call)
+        return
+    }
+    // Unresolved magic names: channel cells are the sanctioned worker I/O;
+    // future cells are UI-thread state.
+    if callee != ast.NONE && ast.NODES[callee].kind == Kind.Ident && ast.NODES[callee].res == ast.NONE &&
+        ast.NODES[callee].has_name {
+        let magic = ast.NODES[callee].name
+        if magic.len >= 5 && str_prefix(magic, "__ch_") {
+            walk_args(call)
+            return
+        }
+        if magic.len >= 6 && str_prefix(magic, "__fut_") {
+            report(ast.NODES[call].loc, "spawned fn uses a future cell (UI-thread state); workers return values through channel<T> only")
+            return
+        }
+    }
+    // A closure called directly: its body runs on this thread.
+    if callee != ast.NONE && ast.NODES[callee].kind == Kind.Closure {
+        worker_walk(ast.NODES[callee].b)
+        walk_args(call)
+        return
+    }
+    // A fn value: trace a local's initializer one hop.
+    if (marks & ast.M_FN_VAL) != 0 {
+        let holder = resolved_of(callee)
+        if holder != ast.NONE && ast.NODES[holder].kind == Kind.Var && ast.NODES[holder].b != ast.NONE {
+            let init = ast.NODES[holder].b
+            if ast.NODES[init].kind == Kind.Closure {
+                worker_walk(ast.NODES[init].b)
+                walk_args(call)
+                return
+            }
+            let traced = resolved_of(init)
+            if traced != ast.NONE && ast.NODES[traced].kind == Kind.Fn && !is_generic(traced) && !decl_is_seam(traced) {
+                walk_fn_once(traced)
+                walk_args(call)
+                return
+            }
+        }
+        report(ast.NODES[call].loc, NOT_STATICALLY_VISIBLE)
+        walk_args(call)
+        return
+    }
+    // A resolved fn decl: intrinsic = C seam (allowlist), else walk the body.
+    let fn_decl = resolved_of(callee)
+    if fn_decl != ast.NONE && ast.NODES[fn_decl].kind == Kind.Fn {
+        if decl_is_seam(fn_decl) {
+            let has_cname = ast.NODES[fn_decl].has_sname
+            let cname = if has_cname { ast.NODES[fn_decl].sname } else { "?" }
+            if !has_cname || !in_worker_seam_ok(cname) {
+                report(ast.NODES[call].loc, clip("spawned fn calls the C seam '{{cname}}', which is not allowed from a worker (allowed: pure value helpers and channel ops)", 160))
+            }
+            return
+        }
+        if !is_generic(fn_decl) {
+            walk_fn_once(fn_decl)
+        }
+        walk_args(call)
+        return
+    }
+    if callee != ast.NONE && ast.NODES[callee].kind == Kind.Ident && ast.NODES[callee].has_name &&
+        ast.NODES[callee].name == "push" {
+        walk_args(call)
+        return
+    }
+    report(ast.NODES[call].loc, NOT_STATICALLY_VISIBLE)
+    walk_args(call)
+}
+
+fn str_prefix(text: string, prefix: string) -> bool {
+    if text.len < prefix.len {
+        return false
+    }
+    for i in 0..prefix.len {
+        if text[i] != prefix[i] {
+            return false
+        }
+    }
+    return true
+}
+
+fn worker_walk_list(nodes: []int) {
+    for i in 0..nodes.len {
+        worker_walk(nodes[i])
+    }
+}
+
+fn worker_walk(n: int) {
+    if n == ast.NONE {
+        return
+    }
+    let node_kind = ast.NODES[n].kind
+    switch node_kind {
+        case Kind.Call:
+            worker_call(n)
+            break
+        case Kind.Ident:
+            if ast.NODES[n].res != ast.NONE && is_module_global(ast.NODES[n].res) {
+                let name = if ast.NODES[n].has_name { ast.NODES[n].name } else { "?" }
+                report(ast.NODES[n].loc, clip("spawned fn touches module state '{{name}}'; workers may only use their captures and channels", 160))
+            }
+            break
+        case Kind.Field:
+            if ast.NODES[n].res != ast.NONE && is_module_global(ast.NODES[n].res) {
+                report(ast.NODES[n].loc, clip("spawned fn touches module state (a module-level `let`); workers may only use their captures and channels", 160))
+            }
+            worker_walk(ast.NODES[n].a)
+            break
+        case Kind.Fn, Kind.Closure:
+            worker_walk(ast.NODES[n].b)
+            break
+        case Kind.Block:
+            worker_walk_list(ast.NODES[n].kids)
+            break
+        case Kind.If:
+            worker_walk(ast.NODES[n].a)
+            worker_walk(ast.NODES[n].b)
+            worker_walk(ast.NODES[n].c)
+            break
+        case Kind.For, Kind.While, Kind.Assign, Kind.Binary:
+            worker_walk(ast.NODES[n].a)
+            worker_walk(ast.NODES[n].b)
+            break
+        case Kind.Switch:
+            worker_walk(ast.NODES[n].a)
+            worker_walk_list(ast.NODES[n].kids)
+            break
+        case Kind.Case, Kind.Return, Kind.ExprStmt, Kind.Unary, Kind.Cast, Kind.Try:
+            worker_walk(ast.NODES[n].a)
+            break
+        case Kind.Var:
+            worker_walk(ast.NODES[n].b)
+            break
+        case Kind.Index:
+            worker_walk(ast.NODES[n].a)
+            worker_walk(ast.NODES[n].b)
+            break
+        case Kind.Deref, Kind.Addr:
+            worker_walk(ast.NODES[n].a)
+            break
+        case Kind.StructLit:
+            for i in 0..ast.NODES[n].kids.len {
+                worker_walk(ast.NODES[ast.NODES[n].kids[i]].a)
+            }
+            break
+        case Kind.ArrayLit, Kind.Tuple:
+            worker_walk_list(ast.NODES[n].kids)
+            break
+        default:
+            return
+    }
+}
+
+/** *Validate one spawn call site and check its callback in worker mode. */
+fn scan_spawn(call: int) {
+    let loc = ast.NODES[call].loc
+    SPAWN_FILE = dump.path_of(loc.file)
+    SPAWN_LINE = loc.line
+    HAS_SPAWN = true
+    if ast.NODES[call].kids.len == 0 {
+        report(loc, "thread.spawn expects a callback")
+        return
+    }
+    let callback = ast.NODES[call].kids[0]
+    if ast.NODES[callback].kind == Kind.Closure {
+        let captures = ast.NODES[callback].caps
+        for i in 0..captures.len {
+            let capture_type = if i < ast.NODES[callback].cap_types.len { ast.NODES[callback].cap_types[i] } else { types.NO_TYPE }
+            if capture_type == types.NO_TYPE || !types.is_send(capture_type) {
+                report(ast.NODES[callback].loc, clip("thread.spawn callback captures '{{captures[i]}}' (type {{types.type_name(capture_type)}}), which is not Send: workers may carry only plain data (no []T, fn, Box, or borrows)", 256))
+            }
+        }
+        worker_walk(ast.NODES[callback].b)
+        return
+    }
+    let fn_decl = resolved_of(callback)
+    if fn_decl != ast.NONE && ast.NODES[fn_decl].kind == Kind.Fn {
+        if is_generic(fn_decl) {
+            report(loc, "thread.spawn cannot take a generic fn")
+            return
+        }
+        if decl_is_seam(fn_decl) {
+            report(loc, "thread.spawn cannot run a C seam fn")
+            return
+        }
+        walk_fn_once(fn_decl)
+        return
+    }
+    report(loc, "thread.spawn callback must be a closure or a fn name, not a fn value")
+}
+
+fn scan_walk_list(nodes: []int) {
+    for i in 0..nodes.len {
+        scan_walk(nodes[i])
+    }
+}
+
+fn scan_walk(n: int) {
+    if n == ast.NONE {
+        return
+    }
+    let node_kind = ast.NODES[n].kind
+    switch node_kind {
+        case Kind.Call:
+            if callee_cname(n) == "loam_thread_spawn" {
+                scan_spawn(n)
+                return
+            }
+            scan_walk(ast.NODES[n].a)
+            scan_walk_list(ast.NODES[n].kids)
+            break
+        case Kind.Field, Kind.Deref, Kind.Addr:
+            scan_walk(ast.NODES[n].a)
+            break
+        case Kind.Fn, Kind.Closure:
+            scan_walk(ast.NODES[n].b)
+            break
+        case Kind.Block:
+            scan_walk_list(ast.NODES[n].kids)
+            break
+        case Kind.If:
+            scan_walk(ast.NODES[n].a)
+            scan_walk(ast.NODES[n].b)
+            scan_walk(ast.NODES[n].c)
+            break
+        case Kind.For, Kind.While, Kind.Assign, Kind.Binary, Kind.Index:
+            scan_walk(ast.NODES[n].a)
+            scan_walk(ast.NODES[n].b)
+            break
+        case Kind.Switch:
+            scan_walk(ast.NODES[n].a)
+            scan_walk_list(ast.NODES[n].kids)
+            break
+        case Kind.Case, Kind.Return, Kind.ExprStmt, Kind.Unary, Kind.Cast, Kind.Try:
+            scan_walk(ast.NODES[n].a)
+            break
+        case Kind.Var:
+            scan_walk(ast.NODES[n].b)
+            break
+        case Kind.StructLit:
+            for i in 0..ast.NODES[n].kids.len {
+                scan_walk(ast.NODES[ast.NODES[n].kids[i]].a)
+            }
+            break
+        case Kind.ArrayLit, Kind.Tuple:
+            scan_walk_list(ast.NODES[n].kids)
+            break
+        default:
+            return
+    }
+}
+
+/** *Check every module, given each module's name and `Program` node. Returns */
+/** *the number of errors reported. */
+fn threadcheck_modules(module_names: []string, roots: []int) -> int {
+    let errors_before = ast.DIAGS.len
+    let mut have_thread = false
+    for m in 0..module_names.len {
+        if module_names[m] == "thread" {
+            have_thread = true
+        }
+    }
+    if !have_thread {
+        return 0
+    }
+    MODULE_GLOBALS = intmap.imap_new(0)
+    WALKED = intmap.imap_new(0)
+    HAS_SPAWN = false
+    for m in 0..roots.len {
+        let root = roots[m]
+        for i in 0..ast.NODES[root].kids.len {
+            let decl = ast.NODES[root].kids[i]
+            if ast.NODES[decl].kind == Kind.Var {
+                intmap.imap_put(&mut MODULE_GLOBALS, decl, 1)
+            }
+        }
+    }
+    for m in 0..roots.len {
+        let root = roots[m]
+        for i in 0..ast.NODES[root].kids.len {
+            let decl = ast.NODES[root].kids[i]
+            let decl_kind = ast.NODES[decl].kind
+            if decl_kind == Kind.Fn && (ast.NODES[decl].marks & ast.M_INTRINSIC) == 0 {
+                let body = ast.NODES[decl].b
+                if body != ast.NONE && ast.NODES[body].kind == Kind.Block {
+                    scan_walk(body)
+                }
+            } else if decl_kind == Kind.Var {
+                scan_walk(ast.NODES[decl].b)
+            }
+        }
+    }
+    return ast.DIAGS.len - errors_before
+}
