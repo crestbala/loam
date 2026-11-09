@@ -661,7 +661,24 @@ beyond what the checklist requires.
         and source line; per block its terminator and switch table. Then
         `verify ok` / `bad`. Types and strings are spelled as in
         `--dump-checked`. Deterministic; all 320 `compile_pass` entries dump
-        and verify. Next: the Loam lowering and its `selfhost_ir` gate.
+        and verify.
+      - 8b–8c done: `compiler/ir.loam` ports all of `ir.c`: places, calls
+        and their builtins, control flow, drops at exits, closures, `__init`
+        fns, generic instances (recording new ones as `ir.c` does), borrowed
+        string loads and the `= {0}` analysis, and the verifier.
+        `irdump.loam` prints it; `tcdump --ir` runs it. It matches
+        `--dump-ir` on all 518 loadable entries, and the strict `selfhost_ir`
+        host stanza gates it (same gate, worker and cache as
+        `selfhost_check`, keyed by dump mode).
+      - The IR is arenas with int ids, like the AST. `FNS`, then per fn a
+        range of `LOCALS` and of `BLOCKS`, per block a range of `INSTS`.
+        Places, call arguments, template defaults, int tables and switch
+        tables sit in pools, not a small vec per instruction. A fn is
+        lowered into a reused scratch list, linked per block because
+        lowering moves between blocks, then copied out block by block.
+      - Whole `--dump-ir` run on a Zeus entry: 0.42 s and ~77 MB, against
+        0.49 s and ~114 MB for C. The lowering pass alone is still slower:
+        92 ms against `ir_lower`'s 55 ms. 8d brings it to parity.
 - [ ] Driver (module loading, package resolution, `cc` invocation) in Loam
 - [ ] Compiler itself uses only safe Loam (arenas + integer indices; §2.7)
 

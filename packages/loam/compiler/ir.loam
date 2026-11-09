@@ -1,0 +1,3165 @@
+// ir — the checked tree lowered to the backend-neutral IR. The self-hosted
+// twin of src/ir.c, diffed against `loamc --dump-ir` (irdump.loam prints it).
+//
+// Control flow is blocks and terminators, drops are instructions, generics are
+// monomorphized, and every operand is a numbered local with a type: a backend
+// walking this emits code and makes no language decision.
+//
+// Everything lives in arenas addressed by int, as the AST does: `FNS`, then per
+// fn a range of `LOCALS` and of `BLOCKS`, per block a range of `INSTS`, and an
+// instruction's place, call arguments, template defaults and constant table in
+// `PLACES`, `ARGS`, `DFLT` and `INTS`. Local and block ids are relative to
+// their fn, as in C.
+//
+// A fn is lowered into `SCRATCH`, where each block's instructions are a linked
+// list (lowering moves between blocks), and copied out block by block when it
+// is done, so a block's instructions are contiguous in `INSTS`.
+
+import "std:buf"
+import "std:fmt"
+import "ast.loam"
+import "types.loam"
+import "lexer.loam"
+import "typecheck.loam"
+
+/** *An absent local, block, place or pool range. */
+const NONE: int = -1
+
+enum Op {
+    ConstInt = 0,
+    ConstBool = 1,
+    ConstStr = 2,
+    ConstFloat = 3,
+    Load = 4,
+    Store = 5,
+    Addr = 6,
+    Move = 7,
+    Bin = 8,
+    Un = 9,
+    Call = 10,
+    CallVal = 11,
+    Alloc = 12,
+    Drop = 13,
+    Bound = 14,
+    StructLit = 15,
+    ArrayLit = 16,
+    FnVal = 17,
+    Clos = 18,
+    Cast = 19,
+    Sizeof = 20,
+    Panic = 21,
+}
+
+enum Term {
+    Ret = 0,
+    Jmp = 1,
+    Br = 2,
+    Switch = 3,
+    Unreachable = 4,
+}
+
+enum PlaceKind {
+    Local = 0,
+    Field = 1,
+    Index = 2,
+    Deref = 3,
+}
+
+/** *A memory location, as a path from a local: `base` is the place this */
+/** *step reads from (`NONE` for a `Local`). */
+struct Place {
+    kind: int,
+    local: int,
+    field: string,
+    /** *Index: the local holding the index. */
+    index: int,
+    base: int,
+    ty: int,
+}
+
+// `Inst.bits`.
+const I_MUT: int = 1
+const I_CHECKED: int = 2
+const I_BORROWED: int = 4
+
+/** *One instruction. `dst`, `a`, `b` are locals (`NONE` when unused). */
+struct Inst {
+    op: int,
+    dst: int,
+    a: int,
+    b: int,
+    place: int,
+    imm: i64,
+    fimm: f64,
+    /** *ConstStr: the string. Call, FnVal, Clos: the callee's C name. */
+    text: string,
+    has_text: bool,
+    /** *`ARGS[args + k]`, k < nargs; -1 a field the template supplies. */
+    args: int,
+    nargs: int,
+    /** *Bin / Un: the operator token; Store: the assignment token. */
+    binop: int,
+    bits: int,
+    /** *Cast: 0 trap, 1 wrapping, 2 saturating. */
+    conv: int,
+    /** *StructLit from a default template: `DFLT[dflt + k]` is field k's */
+    /** *constant default (a node), or `NONE`; `NONE` when not templated. */
+    dflt: int,
+    /** *ArrayLit of an int table: `INTS[ints + k]`, k < nints. */
+    ints: int,
+    nints: int,
+    ty: int,
+    /** *The source line: module index (`NONE` when none) and line. */
+    file: int,
+    line: int,
+}
+
+struct Block {
+    /** *`INSTS[first + k]`, k < count. */
+    first: int,
+    count: int,
+    term: int,
+    term_val: int,
+    succ0: int,
+    succ1: int,
+    /** *Switch: `SW_VALS[sw + k]` goes to block `SW_BLOCKS[sw + k]`. */
+    sw: int,
+    sw_n: int,
+    term_file: int,
+    term_line: int,
+}
+
+// `Local.flags`.
+const L_PARAM: int = 1
+const L_GLOBAL: int = 2
+/** *Owns a box: dropped on every exit path. */
+const L_DROP: int = 4
+/** *Declared `= {0}`: a field a literal left out (`none`). */
+const L_ZERO_INIT: int = 8
+/** *Owning, and some read or drop may run before it is surely assigned. */
+const L_NEEDS_ZERO: int = 16
+
+struct Local {
+    ty: int,
+    name: string,
+    has_name: bool,
+    /** *The C symbol of a global. */
+    cname: string,
+    has_cname: bool,
+    flags: int,
+}
+
+struct IrFn {
+    cname: string,
+    has_cname: bool,
+    name: string,
+    has_name: bool,
+    sig: int,
+    locals: int,
+    nlocals: int,
+    blocks: int,
+    nblocks: int,
+    nparams: int,
+    is_main: bool,
+    /** *False when a construct was not representable. */
+    lowered: bool,
+    /** *Non-zero: this fn is `loam_clos_<id>`. */
+    clos_id: int,
+    env_local: int,
+    caps: []string,
+    cap_types: []int,
+    /** *`__init`: the module whose globals it sets. */
+    init_mod: int,
+}
+
+let mut FNS: []IrFn = []IrFn {}
+let mut LOCALS: []Local = []Local {}
+let mut BLOCKS: []Block = []Block {}
+let mut INSTS: []Inst = []Inst {}
+let mut PLACES: []Place = []Place {}
+let mut ARGS: []int = []int {}
+let mut DFLT: []int = []int {}
+let mut INTS: []i64 = []i64 {}
+let mut SW_VALS: []i64 = []i64 {}
+let mut SW_BLOCKS: []int = []int {}
+
+// --- the fn being lowered ------------------------------------------------------
+
+/** *Its index in `FNS`, and where its locals and blocks start. */
+let mut CF: int = 0
+let mut F_LOCALS: int = 0
+let mut F_BLOCKS: int = 0
+/** *The block being appended to (fn-relative). */
+let mut CUR: int = 0
+/** *Its instructions as they are emitted: `SCRATCH[0..SCRATCH_LEN]`, each */
+/** *block a list from `BHEAD[b]` through `NEXT` to `BTAIL[b]`. */
+let mut SCRATCH: []Inst = []Inst {}
+let mut NEXT: []int = []int {}
+let mut SCRATCH_LEN: int = 0
+let mut BHEAD: []int = []int {}
+let mut BTAIL: []int = []int {}
+
+/** *Module of the code being lowered (C's `Gcur`). */
+let mut CUR_MOD: int = 0
+/** *The generic instance being lowered: its type parameters, their types, */
+/** *and its C name ("" when not an instance). */
+let mut SUBST_NAMES: []string = []string {}
+let mut SUBST_ARGS: []int = []int {}
+let mut CNAME_OVERRIDE: string = ""
+
+/** *Name → local, innermost last; each with the block depth it was bound at. */
+let mut SCOPE_NAMES: []string = []string {}
+let mut SCOPE_LOCALS: []int = []int {}
+let mut SCOPE_DEPTHS: []int = []int {}
+let mut SDEPTH: int = 0
+
+/** *`break` / `continue` targets, innermost last (`NLOOP` in use). */
+let mut LOOP_CONT: []int = []int {}
+let mut LOOP_BRK: []int = []int {}
+let mut LOOP_BASE: []int = []int {}
+let mut LOOP_IS_SWITCH: []bool = []bool {}
+let mut NLOOP: int = 0
+
+fn kind(n: int) -> int {
+    if n == NONE {
+        return -1
+    }
+    return ast.NODES[n].kind
+}
+
+fn tk(t: int) -> int {
+    if t == types.NO_TYPE {
+        return -1
+    }
+    return types.TYPES[t].kind
+}
+
+/** *Substitute the instance's type parameters. */
+fn ir_subst(t: int) -> int {
+    if t == types.NO_TYPE || SUBST_NAMES.len == 0 {
+        return t
+    }
+    return typecheck.subst_type(t, SUBST_NAMES, SUBST_ARGS)
+}
+
+fn nlocals() -> int {
+    return LOCALS.len - F_LOCALS
+}
+
+fn local_ty(l: int) -> int {
+    return LOCALS[F_LOCALS + l].ty
+}
+
+fn has_flag(l: int, bit: int) -> bool {
+    return (LOCALS[F_LOCALS + l].flags & bit) != 0
+}
+
+fn set_flag(l: int, bit: int) {
+    LOCALS[F_LOCALS + l].flags = LOCALS[F_LOCALS + l].flags | bit
+}
+
+fn clear_flag(l: int, bit: int) {
+    if has_flag(l, bit) {
+        LOCALS[F_LOCALS + l].flags = LOCALS[F_LOCALS + l].flags - bit
+    }
+}
+
+fn is_local(l: int) -> bool {
+    return l >= 0 && l < nlocals()
+}
+
+// --- fns, locals, blocks, instructions -------------------------------------------
+
+fn begin_fn(cname: string, has_cname: bool, name: string, has_name: bool, sig: int) {
+    push(FNS, IrFn {
+        cname: cname,
+        has_cname: has_cname,
+        name: name,
+        has_name: has_name,
+        sig: sig,
+        locals: LOCALS.len,
+        nlocals: 0,
+        blocks: BLOCKS.len,
+        nblocks: 0,
+        nparams: 0,
+        is_main: false,
+        lowered: true,
+        clos_id: 0,
+        env_local: 0,
+        caps: []string {},
+        cap_types: []int {},
+        init_mod: 0,
+    })
+    CF = FNS.len - 1
+    F_LOCALS = LOCALS.len
+    F_BLOCKS = BLOCKS.len
+    SCRATCH_LEN = 0
+    BHEAD = []int {}
+    BTAIL = []int {}
+    SCOPE_NAMES = []string {}
+    SCOPE_LOCALS = []int {}
+    SCOPE_DEPTHS = []int {}
+    SDEPTH = 0
+    NLOOP = 0
+}
+
+/** *Copy the fn's instructions out of `SCRATCH`, block by block. */
+fn finish_fn() {
+    let nb = BLOCKS.len - F_BLOCKS
+    for b in 0..nb {
+        BLOCKS[F_BLOCKS + b].first = INSTS.len
+        let mut i = BHEAD[b]
+        while i != NONE {
+            push(INSTS, SCRATCH[i])
+            i = NEXT[i]
+        }
+        BLOCKS[F_BLOCKS + b].count = INSTS.len - BLOCKS[F_BLOCKS + b].first
+    }
+    FNS[CF].nlocals = nlocals()
+    FNS[CF].nblocks = nb
+}
+
+fn new_local(ty: int, name: string, has_name: bool, is_param: bool) -> int {
+    let t = ir_subst(ty)
+    let mut flags = 0
+    if is_param {
+        flags = L_PARAM
+    }
+    // Under string ownership a parameter is a borrowed reference: the caller
+    // owns and releases it, so the callee must not drop it.
+    if types.needs_drop(t) && !(is_param && types.string_owns && tk(t) == TK.String) {
+        flags = flags | L_DROP
+    }
+    push(LOCALS, Local { ty: t, name: name, has_name: has_name, cname: "", has_cname: false, flags: flags })
+    return nlocals() - 1
+}
+
+fn temp(ty: int) -> int {
+    return new_local(ty, "", false, false)
+}
+
+fn new_block() -> int {
+    push(BLOCKS, Block {
+        first: 0,
+        count: 0,
+        term: Term.Unreachable,
+        term_val: NONE,
+        succ0: NONE,
+        succ1: NONE,
+        sw: 0,
+        sw_n: 0,
+        term_file: NONE,
+        term_line: 0,
+    })
+    push(BHEAD, NONE)
+    push(BTAIL, NONE)
+    return BLOCKS.len - F_BLOCKS - 1
+}
+
+/** *Append an instruction to block `b`; returns its index in `SCRATCH`. */
+fn emit_in(b: int, op: int, loc: Loc) -> int {
+    let inst = Inst {
+        op: op,
+        dst: NONE,
+        a: NONE,
+        b: NONE,
+        place: NONE,
+        imm: i64(0),
+        fimm: 0.0,
+        text: "",
+        has_text: false,
+        args: 0,
+        nargs: 0,
+        binop: 0,
+        bits: 0,
+        conv: 0,
+        dflt: NONE,
+        ints: 0,
+        nints: 0,
+        ty: types.NO_TYPE,
+        file: loc.file,
+        line: loc.line,
+    }
+    let i = SCRATCH_LEN
+    if i < SCRATCH.len {
+        SCRATCH[i] = inst
+        NEXT[i] = NONE
+    } else {
+        push(SCRATCH, inst)
+        push(NEXT, NONE)
+    }
+    SCRATCH_LEN = SCRATCH_LEN + 1
+    if BTAIL[b] == NONE {
+        BHEAD[b] = i
+    } else {
+        NEXT[BTAIL[b]] = i
+    }
+    BTAIL[b] = i
+    return i
+}
+
+fn emit(op: int, loc: Loc) -> int {
+    return emit_in(CUR, op, loc)
+}
+
+fn set_args(i: int, args: []int) {
+    SCRATCH[i].args = ARGS.len
+    SCRATCH[i].nargs = args.len
+    for k in 0..args.len {
+        push(ARGS, args[k])
+    }
+}
+
+fn set_text(i: int, s: string) {
+    SCRATCH[i].text = s
+    SCRATCH[i].has_text = true
+}
+
+fn block_closed() -> bool {
+    return BLOCKS[F_BLOCKS + CUR].term != Term.Unreachable
+}
+
+fn term_ret(val: int, loc: Loc) {
+    if block_closed() {
+        return
+    }
+    let b = F_BLOCKS + CUR
+    BLOCKS[b].term = Term.Ret
+    BLOCKS[b].term_val = val
+    BLOCKS[b].term_file = loc.file
+    BLOCKS[b].term_line = loc.line
+}
+
+fn term_jmp(to: int) {
+    if block_closed() {
+        return
+    }
+    BLOCKS[F_BLOCKS + CUR].term = Term.Jmp
+    BLOCKS[F_BLOCKS + CUR].succ0 = to
+}
+
+fn term_br(cond: int, t: int, f: int) {
+    if block_closed() {
+        return
+    }
+    let b = F_BLOCKS + CUR
+    BLOCKS[b].term = Term.Br
+    BLOCKS[b].term_val = cond
+    BLOCKS[b].succ0 = t
+    BLOCKS[b].succ1 = f
+}
+
+fn term_switch(val: int, vals: []i64, targets: []int, dflt: int) {
+    if block_closed() {
+        return
+    }
+    let b = F_BLOCKS + CUR
+    BLOCKS[b].term = Term.Switch
+    BLOCKS[b].term_val = val
+    BLOCKS[b].sw = SW_VALS.len
+    BLOCKS[b].sw_n = vals.len
+    BLOCKS[b].succ0 = dflt
+    for k in 0..vals.len {
+        push(SW_VALS, vals[k])
+        push(SW_BLOCKS, targets[k])
+    }
+}
+
+fn emit_drops_from(lo: int, loc: Loc) {
+    let mut i = nlocals() - 1
+    while i >= lo {
+        if has_flag(i, L_DROP) {
+            let d = emit(Op.Drop, loc)
+            SCRATCH[d].a = i
+        }
+        i = i - 1
+    }
+}
+
+fn loop_push(cont: int, brk: int, base: int) {
+    if NLOOP == LOOP_CONT.len {
+        push(LOOP_CONT, cont)
+        push(LOOP_BRK, brk)
+        push(LOOP_BASE, base)
+        push(LOOP_IS_SWITCH, false)
+    } else {
+        LOOP_CONT[NLOOP] = cont
+        LOOP_BRK[NLOOP] = brk
+        LOOP_BASE[NLOOP] = base
+        LOOP_IS_SWITCH[NLOOP] = false
+    }
+    NLOOP = NLOOP + 1
+}
+
+// --- scopes ----------------------------------------------------------------------
+
+fn scope_push(name: string, local: int) {
+    push(SCOPE_NAMES, name)
+    push(SCOPE_LOCALS, local)
+    push(SCOPE_DEPTHS, SDEPTH)
+}
+
+fn scope_pop_to(d: int) {
+    while SCOPE_DEPTHS.len > 0 && SCOPE_DEPTHS[SCOPE_DEPTHS.len - 1] > d {
+        pop(SCOPE_NAMES)
+        pop(SCOPE_LOCALS)
+        pop(SCOPE_DEPTHS)
+    }
+}
+
+fn scope_find(name: string) -> int {
+    let mut i = SCOPE_NAMES.len - 1
+    while i >= 0 {
+        if SCOPE_NAMES[i] == name {
+            return SCOPE_LOCALS[i]
+        }
+        i = i - 1
+    }
+    return NONE
+}
+
+// --- modules and callee names ------------------------------------------------------
+
+/** *The C name of fn `name` declared in module `m`, or "". */
+fn fn_cname_in(m: int, name: string) -> string {
+    let root = typecheck.MODS[m].root
+    if root == NONE {
+        return ""
+    }
+    let decls = ast.NODES[root].kids
+    for i in 0..decls.len {
+        let d = decls[i]
+        if ast.NODES[d].kind == Kind.Fn && ast.INFO[d].has_name && ast.INFO[d].name == name {
+            return ast.EXTRA[ast.ex(d)].sname
+        }
+    }
+    return ""
+}
+
+/** *The imports of module `m`, in source order. */
+fn imports_of(m: int) -> []int {
+    let mut out = []int {}
+    let root = typecheck.MODS[m].root
+    if root == NONE {
+        return out
+    }
+    let kids = ast.NODES[root].kids
+    for i in 0..kids.len {
+        if ast.NODES[kids[i]].kind == Kind.Import {
+            push(out, kids[i])
+        }
+    }
+    return out
+}
+
+/** *Module `name`, preferring the one `cur` imported under that alias. */
+fn find_mod_here(cur: int, name: string) -> int {
+    if cur >= 0 {
+        let ims = imports_of(cur)
+        for i in 0..ims.len {
+            let im = ims[i]
+            let x = ast.ex(im)
+            if !ast.INFO[im].has_name || !ast.EXTRA[x].has_sname || ast.INFO[im].name != name {
+                continue
+            }
+            for m in 0..typecheck.MODS.len {
+                if typecheck.MODS[m].path == ast.EXTRA[x].sname {
+                    return m
+                }
+            }
+        }
+    }
+    for m in 0..typecheck.MODS.len {
+        if typecheck.MODS[m].name == name {
+            return m
+        }
+    }
+    return NONE
+}
+
+/** *C name of fn `name` as module `root` re-exports it: its own decls, its */
+/** *imports (last first), then their imports. "" when none. */
+fn fn_cname_through(root: int, name: string) -> string {
+    if root == NONE || typecheck.MODS[root].root == NONE {
+        return ""
+    }
+    let own = fn_cname_in(root, name)
+    if own.len > 0 {
+        return own
+    }
+    let ims = imports_of(root)
+    let mut i = ims.len
+    while i > 0 {
+        i = i - 1
+        if !ast.INFO[ims[i]].has_name {
+            continue
+        }
+        let m = find_mod_here(root, ast.INFO[ims[i]].name)
+        if m != NONE {
+            let c = fn_cname_in(m, name)
+            if c.len > 0 {
+                return c
+            }
+        }
+    }
+    i = ims.len
+    while i > 0 {
+        i = i - 1
+        if !ast.INFO[ims[i]].has_name {
+            continue
+        }
+        let m = find_mod_here(root, ast.INFO[ims[i]].name)
+        if m == NONE || typecheck.MODS[m].root == NONE {
+            continue
+        }
+        let ims2 = imports_of(m)
+        let mut k = ims2.len
+        while k > 0 {
+            k = k - 1
+            if !ast.INFO[ims2[k]].has_name {
+                continue
+            }
+            let m2 = find_mod_here(m, ast.INFO[ims2[k]].name)
+            if m2 != NONE {
+                let c = fn_cname_in(m2, name)
+                if c.len > 0 {
+                    return c
+                }
+            }
+        }
+    }
+    return ""
+}
+
+/** *Linkage symbol of a call target; "" when it has none. */
+fn resolve_callee(cal: int) -> string {
+    if cal == NONE {
+        return ""
+    }
+    if kind(cal) == Kind.Ident {
+        let r = ast.NODES[cal].res
+        if r != NONE && kind(r) == Kind.Fn && ast.EXTRA[ast.ex(r)].sname.len > 0 {
+            return ast.EXTRA[ast.ex(r)].sname
+        }
+        let name = ast.INFO[cal].name
+        let here = fn_cname_through(CUR_MOD, name)
+        if here.len > 0 {
+            return here
+        }
+        for m in 0..typecheck.MODS.len {
+            let c = fn_cname_through(m, name)
+            if c.len > 0 {
+                return c
+            }
+        }
+        return name
+    }
+    let tgt = ast.NODES[cal].a
+    if kind(cal) == Kind.Field && kind(tgt) == Kind.Ident {
+        let m = find_mod_here(CUR_MOD, ast.INFO[tgt].name)
+        let c = if m != NONE { fn_cname_through(m, ast.INFO[cal].name) } else { "" }
+        if c.len > 0 {
+            return c
+        }
+        return ast.INFO[cal].name
+    }
+    return ""
+}
+
+/** *The C name of a generic call's instance under the instance being lowered */
+/** *(typecheck_callee_cname); records the instance. "" when unbound. */
+fn callee_cname(call: int) -> string {
+    let rx = ast.ex(call)
+    let resolved = if ast.EXTRA[rx].has_sname { ast.EXTRA[rx].sname } else { "" }
+    let f = typecheck.call_generic_fn(call)
+    if f == NONE {
+        return resolved
+    }
+    let ft = typecheck.fn_type_of(f)
+    if ft == types.NO_TYPE {
+        return ""
+    }
+    let tps = ast.EXTRA[ast.ex(f)].strs
+    let mut bound = []int {}
+    for i in 0..tps.len {
+        push(bound, types.NO_TYPE)
+    }
+    let cargs = ast.NODES[call].kids
+    let mut i = 0
+    while i < cargs.len && i < types.TYPES[ft].params.len {
+        if cargs[i] != NONE {
+            let at = typecheck.subst_type(ast.NODES[cargs[i]].ty, SUBST_NAMES, SUBST_ARGS)
+            typecheck.unify(types.TYPES[ft].params[i], at, tps, &mut bound)
+        }
+        i = i + 1
+    }
+    for k in 0..tps.len {
+        if bound[k] != types.NO_TYPE {
+            bound[k] = typecheck.subst_type(bound[k], SUBST_NAMES, SUBST_ARGS)
+        }
+        if bound[k] == types.NO_TYPE || typecheck.type_has_param(bound[k]) {
+            return ""
+        }
+    }
+    let cn = typecheck.mono_cname(f, bound)
+    typecheck.record_mono(f, bound, cn)
+    for m in 0..typecheck.MONOS.len {
+        if typecheck.MONOS[m].fn_ != f {
+            continue
+        }
+        if typecheck.MONOS[m].cname == cn {
+            return typecheck.MONOS[m].cname
+        }
+        if typecheck.MONOS[m].args.len == bound.len {
+            let mut same = true
+            for k in 0..bound.len {
+                if !types.type_eq(typecheck.MONOS[m].args[k], bound[k]) {
+                    same = false
+                }
+            }
+            if same {
+                return typecheck.MONOS[m].cname
+            }
+        }
+    }
+    return cn
+}
+
+// --- globals ------------------------------------------------------------------------
+
+fn new_global_local(gv: int, cname: string) -> int {
+    let id = new_local(ast.NODES[gv].ty, ast.INFO[gv].name, ast.INFO[gv].has_name, false)
+    set_flag(id, L_GLOBAL)
+    clear_flag(id, L_DROP)
+    LOCALS[F_LOCALS + id].cname = cname
+    LOCALS[F_LOCALS + id].has_cname = true
+    return id
+}
+
+/** *A local for each global of the module being lowered, in scope. */
+fn bind_module_globals() {
+    for g in 0..typecheck.GVARS.len {
+        if typecheck.GVARS[g].mod != CUR_MOD {
+            continue
+        }
+        let gv = typecheck.GVARS[g].var
+        if gv == NONE || !ast.INFO[gv].has_name {
+            continue
+        }
+        let id = new_global_local(gv, typecheck.GVARS[g].cname)
+        scope_push(ast.INFO[gv].name, id)
+    }
+}
+
+/** *The local for module `let` `gv`, also one imported as `mod.name`. */
+fn local_for_global(gv: int) -> int {
+    if gv == NONE {
+        return NONE
+    }
+    let mut found = false
+    let mut cn = ""
+    for g in 0..typecheck.GVARS.len {
+        if typecheck.GVARS[g].var == gv {
+            cn = typecheck.GVARS[g].cname
+            found = true
+            break
+        }
+    }
+    if !found {
+        return NONE
+    }
+    for i in 0..nlocals() {
+        let l = F_LOCALS + i
+        if (LOCALS[l].flags & L_GLOBAL) != 0 && LOCALS[l].has_cname && LOCALS[l].cname == cn {
+            return i
+        }
+    }
+    return new_global_local(gv, cn)
+}
+
+// --- places ----------------------------------------------------------------------------
+
+fn new_place(kind: int, local: int, field: string, index: int, base: int, ty: int) -> int {
+    push(PLACES, Place { kind: kind, local: local, field: field, index: index, base: base, ty: ty })
+    return PLACES.len - 1
+}
+
+fn place_local(id: int, ty: int) -> int {
+    return new_place(PlaceKind.Local, id, "", 0, NONE, ty)
+}
+
+fn clone_place(p: int) -> int {
+    if p == NONE {
+        return NONE
+    }
+    let base = clone_place(PLACES[p].base)
+    let x = PLACES[p]
+    return new_place(x.kind, x.local, x.field, x.index, base, x.ty)
+}
+
+/** *The place an lvalue names, or `NONE`. With `allow_temp` a non-place */
+/** *base is evaluated into a fresh local the path is rooted in (reads only: */
+/** *an assignment or `&` through a temporary would be lost). */
+fn lower_place_mode(n: int, allow_temp: bool) -> int {
+    if n == NONE {
+        return NONE
+    }
+    let k = kind(n)
+    if k == Kind.Ident {
+        let mut id = scope_find(ast.INFO[n].name)
+        let r = ast.NODES[n].res
+        if id < 0 && r != NONE && kind(r) == Kind.Var {
+            id = local_for_global(r)
+        }
+        if id < 0 {
+            return NONE
+        }
+        return place_local(id, local_ty(id))
+    }
+    if k == Kind.Field {
+        let r = ast.NODES[n].res
+        if r != NONE && kind(r) == Kind.Var {
+            let id = local_for_global(r)
+            if id < 0 {
+                return NONE
+            }
+            return place_local(id, ir_subst(ast.NODES[n].ty))
+        }
+        let base = lower_place_mode(ast.NODES[n].a, allow_temp)
+        if base == NONE {
+            return NONE
+        }
+        return new_place(PlaceKind.Field, 0, ast.INFO[n].name, 0, base, ir_subst(ast.NODES[n].ty))
+    }
+    if k == Kind.Index {
+        let base = lower_place_mode(ast.NODES[n].a, allow_temp)
+        if base == NONE {
+            return NONE
+        }
+        let idx = lower_expr(ast.NODES[n].b)
+        let loc = ast.INFO[n].loc
+        if (ast.NODES[n].flags & typecheck.ASTF_INDEX_SAFE) == 0 {
+            let tgt = ast.NODES[n].a
+            let mut t = if tgt != NONE { ir_subst(ast.NODES[tgt].ty) } else { types.NO_TYPE }
+            if tk(t) == TK.Ptr || tk(t) == TK.Box {
+                t = types.TYPES[t].elem
+            }
+            if tk(t) == TK.Vec || tk(t) == TK.String {
+                let lenp = new_place(PlaceKind.Field, 0, "len", 0, clone_place(base), types.ty_int())
+                let lenl = temp(types.ty_int())
+                let ld = emit(Op.Load, loc)
+                SCRATCH[ld].dst = lenl
+                SCRATCH[ld].place = lenp
+                SCRATCH[ld].ty = types.ty_int()
+                let bd = emit(Op.Bound, loc)
+                SCRATCH[bd].a = idx
+                SCRATCH[bd].b = lenl
+                SCRATCH[bd].ty = types.ty_int()
+            } else {
+                let bd = emit(Op.Bound, loc)
+                SCRATCH[bd].a = idx
+                SCRATCH[bd].imm = if tk(t) == TK.Array { types.TYPES[t].array_len } else { i64(0) }
+                SCRATCH[bd].ty = types.ty_int()
+            }
+        }
+        return new_place(PlaceKind.Index, 0, "", idx, base, ir_subst(ast.NODES[n].ty))
+    }
+    if k == Kind.Deref {
+        let base = lower_place_mode(ast.NODES[n].a, allow_temp)
+        if base == NONE {
+            return NONE
+        }
+        return new_place(PlaceKind.Deref, 0, "", 0, base, ir_subst(ast.NODES[n].ty))
+    }
+    if allow_temp {
+        let v = lower_expr(n)
+        if v < 0 {
+            return NONE
+        }
+        return place_local(v, if v < nlocals() { local_ty(v) } else { ir_subst(ast.NODES[n].ty) })
+    }
+    return NONE
+}
+
+fn lower_place(n: int) -> int {
+    return lower_place_mode(n, false)
+}
+
+fn lower_place_rv(n: int) -> int {
+    return lower_place_mode(n, true)
+}
+
+// --- calls --------------------------------------------------------------------------
+
+fn emit_named_call(callee: string, args: []int, ty: int, loc: Loc) -> int {
+    let i = emit(Op.Call, loc)
+    let dst = if ty != types.NO_TYPE && tk(ty) != TK.Void { temp(ty) } else { NONE }
+    SCRATCH[i].dst = dst
+    set_text(i, callee)
+    set_args(i, args)
+    SCRATCH[i].ty = ty
+    return dst
+}
+
+fn ident_is_state(n: int) -> bool {
+    if kind(n) != Kind.Ident {
+        return false
+    }
+    let d = ast.NODES[n].res
+    return d != NONE && (ast.NODES[d].flags & typecheck.ASTF_STATE) != 0
+}
+
+fn state_sig_local(n: int) -> int {
+    if kind(n) != Kind.Ident || !ast.INFO[n].has_name {
+        return NONE
+    }
+    return scope_find(ast.INFO[n].name)
+}
+
+fn emit_state_get(sid: int, loc: Loc) -> int {
+    return emit_named_call("loam_zeus_get", []int { sid }, types.ty_int(), loc)
+}
+
+fn emit_state_set(sid: int, val: int, loc: Loc) {
+    emit_named_call("loam_zeus_set", []int { sid, val }, types.ty_void(), loc)
+}
+
+fn assign_to_bin(op: int) -> int {
+    if op == Tok.PlusEq {
+        return Tok.Plus
+    }
+    if op == Tok.MinusEq {
+        return Tok.Minus
+    }
+    if op == Tok.StarEq {
+        return Tok.Star
+    }
+    if op == Tok.SlashEq {
+        return Tok.Slash
+    }
+    if op == Tok.PercentEq {
+        return Tok.Percent
+    }
+    if op == Tok.AmpEq {
+        return Tok.Amp
+    }
+    if op == Tok.PipeEq {
+        return Tok.Pipe
+    }
+    if op == Tok.CaretEq {
+        return Tok.Caret
+    }
+    if op == Tok.ShlEq {
+        return Tok.Shl
+    }
+    if op == Tok.ShrEq {
+        return Tok.Shr
+    }
+    return 0
+}
+
+/** *`fmt.println` (or `eprintln`) as writes of each argument by type, spaces */
+/** *between, then a newline: the language's compile-time expansion. */
+fn lower_println(n: int) -> int {
+    let loc = ast.INFO[n].loc
+    let to_err = (ast.INFO[n].marks & ast.M_EPRINTLN) != 0
+    let w_str = if to_err { "loam_fmt_ewrite" } else { "loam_fmt_write" }
+    let kids = ast.NODES[n].kids
+    for k in 0..kids.len {
+        if k > 0 {
+            let sp = temp(types.ty_string())
+            let c = emit(Op.ConstStr, loc)
+            SCRATCH[c].dst = sp
+            set_text(c, " ")
+            SCRATCH[c].ty = types.ty_string()
+            emit_named_call(w_str, []int { sp }, types.ty_void(), loc)
+        }
+        let arg = kids[k]
+        let v = lower_expr(arg)
+        let t = ir_subst(ast.NODES[arg].ty)
+        let mut w = if to_err { "loam_fmt_ewrite_int" } else { "loam_fmt_write_int" }
+        if tk(t) == TK.String {
+            w = w_str
+        } else if tk(t) == TK.Bool {
+            w = if to_err { "loam_fmt_ewrite_bool" } else { "loam_fmt_write_bool" }
+        } else if tk(t) == TK.Float {
+            w = if to_err { "loam_fmt_ewrite_float" } else { "loam_fmt_write_float" }
+        } else if tk(t) == TK.Int && types.TYPES[t].is_unsigned != 0 && types.TYPES[t].bits == 64 {
+            w = if to_err { "loam_fmt_ewrite_u64" } else { "loam_fmt_write_u64" }
+        }
+        emit_named_call(w, []int { v }, types.ty_void(), loc)
+    }
+    emit_named_call(if to_err { "loam_fmt_ewriteln" } else { "loam_fmt_writeln" }, []int {}, types.ty_void(), loc)
+    return NONE
+}
+
+/** *A pushed element moves into the slot when it holds a `Box` (the push */
+/** *retains refcounted leaves but takes a Box as-is). */
+fn push_moves(t: int) -> bool {
+    if t == types.NO_TYPE {
+        return false
+    }
+    let k = tk(t)
+    if k == TK.Box {
+        return true
+    }
+    if k == TK.Array {
+        return push_moves(types.TYPES[t].elem)
+    }
+    if k == TK.Struct {
+        let fts = types.TYPES[t].field_types
+        for i in 0..fts.len {
+            if push_moves(fts[i]) {
+                return true
+            }
+        }
+    }
+    return false
+}
+
+/** *A borrow argument whose place goes through an index: lowered last, so */
+/** *no other argument can reallocate the buffer it points into. */
+fn addr_through_index(a: int) -> bool {
+    if kind(a) != Kind.Addr {
+        return false
+    }
+    let mut place = ast.NODES[a].a
+    while place != NONE {
+        if kind(place) == Kind.Index {
+            return true
+        }
+        if kind(place) != Kind.Field {
+            return false
+        }
+        place = ast.NODES[place].a
+    }
+    return false
+}
+
+fn lower_all(nodes: []int) -> []int {
+    let mut out = []int {}
+    for k in 0..nodes.len {
+        push(out, lower_expr(nodes[k]))
+    }
+    return out
+}
+
+/** *Clear the drop of each argument the callee adopts (a Box or an fn). */
+fn args_transfer(args: []int) {
+    for k in 0..args.len {
+        let a = args[k]
+        if is_local(a) && types.arg_transfers(local_ty(a)) {
+            clear_flag(a, L_DROP)
+        }
+    }
+}
+
+fn kid_ty(n: int, k: int) -> int {
+    return ast.NODES[ast.NODES[n].kids[k]].ty
+}
+
+fn lower_call(n: int) -> int {
+    let loc = ast.INFO[n].loc
+    let nty = ast.NODES[n].ty
+    let marks = ast.INFO[n].marks
+    let x = ast.ex(n)
+    let kids = ast.NODES[n].kids
+    let ac = kids.len
+    let mut dst = NONE
+    if nty != types.NO_TYPE && tk(nty) != TK.Void {
+        dst = temp(nty)
+    }
+    if (marks & ast.M_BOX_NEW) != 0 {
+        let v = if ac > 0 { lower_expr(kids[0]) } else { NONE }
+        let i = emit(Op.Alloc, loc)
+        SCRATCH[i].dst = dst
+        SCRATCH[i].a = v
+        SCRATCH[i].ty = ir_subst(nty)
+        return dst
+    }
+    if (marks & ast.M_VALUE_KEY) != 0 && ac == 1 {
+        let arg = lower_expr(kids[0])
+        let i = emit(Op.Call, loc)
+        SCRATCH[i].dst = dst
+        set_args(i, []int { arg })
+        // The value's type, which codegen walks; the dest local is a string.
+        SCRATCH[i].ty = ir_subst(kid_ty(n, 0))
+        set_text(i, "loam_value_key")
+        return dst
+    }
+    let sig = ast.EXTRA[x].sig
+    if sig != 0 {
+        let args = lower_all(kids)
+        let i = emit(Op.Call, loc)
+        SCRATCH[i].dst = if sig == 3 { NONE } else { dst }
+        set_args(i, args)
+        SCRATCH[i].ty = if sig == 1 && ac > 0 { ir_subst(kid_ty(n, 0)) } else { ir_subst(nty) }
+        set_text(i, if sig == 1 { "loam_sig_push" } else if sig == 2 { "loam_sig_load" } else { "loam_sig_store" })
+        return if sig == 3 { NONE } else { dst }
+    }
+    let fut = ast.EXTRA[x].fut
+    if fut != 0 {
+        let args = lower_all(kids)
+        let i = emit(Op.Call, loc)
+        let no_dst = fut == 3 || fut == 5
+        SCRATCH[i].dst = if no_dst { NONE } else { dst }
+        set_args(i, args)
+        if fut == 1 && ac > 0 {
+            SCRATCH[i].ty = ir_subst(kid_ty(n, 0))
+        } else if fut == 3 && ac >= 2 {
+            SCRATCH[i].ty = ir_subst(kid_ty(n, 1))
+        } else {
+            SCRATCH[i].ty = ir_subst(nty)
+        }
+        let mut callee = "loam_fut_clear"
+        if fut == 1 {
+            callee = "loam_fut_push"
+        } else if fut == 2 {
+            callee = "loam_fut_load"
+        } else if fut == 3 {
+            callee = "loam_fut_store"
+        } else if fut == 4 {
+            callee = "loam_fut_ready"
+        }
+        set_text(i, callee)
+        return if no_dst { NONE } else { dst }
+    }
+    let ch = ast.EXTRA[x].ch
+    if ch != 0 {
+        let args = lower_all(kids)
+        let i = emit(Op.Call, loc)
+        let no_dst = ch == 2
+        SCRATCH[i].dst = if no_dst { NONE } else { dst }
+        set_args(i, args)
+        // The payload T (new / send / try_send) or the return type.
+        if (ch == 1 || ch == 2 || ch == 3) && ac >= 2 {
+            SCRATCH[i].ty = ir_subst(kid_ty(n, 1))
+        } else {
+            SCRATCH[i].ty = ir_subst(nty)
+        }
+        let mut callee = "loam_ch_ready"
+        if ch == 1 {
+            callee = "loam_ch_alloc"
+        } else if ch == 2 {
+            callee = "loam_ch_send"
+        } else if ch == 3 {
+            callee = "loam_ch_try_send"
+        } else if ch == 4 {
+            callee = "loam_ch_recv"
+        } else if ch == 5 {
+            callee = "loam_ch_pop"
+        }
+        set_text(i, callee)
+        return if no_dst { NONE } else { dst }
+    }
+    if (marks & ast.M_PRINTLN) != 0 {
+        return lower_println(n)
+    }
+    if (marks & ast.M_VEC_PUSH) != 0 {
+        let vec_addr_last = ac > 1 && addr_through_index(kids[0])
+        let mut a0 = NONE
+        if !vec_addr_last && ac > 0 {
+            a0 = lower_expr(kids[0])
+        }
+        let a1 = if ac > 1 { lower_expr(kids[1]) } else { NONE }
+        if vec_addr_last {
+            a0 = lower_expr(kids[0])
+        }
+        let i = emit(Op.Call, loc)
+        set_text(i, "loam_vec_push")
+        set_args(i, []int { a0, a1 })
+        SCRATCH[i].ty = if ac > 1 && kids[1] != NONE { ir_subst(kid_ty(n, 1)) } else { types.ty_int() }
+        // `loam_vec_push_owned` retains every refcounted leaf for the slot; a
+        // Box leaf is moved in, so an element holding one is handed over.
+        if a1 >= 0 && is_local(a1) && types.needs_drop(local_ty(a1)) && push_moves(local_ty(a1)) {
+            clear_flag(a1, L_DROP)
+        }
+        return NONE
+    }
+    if (marks & ast.M_VEC_POP) != 0 {
+        let a0 = if ac > 0 { lower_expr(kids[0]) } else { NONE }
+        let i = emit(Op.Call, loc)
+        SCRATCH[i].dst = dst
+        set_text(i, "loam_vec_pop")
+        set_args(i, []int { a0 })
+        SCRATCH[i].ty = ir_subst(nty)
+        return dst
+    }
+    let numb = ast.EXTRA[x].numb
+    if numb != 0 {
+        let args = lower_all(kids)
+        let i = emit(Op.Call, loc)
+        SCRATCH[i].dst = dst
+        set_args(i, args)
+        SCRATCH[i].ty = ir_subst(nty)
+        set_text(i, types.numeric_builtin_cname(numb, nty))
+        return dst
+    }
+    if (marks & ast.M_SIZEOF) != 0 {
+        let i = emit(Op.Sizeof, loc)
+        SCRATCH[i].dst = dst
+        SCRATCH[i].ty = if ac > 0 { ir_subst(kid_ty(n, 0)) } else { types.ty_void() }
+        return dst
+    }
+    if (marks & ast.M_PANIC) != 0 {
+        let msg = if ac > 0 { lower_expr(kids[0]) } else { NONE }
+        let i = emit(Op.Panic, loc)
+        SCRATCH[i].a = msg
+        SCRATCH[i].ty = types.ty_void()
+        return NONE
+    }
+    if ast.EXTRA[x].has_cbuiltin {
+        let args = lower_all(kids)
+        let i = emit(Op.Call, loc)
+        SCRATCH[i].dst = dst
+        set_args(i, args)
+        SCRATCH[i].ty = ir_subst(nty)
+        set_text(i, ast.EXTRA[x].cbuiltin)
+        args_transfer(args)
+        return dst
+    }
+
+    let is_fn_val = (marks & ast.M_FN_VAL) != 0
+    let mut callee_local = NONE
+    if is_fn_val {
+        callee_local = lower_expr(ast.NODES[n].a)
+    }
+    let mut callee = ""
+    if !is_fn_val {
+        if SUBST_NAMES.len > 0 {
+            callee = callee_cname(n)
+        }
+        if callee.len == 0 && ast.EXTRA[x].has_sname {
+            callee = ast.EXTRA[x].sname
+        }
+        if callee.len == 0 {
+            callee = resolve_callee(ast.NODES[n].a)
+        }
+    }
+    let bind_state = callee == "loam_zeus_bind_n" && ac >= 2 && ident_is_state(kids[1])
+    let mut args = []int {}
+    for k in 0..ac {
+        push(args, NONE)
+    }
+    // Pass 0 lowers every other argument; pass 1 the indexed borrows.
+    for pass in 0..2 {
+        for k in 0..ac {
+            let indexed = !(bind_state && k == 1) && addr_through_index(kids[k])
+            if (if indexed { 1 } else { 0 }) != pass {
+                continue
+            }
+            if bind_state && k == 1 {
+                args[k] = state_sig_local(kids[k])
+                if args[k] < 0 {
+                    FNS[CF].lowered = false
+                    return NONE
+                }
+            } else {
+                args[k] = lower_expr(kids[k])
+            }
+        }
+    }
+    if bind_state {
+        callee = "loam_zeus_bind"
+    }
+    let i = emit(if is_fn_val { Op.CallVal } else { Op.Call }, loc)
+    SCRATCH[i].dst = dst
+    set_args(i, args)
+    SCRATCH[i].ty = ir_subst(nty)
+    if is_fn_val {
+        SCRATCH[i].a = callee_local
+    } else if callee.len > 0 {
+        set_text(i, callee)
+    }
+    // The callee adopts a Box or an fn handed to it; a []T arrives retained,
+    // so the caller still drops its own reference.
+    args_transfer(args)
+    return dst
+}
+
+// --- constants ----------------------------------------------------------------------
+
+/** *The non-generic fn a callee or fn value names, when typecheck bound it. */
+fn bound_fn(e: int) -> int {
+    if kind(e) != Kind.Ident && kind(e) != Kind.Field {
+        return NONE
+    }
+    let d = ast.NODES[e].res
+    if kind(d) != Kind.Fn {
+        return NONE
+    }
+    let dx = ast.ex(d)
+    if !ast.EXTRA[dx].has_sname || ast.EXTRA[dx].strs.len > 0 {
+        return NONE
+    }
+    return d
+}
+
+/** *`fn no_keys() -> []T { return []T {} }`. */
+fn returns_empty_vec(f: int) -> bool {
+    let b = ast.NODES[f].b
+    if kind(b) != Kind.Block || ast.NODES[b].kids.len != 1 {
+        return false
+    }
+    let r = ast.NODES[b].kids[0]
+    if kind(r) != Kind.Return || ast.NODES[r].a == NONE {
+        return false
+    }
+    let a = ast.NODES[r].a
+    return kind(a) == Kind.ArrayLit && ast.NODES[a].kids.len == 0 && tk(ast.NODES[a].ty) == TK.Vec
+}
+
+/** *The C name of the fn a constant fn-value default names, or "". */
+fn const_fn_val(e: int) -> string {
+    if kind(e) != Kind.Ident || (ast.NODES[e].flags & typecheck.ASTF_FN_VAL) == 0 {
+        return ""
+    }
+    let d = bound_fn(e)
+    if d == NONE {
+        return ""
+    }
+    return ast.EXTRA[ast.ex(d)].sname
+}
+
+/** *A call that always returns the empty vec (`no_keys()`). */
+fn const_empty_vec(e: int) -> bool {
+    if kind(e) != Kind.Call || ast.NODES[e].kids.len > 0 || (ast.INFO[e].marks & ast.M_FN_VAL) != 0 {
+        return false
+    }
+    if tk(ast.NODES[e].ty) != TK.Vec {
+        return false
+    }
+    let d = bound_fn(ast.NODES[e].a)
+    return d != NONE && returns_empty_vec(d)
+}
+
+fn finite(f: f64) -> bool {
+    return f - f == 0.0
+}
+
+/** *A C constant initializer: a number, bool, string, named fn value, */
+/** *empty-vec call, or a struct literal of those. */
+fn static_const(e: int) -> bool {
+    if e == NONE {
+        return false
+    }
+    if const_fn_val(e).len > 0 || const_empty_vec(e) {
+        return true
+    }
+    let k = kind(e)
+    if k == Kind.Number || k == Kind.Bool || k == Kind.String {
+        return true
+    }
+    if k == Kind.Float {
+        return finite(ast.EXTRA[ast.ex(e)].fnum)
+    }
+    if k == Kind.StructLit {
+        if tk(ast.NODES[e].ty) != TK.Struct {
+            return false
+        }
+        let kids = ast.NODES[e].kids
+        for i in 0..kids.len {
+            if !static_const(kids[i]) {
+                return false
+            }
+        }
+        return true
+    }
+    return false
+}
+
+/** *Plain data (no fn value): it can sit in a C initializer. */
+fn static_data(e: int) -> bool {
+    if e == NONE || ast.NODES[e].ty == types.NO_TYPE {
+        return false
+    }
+    let k = kind(e)
+    if k == Kind.Number || k == Kind.Bool || k == Kind.String {
+        return true
+    }
+    if k == Kind.Float {
+        return finite(ast.EXTRA[ast.ex(e)].fnum)
+    }
+    if k == Kind.StructLit {
+        let t = ast.NODES[e].ty
+        if tk(t) != TK.Struct || types.TYPES[t].params.len > 0 {
+            return false
+        }
+        let kids = ast.NODES[e].kids
+        for i in 0..kids.len {
+            if !static_data(kids[i]) {
+                return false
+            }
+        }
+        return true
+    }
+    return false
+}
+
+/** *A `[]T` literal of 8 or more integer constants: a table, not pushes. */
+fn int_list_lit(n: int) -> bool {
+    let t = ir_subst(ast.NODES[n].ty)
+    if tk(t) != TK.Vec || tk(types.TYPES[t].elem) != TK.Int {
+        return false
+    }
+    let kids = ast.NODES[n].kids
+    if kids.len < 8 {
+        return false
+    }
+    for k in 0..kids.len {
+        if kind(kids[k]) != Kind.Number {
+            return false
+        }
+    }
+    return true
+}
+
+/** *A props literal whose left-out fields have two or more constant */
+/** *defaults starts from the struct's static template: field-indexed */
+/** *default nodes (`NONE` where the literal stores it), or empty for none. */
+fn lit_template(n: int, t: int) -> []int {
+    let mut d = []int {}
+    if tk(t) != TK.Struct || types.TYPES[t].params.len > 0 || types.TYPES[t].field_names.len == 0 {
+        return d
+    }
+    let fnames = types.TYPES[t].field_names
+    let kids = ast.NODES[n].kids
+    let mut nd = 0
+    for f in 0..fnames.len {
+        push(d, NONE)
+        for k in 0..kids.len {
+            if fnames[f] != ast.init_name(n, k) {
+                continue
+            }
+            let init = kids[k]
+            if init != NONE && (ast.NODES[init].flags & typecheck.ASTF_DEFAULT) != 0 && static_const(init) {
+                d[f] = init
+                nd = nd + 1
+            }
+            break
+        }
+    }
+    if nd < 2 {
+        return []int {}
+    }
+    return d
+}
+
+// --- expressions ---------------------------------------------------------------------
+
+/** *One arm of an `if` used as a value: its statements run, and its */
+/** *trailing expression is moved into `dst`. */
+fn lower_block_value(blk: int, dst: int, ty: int) {
+    if kind(blk) != Kind.Block {
+        return
+    }
+    SDEPTH = SDEPTH + 1
+    let stmts = ast.NODES[blk].kids
+    for i in 0..stmts.len {
+        let st = stmts[i]
+        if i + 1 == stmts.len && kind(st) == Kind.ExprStmt {
+            let v = lower_expr(ast.NODES[st].a)
+            if v >= 0 && !block_closed() {
+                let m = emit(Op.Move, ast.INFO[st].loc)
+                SCRATCH[m].dst = dst
+                SCRATCH[m].a = v
+                SCRATCH[m].ty = ir_subst(ty)
+            }
+            break
+        }
+        lower_stmt(st)
+        if block_closed() {
+            break
+        }
+    }
+    scope_pop_to(SDEPTH - 1)
+    SDEPTH = SDEPTH - 1
+}
+
+/** *A load of a place (or the local it is), then a move when the use moved */
+/** *a value that owns something. */
+fn lower_read(n: int) -> int {
+    let p = lower_place_rv(n)
+    if p == NONE {
+        FNS[CF].lowered = false
+        return NONE
+    }
+    let loc = ast.INFO[n].loc
+    let nty = ast.NODES[n].ty
+    let mut src = NONE
+    if PLACES[p].kind == PlaceKind.Local {
+        src = PLACES[p].local
+    } else {
+        // An owned copy: codegen retains on the load and `d` drops it unless
+        // a consumer moves it out first.
+        let d = temp(nty)
+        let i = emit(Op.Load, loc)
+        SCRATCH[i].dst = d
+        SCRATCH[i].place = p
+        SCRATCH[i].ty = ir_subst(nty)
+        src = d
+    }
+    if (ast.NODES[n].flags & typecheck.ASTF_MOVED) != 0 && nty != types.NO_TYPE && types.needs_drop(nty) {
+        let d = temp(nty)
+        let mv = emit(Op.Move, loc)
+        SCRATCH[mv].dst = d
+        SCRATCH[mv].a = src
+        SCRATCH[mv].ty = ir_subst(nty)
+        return d
+    }
+    return src
+}
+
+fn const_int(v: i64, ty: int, loc: Loc) -> int {
+    let d = temp(ty)
+    let i = emit(Op.ConstInt, loc)
+    SCRATCH[i].dst = d
+    SCRATCH[i].imm = v
+    SCRATCH[i].ty = ty
+    return d
+}
+
+fn bin(op: int, a: int, b: int, ty: int, checked: bool, loc: Loc) -> int {
+    let d = temp(ty)
+    let i = emit(Op.Bin, loc)
+    SCRATCH[i].dst = d
+    SCRATCH[i].a = a
+    SCRATCH[i].b = b
+    SCRATCH[i].binop = op
+    SCRATCH[i].ty = ty
+    if checked {
+        SCRATCH[i].bits = I_CHECKED
+    }
+    return d
+}
+
+/** *The range of an integer type, as C's i64 arithmetic sees it (a u64's */
+/** *top is -1, so a u64 fold never proves it fits). */
+fn int_lo(bits: int, is_signed: bool) -> i64 {
+    if !is_signed {
+        return i64(0)
+    }
+    if bits >= 64 {
+        return i64(-9223372036854775807) - i64(1)
+    }
+    if bits == 32 {
+        return i64(-2147483648)
+    }
+    if bits == 16 {
+        return i64(-32768)
+    }
+    return i64(-128)
+}
+
+fn int_hi(bits: int, is_signed: bool) -> i64 {
+    if bits >= 64 {
+        return if is_signed { i64(9223372036854775807) } else { i64(-1) }
+    }
+    if bits == 32 {
+        return if is_signed { i64(2147483647) } else { i64(4294967295) }
+    }
+    if bits == 16 {
+        return if is_signed { i64(32767) } else { i64(65535) }
+    }
+    return if is_signed { i64(127) } else { i64(255) }
+}
+
+/** *A literal op literal that provably fits its type needs no trap. */
+fn fold_check(n: int, i: int, op: int) {
+    let l = ast.NODES[n].a
+    let r = ast.NODES[n].b
+    if kind(l) != Kind.Number || kind(r) != Kind.Number {
+        return
+    }
+    let x = ast.INFO[l].num
+    let y = ast.INFO[r].num
+    let lim = i64(2147483647)
+    if x < -lim || x > lim || y < -lim || y > lim {
+        return
+    }
+    let bt = SCRATCH[i].ty
+    let bits = if bt != types.NO_TYPE && types.TYPES[bt].bits != 0 { types.TYPES[bt].bits } else { 64 }
+    let is_signed = !(bt != types.NO_TYPE && types.TYPES[bt].is_unsigned != 0)
+    let mut r_val = i64(0)
+    let mut ok = false
+    if op == Tok.Plus {
+        r_val = x + y
+        ok = true
+    } else if op == Tok.Minus {
+        r_val = x - y
+        ok = true
+    } else if op == Tok.Star {
+        r_val = x * y
+        ok = true
+    } else if op == Tok.Slash && y != i64(0) {
+        r_val = x / y
+        ok = true
+    } else if op == Tok.Percent && y != i64(0) {
+        r_val = x % y
+        ok = true
+    }
+    if ok && r_val >= int_lo(bits, is_signed) && r_val <= int_hi(bits, is_signed) {
+        SCRATCH[i].bits = 0
+    }
+}
+
+fn lower_expr(n: int) -> int {
+    if n == NONE {
+        return NONE
+    }
+    let loc = ast.INFO[n].loc
+    let nty = ast.NODES[n].ty
+    switch ast.NODES[n].kind {
+        case Kind.Try:
+            // `expr?`: return the container whole on failure (tag != 0),
+            // else yield its `val`.
+            let v = lower_expr(ast.NODES[n].a)
+            let ct = if is_local(v) { local_ty(v) } else { types.NO_TYPE }
+            let vt = ir_subst(nty)
+            let tagp = new_place(PlaceKind.Field, 0, "tag", 0, place_local(v, ct), types.ty_int())
+            let tagl = temp(types.ty_int())
+            let ldt = emit(Op.Load, loc)
+            SCRATCH[ldt].dst = tagl
+            SCRATCH[ldt].place = tagp
+            SCRATCH[ldt].ty = types.ty_int()
+            let zero = const_int(i64(0), types.ty_int(), loc)
+            let cond = bin(Tok.BangEq, tagl, zero, types.ty_bool(), false, loc)
+            let fail = new_block()
+            let join = new_block()
+            term_br(cond, fail, join)
+            CUR = fail
+            term_ret(v, loc)
+            CUR = join
+            let valp = new_place(PlaceKind.Field, 0, "val", 0, place_local(v, ct), vt)
+            let d = temp(vt)
+            let ldv = emit(Op.Load, loc)
+            SCRATCH[ldv].dst = d
+            SCRATCH[ldv].place = valp
+            SCRATCH[ldv].ty = vt
+            return d
+        case Kind.If:
+            let d = temp(nty)
+            let c = lower_expr(ast.NODES[n].a)
+            let bt = new_block()
+            let be = new_block()
+            let join = new_block()
+            term_br(c, bt, be)
+            CUR = bt
+            lower_block_value(ast.NODES[n].b, d, nty)
+            term_jmp(join)
+            CUR = be
+            lower_block_value(ast.NODES[n].c, d, nty)
+            term_jmp(join)
+            CUR = join
+            return d
+        case Kind.Number:
+            return const_int(ast.INFO[n].num, nty, loc)
+        case Kind.Float:
+            let d = temp(nty)
+            let i = emit(Op.ConstFloat, loc)
+            SCRATCH[i].dst = d
+            SCRATCH[i].fimm = ast.EXTRA[ast.ex(n)].fnum
+            SCRATCH[i].ty = nty
+            return d
+        case Kind.Bool:
+            let d = temp(nty)
+            let i = emit(Op.ConstBool, loc)
+            SCRATCH[i].dst = d
+            SCRATCH[i].imm = i64(ast.NODES[n].op)
+            SCRATCH[i].ty = nty
+            return d
+        case Kind.String:
+            let d = temp(nty)
+            let i = emit(Op.ConstStr, loc)
+            SCRATCH[i].dst = d
+            set_text(i, ast.EXTRA[ast.ex(n)].text)
+            SCRATCH[i].ty = nty
+            return d
+        case Kind.Ident:
+            if (ast.NODES[n].flags & typecheck.ASTF_FN_VAL) != 0 {
+                let d = temp(nty)
+                let i = emit(Op.FnVal, loc)
+                SCRATCH[i].dst = d
+                let c = resolve_callee(n)
+                if c.len > 0 {
+                    set_text(i, c)
+                }
+                SCRATCH[i].ty = ir_subst(nty)
+                return d
+            }
+            if ident_is_state(n) {
+                let sid = state_sig_local(n)
+                if sid < 0 {
+                    FNS[CF].lowered = false
+                    return NONE
+                }
+                return emit_state_get(sid, loc)
+            }
+            return lower_read(n)
+        case Kind.Field, Kind.Index, Kind.Deref:
+            return lower_read(n)
+        case Kind.Addr:
+            let p = lower_place(ast.NODES[n].a)
+            if p == NONE {
+                FNS[CF].lowered = false
+                return NONE
+            }
+            let d = temp(nty)
+            let i = emit(Op.Addr, loc)
+            SCRATCH[i].dst = d
+            SCRATCH[i].place = p
+            if ast.NODES[n].op != 0 {
+                SCRATCH[i].bits = I_MUT
+            }
+            SCRATCH[i].ty = ir_subst(nty)
+            return d
+        case Kind.Binary:
+            let op = ast.NODES[n].op
+            if op == Tok.AmpAmp || op == Tok.PipePipe {
+                // Short-circuit: the lhs, overwritten by the rhs if it runs.
+                let d = temp(nty)
+                let lhs = lower_expr(ast.NODES[n].a)
+                let m = emit(Op.Move, loc)
+                SCRATCH[m].dst = d
+                SCRATCH[m].a = lhs
+                SCRATCH[m].ty = ir_subst(nty)
+                let rhs_bb = new_block()
+                let join = new_block()
+                if op == Tok.AmpAmp {
+                    term_br(lhs, rhs_bb, join)
+                } else {
+                    term_br(lhs, join, rhs_bb)
+                }
+                CUR = rhs_bb
+                let rhs = lower_expr(ast.NODES[n].b)
+                let m2 = emit(Op.Move, loc)
+                SCRATCH[m2].dst = d
+                SCRATCH[m2].a = rhs
+                SCRATCH[m2].ty = ir_subst(nty)
+                term_jmp(join)
+                CUR = join
+                return d
+            }
+            let a = lower_expr(ast.NODES[n].a)
+            let b = lower_expr(ast.NODES[n].b)
+            let checked = tk(nty) == TK.Int &&
+                (op == Tok.Plus || op == Tok.Minus || op == Tok.Star || op == Tok.Slash || op == Tok.Percent)
+            let d = temp(nty)
+            let i = emit(Op.Bin, loc)
+            SCRATCH[i].dst = d
+            SCRATCH[i].a = a
+            SCRATCH[i].b = b
+            SCRATCH[i].binop = op
+            SCRATCH[i].ty = ir_subst(nty)
+            if checked {
+                SCRATCH[i].bits = I_CHECKED
+                fold_check(n, i, op)
+            }
+            return d
+        case Kind.Unary:
+            let a = lower_expr(ast.NODES[n].a)
+            let d = temp(nty)
+            let i = emit(Op.Un, loc)
+            SCRATCH[i].dst = d
+            SCRATCH[i].a = a
+            SCRATCH[i].binop = ast.NODES[n].op
+            SCRATCH[i].ty = ir_subst(nty)
+            return d
+        case Kind.IncDec:
+            return lower_incdec(n)
+        case Kind.Cast:
+            let a = lower_expr(ast.NODES[n].a)
+            let d = temp(nty)
+            let i = emit(Op.Cast, loc)
+            SCRATCH[i].dst = d
+            SCRATCH[i].a = a
+            SCRATCH[i].ty = ir_subst(nty)
+            SCRATCH[i].conv = ast.EXTRA[ast.ex(n)].conv
+            return d
+        case Kind.Call:
+            return lower_call(n)
+        case Kind.StructLit:
+            return lower_struct_lit(n)
+        case Kind.ArrayLit:
+            return lower_array_lit(n)
+        case Kind.Closure:
+            return lower_clos_value(n)
+        default:
+            FNS[CF].lowered = false
+            return NONE
+    }
+}
+
+fn lower_incdec(n: int) -> int {
+    let loc = ast.INFO[n].loc
+    let nty = ast.NODES[n].ty
+    let is_dec = ast.NODES[n].op != 0
+    let is_post = ast.INFO[n].aux != 0
+    let bop = if is_dec { Tok.Minus } else { Tok.Plus }
+    let operand = ast.NODES[n].a
+    // A closure-captured `let mut`: the signal path, as compound assignment.
+    if ident_is_state(operand) {
+        let sid = state_sig_local(operand)
+        if sid < 0 {
+            FNS[CF].lowered = false
+            return NONE
+        }
+        let cur = emit_state_get(sid, loc)
+        let one = const_int(i64(1), types.ty_int(), loc)
+        let nx = bin(bop, cur, one, types.ty_int(), true, loc)
+        emit_state_set(sid, nx, loc)
+        return if is_post { cur } else { nx }
+    }
+    let p = lower_place(operand)
+    if p == NONE {
+        FNS[CF].lowered = false
+        return NONE
+    }
+    let mut src = NONE
+    if PLACES[p].kind == PlaceKind.Local {
+        if is_post {
+            // The store overwrites the local: keep the old value for postfix.
+            let ld = temp(nty)
+            let mv = emit(Op.Move, loc)
+            SCRATCH[mv].dst = ld
+            SCRATCH[mv].a = PLACES[p].local
+            SCRATCH[mv].ty = ir_subst(nty)
+            src = ld
+        } else {
+            src = PLACES[p].local
+        }
+    } else {
+        let ld = temp(nty)
+        let l = emit(Op.Load, loc)
+        SCRATCH[l].dst = ld
+        SCRATCH[l].place = p
+        SCRATCH[l].ty = ir_subst(nty)
+        src = ld
+    }
+    let one = temp(nty)
+    if tk(nty) == TK.Float {
+        let k = emit(Op.ConstFloat, loc)
+        SCRATCH[k].dst = one
+        SCRATCH[k].fimm = 1.0
+        SCRATCH[k].ty = ir_subst(nty)
+    } else {
+        let k = emit(Op.ConstInt, loc)
+        SCRATCH[k].dst = one
+        SCRATCH[k].imm = i64(1)
+        SCRATCH[k].ty = ir_subst(nty)
+    }
+    let nx = temp(nty)
+    let bi = emit(Op.Bin, loc)
+    SCRATCH[bi].dst = nx
+    SCRATCH[bi].a = src
+    SCRATCH[bi].b = one
+    SCRATCH[bi].binop = bop
+    SCRATCH[bi].ty = ir_subst(nty)
+    if nty != types.NO_TYPE && tk(nty) != TK.Float {
+        SCRATCH[bi].bits = I_CHECKED
+    }
+    let st = emit(Op.Store, loc)
+    SCRATCH[st].place = clone_place(p)
+    SCRATCH[st].a = nx
+    SCRATCH[st].ty = ir_subst(nty)
+    return if is_post { src } else { nx }
+}
+
+fn lower_struct_lit(n: int) -> int {
+    let loc = ast.INFO[n].loc
+    let nty = ast.NODES[n].ty
+    let t = ir_subst(nty)
+    let kids = ast.NODES[n].kids
+    let is_struct = tk(t) == TK.Struct
+    let nf = if is_struct { types.TYPES[t].field_names.len } else { kids.len }
+    let dflt = lit_template(n, t)
+    let templated = dflt.len > 0
+    let mut args = []int {}
+    if is_struct {
+        let fnames = types.TYPES[t].field_names
+        for f in 0..nf {
+            push(args, NONE)
+            if templated && dflt[f] != NONE {
+                continue
+            }
+            for k in 0..kids.len {
+                if fnames[f] == ast.init_name(n, k) {
+                    args[f] = lower_expr(kids[k])
+                    break
+                }
+            }
+            // `none`'s payload: a zeroed temp of the field's type.
+            if args[f] < 0 && (ast.INFO[n].marks & ast.M_ZERO_REST) != 0 && !templated {
+                let z = temp(types.TYPES[t].field_types[f])
+                set_flag(z, L_ZERO_INIT)
+                args[f] = z
+            }
+        }
+    } else {
+        for k in 0..nf {
+            push(args, lower_expr(kids[k]))
+        }
+    }
+    let d = temp(nty)
+    let i = emit(Op.StructLit, loc)
+    SCRATCH[i].dst = d
+    set_args(i, args)
+    SCRATCH[i].ty = t
+    if templated {
+        SCRATCH[i].dflt = DFLT.len
+        for f in 0..dflt.len {
+            push(DFLT, dflt[f])
+        }
+    }
+    for k in 0..nf {
+        let a = args[k]
+        if !is_local(a) || !types.needs_drop(local_ty(a)) {
+            continue
+        }
+        // An owned string (or what holds one) is copied in: the container
+        // retains and the source keeps its own reference. A Box moves.
+        if types.string_owns && types.owns_string(local_ty(a)) {
+            continue
+        }
+        if types.string_owns && is_struct && types.owns_string(t) && !push_moves(local_ty(a)) {
+            continue
+        }
+        clear_flag(a, L_DROP)
+    }
+    return d
+}
+
+fn lower_array_lit(n: int) -> int {
+    let loc = ast.INFO[n].loc
+    let nty = ast.NODES[n].ty
+    let kids = ast.NODES[n].kids
+    if int_list_lit(n) {
+        let d = temp(nty)
+        let i = emit(Op.ArrayLit, loc)
+        SCRATCH[i].dst = d
+        SCRATCH[i].ints = INTS.len
+        SCRATCH[i].nints = kids.len
+        for k in 0..kids.len {
+            push(INTS, ast.INFO[kids[k]].num)
+        }
+        SCRATCH[i].ty = ir_subst(nty)
+        return d
+    }
+    let args = lower_all(kids)
+    let d = temp(nty)
+    let i = emit(Op.ArrayLit, loc)
+    SCRATCH[i].dst = d
+    set_args(i, args)
+    let t = ir_subst(nty)
+    SCRATCH[i].ty = t
+    if tk(t) == TK.Vec {
+        for k in 0..args.len {
+            let a = args[k]
+            // As `push`: only an element holding a Box moves in.
+            if is_local(a) && types.needs_drop(local_ty(a)) && push_moves(local_ty(a)) {
+                clear_flag(a, L_DROP)
+            }
+        }
+    }
+    return d
+}
+
+fn clos_cname(id: int) -> string {
+    if CNAME_OVERRIDE.len > 0 {
+        return "loam_clos_{{id}}_{{CNAME_OVERRIDE}}"
+    }
+    return "loam_clos_{{id}}"
+}
+
+fn lower_clos_value(n: int) -> int {
+    let loc = ast.INFO[n].loc
+    if ast.EXTRA[ast.ex(n)].clos_id == 0 {
+        ast.EXTRA[ast.ex_mut(n)].clos_id = 1
+    }
+    let x = ast.ex(n)
+    let caps = ast.EXTRA[x].caps
+    let mut args = []int {}
+    for k in 0..caps.len {
+        let id = scope_find(caps[k])
+        if id < 0 {
+            FNS[CF].lowered = false
+            return NONE
+        }
+        push(args, id)
+    }
+    let d = temp(ast.NODES[n].ty)
+    let i = emit(Op.Clos, loc)
+    SCRATCH[i].dst = d
+    SCRATCH[i].imm = i64(ast.EXTRA[x].clos_id)
+    set_args(i, args)
+    SCRATCH[i].ty = ir_subst(ast.NODES[n].ty)
+    set_text(i, clos_cname(ast.EXTRA[x].clos_id))
+    return d
+}
+
+// --- drops at exits ------------------------------------------------------------------
+
+// Bitsets: 31 bits per `int` word, so no shift reaches the sign bit.
+const WORD_BITS: int = 31
+const WORD_ALL: int = 2147483647
+
+fn bit_mask(l: int) -> int {
+    return 1 << (l % WORD_BITS)
+}
+
+fn mark_bit(set: &mut []int, base: int, l: int) {
+    if l >= 0 && l < nlocals() {
+        let w = base + l / WORD_BITS
+        set[w] = set[w] | bit_mask(l)
+    }
+}
+
+fn has_bit(set: &[]int, base: int, l: int) -> bool {
+    return (set[base + l / WORD_BITS] & bit_mask(l)) != 0
+}
+
+/** *A move of a non-Copy value transfers ownership: the source no longer */
+/** *drops. A move of a Copy value is a copy, and both drop. */
+fn transfer_moved() {
+    for s in 0..SCRATCH_LEN {
+        let x = &SCRATCH[s]
+        if x.op != Op.Move || !is_local(x.a) {
+            continue
+        }
+        let ty = if x.ty != types.NO_TYPE { x.ty } else if is_local(x.dst) { local_ty(x.dst) } else { types.NO_TYPE }
+        if ty != types.NO_TYPE && types.is_copy(ty) {
+            continue
+        }
+        clear_flag(x.a, L_DROP)
+    }
+}
+
+/** *Which successors block `b` (fn-relative, in `BLOCKS[base + b]`) has. */
+fn successors(base: int, b: int) -> []int {
+    let mut out = []int {}
+    let x = BLOCKS[base + b]
+    if x.term == Term.Jmp {
+        push(out, x.succ0)
+    } else if x.term == Term.Br {
+        push(out, x.succ0)
+        push(out, x.succ1)
+    } else if x.term == Term.Switch {
+        push(out, x.succ0)
+        for k in 0..x.sw_n {
+            push(out, SW_BLOCKS[x.sw + k])
+        }
+    }
+    return out
+}
+
+fn mark_place_bits(set: &mut []int, base: int, p: int) {
+    let mut q = p
+    while q != NONE {
+        if PLACES[q].kind == PlaceKind.Local {
+            mark_bit(set, base, PLACES[q].local)
+        }
+        if PLACES[q].kind == PlaceKind.Index {
+            mark_bit(set, base, PLACES[q].index)
+        }
+        q = PLACES[q].base
+    }
+}
+
+/** *Drop every owning local on each returning path that some path to it */
+/** *may have touched (an untouched one is still `{0}`), innermost first. */
+fn emit_drops_at_exits() {
+    transfer_moved()
+    let n_loc = nlocals()
+    let words = (n_loc + WORD_BITS - 1) / WORD_BITS
+    let nb = BLOCKS.len - F_BLOCKS
+    if words == 0 {
+        return
+    }
+    // What each block touches (anything but a drop), then a union forward.
+    let mut gen = []int {}
+    let mut out = []int {}
+    let mut in_set = []int {}
+    for w in 0..nb * words {
+        push(gen, 0)
+        push(out, 0)
+        push(in_set, 0)
+    }
+    for b in 0..nb {
+        let mut s = BHEAD[b]
+        while s != NONE {
+            let x = SCRATCH[s]
+            if x.op != Op.Drop {
+                let gb = b * words
+                mark_bit(&mut gen, gb, x.dst)
+                mark_bit(&mut gen, gb, x.a)
+                mark_bit(&mut gen, gb, x.b)
+                for k in 0..x.nargs {
+                    mark_bit(&mut gen, gb, ARGS[x.args + k])
+                }
+                mark_place_bits(&mut gen, gb, x.place)
+            }
+            s = NEXT[s]
+        }
+    }
+    // Parameters and globals hold a value from the start.
+    for l in 0..n_loc {
+        if has_flag(l, L_PARAM) || has_flag(l, L_GLOBAL) {
+            mark_bit(&mut in_set, 0, l)
+        }
+    }
+    let mut work = []int {}
+    let mut queued = []bool {}
+    for b in 0..nb {
+        push(queued, false)
+    }
+    if nb > 0 {
+        push(work, 0)
+        queued[0] = true
+    }
+    while work.len > 0 {
+        let b = work[work.len - 1]
+        pop(work)
+        queued[b] = false
+        for w in 0..words {
+            out[b * words + w] = in_set[b * words + w] | gen[b * words + w]
+        }
+        let succ = successors(F_BLOCKS, b)
+        for k in 0..succ.len {
+            let s = succ[k]
+            if s < 0 || s >= nb {
+                continue
+            }
+            let mut grew = false
+            for w in 0..words {
+                let merged = in_set[s * words + w] | out[b * words + w]
+                if merged != in_set[s * words + w] {
+                    in_set[s * words + w] = merged
+                    grew = true
+                }
+            }
+            if grew && !queued[s] {
+                queued[s] = true
+                push(work, s)
+            }
+        }
+    }
+    for b in 0..nb {
+        let blk = BLOCKS[F_BLOCKS + b]
+        if blk.term != Term.Ret {
+            continue
+        }
+        let loc = Loc { file: blk.term_file, line: blk.term_line, col: 0, end_line: 0, end_col: 0 }
+        let mut i = n_loc - 1
+        while i >= 0 {
+            if has_flag(i, L_DROP) && i != blk.term_val && has_bit(&out, b * words, i) {
+                let d = emit_in(b, Op.Drop, loc)
+                SCRATCH[d].a = i
+            }
+            i = i - 1
+        }
+    }
+}
+
+// --- statements ---------------------------------------------------------------------
+
+fn lower_stmt(n: int) {
+    if n == NONE || block_closed() {
+        return
+    }
+    let loc = ast.INFO[n].loc
+    switch ast.NODES[n].kind {
+        case Kind.Var:
+            lower_var(n)
+            break
+        case Kind.Assign:
+            lower_assign(n)
+            break
+        case Kind.ExprStmt:
+            lower_expr(ast.NODES[n].a)
+            break
+        case Kind.Return:
+            let mut v = if ast.NODES[n].a != NONE { lower_expr(ast.NODES[n].a) } else { NONE }
+            // A global is never dropped, so returning one hands out an alias
+            // the caller would free: return an owned copy instead.
+            if is_local(v) && has_flag(v, L_GLOBAL) && types.needs_drop(local_ty(v)) {
+                let vt = local_ty(v)
+                let d = temp(vt)
+                let ld = emit(Op.Load, loc)
+                SCRATCH[ld].dst = d
+                SCRATCH[ld].place = place_local(v, vt)
+                SCRATCH[ld].ty = vt
+                v = d
+            }
+            term_ret(v, loc)
+            break
+        case Kind.Block:
+            SDEPTH = SDEPTH + 1
+            let stmts = ast.NODES[n].kids
+            for i in 0..stmts.len {
+                lower_stmt(stmts[i])
+                if block_closed() {
+                    break
+                }
+            }
+            scope_pop_to(SDEPTH - 1)
+            SDEPTH = SDEPTH - 1
+            break
+        case Kind.If:
+            let c = lower_expr(ast.NODES[n].a)
+            let bt = new_block()
+            let has_else = ast.NODES[n].c != NONE
+            let be = if has_else { new_block() } else { NONE }
+            let join = new_block()
+            term_br(c, bt, if has_else { be } else { join })
+            CUR = bt
+            lower_stmt(ast.NODES[n].b)
+            term_jmp(join)
+            if has_else {
+                CUR = be
+                lower_stmt(ast.NODES[n].c)
+                term_jmp(join)
+            }
+            CUR = join
+            break
+        case Kind.For:
+            lower_for(n)
+            break
+        case Kind.While:
+            let head = new_block()
+            let body = new_block()
+            let exit = new_block()
+            // A pass re-creates its temporaries and `let`s: release them at
+            // the end of each pass.
+            let base = nlocals()
+            term_jmp(head)
+            CUR = head
+            let c = lower_expr(ast.NODES[n].a)
+            term_br(c, body, exit)
+            CUR = body
+            loop_push(head, exit, base)
+            lower_stmt(ast.NODES[n].b)
+            if NLOOP > 0 {
+                NLOOP = NLOOP - 1
+            }
+            if !block_closed() {
+                emit_drops_from(base, loc)
+            }
+            term_jmp(head)
+            CUR = exit
+            break
+        case Kind.Break:
+            if NLOOP <= 0 {
+                FNS[CF].lowered = false
+                return
+            }
+            // Leaving a switch drops nothing: a case's locals live on.
+            if !LOOP_IS_SWITCH[NLOOP - 1] {
+                emit_drops_from(LOOP_BASE[NLOOP - 1], loc)
+            }
+            term_jmp(LOOP_BRK[NLOOP - 1])
+            break
+        case Kind.Continue:
+            let mut li = NLOOP - 1
+            while li >= 0 && LOOP_IS_SWITCH[li] {
+                li = li - 1
+            }
+            if li < 0 {
+                FNS[CF].lowered = false
+                return
+            }
+            emit_drops_from(LOOP_BASE[li], loc)
+            term_jmp(LOOP_CONT[li])
+            break
+        case Kind.Switch:
+            lower_switch(n)
+            break
+        default:
+            FNS[CF].lowered = false
+            return
+    }
+}
+
+fn lower_var(n: int) {
+    let loc = ast.INFO[n].loc
+    let name = ast.INFO[n].name
+    let init = ast.NODES[n].b
+    if (ast.NODES[n].flags & typecheck.ASTF_STATE) != 0 {
+        let sig_ty = typecheck.signal_type()
+        if sig_ty == types.NO_TYPE {
+            FNS[CF].lowered = false
+            return
+        }
+        let mut initv = if init != NONE { lower_expr(init) } else { NONE }
+        if initv < 0 {
+            initv = const_int(i64(0), types.ty_int(), loc)
+        }
+        // A captured `let mut int` is a signal cell.
+        let id = emit_named_call("loam_zeus_signal", []int { initv }, sig_ty, loc)
+        if id >= 0 && ast.INFO[n].has_name {
+            LOCALS[F_LOCALS + id].name = name
+            LOCALS[F_LOCALS + id].has_name = true
+        }
+        scope_push(name, id)
+        return
+    }
+    let v = if init != NONE { lower_expr(init) } else { NONE }
+    let id = new_local(ast.NODES[n].ty, name, ast.INFO[n].has_name, false)
+    scope_push(name, id)
+    if v >= 0 {
+        let i = emit(Op.Move, loc)
+        SCRATCH[i].dst = id
+        SCRATCH[i].a = v
+        SCRATCH[i].ty = ir_subst(ast.NODES[n].ty)
+    }
+}
+
+fn lower_assign(n: int) {
+    let loc = ast.INFO[n].loc
+    let left = ast.NODES[n].a
+    let op = ast.NODES[n].op
+    if ident_is_state(left) {
+        let sid = state_sig_local(left)
+        if sid < 0 {
+            FNS[CF].lowered = false
+            return
+        }
+        let mut v = lower_expr(ast.NODES[n].b)
+        let bop = assign_to_bin(op)
+        if bop != 0 {
+            let cur = emit_state_get(sid, loc)
+            v = bin(bop, cur, v, types.ty_int(), true, loc)
+        }
+        emit_state_set(sid, v, loc)
+        return
+    }
+    let v = lower_expr(ast.NODES[n].b)
+    let p = lower_place(left)
+    if p == NONE {
+        FNS[CF].lowered = false
+        return
+    }
+    let i = emit(Op.Store, loc)
+    SCRATCH[i].place = p
+    SCRATCH[i].a = v
+    SCRATCH[i].binop = op
+    SCRATCH[i].ty = ir_subst(ast.NODES[left].ty)
+}
+
+/** *`for i in lo..hi`: the header tests, the body runs, the latch increments. */
+fn lower_for(n: int) {
+    let loc = ast.INFO[n].loc
+    let rng = ast.NODES[n].a
+    if kind(rng) != Kind.Binary {
+        FNS[CF].lowered = false
+        return
+    }
+    let lo = lower_expr(ast.NODES[rng].a)
+    let hi = lower_expr(ast.NODES[rng].b)
+    let var_name = ast.INFO[n].name
+    let iv = new_local(types.ty_int(), var_name, ast.INFO[n].has_name, false)
+    let init = emit(Op.Move, loc)
+    SCRATCH[init].dst = iv
+    SCRATCH[init].a = lo
+    let head = new_block()
+    let body = new_block()
+    let latch = new_block()
+    let exit = new_block()
+    term_jmp(head)
+    CUR = head
+    let c = temp(types.ty_bool())
+    let cmp = emit(Op.Bin, loc)
+    SCRATCH[cmp].dst = c
+    SCRATCH[cmp].a = iv
+    SCRATCH[cmp].b = hi
+    SCRATCH[cmp].binop = Tok.Lt
+    term_br(c, body, exit)
+    CUR = body
+    SDEPTH = SDEPTH + 1
+    scope_push(var_name, iv)
+    let base = nlocals()
+    loop_push(latch, exit, base)
+    lower_stmt(ast.NODES[n].b)
+    if NLOOP > 0 {
+        NLOOP = NLOOP - 1
+    }
+    scope_pop_to(SDEPTH - 1)
+    SDEPTH = SDEPTH - 1
+    // The body's `let`s are re-made on the next pass: release them first.
+    if !block_closed() {
+        emit_drops_from(base, loc)
+    }
+    term_jmp(latch)
+    CUR = latch
+    let one = const_int(i64(1), types.ty_int(), loc)
+    let nx = temp(types.ty_int())
+    let add = emit(Op.Bin, loc)
+    SCRATCH[add].dst = nx
+    SCRATCH[add].a = iv
+    SCRATCH[add].b = one
+    SCRATCH[add].binop = Tok.Plus
+    SCRATCH[add].bits = I_CHECKED
+    let st = emit(Op.Move, loc)
+    SCRATCH[st].dst = iv
+    SCRATCH[st].a = nx
+    term_jmp(head)
+    CUR = exit
+}
+
+/** *One dispatch on constant labels (a jump table), not a compare chain. */
+fn lower_switch(n: int) {
+    let scrut = lower_expr(ast.NODES[n].a)
+    let cases = ast.NODES[n].kids
+    let join = new_block()
+    let mut bodies = []int {}
+    let mut dflt = join
+    let mut vals = []i64 {}
+    let mut targets = []int {}
+    for i in 0..cases.len {
+        let cs = cases[i]
+        push(bodies, new_block())
+        if kind(cs) != Kind.Case {
+            continue
+        }
+        if ast.NODES[cs].op != 0 {
+            dflt = bodies[i]
+        }
+        let pats = ast.NODES[cs].kids
+        for p in 0..pats.len {
+            let cv = typecheck.case_value(pats[p])
+            if !cv.ok {
+                FNS[CF].lowered = false
+                continue
+            }
+            push(vals, cv.v)
+            push(targets, bodies[i])
+        }
+    }
+    term_switch(scrut, vals, targets, dflt)
+    loop_push(NONE, join, 0)
+    LOOP_IS_SWITCH[NLOOP - 1] = true
+    for i in 0..cases.len {
+        let cs = cases[i]
+        CUR = bodies[i]
+        if kind(cs) == Kind.Case {
+            lower_stmt(ast.NODES[cs].a)
+        }
+        // Running off a case's end falls into the next one.
+        term_jmp(if i + 1 < cases.len { bodies[i + 1] } else { join })
+    }
+    if NLOOP > 0 {
+        NLOOP = NLOOP - 1
+    }
+    CUR = join
+}
+
+// --- fns ---------------------------------------------------------------------------
+
+/** *Every closure, in the order lowering meets them, with its module. */
+let mut CLOS_NODES: []int = []int {}
+let mut CLOS_MODS: []int = []int {}
+
+fn collect_list(nodes: []int) {
+    for i in 0..nodes.len {
+        collect_clos(nodes[i])
+    }
+}
+
+fn collect_clos(n: int) {
+    if n == NONE {
+        return
+    }
+    let k = ast.NODES[n].kind
+    if k == Kind.Closure {
+        push(CLOS_NODES, n)
+        push(CLOS_MODS, CUR_MOD)
+        collect_clos(ast.NODES[n].b)
+        return
+    }
+    switch k {
+        case Kind.Program, Kind.Block, Kind.StructLit, Kind.ArrayLit, Kind.Tuple:
+            collect_list(ast.NODES[n].kids)
+            break
+        case Kind.Fn:
+            // A generic template's closures are lowered per instance.
+            if ast.EXTRA[ast.ex(n)].strs.len == 0 {
+                collect_clos(ast.NODES[n].b)
+            }
+            break
+        case Kind.If:
+            collect_clos(ast.NODES[n].a)
+            collect_clos(ast.NODES[n].b)
+            collect_clos(ast.NODES[n].c)
+            break
+        case Kind.For, Kind.While, Kind.Assign, Kind.Binary, Kind.Index:
+            collect_clos(ast.NODES[n].a)
+            collect_clos(ast.NODES[n].b)
+            break
+        case Kind.Switch:
+            collect_clos(ast.NODES[n].a)
+            collect_list(ast.NODES[n].kids)
+            break
+        case Kind.Case:
+            collect_list(ast.NODES[n].kids)
+            collect_clos(ast.NODES[n].a)
+            break
+        case Kind.Return, Kind.ExprStmt, Kind.Unary, Kind.IncDec, Kind.Cast, Kind.Try, Kind.Field,
+            Kind.Deref, Kind.Addr:
+            collect_clos(ast.NODES[n].a)
+            break
+        case Kind.Var:
+            collect_clos(ast.NODES[n].b)
+            break
+        case Kind.Call:
+            collect_clos(ast.NODES[n].a)
+            collect_list(ast.NODES[n].kids)
+            break
+        default:
+            return
+    }
+}
+
+/** *Closures nested in a generic instance, lowered with its substitution. */
+fn lower_clos_in(n: int) {
+    if n == NONE {
+        return
+    }
+    let k = ast.NODES[n].kind
+    if k == Kind.Closure {
+        lower_closure(n)
+        lower_clos_in(ast.NODES[n].b)
+        return
+    }
+    switch k {
+        case Kind.Block, Kind.StructLit, Kind.ArrayLit, Kind.Tuple:
+            let kids = ast.NODES[n].kids
+            for i in 0..kids.len {
+                lower_clos_in(kids[i])
+            }
+            break
+        case Kind.If:
+            lower_clos_in(ast.NODES[n].a)
+            lower_clos_in(ast.NODES[n].b)
+            lower_clos_in(ast.NODES[n].c)
+            break
+        case Kind.For, Kind.While, Kind.Assign, Kind.Binary, Kind.Index:
+            lower_clos_in(ast.NODES[n].a)
+            lower_clos_in(ast.NODES[n].b)
+            break
+        case Kind.Switch:
+            lower_clos_in(ast.NODES[n].a)
+            let cases = ast.NODES[n].kids
+            for i in 0..cases.len {
+                lower_clos_in(cases[i])
+            }
+            break
+        case Kind.Return, Kind.ExprStmt, Kind.Unary, Kind.IncDec, Kind.Cast, Kind.Try, Kind.Field,
+            Kind.Deref, Kind.Addr, Kind.Case:
+            lower_clos_in(ast.NODES[n].a)
+            break
+        case Kind.Var:
+            lower_clos_in(ast.NODES[n].b)
+            break
+        case Kind.Call:
+            lower_clos_in(ast.NODES[n].a)
+            let args = ast.NODES[n].kids
+            for i in 0..args.len {
+                lower_clos_in(args[i])
+            }
+            break
+        default:
+            return
+    }
+}
+
+/** *A local per parameter of fn or closure `d`, in scope. */
+fn bind_params(d: int) {
+    let ft = ast.NODES[d].ty
+    let params = ast.NODES[d].kids
+    for k in 0..params.len {
+        let pt = if ft != types.NO_TYPE && k < types.TYPES[ft].params.len { types.TYPES[ft].params[k] } else { types.NO_TYPE }
+        let pn = params[k]
+        let id = new_local(pt, ast.INFO[pn].name, ast.INFO[pn].has_name, true)
+        scope_push(ast.INFO[pn].name, id)
+    }
+}
+
+/** *The body, a return where it runs off its end, and the exit drops. */
+fn lower_body(d: int) {
+    lower_stmt(ast.NODES[d].b)
+    if !block_closed() {
+        term_ret(NONE, ast.INFO[d].loc)
+    }
+    emit_drops_at_exits()
+    scope_pop_to(-1)
+    finish_fn()
+}
+
+fn lower_closure(d: int) {
+    let x = ast.ex(d)
+    let id = ast.EXTRA[x].clos_id
+    begin_fn(clos_cname(id), true, ast.INFO[d].name, ast.INFO[d].has_name, ir_subst(ast.NODES[d].ty))
+    FNS[CF].clos_id = id
+    FNS[CF].env_local = NONE
+    let caps = ast.EXTRA[x].caps
+    let raw_cap_types = ast.EXTRA[x].cap_types
+    FNS[CF].caps = caps
+    let mut cap_types = []int {}
+    for k in 0..caps.len {
+        push(cap_types, ir_subst(if k < raw_cap_types.len { raw_cap_types[k] } else { types.NO_TYPE }))
+    }
+    FNS[CF].cap_types = cap_types
+    CUR = new_block()
+    // `_env` first, so it is a known local even beside the module's globals.
+    let env = new_local(types.type_ptr(types.ty_void(), 1), "_env", true, true)
+    FNS[CF].env_local = env
+    bind_module_globals()
+    bind_params(d)
+    FNS[CF].nparams = 1 + ast.NODES[d].kids.len
+    let loc = ast.INFO[d].loc
+    for k in 0..caps.len {
+        let ct = ir_subst(raw_cap_types[k])
+        let cid = new_local(ct, caps[k], true, false)
+        scope_push(caps[k], cid)
+        let fp = new_place(PlaceKind.Field, 0, caps[k], 0, place_local(env, local_ty(env)), ct)
+        let ld = emit(Op.Load, loc)
+        SCRATCH[ld].dst = cid
+        SCRATCH[ld].place = fp
+        SCRATCH[ld].ty = ct
+        // Caps live in the env; the local is an alias.
+        clear_flag(cid, L_DROP)
+    }
+    lower_body(d)
+}
+
+fn lower_fn(d: int) {
+    let x = ast.ex(d)
+    let has_override = CNAME_OVERRIDE.len > 0
+    let cname = if has_override { CNAME_OVERRIDE } else { ast.EXTRA[x].sname }
+    begin_fn(cname, has_override || ast.EXTRA[x].has_sname, ast.INFO[d].name, ast.INFO[d].has_name, ir_subst(ast.NODES[d].ty))
+    FNS[CF].env_local = NONE
+    FNS[CF].is_main = CUR_MOD == 0 && !has_override && ast.INFO[d].has_name && ast.INFO[d].name == "main"
+    CUR = new_block()
+    bind_module_globals()
+    bind_params(d)
+    FNS[CF].nparams = ast.NODES[d].kids.len
+    lower_body(d)
+}
+
+/** *`__init` of module `mi`: each global's non-constant initializer. */
+fn lower_init(mi: int) {
+    let name = typecheck.MODS[mi].name
+    let cname = if mi == 0 { "loam__init" } else { "loam_{{name}}__init" }
+    begin_fn(cname, true, "__init", true, types.NO_TYPE)
+    FNS[CF].init_mod = mi
+    CUR = new_block()
+    bind_module_globals()
+    let root = typecheck.MODS[mi].root
+    let decls = ast.NODES[root].kids
+    for k in 0..decls.len {
+        let d = decls[k]
+        if ast.NODES[d].kind != Kind.Var {
+            continue
+        }
+        let init = ast.NODES[d].b
+        // Codegen writes plain data as the global's initializer.
+        if static_data(init) {
+            continue
+        }
+        let gid = scope_find(ast.INFO[d].name)
+        let v = if init != NONE { lower_expr(init) } else { NONE }
+        if v >= 0 && gid >= 0 {
+            let mv = emit(Op.Move, ast.INFO[d].loc)
+            SCRATCH[mv].dst = gid
+            SCRATCH[mv].a = v
+            SCRATCH[mv].ty = ir_subst(ast.NODES[d].ty)
+        }
+    }
+    if !block_closed() {
+        term_ret(NONE, ast.INFO[root].loc)
+    }
+    scope_pop_to(-1)
+    finish_fn()
+}
+
+fn has_var_decl(root: int) -> bool {
+    let decls = ast.NODES[root].kids
+    for k in 0..decls.len {
+        if ast.NODES[decls[k]].kind == Kind.Var {
+            return true
+        }
+    }
+    return false
+}
+
+/** *Lower every module: closures, fns, `__init`s, then generic instances */
+/** *(more may be recorded while lowering them), then the post passes. */
+fn lower_modules() {
+    let nmods = typecheck.MODS.len
+    for i in 0..nmods {
+        CUR_MOD = i
+        collect_clos(typecheck.MODS[i].root)
+    }
+    // A closure's module globals are its own module's.
+    for i in 0..CLOS_NODES.len {
+        CUR_MOD = CLOS_MODS[i]
+        lower_closure(CLOS_NODES[i])
+    }
+    for i in 0..nmods {
+        let root = typecheck.MODS[i].root
+        if root == NONE {
+            continue
+        }
+        CUR_MOD = i
+        let decls = ast.NODES[root].kids
+        for k in 0..decls.len {
+            let d = decls[k]
+            if ast.NODES[d].kind != Kind.Fn {
+                continue
+            }
+            if (ast.INFO[d].marks & ast.M_INTRINSIC) != 0 || ast.EXTRA[ast.ex(d)].strs.len > 0 {
+                continue
+            }
+            lower_fn(d)
+        }
+    }
+    for mi in 0..nmods {
+        let root = typecheck.MODS[mi].root
+        if root == NONE || !has_var_decl(root) {
+            continue
+        }
+        CUR_MOD = mi
+        lower_init(mi)
+    }
+    let mut i = 0
+    while i < typecheck.MONOS.len {
+        let f = typecheck.MONOS[i].fn_
+        if f != NONE {
+            SUBST_NAMES = ast.EXTRA[ast.ex(f)].strs
+            SUBST_ARGS = typecheck.MONOS[i].args
+            CNAME_OVERRIDE = typecheck.MONOS[i].cname
+            lower_fn(f)
+            lower_clos_in(ast.NODES[f].b)
+            SUBST_NAMES = []string {}
+            SUBST_ARGS = []int {}
+            CNAME_OVERRIDE = ""
+        }
+        i = i + 1
+    }
+    for f in 0..FNS.len {
+        borrow_read_only_loads(f)
+    }
+    for f in 0..FNS.len {
+        mark_needs_zero(f)
+    }
+}
+
+// --- borrowed loads -------------------------------------------------------------------
+
+fn place_reads_local(p: int, l: int) -> bool {
+    let mut q = p
+    while q != NONE {
+        if PLACES[q].kind == PlaceKind.Local && PLACES[q].local == l {
+            return true
+        }
+        if PLACES[q].kind == PlaceKind.Index && PLACES[q].index == l {
+            return true
+        }
+        q = PLACES[q].base
+    }
+    return false
+}
+
+fn place_root_local(p: int) -> int {
+    let mut q = p
+    while q != NONE && PLACES[q].base != NONE {
+        q = PLACES[q].base
+    }
+    if q != NONE && PLACES[q].kind == PlaceKind.Local {
+        return PLACES[q].local
+    }
+    return NONE
+}
+
+fn inst_reads_local(i: int, l: int) -> bool {
+    let x = &INSTS[i]
+    if x.a == l || x.b == l {
+        return true
+    }
+    for k in 0..x.nargs {
+        if ARGS[x.args + k] == l {
+            return true
+        }
+    }
+    return place_reads_local(x.place, l)
+}
+
+/** *Frees, writes and calls nothing, so a place it runs beside keeps its value. */
+fn inst_keeps_places(op: int) -> bool {
+    return op == Op.ConstInt || op == Op.ConstBool || op == Op.ConstStr || op == Op.ConstFloat ||
+        op == Op.Load || op == Op.Bin || op == Op.Un || op == Op.Bound || op == Op.Cast ||
+        op == Op.Sizeof || op == Op.Addr || op == Op.FnVal
+}
+
+/** *Only reads string temp `t` in place: a `==` / `!=` operand. */
+fn inst_reads_string_in_place(i: int, t: int) -> bool {
+    let x = &INSTS[i]
+    if x.dst == t || x.op != Op.Bin {
+        return false
+    }
+    if x.binop != Tok.EqEq && x.binop != Tok.BangEq {
+        return false
+    }
+    for k in 0..x.nargs {
+        if ARGS[x.args + k] == t {
+            return false
+        }
+    }
+    return !place_reads_local(x.place, t)
+}
+
+/** *A string temp loaded from a place and only compared before anything */
+/** *could release what the place holds takes no reference: its load is */
+/** *marked borrowed and its drops go (see src/ir.c for the conditions). */
+fn borrow_read_only_loads(f: int) {
+    if !FNS[f].lowered || !types.string_owns {
+        return
+    }
+    let lbase = FNS[f].locals
+    let nl = FNS[f].nlocals
+    let bbase = FNS[f].blocks
+    let nb = FNS[f].nblocks
+    for b in 0..nb {
+        let mut i = 0
+        while i < BLOCKS[bbase + b].count {
+            let first = BLOCKS[bbase + b].first
+            let count = BLOCKS[bbase + b].count
+            let ld = first + i
+            let t = INSTS[ld].dst
+            let mut ok = INSTS[ld].op == Op.Load && t >= 0 && t < nl
+            if ok {
+                let tl = &LOCALS[lbase + t]
+                ok = !tl.has_name && (tl.flags & (L_PARAM | L_GLOBAL)) == 0 && (tl.flags & L_DROP) != 0 &&
+                    tk(tl.ty) == TK.String
+            }
+            let root = if ok { place_root_local(INSTS[ld].place) } else { NONE }
+            if ok && root == t {
+                ok = false
+            }
+            // Reads and drops of `t` in this block, after the load.
+            let mut last_read = -1
+            if ok {
+                let mut j = i + 1
+                while j < count && ok {
+                    let x = first + j
+                    if !(INSTS[x].op == Op.Drop && INSTS[x].a == t) {
+                        if INSTS[x].dst == t {
+                            ok = false
+                        } else if inst_reads_local(x, t) {
+                            if inst_reads_string_in_place(x, t) {
+                                last_read = j
+                            } else {
+                                ok = false
+                            }
+                        }
+                    }
+                    j = j + 1
+                }
+            }
+            if ok && (last_read < 0 || BLOCKS[bbase + b].term_val == t) {
+                ok = false
+            }
+            if ok {
+                let mut j = i + 1
+                while j <= last_read && ok {
+                    let x = first + j
+                    if INSTS[x].op == Op.Drop && INSTS[x].a == t {
+                        ok = false
+                        break
+                    }
+                    if !inst_keeps_places(INSTS[x].op) {
+                        ok = false
+                    }
+                    if root >= 0 && INSTS[x].dst == root {
+                        ok = false
+                    }
+                    j = j + 1
+                }
+            }
+            // Elsewhere `t` may only be dropped, never read or set.
+            if ok {
+                for ob in 0..nb {
+                    if !ok {
+                        break
+                    }
+                    if BLOCKS[bbase + ob].term_val == t {
+                        ok = false
+                    }
+                    let end = if ob == b { i } else { BLOCKS[bbase + ob].count }
+                    let ofirst = BLOCKS[bbase + ob].first
+                    for j in 0..end {
+                        if !ok {
+                            break
+                        }
+                        let x = ofirst + j
+                        if INSTS[x].op == Op.Drop && INSTS[x].a == t {
+                            continue
+                        }
+                        if INSTS[x].dst == t || inst_reads_local(x, t) {
+                            ok = false
+                        }
+                    }
+                }
+            }
+            if ok {
+                INSTS[ld].bits = INSTS[ld].bits | I_BORROWED
+                LOCALS[lbase + t].flags = LOCALS[lbase + t].flags - L_DROP
+                // Its drops go: the temp holds no reference of its own.
+                for ob in 0..nb {
+                    let ofirst = BLOCKS[bbase + ob].first
+                    let ocount = BLOCKS[bbase + ob].count
+                    let mut w = 0
+                    for j in 0..ocount {
+                        let x = ofirst + j
+                        if INSTS[x].op == Op.Drop && INSTS[x].a == t {
+                            continue
+                        }
+                        if w != j {
+                            INSTS[ofirst + w] = INSTS[x]
+                        }
+                        w = w + 1
+                    }
+                    BLOCKS[bbase + ob].count = w
+                }
+                // The block may have shrunk: rescan from the load's new spot.
+                let nfirst = BLOCKS[bbase + b].first
+                for j in 0..BLOCKS[bbase + b].count {
+                    if INSTS[nfirst + j].op == Op.Load && INSTS[nfirst + j].dst == t {
+                        i = j
+                        break
+                    }
+                }
+            }
+            i = i + 1
+        }
+    }
+}
+
+// --- which owning locals need a `{0}` --------------------------------------------------
+
+/** *The builtins codegen writes the result of in place, not `dst = f(..)`. */
+fn call_sets_dst_whole(i: int) -> bool {
+    if !INSTS[i].has_text {
+        return false
+    }
+    let c = INSTS[i].text
+    if c.len >= 13 && str_prefix(c, "loam_zeus_sig") {
+        return false
+    }
+    return !(c == "loam_ch_alloc" || c == "loam_ch_pop" || c == "loam_ch_ready" || c == "loam_ch_recv" ||
+        c == "loam_ch_send" || c == "loam_ch_try_send" || c == "loam_fut_load" || c == "loam_fut_push" ||
+        c == "loam_fut_store" || c == "loam_sig_load" || c == "loam_sig_push" || c == "loam_sig_store" ||
+        c == "loam_value_key" || c == "loam_vec_pop" || c == "loam_vec_push")
+}
+
+fn str_prefix(s: string, p: string) -> bool {
+    if s.len < p.len {
+        return false
+    }
+    for k in 0..p.len {
+        if s[k] != p[k] {
+            return false
+        }
+    }
+    return true
+}
+
+/** *Sets its dst whole, without reading the old value. */
+fn inst_defines_fresh(i: int) -> bool {
+    let op = INSTS[i].op
+    if op == Op.ConstInt || op == Op.ConstBool || op == Op.ConstStr || op == Op.ConstFloat || op == Op.Load ||
+        op == Op.Bin || op == Op.Un || op == Op.Sizeof || op == Op.Move || op == Op.CallVal {
+        return true
+    }
+    if op == Op.Call {
+        return call_sets_dst_whole(i)
+    }
+    return false
+}
+
+/** *A use of `l` (anything but a fresh definition) must hold a value. */
+fn use_local(f: int, assigned: &[]int, l: int) {
+    if l < 0 || l >= FNS[f].nlocals {
+        return
+    }
+    if (assigned[l / WORD_BITS] & bit_mask(l)) == 0 {
+        let x = FNS[f].locals + l
+        LOCALS[x].flags = LOCALS[x].flags | L_NEEDS_ZERO
+    }
+}
+
+fn use_place(f: int, assigned: &[]int, p: int) {
+    let mut q = p
+    while q != NONE {
+        if PLACES[q].kind == PlaceKind.Local {
+            use_local(f, assigned, PLACES[q].local)
+        }
+        if PLACES[q].kind == PlaceKind.Index {
+            use_local(f, assigned, PLACES[q].index)
+        }
+        q = PLACES[q].base
+    }
+}
+
+/** *Walk block `b` from the assigned set `cur` (updated in place); with */
+/** *`record`, mark every local some use reaches unassigned. */
+fn assigned_through_block(f: int, b: int, cur: &mut []int, record: bool) {
+    let blk = BLOCKS[FNS[f].blocks + b]
+    let nl = FNS[f].nlocals
+    for k in 0..blk.count {
+        let i = blk.first + k
+        let x = INSTS[i]
+        let fresh = x.dst >= 0 && inst_defines_fresh(i)
+        if record {
+            use_local(f, cur, x.a)
+            use_local(f, cur, x.b)
+            for j in 0..x.nargs {
+                use_local(f, cur, ARGS[x.args + j])
+            }
+            use_place(f, cur, x.place)
+            if x.dst >= 0 && !fresh {
+                use_local(f, cur, x.dst)
+            }
+        }
+        if x.dst >= 0 && x.dst < nl {
+            cur[x.dst / WORD_BITS] = cur[x.dst / WORD_BITS] | bit_mask(x.dst)
+        }
+    }
+    if record {
+        use_local(f, cur, blk.term_val)
+    }
+}
+
+/** *Which owning locals some use can reach before every path assigned them */
+/** *(a forward "surely assigned" analysis): those codegen declares `= {0}`. */
+fn mark_needs_zero(f: int) {
+    let nb = FNS[f].nblocks
+    let nl = FNS[f].nlocals
+    let words = (nl + WORD_BITS - 1) / WORD_BITS
+    let lbase = FNS[f].locals
+    if !FNS[f].lowered || words == 0 || nb == 0 {
+        for l in 0..nl {
+            LOCALS[lbase + l].flags = LOCALS[lbase + l].flags | L_NEEDS_ZERO
+        }
+        return
+    }
+    // Top (all assigned) everywhere but the entry: the meet only shrinks it.
+    let mut in_set = []int {}
+    for w in 0..nb * words {
+        push(in_set, if w < words { 0 } else { WORD_ALL })
+    }
+    for l in 0..nl {
+        if (LOCALS[lbase + l].flags & (L_PARAM | L_GLOBAL)) != 0 {
+            in_set[l / WORD_BITS] = in_set[l / WORD_BITS] | bit_mask(l)
+        }
+    }
+    let mut cur = []int {}
+    for w in 0..words {
+        push(cur, 0)
+    }
+    let mut work = []int { 0 }
+    let mut queued = []bool {}
+    let mut reached = []bool {}
+    for b in 0..nb {
+        push(queued, b == 0)
+        push(reached, b == 0)
+    }
+    while work.len > 0 {
+        let b = work[work.len - 1]
+        pop(work)
+        queued[b] = false
+        for w in 0..words {
+            cur[w] = in_set[b * words + w]
+        }
+        assigned_through_block(f, b, &mut cur, false)
+        let succ = successors(FNS[f].blocks, b)
+        for k in 0..succ.len {
+            let s = succ[k]
+            if s < 0 || s >= nb {
+                continue
+            }
+            let mut shrank = !reached[s]
+            reached[s] = true
+            for w in 0..words {
+                let met = in_set[s * words + w] & cur[w]
+                if met != in_set[s * words + w] {
+                    in_set[s * words + w] = met
+                    shrank = true
+                }
+            }
+            if shrank && !queued[s] {
+                queued[s] = true
+                push(work, s)
+            }
+        }
+    }
+    for b in 0..nb {
+        if !reached[b] {
+            continue
+        }
+        for w in 0..words {
+            cur[w] = in_set[b * words + w]
+        }
+        assigned_through_block(f, b, &mut cur, true)
+    }
+}
+
+// --- verification -------------------------------------------------------------------------
+
+/** *Operand checks on fully lowered fns; each problem is reported on */
+/** *stderr. Returns whether any was found. */
+fn verify() -> bool {
+    let mut bad = false
+    for f in 0..FNS.len {
+        let fx = &FNS[f]
+        if !fx.lowered {
+            continue
+        }
+        let cn = fx.cname
+        for b in 0..fx.nblocks {
+            let blk = BLOCKS[fx.blocks + b]
+            if blk.term == Term.Unreachable {
+                fmt.eprintln("ir: {{cn}} bb{{b}} has no terminator")
+                bad = true
+            }
+            let succ = []int { blk.succ0, blk.succ1 }
+            for s in 0..2 {
+                if succ[s] >= 0 && succ[s] >= fx.nblocks {
+                    fmt.eprintln("ir: {{cn}} bb{{b}} successor {{succ[s]}} out of range")
+                    bad = true
+                }
+            }
+            for c in 0..blk.sw_n {
+                let target = SW_BLOCKS[blk.sw + c]
+                if target < 0 || target >= fx.nblocks {
+                    fmt.eprintln("ir: {{cn}} bb{{b}} switch target {{target}} out of range")
+                    bad = true
+                }
+            }
+            for k in 0..blk.count {
+                let x = &INSTS[blk.first + k]
+                if x.dst >= fx.nlocals || x.a >= fx.nlocals || x.b >= fx.nlocals {
+                    fmt.eprintln("ir: {{cn}} bb{{b}} inst {{k}} references unknown local")
+                    bad = true
+                }
+                for j in 0..x.nargs {
+                    let a = ARGS[x.args + j]
+                    if a >= fx.nlocals || (a < 0 && !(x.op == Op.StructLit && x.dflt != NONE)) {
+                        fmt.eprintln("ir: {{cn}} bb{{b}} inst {{k}} bad arg {{j}}")
+                        bad = true
+                    }
+                }
+            }
+        }
+    }
+    return bad
+}
