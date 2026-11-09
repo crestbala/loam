@@ -100,7 +100,10 @@ parser in Loam, arena AST, diffed via `--dump-ast`; §4 step 4) are done; the
 `selfhost` workflow ran green on Linux x86_64/aarch64 and Windows x86_64.
 Phase 6 (typecheck in Loam) is done and diffed against `typecheck.c`;
 phase 7 (borrowck, threadcheck, boundscheck) is done and diffed through
-`--dump-checked`. Next: IR and codegen (see the compiler-port checklist).
+`--dump-checked`. Phase 8 (IR lowering) and phase 9 (dead-code elimination
+and the C emitter) are done: from a module list, the Loam compiler now writes
+the same C translation unit as `loamc`, byte for byte. Next: the driver
+(module loading, package resolution, `cc`), then the fixed point.
 
 ---
 
@@ -649,7 +652,7 @@ beyond what the checklist requires.
           large `realloc` frees the old block as it moves, and pages past
           `len` are never touched, so reserving up front could not help. The
           arenas end over 99% full.
-- [ ] IR and codegen ported
+- [x] IR and codegen ported
       - IR lowering (phase 8). 8a done: `loamc --dump-ir` checks as
         `--dump-checked` does, lowers to IR (no DCE, as `--emit-ir`), and
         prints everything codegen reads from the IR (`ir_dump` in `ir.c`):
@@ -722,6 +725,38 @@ beyond what the checklist requires.
         scans an array on every insert: 2–3 ms against 9 ms on a Zeus entry.
         Two cleanups in `dce.c`: `has_closure` was dead (it only called
         itself), and a host root was listed twice.
+      - 9b done: `compiler/codegen.loam` ports `codegen_c.c` whole: the
+        runtime paste and headers, struct typedefs and definitions in
+        dependency order, element hooks and ownership helpers, globals and
+        their constant initializers, prototypes, closure envs (per instance
+        for closures in generic fns), `#[c]` bindings, fn-value trampolines,
+        every IR instruction and terminator, `#line` directives, `__init`
+        order, and the literal default templates. `loamc --dump-c` writes
+        the C a default build emits (no test runner, server split, shards or
+        batch table; the same bytes as `--emit-c`) to stdout, and `tcdump
+        --c` writes the Loam compiler's. The strict `selfhost_codegen` stanza
+        diffs them on all 521 loadable entries (same gate, worker and cache
+        as the others). They also match on the 109 other loadable programs
+        with a `main` in `examples/` and `packages/` (Zeus apps, `nob`, `zeli`,
+        the Loam compiler itself).
+      - One addition to std: `conv.f64_to_g17`, C's `%.17g`, the spelling of
+        a float constant in generated C. `f64_to_str` is the shortest
+        round-trip text, which is not the same bytes.
+      - The port surfaced a bug in the Loam typecheck: a negative float
+        literal was folded as `0.0 - x`, which is `+0.0` for `-0.0` (and for
+        `-0` where a float is expected). C negates, as it should. No gate
+        entry had one; a Zeus app's math tests did
+        (`compile_pass/neg_zero_float.loam`).
+      - 9c, speed and memory: the emitter already beats `codegen_c.c` alone,
+        timed between the end of IR lowering and the last byte written
+        (median of 5): 32 ms vs 50 ms on `zeus_show`, 74 ms vs 113 ms on the
+        dracula app (5.3 MB of C). DCE plus lowering: 45 vs 65 ms and 81 vs
+        109 ms. Peak memory of the whole run is below C's (~110 MB vs 120 MB,
+        ~140 MB vs 163 MB). What keeps it there: a type's C spelling and
+        `needs_drop` are memoized per type id; inside a generic instance only
+        a type naming a parameter is substituted (`subst_type` allocates a
+        new type per call); each local's spelling is made once per fn; the
+        text streams out in 64 KB pieces.
 - [ ] Driver (module loading, package resolution, `cc` invocation) in Loam
 - [ ] Compiler itself uses only safe Loam (arenas + integer indices; §2.7)
 

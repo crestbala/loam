@@ -1,8 +1,9 @@
 #!/bin/sh
 # One entry file of nob's `selfhost_typecheck` / `selfhost_check` /
-# `selfhost_ir` / `selfhost_dce` gates: the Loam compiler's dump (tcdump, run
-# with $EXE_FLAGS) against `loamc $DUMP_FLAG` (`--dump-typed`,
-# `--dump-checked`, `--dump-ir` or `--dump-dce`). Prints one verdict line, then the path:
+# `selfhost_ir` / `selfhost_dce` / `selfhost_codegen` gates: the Loam
+# compiler's dump (tcdump, run with $EXE_FLAGS) against `loamc $DUMP_FLAG`
+# (`--dump-typed`, `--dump-checked`, `--dump-ir`, `--dump-dce` or
+# `--dump-c`). Prints one verdict line, then the path:
 #   match  the dumps are byte-identical
 #   load   C cannot load the file (parse errors: selfhost_parse covers those)
 #   hang   tcdump ran past 60 s (a watchdog subshell kills it; plain sh, so no

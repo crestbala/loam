@@ -1,0 +1,16 @@
+// A negative float literal is folded as negation, not as `0 - x`: the two
+// differ at zero, so `-0.0` must stay negative zero (its reciprocal is
+// `-inf`). The self-hosted typecheck folded it to `+0.0`.
+
+import "std:conv"
+import "std:fmt"
+
+fn main() {
+    let a: f64 = -0.0
+    let b: f64 = -0
+    let one: f64 = 1.0
+    fmt.println(conv.f64_to_str(a))
+    fmt.println(conv.f64_to_str(b))
+    fmt.println(one / a < 0.0)
+    fmt.println(one / b < 0.0)
+}

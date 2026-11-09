@@ -197,6 +197,10 @@ fn parse_int(s: string) -> Result<int> {
 /** *The shortest decimal text that reads back as exactly `x` (`%.17g` at most). */
 fn f64_to_str(x: f64) -> string {}
 
+/** *`x` printed as C's `%.17g`: 17 significant digits, so `0.1` is */
+/** *`0.10000000000000001`. What generated C writes for a float constant. */
+fn f64_to_g17(x: f64) -> string {}
+
 /** *`strtod` over text already checked by `parse_f64`. */
 fn strtod(s: string) -> f64 {}
 

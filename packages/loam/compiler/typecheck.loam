@@ -3878,7 +3878,7 @@ fn check_unary(n: int, expect: int) -> int {
             }
             if tk(expect) == TK.Float {
                 ast.NODES[n].kind = Kind.Float
-                ast.EXTRA[ast.ex_mut(n)].fnum = 0.0 - f64(o.num)
+                ast.EXTRA[ast.ex_mut(n)].fnum = -f64(o.num)
             } else {
                 if !int_lit_fits(v, expect) {
                     err(x.loc, "literal {{v}} does not fit {{types.type_name(expect)}}")
@@ -3892,7 +3892,7 @@ fn check_unary(n: int, expect: int) -> int {
         }
         if o.kind == Kind.Float && tk(expect) == TK.Float {
             ast.NODES[n].kind = Kind.Float
-            ast.EXTRA[ast.ex_mut(n)].fnum = 0.0 - o.fnum
+            ast.EXTRA[ast.ex_mut(n)].fnum = -o.fnum
             ast.NODES[n].ty = expect
             ast.INFO[n].place_mut = 0
             return expect
