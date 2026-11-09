@@ -150,6 +150,9 @@ typedef struct {
 
 IrModule *ir_lower(LoamModule *mods, int nmods);
 void ir_print(FILE *out, const IrModule *m);
+/** `loamc --dump-ir` (to stdout): `ir_print` plus every field codegen reads —
+ *  types, lines, flags, closure and global metadata. */
+void ir_dump(const IrModule *m);
 int ir_verify(const IrModule *m);
 /** 1 if `e` (a typechecked expression) is a C constant initializer: a number,
  *  bool, string literal, named fn value, empty-vec call, or a struct literal
