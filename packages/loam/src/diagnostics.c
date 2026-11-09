@@ -29,6 +29,12 @@ void loam_diag_clear(void) {
 
 int loam_diag_count(void) { return ncap; }
 
+/* Every error reported, printed or captured: a pass counts its own errors
+   with this, so the count holds outside capture mode too (--dump-checked). */
+static int nerrors_reported;
+
+int loam_error_count(void) { return nerrors_reported; }
+
 void loam_diag_take(LoamDiag **out, int *n) {
     *out = cap;
     *n = ncap;
@@ -68,6 +74,7 @@ void loam_error(SourceLoc loc, const char *fmt, ...) {
     va_start(ap, fmt);
     vsnprintf(buf, sizeof buf, fmt, ap);
     va_end(ap);
+    nerrors_reported++;
     if (capturing) {
         capture_one(loc, buf);
     } else {

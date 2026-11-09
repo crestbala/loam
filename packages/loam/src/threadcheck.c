@@ -534,7 +534,7 @@ static void scan_walk(AstNode *n, ThreadCheck *tc) {
  *  typecheck/IR covering everything). Returns the number of errors. */
 int threadcheck_modules(LoamModule *mods, int nmods) {
     ThreadCheck tc;
-    int errs_before = loam_diag_count();
+    int errs_before = loam_error_count();
     int have_thread = 0;
     tc.nglobals = 0;
     tc.globals = NULL;
@@ -579,5 +579,5 @@ int threadcheck_modules(LoamModule *mods, int nmods) {
     }
     free(tc.globals);
     free(tc.walked.items);
-    return loam_diag_count() - errs_before;
+    return loam_error_count() - errs_before;
 }
