@@ -276,12 +276,7 @@ fn worker_walk(n: int) {
         case Kind.Deref, Kind.Addr:
             worker_walk(ast.NODES[n].a)
             break
-        case Kind.StructLit:
-            for i in 0..ast.NODES[n].kids.len {
-                worker_walk(ast.NODES[ast.NODES[n].kids[i]].a)
-            }
-            break
-        case Kind.ArrayLit, Kind.Tuple:
+        case Kind.StructLit, Kind.ArrayLit, Kind.Tuple:
             worker_walk_list(n)
             break
         default:
@@ -376,12 +371,7 @@ fn scan_walk(n: int) {
         case Kind.Var:
             scan_walk(ast.NODES[n].b)
             break
-        case Kind.StructLit:
-            for i in 0..ast.NODES[n].kids.len {
-                scan_walk(ast.NODES[ast.NODES[n].kids[i]].a)
-            }
-            break
-        case Kind.ArrayLit, Kind.Tuple:
+        case Kind.StructLit, Kind.ArrayLit, Kind.Tuple:
             scan_walk_list(n)
             break
         default:

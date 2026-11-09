@@ -254,14 +254,6 @@ fn type_node(p: &mut Parser, tag: int, elem: int, alen: i64, loc: Loc) -> int {
     return add(p, n)
 }
 
-fn init_node(p: &mut Parser, name: string, value: int) -> int {
-    let mut n = ast.node(Kind.Init, tloc(p, p.prev))
-    n.name = name
-    n.has_name = true
-    n.a = value
-    return add(p, n)
-}
-
 fn set_doc(p: &mut Parser, i: int, d: Doc) {
     ast.EXTRA[ast.ex_mut(i)].doc = d.text
     ast.EXTRA[ast.ex_mut(i)].has_doc = d.has
@@ -946,9 +938,10 @@ fn ident_targs_then_brace(p: &Parser) -> bool {
     return false
 }
 
-/** *`name: value, ...` up to the `}` of a struct literal. */
-fn struct_lit_fields(p: &mut Parser) -> []int {
-    let mut fs = []int {}
+/** *`name: value, ...` up to the `}` of a struct literal: the values, and */
+/** *their names pushed onto `names`. */
+fn struct_lit_fields(p: &mut Parser, names: &mut []string) -> []int {
+    let mut values = []int {}
     while !check(p, Tok.Rbrace) && !check(p, Tok.Eof) {
         if !eat(p, Tok.Ident) {
             error(p, "expected field name")
@@ -957,21 +950,22 @@ fn struct_lit_fields(p: &mut Parser) -> []int {
         let fname = tok_text(p, p.prev)
         consume(p, Tok.Colon, "expected : in struct literal")
         let v = parse_expr(p)
-        let f = init_node(p, fname, v)
-        push(fs, f)
+        push(names, fname)
+        push(values, v)
         if !eat(p, Tok.Comma) {
             break
         }
     }
     consume(p, Tok.Rbrace, "expected }")
-    return fs
+    return values
 }
 
-fn struct_lit_node(p: &mut Parser, name: string, fields: []int, targs: []int, loc: Loc) -> int {
+fn struct_lit_node(p: &mut Parser, name: string, values: []int, names: []string, targs: []int, loc: Loc) -> int {
     let mut n = ast.node(Kind.StructLit, loc)
     n.name = name
     n.has_name = true
-    n.kids = fields
+    n.kids = values
+    n.c = ast.new_lit_names(names)
     n.kids2 = targs
     return add(p, n)
 }
@@ -994,12 +988,14 @@ fn parse_primary(p: &mut Parser) -> int {
             }
             consume_gt(p)
             eat(p, Tok.Lbrace)
-            let fs = struct_lit_fields(p)
-            return struct_lit_node(p, nm, fs, targs, loc)
+            let mut names = []string {}
+            let values = struct_lit_fields(p, &mut names)
+            return struct_lit_node(p, nm, values, names, targs, loc)
         }
         if p.allow_struct_lit && eat(p, Tok.Lbrace) {
-            let fs = struct_lit_fields(p)
-            return struct_lit_node(p, nm, fs, []int {}, loc)
+            let mut names = []string {}
+            let values = struct_lit_fields(p, &mut names)
+            return struct_lit_node(p, nm, values, names, []int {}, loc)
         }
         return ident_node(p, nm, loc)
     }
@@ -1130,6 +1126,7 @@ fn parse_postfix(p: &mut Parser, first: int) -> int {
         if same_line(p) && eat(p, Tok.Lparen) {
             let mut args = []int {}
             let mut props = []int {}
+            let mut prop_names = []string {}
             if !check(p, Tok.Rparen) {
                 while true {
                     if check(p, Tok.Ident) && p.peek.kind == Tok.Eq {
@@ -1137,8 +1134,8 @@ fn parse_postfix(p: &mut Parser, first: int) -> int {
                         bump(p)
                         bump(p)
                         let v = parse_expr(p)
-                        let f = init_node(p, pname, v)
-                        push(props, f)
+                        push(prop_names, pname)
+                        push(props, v)
                     } else {
                         if props.len > 0 {
                             error(p, "positional argument after a named one")
@@ -1162,6 +1159,7 @@ fn parse_postfix(p: &mut Parser, first: int) -> int {
             if props.len > 0 {
                 let mut lit = ast.node(Kind.StructLit, loc)
                 lit.kids = props
+                lit.c = ast.new_lit_names(prop_names)
                 let li = add(p, lit)
                 push(args, li)
             }

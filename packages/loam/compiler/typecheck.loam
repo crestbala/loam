@@ -1811,20 +1811,14 @@ fn new_call(callee: int, args: []int, loc: Loc) -> int {
     return add(n)
 }
 
-fn new_init(name: string, value: int, loc: Loc) -> int {
-    let mut n = mk(Kind.Init, loc)
-    n.name = name
-    n.has_name = true
-    n.a = value
-    return add(n)
-}
-
-/** *A struct literal; an empty `tn` is C's NULL type name. */
-fn new_struct_lit(tn: string, inits: []int, loc: Loc) -> int {
+/** *A struct literal, field `names[k]` set to `values[k]`; an empty `tn` is */
+/** *C's NULL type name. */
+fn new_struct_lit(tn: string, names: []string, values: []int, loc: Loc) -> int {
     let mut n = mk(Kind.StructLit, loc)
     n.name = tn
     n.has_name = tn.len > 0
-    n.kids = inits
+    n.kids = values
+    n.c = ast.new_lit_names(names)
     return add(n)
 }
 
@@ -1952,12 +1946,11 @@ fn clone_const(e: int) -> int {
             }
             return new_call(clone_const(x.a), args, x.loc)
         case Kind.StructLit:
-            let mut fs = []int {}
+            let mut values = []int {}
             for i in 0..x.kids.len {
-                let f = ast.full(x.kids[i])
-                push(fs, new_init(f.name, clone_const(f.a), f.loc))
+                push(values, clone_const(x.kids[i]))
             }
-            let c = new_struct_lit("", fs, x.loc)
+            let c = new_struct_lit("", ast.lit_names(e), values, x.loc)
             ast.INFO[c].name = x.name
             ast.INFO[c].has_name = x.has_name
             return c
@@ -2112,24 +2105,20 @@ fn is_bare_none(arg: int) -> bool {
 
 fn make_none(arg: int) -> int {
     let loc = ast.INFO[arg].loc
-    let lit = new_struct_lit("Option", []int { new_init("tag", new_number(i64(1), loc), loc) }, loc)
+    let lit = new_struct_lit("Option", []string { "tag" }, []int { new_number(i64(1), loc) }, loc)
     ast.INFO[lit].marks = ast.INFO[lit].marks | ast.M_ZERO_REST
     return lit
 }
 
 /** *A Zeus state style is paint-only: keys outside the paint set are errors. */
-fn check_state_style(fi: int) {
-    if fi == NONE {
+fn check_state_style(field: string, value: int) {
+    if value == NONE {
         return
     }
-    let f = ast.full(fi)
-    if f.a == NONE {
+    if field != "hoverStyle" && field != "pressStyle" && field != "focusStyle" && field != "disabledStyle" {
         return
     }
-    if f.name != "hoverStyle" && f.name != "pressStyle" && f.name != "focusStyle" && f.name != "disabledStyle" {
-        return
-    }
-    let v = ast.full(f.a)
+    let v = ast.full(value)
     if v.kind != Kind.Call || v.a == NONE {
         return
     }
@@ -2144,20 +2133,18 @@ fn check_state_style(fi: int) {
     }
     let ks = ast.NODES[lit].kids
     for k in 0..ks.len {
-        let key = ast.INFO[ks[k]].name
+        let key = ast.init_name(lit, k)
         let ok = key == "background" || key == "color" || key == "opacity" || key == "borderWidth" ||
             key == "borderColor" || key == "elevation"
         if !ok {
-            err(ast.INFO[ast.NODES[ks[k]].a].loc, "'{{key}}' in {{f.name}}: a state style takes paint keys only (background, color, opacity, borderWidth, borderColor, elevation), so hover and press never reflow")
+            err(ast.INFO[ks[k]].loc, "'{{key}}' in {{field}}: a state style takes paint keys only (background, color, opacity, borderWidth, borderColor, elevation), so hover and press never reflow")
         }
     }
 }
 
 fn make_some(arg: int) -> int {
     let loc = ast.INFO[arg].loc
-    let tag = new_init("tag", new_number(i64(0), loc), loc)
-    let val = new_init("val", arg, loc)
-    return new_struct_lit("Option", []int { tag, val }, loc)
+    return new_struct_lit("Option", []string { "tag", "val" }, []int { new_number(i64(0), loc), arg }, loc)
 }
 
 fn is_signal_ty(t: int) -> bool {
@@ -2397,17 +2384,16 @@ fn fold_children_block(n: int) -> bool {
                 return false
             }
         }
-        lit = new_struct_lit("", []int {}, ast.INFO[inner].loc)
+        lit = new_struct_lit("", []string {}, []int {}, ast.INFO[inner].loc)
         push(ast.NODES[inner].kids, lit)
     }
-    let fs = ast.NODES[lit].kids
-    for i in 0..fs.len {
-        if ast.INFO[fs[i]].name == "children" {
+    for i in 0..ast.NODES[lit].kids.len {
+        if ast.init_name(lit, i) == "children" {
             err(ast.INFO[blk].loc, "children given twice: as `children =` and as a trailing block")
             return false
         }
     }
-    push(ast.NODES[lit].kids, new_init("children", blk, ast.INFO[blk].loc))
+    ast.append_inits(lit, []string { "children" }, []int { blk })
     ast.NODES[n].a = ast.NODES[inner].a
     ast.NODES[n].kids = ast.NODES[inner].kids
     return true
@@ -2441,7 +2427,7 @@ fn add_empty_props(n: int, pc: int, last: int) {
         }
         i = i + 1
     }
-    push(ast.NODES[n].kids, new_struct_lit("", []int {}, ast.INFO[n].loc))
+    push(ast.NODES[n].kids, new_struct_lit("", []string {}, []int {}, ast.INFO[n].loc))
 }
 
 // --- calls ------------------------------------------------------------------------------
@@ -2487,16 +2473,18 @@ fn finish_proc_call(n: int, ft: int, named: int) -> int {
                 let st = find_struct(types.TYPES[last].name)
                 if st != NONE && extra <= ast.NODES[st].kids.len {
                     let args = ast.NODES[n].kids
-                    let mut nf = []int {}
+                    let mut values = []int {}
+                    let mut names = []string {}
                     for i in 0..extra {
-                        let fname = ast.INFO[ast.NODES[st].kids[i]].name
-                        push(nf, new_init(fname, args[i], ast.INFO[args[i]].loc))
+                        push(names, ast.INFO[ast.NODES[st].kids[i]].name)
+                        push(values, args[i])
                     }
-                    let old = ast.NODES[lit].kids
-                    for i in 0..old.len {
-                        push(nf, old[i])
+                    let old_values = ast.NODES[lit].kids
+                    for i in 0..old_values.len {
+                        push(names, ast.init_name(lit, i))
+                        push(values, old_values[i])
                     }
-                    ast.NODES[lit].kids = nf
+                    ast.set_inits(lit, names, values)
                     ast.INFO[lit].name = types.TYPES[last].name
                     ast.INFO[lit].has_name = true
                     let mut na = []int {}
@@ -2509,7 +2497,7 @@ fn finish_proc_call(n: int, ft: int, named: int) -> int {
                     ast.NODES[n].kids = na
                 }
             } else if ac + 1 == pc && struct_all_defaulted(find_struct(types.TYPES[last].name)) {
-                push(ast.NODES[n].kids, new_struct_lit(types.TYPES[last].name, []int {}, nloc))
+                push(ast.NODES[n].kids, new_struct_lit(types.TYPES[last].name, []string {}, []int {}, nloc))
             }
         }
     }
@@ -2938,9 +2926,11 @@ fn as_struct_ctor(n: int) -> bool {
         return false
     }
     let args = ast.NODES[n].kids
-    let mut fi = []int {}
+    let mut values = []int {}
+    let mut names = []string {}
     if args.len == 1 && is_props_lit(args[0]) {
-        fi = ast.NODES[args[0]].kids
+        values = ast.NODES[args[0]].kids
+        names = ast.lit_names(args[0])
     } else if args.len != 0 {
         err(ast.INFO[n].loc, "'{{sname}}' is a struct — construct it with named fields")
         return false
@@ -2948,7 +2938,7 @@ fn as_struct_ctor(n: int) -> bool {
     ast.NODES[n].kind = Kind.StructLit
     ast.INFO[n].name = sname
     ast.INFO[n].has_name = true
-    ast.NODES[n].kids = fi
+    ast.set_inits(n, names, values)
     ast.EXTRA[ast.ex_mut(n)].kids2 = []int {}
     ast.NODES[n].a = NONE
     return true
@@ -4067,10 +4057,10 @@ fn check_struct_lit(n: int, expect: int) -> int {
     for f in 0..fnames.len {
         push(seen, false)
     }
-    let inits = ast.NODES[n].kids
-    for i in 0..inits.len {
-        let fi = inits[i]
-        let fname = ast.INFO[fi].name
+    // The values are read in place: `check_arg_ty` may rewrite each one.
+    let given = ast.NODES[n].kids.len
+    for i in 0..given {
+        let fname = ast.init_name(n, i)
         let mut found = -1
         for f in 0..fnames.len {
             if fnames[f] == fname {
@@ -4079,11 +4069,11 @@ fn check_struct_lit(n: int, expect: int) -> int {
             }
         }
         if found < 0 {
-            err(ast.INFO[ast.NODES[fi].a].loc, "unknown field '{{fname}}'")
+            err(ast.INFO[ast.NODES[n].kids[i]].loc, "unknown field '{{fname}}'")
             continue
         }
         seen[found] = true
-        check_state_style(fi)
+        check_state_style(fname, ast.NODES[n].kids[i])
         let ftype = types.TYPES[tmpl].field_types[found]
         let mut want = if nt > 0 { NO_TYPE } else { ftype }
         if nt > 0 {
@@ -4097,8 +4087,8 @@ fn check_struct_lit(n: int, expect: int) -> int {
                 want = subst_type(ftype, tps, bound)
             }
         }
-        let r = check_arg_ty(ast.NODES[fi].a, want)
-        ast.NODES[fi].a = r.node
+        let r = check_arg_ty(ast.NODES[n].kids[i], want)
+        ast.NODES[n].kids[i] = r.node
         let it = r.ty
         if nt > 0 {
             if !unify(ftype, it, tps, &mut bound) {
@@ -4109,6 +4099,9 @@ fn check_struct_lit(n: int, expect: int) -> int {
         }
     }
     let sfields = ast.NODES[st].kids
+    // Fields left out take their defaults, appended together at the end.
+    let mut default_names = []string {}
+    let mut default_values = []int {}
     for f in 0..fnames.len {
         if seen[f] {
             continue
@@ -4139,7 +4132,11 @@ fn check_struct_lit(n: int, expect: int) -> int {
             err(nloc, "default for '{{fname}}' has type {{types.type_name(r.ty)}}, expected {{types.type_name(ftype)}}")
         }
         ast.NODES[r.node].flags = ast.NODES[r.node].flags | ASTF_DEFAULT
-        push(ast.NODES[n].kids, new_init(fname, r.node, nloc))
+        push(default_names, fname)
+        push(default_values, r.node)
+    }
+    if default_names.len > 0 {
+        ast.append_inits(n, default_names, default_values)
     }
     if nt > 0 {
         for i in 0..nt {
@@ -4835,7 +4832,8 @@ fn proto_encode_body(t: int, loc: Loc) -> int {
 }
 
 fn proto_zero_lit(st: int, t: int, loc: Loc) -> int {
-    let mut fi = []int {}
+    let mut names = []string {}
+    let mut values = []int {}
     if t != NO_TYPE {
         let fns = types.TYPES[t].field_names
         for f in 0..fns.len {
@@ -4849,10 +4847,11 @@ fn proto_zero_lit(st: int, t: int, loc: Loc) -> int {
             } else {
                 init = new_number(i64(0), loc)
             }
-            push(fi, new_init(fns[f], init, loc))
+            push(names, fns[f])
+            push(values, init)
         }
     }
-    return new_struct_lit(ast.INFO[st].name, fi, loc)
+    return new_struct_lit(ast.INFO[st].name, names, values, loc)
 }
 
 fn set_more(v: int, loc: Loc) -> int {
@@ -5199,7 +5198,7 @@ fn walk_instantiate(n: int, names: []string, args: []int) {
             break
         case Kind.StructLit:
             for i in 0..x.kids.len {
-                walk_instantiate(ast.NODES[x.kids[i]].a, names, args)
+                walk_instantiate(x.kids[i], names, args)
             }
             break
         default:

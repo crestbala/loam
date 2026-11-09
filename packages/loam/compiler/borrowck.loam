@@ -376,14 +376,7 @@ fn expr_uses(n: int, name: string) -> bool {
                 }
             }
             return false
-        case Kind.StructLit:
-            for i in 0..ast.NODES[n].kids.len {
-                if expr_uses(ast.NODES[ast.NODES[n].kids[i]].a, name) {
-                    return true
-                }
-            }
-            return false
-        case Kind.ArrayLit, Kind.Tuple:
+        case Kind.StructLit, Kind.ArrayLit, Kind.Tuple:
             for i in 0..ast.NODES[n].kids.len {
                 if expr_uses(ast.NODES[n].kids[i], name) {
                     return true
@@ -901,12 +894,7 @@ fn collect_writes(n: int, index: int) {
             }
             collect_writes_list(n, index)
             break
-        case Kind.StructLit:
-            for i in 0..ast.NODES[n].kids.len {
-                collect_writes(ast.NODES[ast.NODES[n].kids[i]].a, index)
-            }
-            break
-        case Kind.ArrayLit, Kind.Tuple:
+        case Kind.StructLit, Kind.ArrayLit, Kind.Tuple:
             collect_writes_list(n, index)
             break
         default:
@@ -1656,7 +1644,7 @@ fn check_expr(n: int, as_move: bool) -> bool {
             return check_call(n)
         case Kind.StructLit:
             for i in 0..ast.NODES[n].kids.len {
-                let init = ast.NODES[ast.NODES[n].kids[i]].a
+                let init = ast.NODES[n].kids[i]
                 let consumes = init != ast.NONE && not_copy(ast.NODES[init].ty)
                 if check_expr(init, consumes) {
                     return true

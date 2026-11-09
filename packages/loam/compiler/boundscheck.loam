@@ -173,12 +173,7 @@ fn walk(n: int) {
         case Kind.Field, Kind.Deref, Kind.Addr:
             walk(ast.NODES[n].a)
             break
-        case Kind.StructLit:
-            for i in 0..ast.NODES[n].kids.len {
-                walk(ast.NODES[ast.NODES[n].kids[i]].a)
-            }
-            break
-        case Kind.ArrayLit, Kind.Tuple:
+        case Kind.StructLit, Kind.ArrayLit, Kind.Tuple:
             walk_list(n)
             break
         default:
