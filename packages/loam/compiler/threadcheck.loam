@@ -31,9 +31,9 @@ let WORKER_SEAM_OK: []string = []string {
 const NOT_STATICALLY_VISIBLE: string = "spawned fn calls a fn value whose code is not statically visible (pass a fn name or call the closure directly)"
 
 /** *Program-level `let` nodes: the state a worker must not touch. */
-let mut MODULE_GLOBALS: IntMap<int> = intmap.imap_new(0)
+let mut MODULE_GLOBALS: IntMap<int> = intmap.new(0)
 /** *Fn decls whose bodies were already checked in worker mode. */
-let mut WALKED: IntMap<int> = intmap.imap_new(0)
+let mut WALKED: IntMap<int> = intmap.new(0)
 /** *The spawn site errors are attributed to: file path and line. */
 let mut SPAWN_FILE: string = ""
 let mut HAS_SPAWN: bool = false
@@ -70,7 +70,7 @@ fn in_worker_seam_ok(cname: string) -> bool {
 }
 
 fn is_module_global(decl: int) -> bool {
-    return decl != ast.NONE && intmap.imap_get(&mut MODULE_GLOBALS, decl) != 0
+    return decl != ast.NONE && intmap.get(&mut MODULE_GLOBALS, decl) != 0
 }
 
 /** *A bodyless fn of the std seam: its body is C. */
@@ -112,8 +112,8 @@ fn walk_args(call: int) {
 
 /** *Check a fn decl's body in worker mode, once. */
 fn walk_fn_once(fn_decl: int) {
-    if intmap.imap_get(&mut WALKED, fn_decl) == 0 {
-        intmap.imap_put(&mut WALKED, fn_decl, 1)
+    if intmap.get(&mut WALKED, fn_decl) == 0 {
+        intmap.put(&mut WALKED, fn_decl, 1)
         worker_walk(ast.NODES[fn_decl].b)
     }
 }
@@ -400,15 +400,15 @@ fn threadcheck_modules(module_names: []string, roots: []int) -> int {
     if !have_thread {
         return 0
     }
-    MODULE_GLOBALS = intmap.imap_new(0)
-    WALKED = intmap.imap_new(0)
+    MODULE_GLOBALS = intmap.new(0)
+    WALKED = intmap.new(0)
     HAS_SPAWN = false
     for m in 0..roots.len {
         let root = roots[m]
         for i in 0..ast.NODES[root].kids.len {
             let decl = ast.NODES[root].kids[i]
             if ast.NODES[decl].kind == Kind.Var {
-                intmap.imap_put(&mut MODULE_GLOBALS, decl, 1)
+                intmap.put(&mut MODULE_GLOBALS, decl, 1)
             }
         }
     }

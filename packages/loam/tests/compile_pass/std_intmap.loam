@@ -4,23 +4,23 @@ import "std:intmap"
 import "std:map"
 
 fn main() {
-    let mut m = intmap.imap_new(0 - 1)
-    for i in 0..1000 { intmap.imap_put(&mut m, i * 7 - 300, i) }
+    let mut m = intmap.new(0 - 1)
+    for i in 0..1000 { intmap.put(&mut m, i * 7 - 300, i) }
     fmt.println(
         m.len,
-        intmap.imap_get(&mut m, 7 * 500 - 300),
-        intmap.imap_get(&mut m, 1),
-        intmap.imap_has(&mut m, -300),
+        intmap.get(&mut m, 7 * 500 - 300),
+        intmap.get(&mut m, 1),
+        intmap.has(&mut m, -300),
     )
-    for i in 0..500 { intmap.imap_remove(&mut m, i * 7 - 300) }
-    fmt.println(m.len, intmap.imap_get(&mut m, -300), intmap.imap_get(&mut m, 999 * 7 - 300))
+    for i in 0..500 { intmap.remove(&mut m, i * 7 - 300) }
+    fmt.println(m.len, intmap.get(&mut m, -300), intmap.get(&mut m, 999 * 7 - 300))
 
-    let mut lists = intmap.imap_new([]int {})
-    intmap.imap_put(&mut lists, 4, []int {})
-    let s = intmap.imap_find(&mut lists, 4)
+    let mut lists = intmap.new([]int {})
+    intmap.put(&mut lists, 4, []int {})
+    let s = intmap.find(&mut lists, 4)
     push(lists.entries[s].value, 10)
     push(lists.entries[s].value, 20)
-    fmt.println(intmap.imap_get(&mut lists, 4).len)
+    fmt.println(intmap.get(&mut lists, 4).len)
 
     let mut sm = map.map_new([]int {})
     map.map_put(&mut sm, "a", []int { 1, 2 })

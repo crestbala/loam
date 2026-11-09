@@ -81,13 +81,13 @@ fn decls_of(prog: int) -> []int {
 
 // imports_of per program node, and the kid count it was built at: name lookup
 // asks on every bare identifier, so the scan runs only when the tree grew.
-let mut IMPORTS_BY_PROGRAM: IntMap<[]int> = intmap.imap_new([]int {})
-let mut IMPORTS_BUILT_AT: IntMap<int> = intmap.imap_new(-1)
+let mut IMPORTS_BY_PROGRAM: IntMap<[]int> = intmap.new([]int {})
+let mut IMPORTS_BUILT_AT: IntMap<int> = intmap.new(-1)
 
 fn imports_of(prog: int) -> []int {
     let kid_count = ast.NODES[prog].kids.len
-    if intmap.imap_get(&mut IMPORTS_BUILT_AT, prog) == kid_count {
-        return intmap.imap_get(&mut IMPORTS_BY_PROGRAM, prog)
+    if intmap.get(&mut IMPORTS_BUILT_AT, prog) == kid_count {
+        return intmap.get(&mut IMPORTS_BY_PROGRAM, prog)
     }
     let mut imports = []int {}
     for i in 0..kid_count {
@@ -96,8 +96,8 @@ fn imports_of(prog: int) -> []int {
             push(imports, kid)
         }
     }
-    intmap.imap_put(&mut IMPORTS_BY_PROGRAM, prog, imports)
-    intmap.imap_put(&mut IMPORTS_BUILT_AT, prog, kid_count)
+    intmap.put(&mut IMPORTS_BY_PROGRAM, prog, imports)
+    intmap.put(&mut IMPORTS_BUILT_AT, prog, kid_count)
     return imports
 }
 
@@ -695,8 +695,8 @@ fn lookup_reset() {
         push(MODULE_BY_ALIAS, map.map_new(-2))
     }
     unqualified_lookups_clear()
-    IMPORTS_BY_PROGRAM = intmap.imap_new([]int {})
-    IMPORTS_BUILT_AT = intmap.imap_new(-1)
+    IMPORTS_BY_PROGRAM = intmap.new([]int {})
+    IMPORTS_BUILT_AT = intmap.new(-1)
 }
 
 /** *Point `mod.fn` / `mod.global` prefixes at the module file for hover/def. */
