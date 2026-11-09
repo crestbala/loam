@@ -692,10 +692,10 @@ fn end_dead_borrows(stmts: []int, at: int, block_depth: int) {
 // --- Globals, and which globals each fn may change --------------------------
 
 /** *Every module-level `let` of the session. */
-let mut GLOBAL_DECLS: IntMap<int> = intmap.imap_new(0)
+let mut GLOBAL_DECLS: IntMap<int> = intmap.new(0)
 
 fn is_global_decl(decl: int) -> bool {
-    return decl != ast.NONE && intmap.imap_get(&mut GLOBAL_DECLS, decl) != 0
+    return decl != ast.NONE && intmap.get(&mut GLOBAL_DECLS, decl) != 0
 }
 
 /** *The global a place roots in (`ITEMS[i].kids`, `store.ITEMS[i]`), or */
@@ -736,13 +736,13 @@ struct GlobalWrites {
 
 let mut GLOBAL_WRITES: []GlobalWrites = []GlobalWrites {}
 /** *fn decl -> index into GLOBAL_WRITES, plus one (0 = none). */
-let mut WRITES_INDEX: IntMap<int> = intmap.imap_new(0)
+let mut WRITES_INDEX: IntMap<int> = intmap.new(0)
 
 fn writes_index_find(fn_decl: int) -> int {
     if fn_decl == ast.NONE {
         return -1
     }
-    return intmap.imap_get(&mut WRITES_INDEX, fn_decl) - 1
+    return intmap.get(&mut WRITES_INDEX, fn_decl) - 1
 }
 
 fn writes_has_global(index: int, global: int) -> bool {
@@ -913,12 +913,12 @@ fn collect_writes(n: int, index: int) {
 
 /** *Every fn's direct writes, then its callees' until nothing changes. */
 fn global_writes_build() {
-    GLOBAL_DECLS = intmap.imap_new(0)
+    GLOBAL_DECLS = intmap.new(0)
     GLOBAL_WRITES = []GlobalWrites {}
-    WRITES_INDEX = intmap.imap_new(0)
+    WRITES_INDEX = intmap.new(0)
     for g in 0..typecheck.GVARS.len {
         if typecheck.GVARS[g].var != ast.NONE {
-            intmap.imap_put(&mut GLOBAL_DECLS, typecheck.GVARS[g].var, 1)
+            intmap.put(&mut GLOBAL_DECLS, typecheck.GVARS[g].var, 1)
         }
     }
     for m in 0..typecheck.MODS.len {
@@ -947,7 +947,7 @@ fn global_writes_build() {
                     }
                 }
             }
-            intmap.imap_put(&mut WRITES_INDEX, fn_decl, index + 1)
+            intmap.put(&mut WRITES_INDEX, fn_decl, index + 1)
         }
     }
     let mut changed = true
@@ -1062,21 +1062,21 @@ fn root_name_text(r: Root) -> string {
 
 /* What an `if` expression's value points into, recorded while its arms' */
 /* bindings were live. */
-let mut IF_ROOTS: IntMap<int> = intmap.imap_new(0)
+let mut IF_ROOTS: IntMap<int> = intmap.new(0)
 let mut IF_ROOT_VALUES: []Root = []Root {}
 
 fn set_if_root(n: int, r: Root) {
-    let slot = intmap.imap_get(&mut IF_ROOTS, n)
+    let slot = intmap.get(&mut IF_ROOTS, n)
     if slot > 0 {
         IF_ROOT_VALUES[slot - 1] = r
         return
     }
     push(IF_ROOT_VALUES, r)
-    intmap.imap_put(&mut IF_ROOTS, n, IF_ROOT_VALUES.len)
+    intmap.put(&mut IF_ROOTS, n, IF_ROOT_VALUES.len)
 }
 
 fn get_if_root(n: int) -> Root {
-    let slot = intmap.imap_get(&mut IF_ROOTS, n)
+    let slot = intmap.get(&mut IF_ROOTS, n)
     return if slot > 0 { IF_ROOT_VALUES[slot - 1] } else { no_root() }
 }
 

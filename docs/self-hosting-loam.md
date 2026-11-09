@@ -359,7 +359,7 @@ or a `kind` + index into a per-kind side table. `switch` on the kind works
 
 `std:map` is `Map<T>` with `string` keys only (`hash_str` returns `int`).
 
-- [x] Integer-keyed map: `std:intmap` (`IntMap<T>`, `imap_*`), the same
+- [x] Integer-keyed map: `std:intmap` (`IntMap<T>`), the same
       table as `std:map` with an int key and a multiplicative hash. Kept a
       separate module on purpose: a generic key would need `==`/hash on a type
       parameter, i.e. new language machinery.
