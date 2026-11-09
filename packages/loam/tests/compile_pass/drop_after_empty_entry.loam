@@ -1,0 +1,58 @@
+// A fn with no parameters, in a module with no globals, whose first block
+// touches nothing (it starts with a loop) used to drop nothing at its exits:
+// the "touched on some path" analysis never visited the blocks after an entry
+// that touched nothing. Each call leaked its locals: 1 MB here, 60 times over
+// against a 24 MB allowance. This module must keep having no globals.
+
+import "std:fmt"
+import "std:str"
+import "std:sys"
+
+fn big(n: int) -> []int {
+    let mut v = []int {}
+    for i in 0..n {
+        push(v, i)
+    }
+    return v
+}
+
+fn rss_mb() -> int {
+    let t = str.trim(sys.exec("ps -o rss= -p $PPID"))
+    let mut n = 0
+    for i in 0..t.len {
+        let c = t[i]
+        if c >= 48 && c <= 57 {
+            n = n * 10 + (c - 48)
+        }
+    }
+    return n / 1024
+}
+
+fn never() -> bool {
+    return false
+}
+
+/** *Starts with a loop: its entry block is a bare jump to the loop head. */
+fn loop_first() -> int {
+    while never() {
+    }
+    let v = big(250000)
+    return v.len
+}
+
+fn main() {
+    // Warm up so allocator caching does not count as growth.
+    for i in 0..5 {
+        let n = loop_first()
+    }
+    let r = rss_mb()
+    for i in 0..60 {
+        let n = loop_first()
+    }
+    let d = rss_mb() - r
+    if d > 24 {
+        fmt.println("loop-first fn leaked: +{{d}} MB")
+        sys.exit(1)
+    }
+    fmt.println("loop-first fn ok")
+}

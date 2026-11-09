@@ -1428,8 +1428,12 @@ static void mark_place_touched(uint64_t *set, const IrPlace *p) {
  * dropping a `{0}` is a no-op, so an exit only needs to drop what a path to
  * it could have set. "Touched" is deliberately coarse — any mention but a
  * drop (a dst, an operand, a call argument, a place's root or index) — so a
- * local the analysis misses can only be one no path ever names. Returns one
- * bitset of `words` words per block; the caller frees it.
+ * local the analysis misses can only be one no path ever names. Every block
+ * the entry reaches is visited at least once, even when nothing flows into
+ * it: a fn with no params and no module globals whose entry block touches
+ * nothing (`fn f() { while … }`) otherwise never visited the blocks after it,
+ * and their exits dropped nothing. Returns one bitset of `words` words per
+ * block; the caller frees it.
  */
 static uint64_t *touched_at_block_ends(int words) {
     int nb = F->nblocks;
@@ -1438,7 +1442,8 @@ static uint64_t *touched_at_block_ends(int words) {
     uint64_t *in = (uint64_t *)calloc((size_t)nb * (size_t)words, sizeof(uint64_t));
     int *work = (int *)malloc((size_t)(nb + 1) * sizeof(int));
     char *queued = (char *)calloc((size_t)nb + 1, 1);
-    if (!gen || !out || !in || !work || !queued) loam_fatal("out of memory");
+    char *reached = (char *)calloc((size_t)nb + 1, 1);
+    if (!gen || !out || !in || !work || !queued || !reached) loam_fatal("out of memory");
     for (int b = 0; b < nb; b++) {
         uint64_t *g = gen + (size_t)b * words;
         const IrBlock *bb = &F->blocks[b];
@@ -1460,6 +1465,7 @@ static uint64_t *touched_at_block_ends(int words) {
     if (nb > 0) {
         work[nwork++] = 0;
         queued[0] = 1;
+        reached[0] = 1;
     }
     while (nwork > 0) {
         int b = work[--nwork];
@@ -1479,7 +1485,8 @@ static uint64_t *touched_at_block_ends(int words) {
             int s = k < nsucc ? succ[k] : bb->sw_blocks[k - nsucc];
             if (s < 0 || s >= nb) continue;
             uint64_t *si = in + (size_t)s * words;
-            int grew = 0;
+            int grew = !reached[s];
+            reached[s] = 1;
             for (int w = 0; w < words; w++) {
                 uint64_t merged = si[w] | o[w];
                 if (merged != si[w]) {
@@ -1497,6 +1504,7 @@ static uint64_t *touched_at_block_ends(int words) {
     free(in);
     free(work);
     free(queued);
+    free(reached);
     return out;
 }
 
