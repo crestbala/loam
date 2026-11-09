@@ -1411,21 +1411,116 @@ static void transfer_moved(void) {
  * only known once every move in the function has been seen. A local being
  * returned is not dropped — ownership leaves with it.
  */
+static void mark_touched(uint64_t *set, int l) {
+    if (l >= 0 && l < F->nlocals) set[l / 64] |= (uint64_t)1 << (l % 64);
+}
+
+static void mark_place_touched(uint64_t *set, const IrPlace *p) {
+    for (; p; p = p->base) {
+        if (p->kind == IR_PL_LOCAL) mark_touched(set, p->local);
+        if (p->kind == IR_PL_INDEX) mark_touched(set, p->index);
+    }
+}
+
+/**
+ * Which locals some path from the entry to the end of each block may have
+ * touched. Every owning local starts as `{0}` (codegen declares it so), and
+ * dropping a `{0}` is a no-op, so an exit only needs to drop what a path to
+ * it could have set. "Touched" is deliberately coarse — any mention but a
+ * drop (a dst, an operand, a call argument, a place's root or index) — so a
+ * local the analysis misses can only be one no path ever names. Returns one
+ * bitset of `words` words per block; the caller frees it.
+ */
+static uint64_t *touched_at_block_ends(int words) {
+    int nb = F->nblocks;
+    uint64_t *gen = (uint64_t *)calloc((size_t)nb * (size_t)words, sizeof(uint64_t));
+    uint64_t *out = (uint64_t *)calloc((size_t)nb * (size_t)words, sizeof(uint64_t));
+    uint64_t *in = (uint64_t *)calloc((size_t)nb * (size_t)words, sizeof(uint64_t));
+    int *work = (int *)malloc((size_t)(nb + 1) * sizeof(int));
+    char *queued = (char *)calloc((size_t)nb + 1, 1);
+    if (!gen || !out || !in || !work || !queued) loam_fatal("out of memory");
+    for (int b = 0; b < nb; b++) {
+        uint64_t *g = gen + (size_t)b * words;
+        const IrBlock *bb = &F->blocks[b];
+        for (int i = 0; i < bb->ninsts; i++) {
+            const IrInst *in_i = &bb->insts[i];
+            if (in_i->op == IR_DROP) continue;
+            mark_touched(g, in_i->dst);
+            mark_touched(g, in_i->a);
+            mark_touched(g, in_i->b);
+            for (int k = 0; k < in_i->nargs; k++)
+                if (in_i->args) mark_touched(g, in_i->args[k]);
+            mark_place_touched(g, in_i->place);
+        }
+    }
+    /* Parameters and globals hold a value from the start. */
+    for (int l = 0; l < F->nlocals; l++)
+        if (F->locals[l].is_param || F->locals[l].is_global) mark_touched(in, l);
+    int nwork = 0;
+    if (nb > 0) {
+        work[nwork++] = 0;
+        queued[0] = 1;
+    }
+    while (nwork > 0) {
+        int b = work[--nwork];
+        queued[b] = 0;
+        uint64_t *o = out + (size_t)b * words;
+        const uint64_t *i = in + (size_t)b * words, *g = gen + (size_t)b * words;
+        for (int w = 0; w < words; w++) o[w] = i[w] | g[w];
+        const IrBlock *bb = &F->blocks[b];
+        int succ[2] = {-1, -1};
+        int nsucc = 0;
+        if (bb->term == IR_TERM_JMP) succ[nsucc++] = bb->succ[0];
+        if (bb->term == IR_TERM_BR || bb->term == IR_TERM_SWITCH) {
+            succ[nsucc++] = bb->succ[0];
+            if (bb->term == IR_TERM_BR) succ[nsucc++] = bb->succ[1];
+        }
+        for (int k = 0; k < nsucc + (bb->term == IR_TERM_SWITCH ? bb->sw_n : 0); k++) {
+            int s = k < nsucc ? succ[k] : bb->sw_blocks[k - nsucc];
+            if (s < 0 || s >= nb) continue;
+            uint64_t *si = in + (size_t)s * words;
+            int grew = 0;
+            for (int w = 0; w < words; w++) {
+                uint64_t merged = si[w] | o[w];
+                if (merged != si[w]) {
+                    si[w] = merged;
+                    grew = 1;
+                }
+            }
+            if (grew && !queued[s]) {
+                queued[s] = 1;
+                work[nwork++] = s;
+            }
+        }
+    }
+    free(gen);
+    free(in);
+    free(work);
+    free(queued);
+    return out;
+}
+
 static void emit_drops_at_exits(void) {
     transfer_moved();
+    int words = (F->nlocals + 63) / 64;
+    uint64_t *touched = words ? touched_at_block_ends(words) : NULL;
     for (int b = 0; b < F->nblocks; b++) {
         IrBlock *bb = &F->blocks[b];
         if (bb->term != IR_TERM_RET) continue;
         int saved = CUR;
         CUR = b;
+        const uint64_t *t = touched + (size_t)b * words;
         for (int i = F->nlocals - 1; i >= 0; i--) {
             if (!F->locals[i].needs_drop) continue;
             if (i == bb->term_val) continue;
+            /* No path here names it: it is still `{0}`. */
+            if (!(t[i / 64] >> (i % 64) & 1)) continue;
             IrInst *d = emit(IR_DROP, bb->term_loc);
             d->a = i;
         }
         CUR = saved;
     }
+    free(touched);
 }
 
 static void lower_stmt(AstNode *n) {
@@ -2059,6 +2154,304 @@ static void lower_fn(IrModule *m, AstNode *d) {
     scope_pop_to(-1);
 }
 
+/* --- borrowed loads ------------------------------------------------------ */
+
+static void free_place(IrPlace *p);
+
+/** 1 if place `p` reads local `l`, as its root or as an index. */
+static int place_reads_local(const IrPlace *p, int l) {
+    for (; p; p = p->base) {
+        if (p->kind == IR_PL_LOCAL && p->local == l) return 1;
+        if (p->kind == IR_PL_INDEX && p->index == l) return 1;
+    }
+    return 0;
+}
+
+/** The local a place is rooted in, or -1. */
+static int place_root_local(const IrPlace *p) {
+    while (p && p->base) p = p->base;
+    return p && p->kind == IR_PL_LOCAL ? p->local : -1;
+}
+
+/** 1 if instruction `in` reads local `l` anywhere. */
+static int inst_reads_local(const IrInst *in, int l) {
+    if (in->a == l || in->b == l) return 1;
+    for (int k = 0; k < in->nargs; k++)
+        if (in->args && in->args[k] == l) return 1;
+    return place_reads_local(in->place, l);
+}
+
+/** 1 if `in` can run between a borrowed load and its last read: it frees,
+    writes and calls nothing, so the place the load read from keeps the value
+    (and its storage) alive. */
+static int inst_keeps_places(const IrInst *in) {
+    switch (in->op) {
+        case IR_CONST_INT:
+        case IR_CONST_BOOL:
+        case IR_CONST_STR:
+        case IR_CONST_FLOAT:
+        case IR_LOAD:
+        case IR_BIN:
+        case IR_UN:
+        case IR_BOUND:
+        case IR_CAST:
+        case IR_SIZEOF:
+        case IR_ADDR:
+        case IR_FN_VAL:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+/** 1 if `in` only reads string temp `t` in place: a `==` / `!=` operand. */
+static int inst_reads_string_in_place(const IrInst *in, int t) {
+    if (in->dst == t) return 0;
+    if (in->op != IR_BIN) return 0;
+    if (in->binop != TOK_EQ_EQ && in->binop != TOK_BANG_EQ) return 0;
+    for (int k = 0; k < in->nargs; k++)
+        if (in->args && in->args[k] == t) return 0;
+    return !place_reads_local(in->place, t);
+}
+
+/**
+ * A string read out of a place is an owned copy: the temp takes a reference
+ * and drops it at the end of its scope. When the temp is only compared before
+ * anything could release what the place holds, the place's own reference
+ * keeps the bytes alive for the whole read, so the pair is pure overhead.
+ * Such a load is marked `borrowed` (no retain) and its temp loses its drops.
+ *
+ * Conditions, all checked here: the temp is a compiler temp loaded exactly
+ * once; every read of it is an `==` / `!=` operand in the load's own block;
+ * no terminator reads it; and every instruction from the load to its last
+ * read is one that frees, writes and calls nothing (`inst_keeps_places`) and
+ * does not overwrite the local the place is rooted in.
+ */
+static void borrow_read_only_loads(IrFn *fn) {
+    if (!fn->lowered || !type_string_owns()) return;
+    for (int b = 0; b < fn->nblocks; b++) {
+        IrBlock *bb = &fn->blocks[b];
+        for (int i = 0; i < bb->ninsts; i++) {
+            IrInst *ld = &bb->insts[i];
+            int t = ld->dst;
+            if (ld->op != IR_LOAD || t < 0 || t >= fn->nlocals) continue;
+            IrLocal *tl = &fn->locals[t];
+            if (tl->name || tl->is_param || tl->is_global || !tl->needs_drop) continue;
+            if (!tl->ty || tl->ty->kind != TY_STRING) continue;
+            int root = place_root_local(ld->place);
+            if (root == t) continue;
+
+            /* Reads and drops of `t` in this block, after the load. */
+            int last_read = -1, ok = 1;
+            for (int j = i + 1; j < bb->ninsts && ok; j++) {
+                const IrInst *in = &bb->insts[j];
+                if (in->op == IR_DROP && in->a == t) continue;
+                if (in->dst == t) ok = 0;
+                else if (inst_reads_local(in, t)) {
+                    if (inst_reads_string_in_place(in, t)) last_read = j;
+                    else ok = 0;
+                }
+            }
+            if (!ok || last_read < 0) continue;
+            if (bb->term_val == t) continue;
+            for (int j = i + 1; j <= last_read && ok; j++) {
+                const IrInst *in = &bb->insts[j];
+                if (in->op == IR_DROP && in->a == t) {
+                    ok = 0; /* dropped before its last read: not a plain temp */
+                    break;
+                }
+                if (!inst_keeps_places(in)) ok = 0;
+                if (root >= 0 && in->dst == root) ok = 0;
+            }
+            if (!ok) continue;
+
+            /* Elsewhere (other blocks, and this one before the load) `t` may
+               only be dropped, never read or set. */
+            for (int ob = 0; ob < fn->nblocks && ok; ob++) {
+                const IrBlock *o = &fn->blocks[ob];
+                if (o->term_val == t) ok = 0;
+                int end = ob == b ? i : o->ninsts;
+                for (int j = 0; j < end && ok; j++) {
+                    const IrInst *in = &o->insts[j];
+                    if (in->op == IR_DROP && in->a == t) continue;
+                    if (in->dst == t || inst_reads_local(in, t)) ok = 0;
+                }
+            }
+            if (!ok) continue;
+
+            ld->borrowed = 1;
+            tl->needs_drop = 0;
+            /* Its drops go: the temp holds no reference of its own. */
+            for (int ob = 0; ob < fn->nblocks; ob++) {
+                IrBlock *o = &fn->blocks[ob];
+                int w = 0;
+                for (int j = 0; j < o->ninsts; j++) {
+                    if (o->insts[j].op == IR_DROP && o->insts[j].a == t) {
+                        free_place(o->insts[j].place);
+                        free(o->insts[j].args);
+                        continue;
+                    }
+                    o->insts[w++] = o->insts[j];
+                }
+                o->ninsts = w;
+            }
+            /* `bb` may have shrunk; restart its scan from the load's new spot. */
+            for (int j = 0; j < bb->ninsts; j++)
+                if (bb->insts[j].op == IR_LOAD && bb->insts[j].dst == t) {
+                    i = j;
+                    break;
+                }
+        }
+    }
+}
+
+/* --- which owning locals need a `{0}` ----------------------------------- */
+
+/** The runtime builtins codegen (`emit_ir_inst`, IR_CALL) writes the result
+    of in place rather than as `dst = f(args);`. Keep in sync with it. */
+static const char *const CALLS_WRITING_DST_IN_PLACE[] = {
+    "loam_ch_alloc", "loam_ch_pop", "loam_ch_ready", "loam_ch_recv", "loam_ch_send",
+    "loam_ch_try_send", "loam_fut_load", "loam_fut_push", "loam_fut_store",
+    "loam_sig_load", "loam_sig_push", "loam_sig_store", "loam_value_key",
+    "loam_vec_pop", "loam_vec_push",
+};
+
+static int call_sets_dst_whole(const char *callee) {
+    if (!callee) return 0;
+    if (strncmp(callee, "loam_zeus_sig", 13) == 0) return 0;
+    for (size_t i = 0; i < sizeof CALLS_WRITING_DST_IN_PLACE / sizeof *CALLS_WRITING_DST_IN_PLACE; i++)
+        if (strcmp(callee, CALLS_WRITING_DST_IN_PLACE[i]) == 0) return 0;
+    return 1;
+}
+
+/** 1 if `in` sets its dst whole, without reading the old value. */
+static int inst_defines_fresh(const IrInst *in) {
+    switch (in->op) {
+        case IR_CONST_INT:
+        case IR_CONST_BOOL:
+        case IR_CONST_STR:
+        case IR_CONST_FLOAT:
+        case IR_LOAD:
+        case IR_BIN:
+        case IR_UN:
+        case IR_SIZEOF:
+        case IR_MOVE:
+        case IR_CALL_VAL:
+            return 1;
+        case IR_CALL:
+            return call_sets_dst_whole(in->callee);
+        default:
+            return 0;
+    }
+}
+
+static int bit_has(const uint64_t *set, int l) { return (int)(set[l / 64] >> (l % 64) & 1); }
+
+/** A use of `l` (anything but a fresh definition): it must hold a value. */
+static void use_local(IrFn *fn, const uint64_t *assigned, int l) {
+    if (l < 0 || l >= fn->nlocals) return;
+    if (!bit_has(assigned, l)) fn->locals[l].needs_zero = 1;
+}
+
+static void use_place(IrFn *fn, const uint64_t *assigned, const IrPlace *p) {
+    for (; p; p = p->base) {
+        if (p->kind == IR_PL_LOCAL) use_local(fn, assigned, p->local);
+        if (p->kind == IR_PL_INDEX) use_local(fn, assigned, p->index);
+    }
+}
+
+/** Walk block `b` from the assigned set `cur` (updated in place); with
+    `record`, mark every local some use reaches unassigned. */
+static void assigned_through_block(IrFn *fn, int b, uint64_t *cur, int record) {
+    const IrBlock *bb = &fn->blocks[b];
+    for (int i = 0; i < bb->ninsts; i++) {
+        const IrInst *in = &bb->insts[i];
+        int fresh = in->dst >= 0 && inst_defines_fresh(in);
+        if (record) {
+            use_local(fn, cur, in->a);
+            use_local(fn, cur, in->b);
+            for (int k = 0; k < in->nargs; k++)
+                if (in->args) use_local(fn, cur, in->args[k]);
+            use_place(fn, cur, in->place);
+            if (in->dst >= 0 && !fresh) use_local(fn, cur, in->dst);
+        }
+        if (in->dst >= 0 && in->dst < fn->nlocals)
+            cur[in->dst / 64] |= (uint64_t)1 << (in->dst % 64);
+    }
+    if (record) use_local(fn, cur, bb->term_val);
+}
+
+/**
+ * Codegen used to declare every owning local `= {0}`, because a drop at an
+ * exit may meet one a path never assigned. In a fn with many such locals that
+ * zeroing runs on every call. A local only needs it if some use — a read, a
+ * drop, a store into it, any write that is not a whole fresh value — can run
+ * before every path has assigned it: a forward "surely assigned" analysis
+ * (intersection over predecessors) finds those, and the rest are declared
+ * bare, as C would. Unsure means zeroed.
+ */
+static void mark_needs_zero(IrFn *fn) {
+    int nb = fn->nblocks, words = (fn->nlocals + 63) / 64;
+    if (!fn->lowered || words == 0 || nb == 0) {
+        for (int l = 0; l < fn->nlocals; l++) fn->locals[l].needs_zero = 1;
+        return;
+    }
+    uint64_t *in = (uint64_t *)malloc((size_t)nb * (size_t)words * sizeof(uint64_t));
+    uint64_t *cur = (uint64_t *)malloc((size_t)words * sizeof(uint64_t));
+    int *work = (int *)malloc((size_t)nb * sizeof(int));
+    char *queued = (char *)calloc((size_t)nb, 1);
+    char *reached = (char *)calloc((size_t)nb, 1);
+    if (!in || !cur || !work || !queued || !reached) loam_fatal("out of memory");
+    /* Top (all assigned) everywhere but the entry: the meet only shrinks it. */
+    memset(in, 0xff, (size_t)nb * (size_t)words * sizeof(uint64_t));
+    memset(in, 0, (size_t)words * sizeof(uint64_t));
+    for (int l = 0; l < fn->nlocals; l++)
+        if (fn->locals[l].is_param || fn->locals[l].is_global)
+            in[l / 64] |= (uint64_t)1 << (l % 64);
+    int nwork = 0;
+    work[nwork++] = 0;
+    queued[0] = 1;
+    reached[0] = 1;
+    while (nwork > 0) {
+        int b = work[--nwork];
+        queued[b] = 0;
+        memcpy(cur, in + (size_t)b * words, (size_t)words * sizeof(uint64_t));
+        assigned_through_block(fn, b, cur, 0);
+        const IrBlock *bb = &fn->blocks[b];
+        int nsucc = bb->term == IR_TERM_JMP ? 1 : bb->term == IR_TERM_BR ? 2
+                    : bb->term == IR_TERM_SWITCH ? 1 + bb->sw_n : 0;
+        for (int k = 0; k < nsucc; k++) {
+            int s = k < (bb->term == IR_TERM_SWITCH ? 1 : nsucc) ? bb->succ[k] : bb->sw_blocks[k - 1];
+            if (s < 0 || s >= nb) continue;
+            uint64_t *si = in + (size_t)s * words;
+            int shrank = !reached[s];
+            reached[s] = 1;
+            for (int w = 0; w < words; w++) {
+                uint64_t met = si[w] & cur[w];
+                if (met != si[w]) {
+                    si[w] = met;
+                    shrank = 1;
+                }
+            }
+            if (shrank && !queued[s]) {
+                queued[s] = 1;
+                work[nwork++] = s;
+            }
+        }
+    }
+    for (int b = 0; b < nb; b++) {
+        if (!reached[b]) continue; /* never runs */
+        memcpy(cur, in + (size_t)b * words, (size_t)words * sizeof(uint64_t));
+        assigned_through_block(fn, b, cur, 1);
+    }
+    free(in);
+    free(cur);
+    free(work);
+    free(queued);
+    free(reached);
+}
+
+
 IrModule *ir_lower(LoamModule *mods, int nmods) {
     IrModule *m = (IrModule *)calloc(1, sizeof(IrModule));
     Gmods = mods;
@@ -2147,6 +2540,8 @@ IrModule *ir_lower(LoamModule *mods, int nmods) {
         subst_n = 0;
         cname_override = NULL;
     }
+    for (int f = 0; f < m->nfns; f++) borrow_read_only_loads(&m->fns[f]);
+    for (int f = 0; f < m->nfns; f++) mark_needs_zero(&m->fns[f]);
     return m;
 }
 
@@ -2201,7 +2596,7 @@ static void print_inst(FILE *o, const IrInst *i) {
         case IR_CONST_BOOL: fprintf(o, "const %s", i->imm ? "true" : "false"); break;
         case IR_CONST_STR: fprintf(o, "str \"%s\"", i->str ? i->str : ""); break;
         case IR_LOAD:
-            fprintf(o, "load ");
+            fprintf(o, i->borrowed ? "load.borrow " : "load ");
             print_place(o, i->place);
             break;
         case IR_STORE:

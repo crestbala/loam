@@ -112,7 +112,9 @@ struct Loc {
 /** *  type, `kids` fn params, `kids2` type args. */
 /** *- IncDec: `op` dec, `aux` post, `a` operand. */
 /** *- CDir: `op` link, `strs` args. */
-struct Node {
+/** *A whole node as it is built (`node`, then fields set) and as `full` */
+/** *reassembles one; `add` stores it split into `NODES` and `INFO`. */
+struct NodeBuild {
     kind: int,
     loc: Loc,
     flags: int,
@@ -164,6 +166,65 @@ struct Node {
     cap_types: []int,
 }
 
+/** *The part of a node every pass walks: kind, children, resolution, type. */
+/** *Kept to 56 bytes so a walk touches one cache line per node; the rest of */
+/** *the node is `NodeInfo` in `INFO`, at the same index (see `add`). */
+struct Node {
+    kind: int,
+    flags: int,
+    a: int,
+    b: int,
+    c: int,
+    // What typecheck sets (src/ast.h's fields of the same names).
+    /** *The node's type, an index into `types.TYPES`, or -1. */
+    ty: int,
+    /** *The declaration a name or field resolved to, or `NONE`. */
+    res: int,
+    op: int,
+    kids: []int,
+}
+
+/** *The rest of a node: location, text, names, and what only some kinds use. */
+struct NodeInfo {
+    loc: Loc,
+    aux: int,
+    /** *Whether `name` / `text` / `doc` are present (C's non-NULL). */
+    has_name: bool,
+    has_text: bool,
+    has_doc: bool,
+    name: string,
+    text: string,
+    doc: string,
+    num: i64,
+    fnum: f64,
+    kids2: []int,
+    strs: []string,
+    place_mut: int,
+    /** *Ident: where the definition is (`def_loc`), 0 when unknown. */
+    def_line: int,
+    def_col: int,
+    /** *Fn / Closure: C name. Program: module name. Import: resolved path. */
+    /** *Try: the fn's return type name. Call: the resolved callee's C name. */
+    sname: string,
+    has_sname: bool,
+    /** *Call: the C symbol a builtin emits. */
+    cbuiltin: string,
+    has_cbuiltin: bool,
+    /** *`M_*` bits below. */
+    marks: int,
+    /** *Call: `NumericBuiltin`, signal / future / channel cell ops. */
+    numb: int,
+    sig: int,
+    fut: int,
+    ch: int,
+    /** *Closure id; Cast conversion mode. */
+    clos_id: int,
+    conv: int,
+    /** *Closure captures: names and types. */
+    caps: []string,
+    cap_types: []int,
+}
+
 // `marks` bits: the typecheck booleans of src/ast.h.
 const M_PRINTLN: int = 1
 const M_BOX_NEW: int = 2
@@ -185,13 +246,15 @@ struct Diag {
     msg: string,
 }
 
-/** *Every node of the session, all modules. */
+/** *Every node of the session, all modules: the walked part, and the rest at */
+/** *the same index. */
 let mut NODES: []Node = []Node {}
+let mut INFO: []NodeInfo = []NodeInfo {}
 /** *Diagnostics in the order they were reported. */
 let mut DIAGS: []Diag = []Diag {}
 
-fn node(kind: int, loc: Loc) -> Node {
-    return Node {
+fn node(kind: int, loc: Loc) -> NodeBuild {
+    return NodeBuild {
         kind: kind,
         loc: loc,
         flags: 0,
@@ -230,4 +293,99 @@ fn node(kind: int, loc: Loc) -> Node {
         caps: []string {},
         cap_types: []int {},
     }
+}
+
+/** *Store a built node; returns its index. */
+fn add(n: NodeBuild) -> int {
+    push(NODES, Node {
+        kind: n.kind,
+        flags: n.flags,
+        a: n.a,
+        b: n.b,
+        c: n.c,
+        ty: n.ty,
+        res: n.res,
+        op: n.op,
+        kids: n.kids,
+    })
+    push(INFO, NodeInfo {
+        loc: n.loc,
+        aux: n.aux,
+        has_name: n.has_name,
+        has_text: n.has_text,
+        has_doc: n.has_doc,
+        name: n.name,
+        text: n.text,
+        doc: n.doc,
+        num: n.num,
+        fnum: n.fnum,
+        kids2: n.kids2,
+        strs: n.strs,
+        place_mut: n.place_mut,
+        def_line: n.def_line,
+        def_col: n.def_col,
+        sname: n.sname,
+        has_sname: n.has_sname,
+        cbuiltin: n.cbuiltin,
+        has_cbuiltin: n.has_cbuiltin,
+        marks: n.marks,
+        numb: n.numb,
+        sig: n.sig,
+        fut: n.fut,
+        ch: n.ch,
+        clos_id: n.clos_id,
+        conv: n.conv,
+        caps: n.caps,
+        cap_types: n.cap_types,
+    })
+    return NODES.len - 1
+}
+
+/** *A copy of node `i`, whole. */
+fn full(i: int) -> NodeBuild {
+    return NodeBuild {
+        kind: NODES[i].kind,
+        loc: INFO[i].loc,
+        flags: NODES[i].flags,
+        op: NODES[i].op,
+        aux: INFO[i].aux,
+        has_name: INFO[i].has_name,
+        has_text: INFO[i].has_text,
+        has_doc: INFO[i].has_doc,
+        name: INFO[i].name,
+        text: INFO[i].text,
+        doc: INFO[i].doc,
+        num: INFO[i].num,
+        fnum: INFO[i].fnum,
+        a: NODES[i].a,
+        b: NODES[i].b,
+        c: NODES[i].c,
+        kids: NODES[i].kids,
+        kids2: INFO[i].kids2,
+        strs: INFO[i].strs,
+        ty: NODES[i].ty,
+        place_mut: INFO[i].place_mut,
+        res: NODES[i].res,
+        def_line: INFO[i].def_line,
+        def_col: INFO[i].def_col,
+        sname: INFO[i].sname,
+        has_sname: INFO[i].has_sname,
+        cbuiltin: INFO[i].cbuiltin,
+        has_cbuiltin: INFO[i].has_cbuiltin,
+        marks: INFO[i].marks,
+        numb: INFO[i].numb,
+        sig: INFO[i].sig,
+        fut: INFO[i].fut,
+        ch: INFO[i].ch,
+        clos_id: INFO[i].clos_id,
+        conv: INFO[i].conv,
+        caps: INFO[i].caps,
+        cap_types: INFO[i].cap_types,
+    }
+}
+
+/** *Node `dst` becomes a copy of node `src`. */
+fn copy_node(dst: int, src: int) {
+    NODES[dst] = NODES[src]
+    INFO[dst] = INFO[src]
 }

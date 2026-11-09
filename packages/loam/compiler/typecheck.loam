@@ -43,10 +43,6 @@ let mut Gerr: int = 0
 
 // --- small helpers over the arena ------------------------------------------------
 
-fn nd(i: int) -> Node {
-    return ast.NODES[i]
-}
-
 fn kind(i: int) -> int {
     if i == NONE {
         return -1
@@ -251,14 +247,14 @@ fn add_cap(clos: int, name: string, ty: int) {
     if clos == NONE {
         return
     }
-    let caps = ast.NODES[clos].caps
+    let caps = ast.INFO[clos].caps
     for i in 0..caps.len {
         if caps[i] == name {
             return
         }
     }
-    push(ast.NODES[clos].caps, name)
-    push(ast.NODES[clos].cap_types, ty)
+    push(ast.INFO[clos].caps, name)
+    push(ast.INFO[clos].cap_types, ty)
 }
 
 // --- stale captures ------------------------------------------------------------------
@@ -307,12 +303,12 @@ fn stale_check_write(place: int, at: Loc) {
         if STALE[i].decl != decl || STALE[i].reported {
             continue
         }
-        let found = scope_find_s(ast.NODES[r].name)
+        let found = scope_find_s(ast.INFO[r].name)
         if clos_depth() > 0 && found.s >= 0 && !scope_is_inside(found.s, clos_scope_stack[clos_depth() - 1]) {
             return
         }
         STALE[i].reported = true
-        err(at, "'{{ast.NODES[r].name}}' is assigned after a closure captured it by copy (line {{STALE[i].cap.line}}); the closure would still see the old value — hold it in a signal, or copy it into a new `let` before the closure if the snapshot is intended")
+        err(at, "'{{ast.INFO[r].name}}' is assigned after a closure captured it by copy (line {{STALE[i].cap.line}}); the closure would still see the old value — hold it in a signal, or copy it into a new `let` before the closure if the snapshot is intended")
         return
     }
 }
@@ -323,10 +319,10 @@ fn expr_is_cap_fn(n: int) -> bool {
         return false
     }
     if kind(n) == Kind.Closure {
-        return ast.NODES[n].caps.len > 0
+        return ast.INFO[n].caps.len > 0
     }
     if kind(n) == Kind.Ident {
-        let f = scope_find_s(ast.NODES[n].name)
+        let f = scope_find_s(ast.INFO[n].name)
         if f.s >= 0 {
             return SCOPES[f.s].capfns[f.i] != 0
         }
@@ -389,7 +385,7 @@ fn subst_type(t: int, names: []string, args: []int) -> int {
         if st == NONE {
             return t
         }
-        return make_struct_inst(st, ps, ast.NODES[st].loc, false)
+        return make_struct_inst(st, ps, ast.INFO[st].loc, false)
     }
     if x.kind == TK.Proc {
         let mut ps = []int {}
@@ -522,7 +518,7 @@ fn cname_append_ty(b: &mut []u8, t: int) {
 }
 
 fn mono_cname(fn_: int, args: []int) -> string {
-    let n = ast.NODES[fn_]
+    let n = ast.full(fn_)
     let mut b = []u8 {}
     let base = if n.has_sname { n.sname } else { n.name }
     for k in 0..base.len {
@@ -563,7 +559,7 @@ fn record_mono(fn_: int, args: []int, cname: string) {
         }
     }
     if MONOS.len >= LOAM_MAX_MONOS {
-        err(ast.NODES[fn_].loc, "too many generic instantiations (max {{LOAM_MAX_MONOS}})")
+        err(ast.INFO[fn_].loc, "too many generic instantiations (max {{LOAM_MAX_MONOS}})")
         return
     }
     push(MONOS, Mono { fn_: fn_, args: args, cname: cname })
@@ -577,7 +573,7 @@ fn module_imported(prog: int, name: string) -> bool {
     }
     let ims = imports_of(prog)
     for i in 0..ims.len {
-        if ast.NODES[ims[i]].name == name {
+        if ast.INFO[ims[i]].name == name {
             return true
         }
     }
@@ -591,11 +587,11 @@ fn find_mod_scan(name: string) -> int {
         let ims = imports_of(MODS[Gcur].root)
         for i in 0..ims.len {
             let import_node = ims[i]
-            if !ast.NODES[import_node].has_sname || ast.NODES[import_node].name != name {
+            if !ast.INFO[import_node].has_sname || ast.INFO[import_node].name != name {
                 continue
             }
             for m in 0..MODS.len {
-                if MODS[m].path == ast.NODES[import_node].sname {
+                if MODS[m].path == ast.INFO[import_node].sname {
                     return m
                 }
             }
@@ -661,7 +657,7 @@ fn decl_table_build(m: int) {
         if slot < 0 {
             continue
         }
-        let decl_name = ast.NODES[decls[i]].name
+        let decl_name = ast.INFO[decls[i]].name
         if !map.map_has(&mut DECL_TABLES[m * DECL_KIND_SLOTS + slot], decl_name) {
             map.map_put(&mut DECL_TABLES[m * DECL_KIND_SLOTS + slot], decl_name, decls[i])
         }
@@ -709,8 +705,8 @@ fn mark_module_ident(id: int, name: string) {
         return
     }
     ast.NODES[id].res = MODS[m].root
-    ast.NODES[id].def_line = 1
-    ast.NODES[id].def_col = 1
+    ast.INFO[id].def_line = 1
+    ast.INFO[id].def_col = 1
 }
 
 fn find_fn_in(m: int, name: string) -> int {
@@ -740,8 +736,8 @@ fn selective_import_source(name: string) -> SelSrc {
         let import_node = ims[i]
         for k in 0..ast.NODES[import_node].kids.len {
             let imported_name = ast.NODES[import_node].kids[k]
-            if ast.NODES[imported_name].text == name {
-                return SelSrc { name: ast.NODES[imported_name].name, mod: find_mod(ast.NODES[import_node].name), found: true }
+            if ast.INFO[imported_name].text == name {
+                return SelSrc { name: ast.INFO[imported_name].name, mod: find_mod(ast.INFO[import_node].name), found: true }
             }
         }
     }
@@ -811,7 +807,7 @@ fn lookup_unqualified_scan(name: string, k: int) -> int {
         if ast.NODES[import_node].kids.len > 0 {
             continue
         }
-        d = pick(find_mod(ast.NODES[import_node].name), k, name)
+        d = pick(find_mod(ast.INFO[import_node].name), k, name)
         if d != NONE {
             return d
         }
@@ -823,7 +819,7 @@ fn lookup_unqualified_scan(name: string, k: int) -> int {
         if ast.NODES[import_node].kids.len > 0 {
             continue
         }
-        let m = find_mod(ast.NODES[import_node].name)
+        let m = find_mod(ast.INFO[import_node].name)
         if m < 0 {
             continue
         }
@@ -836,7 +832,7 @@ fn lookup_unqualified_scan(name: string, k: int) -> int {
                 continue
             }
             // find_mod answers for the current module, as in C.
-            d = pick(find_mod(ast.NODES[nested_import].name), k, name)
+            d = pick(find_mod(ast.INFO[nested_import].name), k, name)
             if d != NONE {
                 return d
             }
@@ -858,7 +854,7 @@ fn lookup_through(root: int, name: string, k: int) -> int {
     let mut i = ims.len
     while i > 0 {
         i = i - 1
-        d = pick(find_mod(ast.NODES[ims[i]].name), k, name)
+        d = pick(find_mod(ast.INFO[ims[i]].name), k, name)
         if d != NONE {
             return d
         }
@@ -866,7 +862,7 @@ fn lookup_through(root: int, name: string, k: int) -> int {
     i = ims.len
     while i > 0 {
         i = i - 1
-        let m = find_mod(ast.NODES[ims[i]].name)
+        let m = find_mod(ast.INFO[ims[i]].name)
         if m < 0 {
             continue
         }
@@ -874,7 +870,7 @@ fn lookup_through(root: int, name: string, k: int) -> int {
         let mut j = ims2.len
         while j > 0 {
             j = j - 1
-            d = pick(find_mod(ast.NODES[ims2[j]].name), k, name)
+            d = pick(find_mod(ast.INFO[ims2[j]].name), k, name)
             if d != NONE {
                 return d
             }
@@ -903,8 +899,8 @@ fn enum_value(en: int, v: string) -> EnumVal {
     }
     let ks = ast.NODES[en].kids
     for i in 0..ks.len {
-        if ast.NODES[ks[i]].name == v {
-            return EnumVal { found: true, v: ast.NODES[ks[i]].num }
+        if ast.INFO[ks[i]].name == v {
+            return EnumVal { found: true, v: ast.INFO[ks[i]].num }
         }
     }
     return EnumVal { found: false, v: i64(0) }
@@ -913,9 +909,9 @@ fn enum_value(en: int, v: string) -> EnumVal {
 /** *Rewrite `n` in place into the int literal `v`. */
 fn lower_to_int(n: int, v: i64) -> int {
     ast.NODES[n].kind = Kind.Number
-    ast.NODES[n].num = v
+    ast.INFO[n].num = v
     ast.NODES[n].ty = types.ty_int()
-    ast.NODES[n].place_mut = 0
+    ast.INFO[n].place_mut = 0
     return ast.NODES[n].ty
 }
 
@@ -977,7 +973,7 @@ fn lit_with_expect(n: int, expect: int) -> int {
     }
     if tk(expect) == TK.Float {
         ast.NODES[n].kind = Kind.Float
-        ast.NODES[n].fnum = f64(ast.NODES[n].num)
+        ast.INFO[n].fnum = f64(ast.INFO[n].num)
         ast.NODES[n].ty = expect
         return expect
     }
@@ -986,24 +982,24 @@ fn lit_with_expect(n: int, expect: int) -> int {
             ast.NODES[n].ty = expect
             return expect
         }
-        err(ast.NODES[n].loc, "integer literal is too large")
+        err(ast.INFO[n].loc, "integer literal is too large")
         ast.NODES[n].ty = if tk(expect) == TK.Int { expect } else { types.ty_int() }
         return ast.NODES[n].ty
     }
     if tk(expect) == TK.Int {
-        let v = ast.NODES[n].num
+        let v = ast.INFO[n].num
         if !int_lit_fits(v, expect) {
-            err(ast.NODES[n].loc, "literal {{v}} does not fit {{types.type_name(expect)}}")
+            err(ast.INFO[n].loc, "literal {{v}} does not fit {{types.type_name(expect)}}")
         }
         ast.NODES[n].ty = expect
         return expect
     }
-    if !int_lit_fits(ast.NODES[n].num, types.ty_int()) {
+    if !int_lit_fits(ast.INFO[n].num, types.ty_int()) {
         let wide = types.ty_int_bits(64, false)
-        if types.TYPES[types.ty_int()].bits < 64 && int_lit_fits(ast.NODES[n].num, wide) {
+        if types.TYPES[types.ty_int()].bits < 64 && int_lit_fits(ast.INFO[n].num, wide) {
             ast.NODES[n].ty = wide
         } else {
-            err(ast.NODES[n].loc, "integer literal {{ast.NODES[n].num}} is too large")
+            err(ast.INFO[n].loc, "integer literal {{ast.INFO[n].num}} is too large")
         }
         return ast.NODES[n].ty
     }
@@ -1051,7 +1047,7 @@ fn find_method(fnn: string, recv: int) -> int {
     let mut i = ims.len
     while i > 0 {
         i = i - 1
-        let m = find_mod(ast.NODES[ims[i]].name)
+        let m = find_mod(ast.INFO[ims[i]].name)
         f = if m >= 0 { find_fn_in(m, fnn) } else { NONE }
         if f != NONE && method_recv_matches(f, recv) {
             return f
@@ -1060,7 +1056,7 @@ fn find_method(fnn: string, recv: int) -> int {
     i = ims.len
     while i > 0 {
         i = i - 1
-        let m = find_mod(ast.NODES[ims[i]].name)
+        let m = find_mod(ast.INFO[ims[i]].name)
         if m < 0 {
             continue
         }
@@ -1068,7 +1064,7 @@ fn find_method(fnn: string, recv: int) -> int {
         let mut k = ims2.len
         while k > 0 {
             k = k - 1
-            let m2 = find_mod(ast.NODES[ims2[k]].name)
+            let m2 = find_mod(ast.INFO[ims2[k]].name)
             f = if m2 >= 0 { find_fn_in(m2, fnn) } else { NONE }
             if f != NONE && method_recv_matches(f, recv) {
                 return f
@@ -1111,7 +1107,7 @@ fn find_struct(name: string) -> int {
     for mi in 0..MODS.len {
         let ds = decls_of(MODS[mi].root)
         for i in 0..ds.len {
-            if kind(ds[i]) == Kind.Struct && ast.NODES[ds[i]].name == name {
+            if kind(ds[i]) == Kind.Struct && ast.INFO[ds[i]].name == name {
                 return ds[i]
             }
         }
@@ -1122,7 +1118,7 @@ fn find_struct(name: string) -> int {
 /** *A user struct another module also declares gets a module-qualified C */
 /** *name (`<module>__<name>`); "" when it keeps its own. */
 fn struct_cname_of(st: int) -> string {
-    let nm = ast.NODES[st].name
+    let nm = ast.INFO[st].name
     let home = module_of_decl(st)
     if home < 0 || home >= MODS.len {
         return ""
@@ -1226,7 +1222,7 @@ fn tparam_index(fn_: int, name: string) -> int {
     if fn_ == NONE || name.len == 0 {
         return -1
     }
-    let tps = ast.NODES[fn_].strs
+    let tps = ast.INFO[fn_].strs
     for i in 0..tps.len {
         if i >= 64 {
             break
@@ -1306,7 +1302,7 @@ fn check_boxed_tparams() {
             if (BOX_MASKS[cm].mask & bit(j)) == i64(0) || !type_holds_ref(g.bound[j]) {
                 continue
             }
-            err(g.loc, "'{{ast.NODES[g.callee].name}}' stores its type parameter '{{ast.NODES[g.callee].strs[j]}}' in a container, so it cannot be a reference ({{types.type_name(g.bound[j])}})")
+            err(g.loc, "'{{ast.INFO[g.callee].name}}' stores its type parameter '{{ast.INFO[g.callee].strs[j]}}' in a container, so it cannot be a reference ({{types.type_name(g.bound[j])}})")
         }
     }
 }
@@ -1354,7 +1350,7 @@ fn inline_cycle(t: int, loc: Loc) -> int {
                 let sd = find_struct(types.TYPES[s].name)
                 let mut at = loc
                 if sd != NONE && i < ast.NODES[sd].kids.len && ast.NODES[ast.NODES[sd].kids[i]].a != NONE {
-                    at = ast.NODES[ast.NODES[ast.NODES[sd].kids[i]].a].loc
+                    at = ast.INFO[ast.NODES[ast.NODES[sd].kids[i]].a].loc
                 }
                 err(at, "struct '{{types.TYPES[s].name}}' contains itself through field '{{types.TYPES[s].field_names[i]}}' and would have infinite size — hold it in a Box, a []T, or by index")
                 types.TYPES[s].field_types[i] = types.ty_void()
@@ -1371,7 +1367,7 @@ fn check_struct_size(st: int) {
         return
     }
     inline_path = []int {}
-    let c = inline_cycle(ast.NODES[st].ty, ast.NODES[st].loc)
+    let c = inline_cycle(ast.NODES[st].ty, ast.INFO[st].loc)
 }
 
 fn struct_type_of(st: int) -> int {
@@ -1386,7 +1382,7 @@ fn struct_type_of(st: int) -> int {
         cur_mod_name = MODS[home].name
     }
     let save_tp = cur_tparams
-    let sn = ast.NODES[st]
+    let sn = ast.full(st)
     cur_tparams = sn.strs
     let t = types.type_new(TK.Struct)
     types.TYPES[t].name = sn.name
@@ -1408,7 +1404,7 @@ fn struct_type_of(st: int) -> int {
     let mut fnames = []string {}
     let mut ftys = []int {}
     for i in 0..sn.kids.len {
-        push(fnames, ast.NODES[sn.kids[i]].name)
+        push(fnames, ast.INFO[sn.kids[i]].name)
         push(ftys, NO_TYPE)
     }
     types.TYPES[t].field_names = fnames
@@ -1418,7 +1414,7 @@ fn struct_type_of(st: int) -> int {
         let ft = resolve_type(tn)
         types.TYPES[t].field_types[i] = ft
         if tk(ft) == TK.Ptr {
-            let at = if tn != NONE { ast.NODES[tn].loc } else { sn.loc }
+            let at = if tn != NONE { ast.INFO[tn].loc } else { sn.loc }
             reject_ref_field(at, sn.name, fnames[i], ft)
         }
     }
@@ -1433,10 +1429,10 @@ fn signal_type() -> int {
     if st == NONE {
         return NO_TYPE
     }
-    if ast.NODES[st].strs.len == 0 {
+    if ast.INFO[st].strs.len == 0 {
         return struct_type_of(st)
     }
-    return make_struct_inst(st, []int { types.ty_int() }, ast.NODES[st].loc, false)
+    return make_struct_inst(st, []int { types.ty_int() }, ast.INFO[st].loc, false)
 }
 
 /** *A captured `let mut int` is component state: a Signal handle in the env. */
@@ -1498,11 +1494,11 @@ fn make_struct_inst(st: int, args: []int, at: Loc, has_at: bool) -> int {
         }
     }
     if STRUCT_INSTS.len >= LOAM_MAX_STRUCT_INSTS {
-        err(ast.NODES[st].loc, "too many generic struct instantiations (max {{LOAM_MAX_STRUCT_INSTS}})")
+        err(ast.INFO[st].loc, "too many generic struct instantiations (max {{LOAM_MAX_STRUCT_INSTS}})")
         return tmpl
     }
     let t = types.type_new(TK.Struct)
-    types.TYPES[t].name = ast.NODES[st].name
+    types.TYPES[t].name = ast.INFO[st].name
     types.TYPES[t].has_name = true
     types.TYPES[t].cname = types.TYPES[tmpl].cname
     types.TYPES[t].has_cname = types.TYPES[tmpl].has_cname
@@ -1518,13 +1514,13 @@ fn make_struct_inst(st: int, args: []int, at: Loc, has_at: bool) -> int {
     types.TYPES[t].field_types = ftys
     // Registered before its fields, which may name this same instance.
     push(STRUCT_INSTS, t)
-    let tps = ast.NODES[st].strs
+    let tps = ast.INFO[st].strs
     for i in 0..fnames.len {
         let tf = types.TYPES[tmpl].field_types[i]
         let ft = subst_type(tf, tps, args)
         types.TYPES[t].field_types[i] = ft
         if type_holds_ref(ft) && !type_holds_ref(tf) {
-            reject_ref_field(if has_at { at } else { ast.NODES[st].loc }, types.TYPES[t].name, fnames[i], ft)
+            reject_ref_field(if has_at { at } else { ast.INFO[st].loc }, types.TYPES[t].name, fnames[i], ft)
         }
         let fk = tk(ft)
         if fk == TK.Box || fk == TK.Array || fk == TK.Vec {
@@ -1572,7 +1568,7 @@ fn resolve_type(tn: int) -> int {
     if tn == NONE || kind(tn) != Kind.Type {
         return types.ty_void()
     }
-    let n = ast.NODES[tn]
+    let n = ast.full(tn)
     let tag = n.op
     if tag == 0 || tag == 1 {
         return types.type_ptr(resolve_type(n.a), tag)
@@ -1633,7 +1629,7 @@ fn resolve_type(tn: int) -> int {
     }
     let st = find_struct(nm)
     if st != NONE {
-        let want = ast.NODES[st].strs.len
+        let want = ast.INFO[st].strs.len
         let got = n.kids2.len
         if want == 0 {
             if got > 0 {
@@ -1667,9 +1663,9 @@ fn fn_type_of(fn_: int) -> int {
         cur_mod_name = MODS[home].name
     }
     let save_tp = cur_tparams
-    cur_tparams = ast.NODES[fn_].strs
+    cur_tparams = ast.INFO[fn_].strs
     let save_gfn = cur_gfn
-    cur_gfn = if ast.NODES[fn_].strs.len > 0 { fn_ } else { NONE }
+    cur_gfn = if ast.INFO[fn_].strs.len > 0 { fn_ } else { NONE }
     let mut ps = []int {}
     let params = ast.NODES[fn_].kids
     for i in 0..params.len {
@@ -1727,12 +1723,11 @@ fn is_printable(t: int) -> bool {
 
 // --- node constructors (src/ast.c) ------------------------------------------------------
 
-fn add(n: Node) -> int {
-    push(ast.NODES, n)
-    return ast.NODES.len - 1
+fn add(n: NodeBuild) -> int {
+    return ast.add(n)
 }
 
-fn mk(k: int, loc: Loc) -> Node {
+fn mk(k: int, loc: Loc) -> NodeBuild {
     return ast.node(k, loc)
 }
 
@@ -1855,7 +1850,7 @@ fn check_block_value(blk: int, expect: int) -> int {
         let mut st = ast.NODES[blk].kids[i]
         let last = i + 1 == n
         if last && st != NONE && kind(st) == Kind.If && if_is_value(st) {
-            st = new_expr_stmt(st, ast.NODES[st].loc)
+            st = new_expr_stmt(st, ast.INFO[st].loc)
             ast.NODES[blk].kids[i] = st
         }
         if last && st != NONE && kind(st) == Kind.ExprStmt {
@@ -1871,9 +1866,9 @@ fn check_block_value(blk: int, expect: int) -> int {
 
 /** *`&inner` / `&mut inner`, typed. */
 fn wrap_addr(inner: int, is_mut: int) -> int {
-    let a = new_addr(inner, is_mut, ast.NODES[inner].loc)
+    let a = new_addr(inner, is_mut, ast.INFO[inner].loc)
     ast.NODES[a].ty = types.type_ptr(ast.NODES[inner].ty, is_mut)
-    ast.NODES[a].place_mut = 0
+    ast.INFO[a].place_mut = 0
     return a
 }
 
@@ -1883,7 +1878,7 @@ fn match_arg(arg: int, pt: int, at: int) -> int {
     if pt == NO_TYPE || at == NO_TYPE {
         return arg
     }
-    let aloc = ast.NODES[arg].loc
+    let aloc = ast.INFO[arg].loc
     if tk(pt) == TK.Ptr {
         if tk(at) == TK.Ptr {
             if types.type_eq(types.TYPES[at].elem, types.TYPES[pt].elem) {
@@ -1896,16 +1891,16 @@ fn match_arg(arg: int, pt: int, at: int) -> int {
         let owned = if tk(at) == TK.Box { types.TYPES[at].elem } else { at }
         if types.type_eq(owned, types.TYPES[pt].elem) || types.type_eq(at, types.TYPES[pt].elem) {
             let pm = types.TYPES[pt].is_mut
-            if pm != 0 && ast.NODES[arg].place_mut == 0 && tk(at) != TK.Box {
+            if pm != 0 && ast.INFO[arg].place_mut == 0 && tk(at) != TK.Box {
                 err(aloc, "cannot auto-borrow immutable place as &mut")
             }
             if tk(at) == TK.Box {
-                if pm != 0 && ast.NODES[arg].place_mut == 0 {
+                if pm != 0 && ast.INFO[arg].place_mut == 0 {
                     err(aloc, "cannot mutably borrow immutable box")
                 }
                 let d = new_deref(arg, aloc)
                 ast.NODES[d].ty = types.TYPES[at].elem
-                ast.NODES[d].place_mut = ast.NODES[arg].place_mut
+                ast.INFO[d].place_mut = ast.INFO[arg].place_mut
                 return wrap_addr(d, pm)
             }
             if tk(at) != TK.Ptr {
@@ -1924,7 +1919,7 @@ fn match_arg(arg: int, pt: int, at: int) -> int {
 
 /** *Named arguments: one untyped struct literal in the last argument slot. */
 fn is_props_lit(a: int) -> bool {
-    return a != NONE && kind(a) == Kind.StructLit && !ast.NODES[a].has_name
+    return a != NONE && kind(a) == Kind.StructLit && !ast.INFO[a].has_name
 }
 
 /** *Copy a constant default expression; `NONE` for anything else. */
@@ -1932,7 +1927,7 @@ fn clone_const(e: int) -> int {
     if e == NONE {
         return NONE
     }
-    let x = ast.NODES[e]
+    let x = ast.full(e)
     switch x.kind {
         case Kind.Number:
             let c = new_number(x.num, x.loc)
@@ -1959,12 +1954,12 @@ fn clone_const(e: int) -> int {
         case Kind.StructLit:
             let mut fs = []int {}
             for i in 0..x.kids.len {
-                let f = ast.NODES[x.kids[i]]
+                let f = ast.full(x.kids[i])
                 push(fs, new_init(f.name, clone_const(f.a), f.loc))
             }
             let c = new_struct_lit("", fs, x.loc)
-            ast.NODES[c].name = x.name
-            ast.NODES[c].has_name = x.has_name
+            ast.INFO[c].name = x.name
+            ast.INFO[c].has_name = x.has_name
             return c
         default:
             return NONE
@@ -1990,7 +1985,7 @@ fn peek_type(a: int) -> int {
     if a == NONE {
         return NO_TYPE
     }
-    let x = ast.NODES[a]
+    let x = ast.full(a)
     if x.kind == Kind.Ident {
         let f = scope_find_s(x.name)
         if f.s >= 0 {
@@ -2001,7 +1996,7 @@ fn peek_type(a: int) -> int {
     }
     if x.kind == Kind.Field && x.op == 0 && x.has_name {
         if x.a != NONE && kind(x.a) == Kind.Ident {
-            let base = ast.NODES[x.a].name
+            let base = ast.INFO[x.a].name
             if module_imported(MODS[Gcur].root, base) {
                 let m = find_mod(base)
                 let gv = if m >= 0 { lookup_through(m, x.name, Kind.Var) } else { NONE }
@@ -2050,7 +2045,7 @@ fn make_thunk(arg0: int) -> int {
             }
         }
     }
-    let loc = ast.NODES[arg].loc
+    let loc = ast.INFO[arg].loc
     let body = new_block([]int { new_expr_stmt(arg, loc) }, loc)
     return new_closure([]int {}, NONE, body, loc)
 }
@@ -2065,13 +2060,13 @@ fn call_target_decl(call: int) -> int {
         return NONE
     }
     let c = ast.NODES[call].a
-    let cn = ast.NODES[c]
+    let cn = ast.full(c)
     if cn.kind == Kind.Ident {
         return lookup_unqualified(cn.name, Kind.Fn)
     }
     if cn.kind == Kind.Field && cn.op == 0 && cn.a != NONE && kind(cn.a) == Kind.Ident &&
-        module_imported(MODS[Gcur].root, ast.NODES[cn.a].name) {
-        let m = find_mod(ast.NODES[cn.a].name)
+        module_imported(MODS[Gcur].root, ast.INFO[cn.a].name) {
+        let m = find_mod(ast.INFO[cn.a].name)
         return if m >= 0 { lookup_through(m, cn.name, Kind.Fn) } else { NONE }
     }
     return NONE
@@ -2102,23 +2097,23 @@ fn wants_some(pt: int, arg: int) -> bool {
 
 /** *`none` with no binding named `none` in scope: the empty Option. */
 fn is_bare_none(arg: int) -> bool {
-    if arg == NONE || kind(arg) != Kind.Ident || ast.NODES[arg].name != "none" {
+    if arg == NONE || kind(arg) != Kind.Ident || ast.INFO[arg].name != "none" {
         return false
     }
     if scope_find("none") {
         return false
     }
     let f = lookup_unqualified("none", Kind.Fn)
-    if f != NONE && ast.NODES[f].strs.len == 0 {
+    if f != NONE && ast.INFO[f].strs.len == 0 {
         return false
     }
     return true
 }
 
 fn make_none(arg: int) -> int {
-    let loc = ast.NODES[arg].loc
+    let loc = ast.INFO[arg].loc
     let lit = new_struct_lit("Option", []int { new_init("tag", new_number(i64(1), loc), loc) }, loc)
-    ast.NODES[lit].marks = ast.NODES[lit].marks | ast.M_ZERO_REST
+    ast.INFO[lit].marks = ast.INFO[lit].marks | ast.M_ZERO_REST
     return lit
 }
 
@@ -2127,18 +2122,18 @@ fn check_state_style(fi: int) {
     if fi == NONE {
         return
     }
-    let f = ast.NODES[fi]
+    let f = ast.full(fi)
     if f.a == NONE {
         return
     }
     if f.name != "hoverStyle" && f.name != "pressStyle" && f.name != "focusStyle" && f.name != "disabledStyle" {
         return
     }
-    let v = ast.NODES[f.a]
+    let v = ast.full(f.a)
     if v.kind != Kind.Call || v.a == NONE {
         return
     }
-    let c = ast.NODES[v.a]
+    let c = ast.full(v.a)
     let cn = if c.kind == Kind.Ident { c.name } else if c.kind == Kind.Field { c.name } else { "" }
     if cn != "Style" || v.kids.len == 0 {
         return
@@ -2149,17 +2144,17 @@ fn check_state_style(fi: int) {
     }
     let ks = ast.NODES[lit].kids
     for k in 0..ks.len {
-        let key = ast.NODES[ks[k]].name
+        let key = ast.INFO[ks[k]].name
         let ok = key == "background" || key == "color" || key == "opacity" || key == "borderWidth" ||
             key == "borderColor" || key == "elevation"
         if !ok {
-            err(ast.NODES[ast.NODES[ks[k]].a].loc, "'{{key}}' in {{f.name}}: a state style takes paint keys only (background, color, opacity, borderWidth, borderColor, elevation), so hover and press never reflow")
+            err(ast.INFO[ast.NODES[ks[k]].a].loc, "'{{key}}' in {{f.name}}: a state style takes paint keys only (background, color, opacity, borderWidth, borderColor, elevation), so hover and press never reflow")
         }
     }
 }
 
 fn make_some(arg: int) -> int {
-    let loc = ast.NODES[arg].loc
+    let loc = ast.INFO[arg].loc
     let tag = new_init("tag", new_number(i64(0), loc), loc)
     let val = new_init("val", arg, loc)
     return new_struct_lit("Option", []int { tag, val }, loc)
@@ -2191,7 +2186,7 @@ fn zeus_call(name: string, arg: int) -> int {
     if f == NONE {
         return NONE
     }
-    let loc = ast.NODES[arg].loc
+    let loc = ast.INFO[arg].loc
     let callee = new_ident(name, loc)
     ast.NODES[callee].res = f
     return new_call(callee, []int { arg }, loc)
@@ -2212,17 +2207,17 @@ fn not_signal(a: int) -> bool {
     if a == NONE {
         return false
     }
-    let x = ast.NODES[a]
+    let x = ast.full(a)
     let k = x.kind
     if k == Kind.String || k == Kind.Number || k == Kind.Float || k == Kind.Bool || k == Kind.Binary ||
         k == Kind.Unary || k == Kind.Closure {
         return true
     }
     if k == Kind.Call {
-        if x.a != NONE && kind(x.a) == Kind.Ident && ast.NODES[x.a].name == "__interp" {
+        if x.a != NONE && kind(x.a) == Kind.Ident && ast.INFO[x.a].name == "__interp" {
             return true
         }
-        if x.a != NONE && kind(x.a) == Kind.Field && (ast.NODES[x.a].name == "get" || ast.NODES[x.a].name == "peek") {
+        if x.a != NONE && kind(x.a) == Kind.Field && (ast.INFO[x.a].name == "get" || ast.INFO[x.a].name == "peek") {
             let st = peek_value_type(ast.NODES[x.a].a)
             if is_signal_ty(st) {
                 return !is_signal_ty(types.TYPES[st].params[0])
@@ -2331,7 +2326,7 @@ fn peek_value_type(a: int) -> int {
         return types.ty_string()
     }
     if k == Kind.Call && ast.NODES[a].a != NONE {
-        let c = ast.NODES[ast.NODES[a].a]
+        let c = ast.full(ast.NODES[a].a)
         let mut f = NONE
         if c.kind == Kind.Ident {
             if c.name == "__interp" {
@@ -2339,8 +2334,8 @@ fn peek_value_type(a: int) -> int {
             }
             f = lookup_unqualified(c.name, Kind.Fn)
         } else if c.kind == Kind.Field && c.op == 0 && c.a != NONE && kind(c.a) == Kind.Ident &&
-            module_imported(MODS[Gcur].root, ast.NODES[c.a].name) {
-            let m = find_mod(ast.NODES[c.a].name)
+            module_imported(MODS[Gcur].root, ast.INFO[c.a].name) {
+            let m = find_mod(ast.INFO[c.a].name)
             f = if m >= 0 { lookup_through(m, c.name, Kind.Fn) } else { NONE }
         }
         let ft = if f != NONE { fn_type_of(f) } else { NO_TYPE }
@@ -2353,7 +2348,7 @@ fn peek_value_type(a: int) -> int {
 /** *the block becomes that field. Rewrites `n` into the inner call. */
 fn fold_children_block(n: int) -> bool {
     let cal = ast.NODES[n].a
-    if cal == NONE || kind(cal) != Kind.Ident || ast.NODES[cal].name != "slot" {
+    if cal == NONE || kind(cal) != Kind.Ident || ast.INFO[cal].name != "slot" {
         return false
     }
     if ast.NODES[n].kids.len != 2 {
@@ -2365,7 +2360,7 @@ fn fold_children_block(n: int) -> bool {
         return false
     }
     let f = call_target_decl(inner)
-    if f == NONE || ast.NODES[f].strs.len > 0 {
+    if f == NONE || ast.INFO[f].strs.len > 0 {
         return false
     }
     let ft = fn_type_of(f)
@@ -2384,7 +2379,7 @@ fn fold_children_block(n: int) -> bool {
     let mut has = false
     let sf = ast.NODES[st].kids
     for i in 0..sf.len {
-        if ast.NODES[sf[i]].name == "children" {
+        if ast.INFO[sf[i]].name == "children" {
             has = true
         }
     }
@@ -2402,17 +2397,17 @@ fn fold_children_block(n: int) -> bool {
                 return false
             }
         }
-        lit = new_struct_lit("", []int {}, ast.NODES[inner].loc)
+        lit = new_struct_lit("", []int {}, ast.INFO[inner].loc)
         push(ast.NODES[inner].kids, lit)
     }
     let fs = ast.NODES[lit].kids
     for i in 0..fs.len {
-        if ast.NODES[fs[i]].name == "children" {
-            err(ast.NODES[blk].loc, "children given twice: as `children =` and as a trailing block")
+        if ast.INFO[fs[i]].name == "children" {
+            err(ast.INFO[blk].loc, "children given twice: as `children =` and as a trailing block")
             return false
         }
     }
-    push(ast.NODES[lit].kids, new_init("children", blk, ast.NODES[blk].loc))
+    push(ast.NODES[lit].kids, new_init("children", blk, ast.INFO[blk].loc))
     ast.NODES[n].a = ast.NODES[inner].a
     ast.NODES[n].kids = ast.NODES[inner].kids
     return true
@@ -2446,7 +2441,7 @@ fn add_empty_props(n: int, pc: int, last: int) {
         }
         i = i + 1
     }
-    push(ast.NODES[n].kids, new_struct_lit("", []int {}, ast.NODES[n].loc))
+    push(ast.NODES[n].kids, new_struct_lit("", []int {}, ast.INFO[n].loc))
 }
 
 // --- calls ------------------------------------------------------------------------------
@@ -2460,18 +2455,18 @@ fn ret_of(ft: int) -> int {
 /** *(the callee decl, or `NONE`) is generic. */
 fn finish_proc_call(n: int, ft: int, named: int) -> int {
     if ft == NO_TYPE {
-        err(ast.NODES[n].loc, "invalid call")
+        err(ast.INFO[n].loc, "invalid call")
         return types.ty_void()
     }
-    let tps = if named != NONE { ast.NODES[named].strs } else { []string {} }
+    let tps = if named != NONE { ast.INFO[named].strs } else { []string {} }
     let nt = tps.len
     let mut bound = []int {}
     for i in 0..nt {
         push(bound, NO_TYPE)
     }
-    let nm = if named != NONE && ast.NODES[named].has_name { ast.NODES[named].name } else { "fn" }
+    let nm = if named != NONE && ast.INFO[named].has_name { ast.INFO[named].name } else { "fn" }
     let pc = types.TYPES[ft].params.len
-    let nloc = ast.NODES[n].loc
+    let nloc = ast.INFO[n].loc
     if pc > 0 {
         let mut last = types.TYPES[ft].params[pc - 1]
         if is_signal_ty(last) {
@@ -2482,8 +2477,8 @@ fn finish_proc_call(n: int, ft: int, named: int) -> int {
             let ac = ast.NODES[n].kids.len
             if ac == pc && is_props_lit(ast.NODES[n].kids[pc - 1]) {
                 let li = ast.NODES[n].kids[pc - 1]
-                ast.NODES[li].name = types.TYPES[last].name
-                ast.NODES[li].has_name = true
+                ast.INFO[li].name = types.TYPES[last].name
+                ast.INFO[li].has_name = true
             } else if ac > pc && is_props_lit(ast.NODES[n].kids[ac - 1]) {
                 // `Button("Go", look = Solid)`: extra leading positionals fill
                 // the first fields of the trailing props struct.
@@ -2494,16 +2489,16 @@ fn finish_proc_call(n: int, ft: int, named: int) -> int {
                     let args = ast.NODES[n].kids
                     let mut nf = []int {}
                     for i in 0..extra {
-                        let fname = ast.NODES[ast.NODES[st].kids[i]].name
-                        push(nf, new_init(fname, args[i], ast.NODES[args[i]].loc))
+                        let fname = ast.INFO[ast.NODES[st].kids[i]].name
+                        push(nf, new_init(fname, args[i], ast.INFO[args[i]].loc))
                     }
                     let old = ast.NODES[lit].kids
                     for i in 0..old.len {
                         push(nf, old[i])
                     }
                     ast.NODES[lit].kids = nf
-                    ast.NODES[lit].name = types.TYPES[last].name
-                    ast.NODES[lit].has_name = true
+                    ast.INFO[lit].name = types.TYPES[last].name
+                    ast.INFO[lit].has_name = true
                     let mut na = []int {}
                     let mut i = 0
                     while i + 1 < pc {
@@ -2535,7 +2530,7 @@ fn finish_proc_call(n: int, ft: int, named: int) -> int {
         if ok {
             i = pre
             while i < pc {
-                let pnode = ast.NODES[params[i]]
+                let pnode = ast.full(params[i])
                 let cp0 = clone_const(pnode.b)
                 if cp0 == NONE {
                     err(nloc, "default for parameter '{{pnode.name}}' of '{{nm}}' is not a constant expression")
@@ -2568,7 +2563,7 @@ fn finish_proc_call(n: int, ft: int, named: int) -> int {
     while i < ac && i < pc {
         let a = ast.NODES[n].kids[i]
         if is_props_lit(a) {
-            err(ast.NODES[a].loc, "named arguments only fill the last parameter, which must be a struct")
+            err(ast.INFO[a].loc, "named arguments only fill the last parameter, which must be a struct")
             bad_props = true
         }
         i = i + 1
@@ -2598,7 +2593,7 @@ fn finish_proc_call(n: int, ft: int, named: int) -> int {
         let at = r.ty
         if nt > 0 {
             if !unify(pt, at, tps, &mut bound) {
-                err(ast.NODES[r.node].loc, "cannot match {{types.type_name(at)}} to {{types.type_name(pt)}}")
+                err(ast.INFO[r.node].loc, "cannot match {{types.type_name(at)}} to {{types.type_name(pt)}}")
             }
             let want = subst_type(pt, tps, bound)
             if !type_has_param(want) {
@@ -2641,12 +2636,12 @@ fn finish_proc_call(n: int, ft: int, named: int) -> int {
         }
         if concrete {
             let cn = mono_cname(named, bound)
-            ast.NODES[n].sname = cn
-            ast.NODES[n].has_sname = true
+            ast.INFO[n].sname = cn
+            ast.INFO[n].has_sname = true
             record_mono(named, bound, cn)
         }
-        let fcn = ast.NODES[named].sname
-        if ast.NODES[named].has_sname && bound[0] != NO_TYPE {
+        let fcn = ast.INFO[named].sname
+        if ast.INFO[named].has_sname && bound[0] != NO_TYPE {
             if (fcn == "loam_zeus_signal" || fcn == "loam_zeus_get" || fcn == "loam_zeus_set") && !types.is_copy(bound[0]) {
                 err(nloc, "Signal<{{types.type_name(bound[0])}}> requires a Copy type")
             }
@@ -2670,25 +2665,25 @@ fn try_vec_builtin(n: int) -> bool {
     let mut is_pop = false
     let mut method = false
     if cal != NONE && kind(cal) == Kind.Ident {
-        if ast.NODES[cal].name == "push" {
+        if ast.INFO[cal].name == "push" {
             is_push = true
-        } else if ast.NODES[cal].name == "pop" {
+        } else if ast.INFO[cal].name == "pop" {
             is_pop = true
         }
     } else if cal != NONE && kind(cal) == Kind.Field && ast.NODES[cal].op == 0 {
         let mut skip = false
         let tgt = ast.NODES[cal].a
         if tgt != NONE && kind(tgt) == Kind.Ident {
-            let base = ast.NODES[tgt].name
+            let base = ast.INFO[tgt].name
             if module_imported(MODS[Gcur].root, base) || base == "Box" {
                 skip = true
             }
         }
         if !skip {
-            if ast.NODES[cal].name == "push" {
+            if ast.INFO[cal].name == "push" {
                 is_push = true
                 method = true
-            } else if ast.NODES[cal].name == "pop" {
+            } else if ast.INFO[cal].name == "pop" {
                 is_pop = true
                 method = true
             }
@@ -2697,7 +2692,7 @@ fn try_vec_builtin(n: int) -> bool {
     if !is_push && !is_pop {
         return false
     }
-    let nloc = ast.NODES[n].loc
+    let nloc = ast.INFO[n].loc
     if method {
         let recv = ast.NODES[cal].a
         ast.NODES[cal].a = NONE
@@ -2727,9 +2722,9 @@ fn try_vec_builtin(n: int) -> bool {
             ast.NODES[n].kids[0] = match_arg(ast.NODES[n].kids[0], types.type_ptr(vec, 1), vt)
         }
         if !types.type_eq(xt, types.TYPES[vec].elem) {
-            err(ast.NODES[ast.NODES[n].kids[1]].loc, "push element has type {{types.type_name(xt)}}, expected {{types.type_name(types.TYPES[vec].elem)}}")
+            err(ast.INFO[ast.NODES[n].kids[1]].loc, "push element has type {{types.type_name(xt)}}, expected {{types.type_name(types.TYPES[vec].elem)}}")
         }
-        ast.NODES[n].marks = ast.NODES[n].marks | ast.M_VEC_PUSH
+        ast.INFO[n].marks = ast.INFO[n].marks | ast.M_VEC_PUSH
         ast.NODES[n].ty = types.ty_void()
         return true
     }
@@ -2749,9 +2744,9 @@ fn try_vec_builtin(n: int) -> bool {
     if !(tk(vt) == TK.Ptr && types.TYPES[vt].is_mut != 0) {
         ast.NODES[n].kids[0] = match_arg(ast.NODES[n].kids[0], types.type_ptr(vec, 1), vt)
     }
-    ast.NODES[n].marks = ast.NODES[n].marks | ast.M_VEC_POP
+    ast.INFO[n].marks = ast.INFO[n].marks | ast.M_VEC_POP
     ast.NODES[n].ty = types.TYPES[vec].elem
-    ast.NODES[n].place_mut = 0
+    ast.INFO[n].place_mut = 0
     return true
 }
 
@@ -2764,7 +2759,7 @@ fn is_mod_field(cal: int) -> bool {
     if t == NONE || kind(t) != Kind.Ident {
         return false
     }
-    let base = ast.NODES[t].name
+    let base = ast.INFO[t].name
     return module_imported(MODS[Gcur].root, base) || base == "Box"
 }
 
@@ -2780,7 +2775,7 @@ fn reject_multi_child(n: int) -> bool {
     if cal == NONE || kind(cal) != Kind.Field || ast.NODES[cal].op != 0 {
         return false
     }
-    if ast.NODES[cal].name != "child" || ast.NODES[cal].a == NONE {
+    if ast.INFO[cal].name != "child" || ast.NODES[cal].a == NONE {
         return false
     }
     let md = is_mod_field(cal)
@@ -2802,7 +2797,7 @@ fn reject_multi_child(n: int) -> bool {
     if !many {
         return false
     }
-    err(ast.NODES[n].loc, "'.child' takes one node; use '.children(...)' for several")
+    err(ast.INFO[n].loc, "'.child' takes one node; use '.children(...)' for several")
     return true
 }
 
@@ -2812,7 +2807,7 @@ fn expand_children(n: int) -> bool {
     if cal == NONE || kind(cal) != Kind.Field || ast.NODES[cal].op != 0 {
         return false
     }
-    if ast.NODES[cal].name != "children" || ast.NODES[cal].a == NONE {
+    if ast.INFO[cal].name != "children" || ast.NODES[cal].a == NONE {
         return false
     }
     let bt = peel_ref(peek_type(ast.NODES[cal].a))
@@ -2825,7 +2820,7 @@ fn expand_children(n: int) -> bool {
         }
     }
     let md = is_mod_field(cal)
-    let nloc = ast.NODES[n].loc
+    let nloc = ast.INFO[n].loc
     let args = ast.NODES[n].kids
     let ac = args.len
     if ac == 0 || (md && ac == 1) {
@@ -2840,7 +2835,7 @@ fn expand_children(n: int) -> bool {
         }
         if nc == 1 {
             ast.NODES[n].kids[0] = els[0]
-            ast.NODES[cal].name = "child"
+            ast.INFO[cal].name = "child"
             return true
         }
         let mut inner = ast.NODES[cal].a
@@ -2852,7 +2847,7 @@ fn expand_children(n: int) -> bool {
         }
         ast.NODES[cal].a = inner
         ast.NODES[n].kids[0] = els[nc - 1]
-        ast.NODES[cal].name = "child"
+        ast.INFO[cal].name = "child"
         return true
     }
     if md && ac == 2 && kind(args[1]) == Kind.Tuple {
@@ -2862,21 +2857,21 @@ fn expand_children(n: int) -> bool {
             return false
         }
         let tgt = ast.NODES[cal].a
-        let modn = ast.NODES[tgt].name
+        let modn = ast.INFO[tgt].name
         let mut acc = args[0]
         let mut i = 0
         while i + 1 < nc {
-            let fld = new_field(new_ident(modn, ast.NODES[tgt].loc), "child", 0, nloc)
+            let fld = new_field(new_ident(modn, ast.INFO[tgt].loc), "child", 0, nloc)
             acc = new_call(fld, []int { acc, els[i] }, nloc)
             i = i + 1
         }
         ast.NODES[n].kids[0] = acc
         ast.NODES[n].kids[1] = els[nc - 1]
-        ast.NODES[cal].name = "child"
+        ast.INFO[cal].name = "child"
         return true
     }
     if !md && ac == 1 {
-        ast.NODES[cal].name = "child"
+        ast.INFO[cal].name = "child"
         return true
     }
     if !md && ac >= 2 {
@@ -2889,25 +2884,25 @@ fn expand_children(n: int) -> bool {
         }
         ast.NODES[cal].a = inner
         ast.NODES[n].kids = []int { args[ac - 1] }
-        ast.NODES[cal].name = "child"
+        ast.INFO[cal].name = "child"
         return true
     }
     if md && ac == 2 {
-        ast.NODES[cal].name = "child"
+        ast.INFO[cal].name = "child"
         return true
     }
     if md && ac >= 3 {
         let tgt = ast.NODES[cal].a
-        let modn = ast.NODES[tgt].name
+        let modn = ast.INFO[tgt].name
         let mut acc = args[0]
         let mut i = 1
         while i + 1 < ac {
-            let fld = new_field(new_ident(modn, ast.NODES[tgt].loc), "child", 0, nloc)
+            let fld = new_field(new_ident(modn, ast.INFO[tgt].loc), "child", 0, nloc)
             acc = new_call(fld, []int { acc, args[i] }, nloc)
             i = i + 1
         }
         ast.NODES[n].kids = []int { acc, args[ac - 1] }
-        ast.NODES[cal].name = "child"
+        ast.INFO[cal].name = "child"
         return true
     }
     return false
@@ -2919,7 +2914,7 @@ fn as_struct_ctor(n: int) -> bool {
     let cal = ast.NODES[n].a
     let mut sname = ""
     if cal != NONE && kind(cal) == Kind.Ident {
-        let nm = ast.NODES[cal].name
+        let nm = ast.INFO[cal].name
         if lookup_unqualified(nm, Kind.Fn) != NONE {
             return false
         }
@@ -2930,13 +2925,13 @@ fn as_struct_ctor(n: int) -> bool {
             sname = nm
         }
     } else if cal != NONE && kind(cal) == Kind.Field && ast.NODES[cal].op == 0 && ast.NODES[cal].a != NONE &&
-        kind(ast.NODES[cal].a) == Kind.Ident && module_imported(MODS[Gcur].root, ast.NODES[ast.NODES[cal].a].name) {
-        let m = find_mod(ast.NODES[ast.NODES[cal].a].name)
-        if m >= 0 && lookup_through(m, ast.NODES[cal].name, Kind.Fn) != NONE {
+        kind(ast.NODES[cal].a) == Kind.Ident && module_imported(MODS[Gcur].root, ast.INFO[ast.NODES[cal].a].name) {
+        let m = find_mod(ast.INFO[ast.NODES[cal].a].name)
+        if m >= 0 && lookup_through(m, ast.INFO[cal].name, Kind.Fn) != NONE {
             return false
         }
-        if m >= 0 && lookup_through(m, ast.NODES[cal].name, Kind.Struct) != NONE {
-            sname = ast.NODES[cal].name
+        if m >= 0 && lookup_through(m, ast.INFO[cal].name, Kind.Struct) != NONE {
+            sname = ast.INFO[cal].name
         }
     }
     if sname.len == 0 {
@@ -2947,14 +2942,14 @@ fn as_struct_ctor(n: int) -> bool {
     if args.len == 1 && is_props_lit(args[0]) {
         fi = ast.NODES[args[0]].kids
     } else if args.len != 0 {
-        err(ast.NODES[n].loc, "'{{sname}}' is a struct — construct it with named fields")
+        err(ast.INFO[n].loc, "'{{sname}}' is a struct — construct it with named fields")
         return false
     }
     ast.NODES[n].kind = Kind.StructLit
-    ast.NODES[n].name = sname
-    ast.NODES[n].has_name = true
+    ast.INFO[n].name = sname
+    ast.INFO[n].has_name = true
     ast.NODES[n].kids = fi
-    ast.NODES[n].kids2 = []int {}
+    ast.INFO[n].kids2 = []int {}
     ast.NODES[n].a = NONE
     return true
 }
@@ -2992,7 +2987,7 @@ fn cell_ops() -> []CellOp {
 }
 
 fn check_cell_op(n: int, op: CellOp, expect: int) -> int {
-    let nloc = ast.NODES[n].loc
+    let nloc = ast.INFO[n].loc
     if ast.NODES[n].kids.len != op.arity {
         let s = if op.arity == 1 { "" } else { "s" }
         err(nloc, "{{op.name}} expects {{op.arity}} argument{{s}}")
@@ -3003,7 +2998,7 @@ fn check_cell_op(n: int, op: CellOp, expect: int) -> int {
         check_expr(ast.NODES[n].kids[1])
     }
     if op.what.len > 0 && !types.type_eq(a, types.ty_int()) {
-        err(ast.NODES[ast.NODES[n].kids[0]].loc, "{{op.name}} requires int {{op.what}}")
+        err(ast.INFO[ast.NODES[n].kids[0]].loc, "{{op.name}} requires int {{op.what}}")
     }
     if op.ret == 2 && (expect == NO_TYPE || tk(expect) == TK.Void) {
         err(nloc, "cannot infer type of {{op.name}}")
@@ -3011,14 +3006,14 @@ fn check_cell_op(n: int, op: CellOp, expect: int) -> int {
         return ast.NODES[n].ty
     }
     if op.family == 1 {
-        ast.NODES[n].sig = op.cell
+        ast.INFO[n].sig = op.cell
     } else if op.family == 2 {
-        ast.NODES[n].fut = op.cell
+        ast.INFO[n].fut = op.cell
     } else {
-        ast.NODES[n].ch = op.cell
+        ast.INFO[n].ch = op.cell
     }
     ast.NODES[n].ty = if op.ret == 0 { types.ty_int() } else if op.ret == 1 { types.ty_void() } else { expect }
-    ast.NODES[n].place_mut = 0
+    ast.INFO[n].place_mut = 0
     return ast.NODES[n].ty
 }
 
@@ -3068,7 +3063,7 @@ fn starts(s: string, p: string) -> bool {
 
 /** *Calls: builtins, `Box::new`, `fmt.println`, methods, `mod.fn`, fn values. */
 fn check_call(n: int, expect: int) -> int {
-    let nloc = ast.NODES[n].loc
+    let nloc = ast.INFO[n].loc
     if (ast.NODES[n].flags & ASTF_AWAIT) != 0 {
         if !cur_async {
             err(nloc, "await is only allowed inside an `async fn`")
@@ -3090,32 +3085,32 @@ fn check_call(n: int, expect: int) -> int {
 
     // Box::new(expr)
     if cal != NONE && kind(cal) == Kind.Field && ast.NODES[cal].op != 0 && ast.NODES[cal].a != NONE &&
-        kind(ast.NODES[cal].a) == Kind.Ident && ast.NODES[ast.NODES[cal].a].name == "Box" &&
-        ast.NODES[cal].name == "new" {
+        kind(ast.NODES[cal].a) == Kind.Ident && ast.INFO[ast.NODES[cal].a].name == "Box" &&
+        ast.INFO[cal].name == "new" {
         if ast.NODES[n].kids.len != 1 {
             err(nloc, "Box::new expects 1 argument")
             return types.ty_void()
         }
         let et = check_expr(ast.NODES[n].kids[0])
-        ast.NODES[n].marks = ast.NODES[n].marks | ast.M_BOX_NEW
+        ast.INFO[n].marks = ast.INFO[n].marks | ast.M_BOX_NEW
         ast.NODES[n].ty = types.type_box(et)
         if tk(et) == TK.Ptr {
             reject_ref_elem(nloc, ast.NODES[n].ty)
         }
         note_boxed(et)
-        ast.NODES[n].place_mut = 0
+        ast.INFO[n].place_mut = 0
         return ast.NODES[n].ty
     }
 
     if cal != NONE && kind(cal) == Kind.Ident {
-        let nm = ast.NODES[cal].name
+        let nm = ast.INFO[cal].name
         if nm == "__sizeof" {
             if ast.NODES[n].kids.len != 1 {
                 err(nloc, "__sizeof expects 1 argument")
                 return types.ty_void()
             }
             check_expr(ast.NODES[n].kids[0])
-            ast.NODES[n].marks = ast.NODES[n].marks | ast.M_SIZEOF
+            ast.INFO[n].marks = ast.INFO[n].marks | ast.M_SIZEOF
             ast.NODES[n].ty = types.ty_int()
             return ast.NODES[n].ty
         }
@@ -3125,9 +3120,9 @@ fn check_call(n: int, expect: int) -> int {
                 return types.ty_void()
             }
             check_expr(ast.NODES[n].kids[0])
-            ast.NODES[n].marks = ast.NODES[n].marks | ast.M_VALUE_KEY
+            ast.INFO[n].marks = ast.INFO[n].marks | ast.M_VALUE_KEY
             ast.NODES[n].ty = types.ty_string()
-            ast.NODES[n].place_mut = 0
+            ast.INFO[n].place_mut = 0
             return ast.NODES[n].ty
         }
         if nm == "panic" {
@@ -3137,9 +3132,9 @@ fn check_call(n: int, expect: int) -> int {
             }
             let at = check_expr(ast.NODES[n].kids[0])
             if tk(at) != TK.String {
-                err(ast.NODES[ast.NODES[n].kids[0]].loc, "panic expects a string")
+                err(ast.INFO[ast.NODES[n].kids[0]].loc, "panic expects a string")
             }
-            ast.NODES[n].marks = ast.NODES[n].marks | ast.M_PANIC
+            ast.INFO[n].marks = ast.INFO[n].marks | ast.M_PANIC
             ast.NODES[n].ty = types.ty_void()
             return ast.NODES[n].ty
         }
@@ -3153,15 +3148,15 @@ fn check_call(n: int, expect: int) -> int {
                 let t = check_expr(part)
                 let k = tk(t)
                 if k != TK.String && k != TK.Int && k != TK.Float && k != TK.Bool {
-                    err(ast.NODES[part].loc, "cannot interpolate {{types.type_name(t)}}")
+                    err(ast.INFO[part].loc, "cannot interpolate {{types.type_name(t)}}")
                     ast.NODES[n].ty = types.ty_string()
                     return ast.NODES[n].ty
                 }
                 if k != TK.String {
-                    let w = new_call(NONE, []int { part }, ast.NODES[part].loc)
+                    let w = new_call(NONE, []int { part }, ast.INFO[part].loc)
                     let cb = if k == TK.Int && types.TYPES[t].is_unsigned != 0 && types.TYPES[t].bits == 64 { "loam_str_of_u64" } else if k == TK.Int { "loam_str_of_int" } else if k == TK.Float { "loam_str_of_float" } else { "loam_str_of_bool" }
-                    ast.NODES[w].cbuiltin = cb
-                    ast.NODES[w].has_cbuiltin = true
+                    ast.INFO[w].cbuiltin = cb
+                    ast.INFO[w].has_cbuiltin = true
                     ast.NODES[w].ty = types.ty_string()
                     part = w
                 }
@@ -3170,8 +3165,8 @@ fn check_call(n: int, expect: int) -> int {
                     continue
                 }
                 let cat = new_call(NONE, []int { acc, part }, nloc)
-                ast.NODES[cat].cbuiltin = "loam_str_concat"
-                ast.NODES[cat].has_cbuiltin = true
+                ast.INFO[cat].cbuiltin = "loam_str_concat"
+                ast.INFO[cat].has_cbuiltin = true
                 ast.NODES[cat].ty = types.ty_string()
                 acc = cat
             }
@@ -3179,7 +3174,7 @@ fn check_call(n: int, expect: int) -> int {
                 acc = new_string("", nloc)
                 ast.NODES[acc].ty = types.ty_string()
             }
-            ast.NODES[n] = ast.NODES[acc]
+            ast.copy_node(n, acc)
             return ast.NODES[n].ty
         }
         let ops = cell_ops()
@@ -3221,10 +3216,10 @@ fn check_call(n: int, expect: int) -> int {
                 at = check_expr(arg)
             }
             if !types.is_numeric(at) && tk(at) != TK.Bool {
-                err(ast.NODES[arg].loc, "cannot convert {{types.type_name(at)}} to {{types.type_name(ct)}}")
+                err(ast.INFO[arg].loc, "cannot convert {{types.type_name(at)}} to {{types.type_name(ct)}}")
             }
             if mode != 0 && !types.is_int_kind(at) {
-                err(ast.NODES[arg].loc, "{{nm}} requires an integer argument")
+                err(ast.INFO[arg].loc, "{{nm}} requires an integer argument")
             }
             let mut tn = mk(Kind.Type, nloc)
             tn.op = 2
@@ -3233,10 +3228,10 @@ fn check_call(n: int, expect: int) -> int {
             ast.NODES[n].kind = Kind.Cast
             ast.NODES[n].a = arg
             ast.NODES[n].b = add(tn)
-            ast.NODES[n].conv = mode
+            ast.INFO[n].conv = mode
             ast.NODES[n].kids = []int {}
             ast.NODES[n].ty = ct
-            ast.NODES[n].place_mut = 0
+            ast.INFO[n].place_mut = 0
             return ct
         }
         let nb = numb_of(nm)
@@ -3256,7 +3251,7 @@ fn check_call(n: int, expect: int) -> int {
             } else if arity == 2 && !types.type_eq(a, b) {
                 err(nloc, "{{nm}} requires matching int widths ({{types.type_name(a)}}, {{types.type_name(b)}})")
             }
-            ast.NODES[n].numb = nb
+            ast.INFO[n].numb = nb
             ast.NODES[n].ty = if types.is_int_kind(a) { a } else { types.ty_int() }
             return ast.NODES[n].ty
         }
@@ -3270,8 +3265,8 @@ fn check_call(n: int, expect: int) -> int {
             if !is_u8 && (tk(a) != TK.Vec || !types.type_eq(types.TYPES[a].elem, types.ty_int())) {
                 err(nloc, "string_from_bytes requires []int or []u8")
             }
-            ast.NODES[n].cbuiltin = if is_u8 { "loam_string_from_u8" } else { "loam_string_from_bytes" }
-            ast.NODES[n].has_cbuiltin = true
+            ast.INFO[n].cbuiltin = if is_u8 { "loam_string_from_u8" } else { "loam_string_from_bytes" }
+            ast.INFO[n].has_cbuiltin = true
             ast.NODES[n].ty = types.ty_string()
             return ast.NODES[n].ty
         }
@@ -3283,9 +3278,9 @@ fn check_call(n: int, expect: int) -> int {
 
     // fmt.println(...) / fmt.eprintln(...)
     if cal != NONE && kind(cal) == Kind.Field && ast.NODES[cal].op == 0 && ast.NODES[cal].a != NONE &&
-        kind(ast.NODES[cal].a) == Kind.Ident && ast.NODES[ast.NODES[cal].a].name == "fmt" &&
-        (ast.NODES[cal].name == "println" || ast.NODES[cal].name == "eprintln") {
-        let field = ast.NODES[cal].name
+        kind(ast.NODES[cal].a) == Kind.Ident && ast.INFO[ast.NODES[cal].a].name == "fmt" &&
+        (ast.INFO[cal].name == "println" || ast.INFO[cal].name == "eprintln") {
+        let field = ast.INFO[cal].name
         let to_err = field == "eprintln"
         if !module_imported(MODS[Gcur].root, "fmt") {
             err(nloc, "unknown module 'fmt' — add `import \"std:fmt\"`")
@@ -3295,12 +3290,12 @@ fn check_call(n: int, expect: int) -> int {
         for i in 0..args.len {
             let t = check_expr(args[i])
             if !is_printable(t) {
-                err(ast.NODES[args[i]].loc, "fmt.{{field}} cannot print {{types.type_name(t)}}")
+                err(ast.INFO[args[i]].loc, "fmt.{{field}} cannot print {{types.type_name(t)}}")
             }
         }
-        ast.NODES[n].marks = ast.NODES[n].marks | ast.M_PRINTLN
+        ast.INFO[n].marks = ast.INFO[n].marks | ast.M_PRINTLN
         if to_err {
-            ast.NODES[n].marks = ast.NODES[n].marks | ast.M_EPRINTLN
+            ast.INFO[n].marks = ast.INFO[n].marks | ast.M_EPRINTLN
         }
         ast.NODES[n].ty = types.ty_void()
         mark_module_ident(ast.NODES[cal].a, "fmt")
@@ -3317,7 +3312,7 @@ fn check_call(n: int, expect: int) -> int {
     let mut f = NONE
     let is_mod_path = is_mod_field(cal)
     if cal != NONE && kind(cal) == Kind.Field && ast.NODES[cal].op == 0 && !is_mod_path {
-        let fnn = ast.NODES[cal].name
+        let fnn = ast.INFO[cal].name
         let resd = ast.NODES[cal].res
         let done = if resd != NONE { fn_type_of(resd) } else { NO_TYPE }
         if done != NO_TYPE && ast.NODES[n].kids.len == types.TYPES[done].params.len {
@@ -3336,7 +3331,7 @@ fn check_call(n: int, expect: int) -> int {
                         let ft = types.TYPES[base].field_types[i]
                         if fns[i] == fnn && tk(ft) == TK.Proc {
                             ast.NODES[cal].ty = ft
-                            ast.NODES[n].marks = ast.NODES[n].marks | ast.M_FN_VAL
+                            ast.INFO[n].marks = ast.INFO[n].marks | ast.M_FN_VAL
                             return finish_proc_call(n, ft, NONE)
                         }
                     }
@@ -3354,13 +3349,13 @@ fn check_call(n: int, expect: int) -> int {
                 push(na, old[i])
             }
             ast.NODES[n].kids = na
-            ast.NODES[n].sname = ast.NODES[f].sname
-            ast.NODES[n].has_sname = ast.NODES[f].has_sname
+            ast.INFO[n].sname = ast.INFO[f].sname
+            ast.INFO[n].has_sname = ast.INFO[f].has_sname
         }
     } else if cal != NONE && kind(cal) == Kind.Field && ast.NODES[cal].op == 0 && ast.NODES[cal].a != NONE &&
         kind(ast.NODES[cal].a) == Kind.Ident {
-        let md = ast.NODES[ast.NODES[cal].a].name
-        let fnn = ast.NODES[cal].name
+        let md = ast.INFO[ast.NODES[cal].a].name
+        let fnn = ast.INFO[cal].name
         if !module_imported(MODS[Gcur].root, md) {
             err(nloc, "unknown module '{{md}}' — add `import \"std:{{md}}\"` or `import \"{{md}}.loam\"`")
             return types.ty_void()
@@ -3379,19 +3374,19 @@ fn check_call(n: int, expect: int) -> int {
         ast.NODES[cal].ty = fn_type_of(f)
         mark_module_ident(ast.NODES[cal].a, md)
     } else if cal != NONE && kind(cal) == Kind.Ident && ast.NODES[cal].res != NONE && kind(ast.NODES[cal].res) == Kind.Fn &&
-        (ast.NODES[cal].name == "signal" || ast.NODES[cal].name == "computed" || ast.NODES[cal].name == "get" ||
-            starts(ast.NODES[cal].name, "opt_reader_")) && ast.NODES[cal].res == zeus_fn(ast.NODES[cal].name) {
+        (ast.INFO[cal].name == "signal" || ast.INFO[cal].name == "computed" || ast.INFO[cal].name == "get" ||
+            starts(ast.INFO[cal].name, "opt_reader_")) && ast.NODES[cal].res == zeus_fn(ast.INFO[cal].name) {
         // A callee the checker bound itself (`zeus_call`).
         f = ast.NODES[cal].res
         ast.NODES[cal].ty = fn_type_of(f)
     } else if cal != NONE && kind(cal) == Kind.Ident {
-        let nm = ast.NODES[cal].name
+        let nm = ast.INFO[cal].name
         let found = scope_find_s(nm)
         if found.s >= 0 {
             let lt = SCOPES[found.s].types[found.i]
             if tk(lt) == TK.Proc {
                 let ct = check_expr(cal)
-                ast.NODES[n].marks = ast.NODES[n].marks | ast.M_FN_VAL
+                ast.INFO[n].marks = ast.INFO[n].marks | ast.M_FN_VAL
                 return finish_proc_call(n, ct, NONE)
             }
         }
@@ -3401,13 +3396,13 @@ fn check_call(n: int, expect: int) -> int {
             return types.ty_void()
         }
         ast.NODES[cal].res = f
-        ast.NODES[cal].def_line = ast.NODES[f].loc.line
-        ast.NODES[cal].def_col = ast.NODES[f].loc.col
+        ast.INFO[cal].def_line = ast.INFO[f].loc.line
+        ast.INFO[cal].def_col = ast.INFO[f].loc.col
         ast.NODES[cal].ty = fn_type_of(f)
     } else if cal != NONE {
         let ct = check_expr(cal)
         if tk(ct) == TK.Proc {
-            ast.NODES[n].marks = ast.NODES[n].marks | ast.M_FN_VAL
+            ast.INFO[n].marks = ast.INFO[n].marks | ast.M_FN_VAL
             return finish_proc_call(n, ct, NONE)
         }
         err(nloc, "invalid call")
@@ -3440,7 +3435,7 @@ fn wrap_else_if(n: int) {
         return
     }
     wrap_else_if(e)
-    let eloc = ast.NODES[e].loc
+    let eloc = ast.INFO[e].loc
     ast.NODES[n].c = new_block([]int { new_expr_stmt(e, eloc) }, eloc)
 }
 
@@ -3495,7 +3490,7 @@ fn tail_expr_to_return(body: int) {
     let last = ast.NODES[body].kids[li]
     if kind(last) == Kind.If && if_is_value(last) {
         wrap_else_if(last)
-        let mut r = mk(Kind.Return, ast.NODES[last].loc)
+        let mut r = mk(Kind.Return, ast.INFO[last].loc)
         r.a = last
         ast.NODES[body].kids[li] = add(r)
         return
@@ -3515,15 +3510,15 @@ fn stage_event_param(n: int, expect: int) {
     if ast.NODES[n].kids.len != 1 {
         return
     }
-    let prm = ast.NODES[ast.NODES[n].kids[0]]
+    let prm = ast.full(ast.NODES[n].kids[0])
     let pt = prm.a
-    if pt == NONE || kind(pt) != Kind.Type || ast.NODES[pt].op != 2 || !ast.NODES[pt].has_name {
+    if pt == NONE || kind(pt) != Kind.Type || ast.NODES[pt].op != 2 || !ast.INFO[pt].has_name {
         return
     }
     let mut reader = ""
-    if ast.NODES[pt].name == "MouseEvent" {
+    if ast.INFO[pt].name == "MouseEvent" {
         reader = "current_mouse"
-    } else if ast.NODES[pt].name == "KeyEvent" {
+    } else if ast.INFO[pt].name == "KeyEvent" {
         reader = "current_key"
     }
     if reader.len == 0 {
@@ -3553,7 +3548,7 @@ fn check_closure(n: int, expect0: int) -> int {
     stage_event_param(n, expect0)
     let params = ast.NODES[n].kids
     let npc = params.len
-    let nloc = ast.NODES[n].loc
+    let nloc = ast.INFO[n].loc
     let mut expect = expect0
     if expect != NO_TYPE && tk(expect) != TK.Proc {
         expect = NO_TYPE
@@ -3563,7 +3558,7 @@ fn check_closure(n: int, expect0: int) -> int {
     }
     let mut ps = []int {}
     for i in 0..npc {
-        let prm = ast.NODES[params[i]]
+        let prm = ast.full(params[i])
         if prm.a != NONE {
             let t = resolve_type(prm.a)
             push(ps, t)
@@ -3602,11 +3597,11 @@ fn check_closure(n: int, expect0: int) -> int {
         push(clos_scope_stack, SCOPES.len - 1)
     }
     for i in 0..npc {
-        let prm = ast.NODES[params[i]]
+        let prm = ast.full(params[i])
         scope_add(prm.name, ps[i], 0, 0, prm.loc, n)
     }
-    if ast.NODES[n].clos_id == 0 {
-        ast.NODES[n].clos_id = next_clos_id
+    if ast.INFO[n].clos_id == 0 {
+        ast.INFO[n].clos_id = next_clos_id
         next_clos_id = next_clos_id + 1
     }
     let body = ast.NODES[n].b
@@ -3644,7 +3639,7 @@ fn check_closure(n: int, expect0: int) -> int {
     cur_async = saved_async
     loop_depth = saved_loop
     switch_depth = saved_switch
-    ast.NODES[n].place_mut = 0
+    ast.INFO[n].place_mut = 0
     return ast.NODES[n].ty
 }
 
@@ -3709,18 +3704,18 @@ fn is_gvar(d: int) -> bool {
 
 /** *`n` now names fn `f` as a value. */
 fn resolve_fn_value(n: int, f: int) -> int {
-    ast.NODES[f].marks = ast.NODES[f].marks | ast.M_AS_VALUE
+    ast.INFO[f].marks = ast.INFO[f].marks | ast.M_AS_VALUE
     ast.NODES[n].flags = ast.NODES[n].flags | ASTF_FN_VAL
     ast.NODES[n].ty = fn_type_of(f)
-    ast.NODES[n].place_mut = 0
+    ast.INFO[n].place_mut = 0
     ast.NODES[n].res = f
-    ast.NODES[n].def_line = ast.NODES[f].loc.line
-    ast.NODES[n].def_col = ast.NODES[f].loc.col
+    ast.INFO[n].def_line = ast.INFO[f].loc.line
+    ast.INFO[n].def_col = ast.INFO[f].loc.col
     return ast.NODES[n].ty
 }
 
 fn check_ident(n: int) -> int {
-    let x = ast.NODES[n]
+    let x = ast.full(n)
     if (x.flags & ASTF_FN_VAL) != 0 && x.res != NONE {
         return set_ty(n, fn_type_of(x.res))
     }
@@ -3750,15 +3745,15 @@ fn check_ident(n: int) -> int {
             }
         }
         ast.NODES[n].ty = ty
-        ast.NODES[n].place_mut = mt
+        ast.INFO[n].place_mut = mt
         ast.NODES[n].res = dnode
-        ast.NODES[n].def_line = dloc.line
-        ast.NODES[n].def_col = dloc.col
+        ast.INFO[n].def_line = dloc.line
+        ast.INFO[n].def_col = dloc.col
         return ty
     }
     let f = find_fn_in(Gcur, x.name)
     if f != NONE {
-        if ast.NODES[f].strs.len > 0 {
+        if ast.INFO[f].strs.len > 0 {
             err(x.loc, "cannot use generic function '{{x.name}}' as a value")
             return set_ty(n, types.ty_void())
         }
@@ -3767,15 +3762,15 @@ fn check_ident(n: int) -> int {
     let gv = lookup_unqualified(x.name, Kind.Var)
     if gv != NONE && ast.NODES[gv].ty != NO_TYPE {
         ast.NODES[n].ty = ast.NODES[gv].ty
-        ast.NODES[n].place_mut = ast.NODES[gv].op
+        ast.INFO[n].place_mut = ast.NODES[gv].op
         ast.NODES[n].res = gv
-        ast.NODES[n].def_line = ast.NODES[gv].loc.line
-        ast.NODES[n].def_col = ast.NODES[gv].loc.col
+        ast.INFO[n].def_line = ast.INFO[gv].loc.line
+        ast.INFO[n].def_col = ast.INFO[gv].loc.col
         return ast.NODES[n].ty
     }
     let ifn = lookup_unqualified(x.name, Kind.Fn)
     if ifn != NONE {
-        if ast.NODES[ifn].strs.len > 0 {
+        if ast.INFO[ifn].strs.len > 0 {
             err(x.loc, "cannot use generic function '{{x.name}}' as a value")
             return set_ty(n, types.ty_void())
         }
@@ -3795,7 +3790,7 @@ fn wider(l: int, r: int) -> int {
 
 fn check_binary(n: int, expect: int) -> int {
     let op = ast.NODES[n].op
-    let nloc = ast.NODES[n].loc
+    let nloc = ast.INFO[n].loc
     if op == Tok.DotDot {
         let l = check_expr(ast.NODES[n].a)
         let r = check_expr_ty(ast.NODES[n].b, if types.is_int_kind(l) { l } else { NO_TYPE })
@@ -3846,10 +3841,10 @@ fn check_binary(n: int, expect: int) -> int {
         } else {
             let amt = ast.NODES[n].b
             if kind(amt) == Kind.Number {
-                let v = ast.NODES[amt].num
+                let v = ast.INFO[amt].num
                 let bits = types.TYPES[p.l].bits
                 if v < i64(0) || v >= i64(bits) {
-                    err(ast.NODES[amt].loc, "shift by {{v}} is out of range for {{types.type_name(p.l)}} (width {{bits}})")
+                    err(ast.INFO[amt].loc, "shift by {{v}} is out of range for {{types.type_name(p.l)}} (width {{bits}})")
                 }
             }
         }
@@ -3882,9 +3877,9 @@ fn check_binary(n: int, expect: int) -> int {
 }
 
 fn check_unary(n: int, expect: int) -> int {
-    let x = ast.NODES[n]
+    let x = ast.full(n)
     if x.op == Tok.Minus && is_num_lit(x.a) && expect != NO_TYPE && types.is_numeric(expect) {
-        let o = ast.NODES[x.a]
+        let o = ast.full(x.a)
         if o.kind == Kind.Number {
             let v = wrapping_sub(i64(0), o.num)
             let imin = i64(-9223372036854775807) - i64(1)
@@ -3893,23 +3888,23 @@ fn check_unary(n: int, expect: int) -> int {
             }
             if tk(expect) == TK.Float {
                 ast.NODES[n].kind = Kind.Float
-                ast.NODES[n].fnum = 0.0 - f64(o.num)
+                ast.INFO[n].fnum = 0.0 - f64(o.num)
             } else {
                 if !int_lit_fits(v, expect) {
                     err(x.loc, "literal {{v}} does not fit {{types.type_name(expect)}}")
                 }
                 ast.NODES[n].kind = Kind.Number
-                ast.NODES[n].num = v
+                ast.INFO[n].num = v
             }
             ast.NODES[n].ty = expect
-            ast.NODES[n].place_mut = 0
+            ast.INFO[n].place_mut = 0
             return expect
         }
         if o.kind == Kind.Float && tk(expect) == TK.Float {
             ast.NODES[n].kind = Kind.Float
-            ast.NODES[n].fnum = 0.0 - o.fnum
+            ast.INFO[n].fnum = 0.0 - o.fnum
             ast.NODES[n].ty = expect
-            ast.NODES[n].place_mut = 0
+            ast.INFO[n].place_mut = 0
             return expect
         }
     }
@@ -3937,34 +3932,34 @@ fn check_unary(n: int, expect: int) -> int {
 /** *An enum constant (`Align.Center`, `zeus.Align.Center`) becomes its int; */
 /** *`mod.global` is a place; `mod.fn` a fn value; then struct fields. */
 fn check_field(n: int) -> int {
-    let x = ast.NODES[n]
+    let x = ast.full(n)
     let tgt = x.a
     if tgt != NONE && kind(tgt) == Kind.Ident && x.has_name {
-        let en = find_enum(ast.NODES[tgt].name)
+        let en = find_enum(ast.INFO[tgt].name)
         if en != NONE {
             let ev = enum_value(en, x.name)
             if !ev.found {
-                err(x.loc, "enum '{{ast.NODES[en].name}}' has no variant '{{x.name}}'")
+                err(x.loc, "enum '{{ast.INFO[en].name}}' has no variant '{{x.name}}'")
                 return set_ty(n, types.ty_int())
             }
             return lower_to_int(n, ev.v)
         }
     }
     if tgt != NONE && kind(tgt) == Kind.Field && ast.NODES[tgt].op == 0 && x.has_name && ast.NODES[tgt].a != NONE &&
-        kind(ast.NODES[tgt].a) == Kind.Ident && module_imported(MODS[Gcur].root, ast.NODES[ast.NODES[tgt].a].name) {
-        let em = find_mod(ast.NODES[ast.NODES[tgt].a].name)
-        let en = if em >= 0 { lookup_through(em, ast.NODES[tgt].name, Kind.Enum) } else { NONE }
+        kind(ast.NODES[tgt].a) == Kind.Ident && module_imported(MODS[Gcur].root, ast.INFO[ast.NODES[tgt].a].name) {
+        let em = find_mod(ast.INFO[ast.NODES[tgt].a].name)
+        let en = if em >= 0 { lookup_through(em, ast.INFO[tgt].name, Kind.Enum) } else { NONE }
         if en != NONE {
             let ev = enum_value(en, x.name)
             if !ev.found {
-                err(x.loc, "enum '{{ast.NODES[en].name}}' has no variant '{{x.name}}'")
+                err(x.loc, "enum '{{ast.INFO[en].name}}' has no variant '{{x.name}}'")
                 return set_ty(n, types.ty_int())
             }
             return lower_to_int(n, ev.v)
         }
     }
     if tgt != NONE && kind(tgt) == Kind.Ident {
-        let base = ast.NODES[tgt].name
+        let base = ast.INFO[tgt].name
         if module_imported(MODS[Gcur].root, base) || base == "Box" {
             mark_module_ident(tgt, base)
             let md = find_mod(base)
@@ -3972,17 +3967,17 @@ fn check_field(n: int) -> int {
             if gv != NONE && ast.NODES[gv].ty != NO_TYPE {
                 ast.NODES[n].res = gv
                 ast.NODES[n].ty = ast.NODES[gv].ty
-                ast.NODES[n].place_mut = ast.NODES[gv].op
+                ast.INFO[n].place_mut = ast.NODES[gv].op
                 return ast.NODES[n].ty
             }
             let mfn = if md >= 0 { lookup_through(md, x.name, Kind.Fn) } else { NONE }
             if mfn != NONE {
-                if ast.NODES[mfn].strs.len > 0 {
+                if ast.INFO[mfn].strs.len > 0 {
                     err(x.loc, "cannot use generic function '{{x.name}}' as a value")
                     return set_ty(n, types.ty_void())
                 }
-                let mf = ast.NODES[mfn].loc.file
-                if (ast.NODES[mfn].marks & ast.M_INTRINSIC) != 0 && mf >= 0 && mf < MODS.len && MODS[mf].is_std {
+                let mf = ast.INFO[mfn].loc.file
+                if (ast.INFO[mfn].marks & ast.M_INTRINSIC) != 0 && mf >= 0 && mf < MODS.len && MODS[mf].is_std {
                     err(x.loc, "cannot use built-in '{{base}}.{{x.name}}' as a value; wrap it in a closure")
                     return set_ty(n, types.ty_void())
                 }
@@ -4001,7 +3996,7 @@ fn check_field(n: int) -> int {
     let bk = tk(base)
     if (bk == TK.Vec || bk == TK.Array || bk == TK.String) && x.has_name {
         if x.name == "len" || (bk == TK.Vec && x.name == "cap") {
-            ast.NODES[n].place_mut = 0
+            ast.INFO[n].place_mut = 0
             return set_ty(n, types.ty_int())
         }
     }
@@ -4014,9 +4009,9 @@ fn check_field(n: int) -> int {
         if fns[i] == x.name {
             ast.NODES[n].ty = types.TYPES[base].field_types[i]
             if tk(t) == TK.Ptr {
-                ast.NODES[n].place_mut = types.TYPES[t].is_mut
+                ast.INFO[n].place_mut = types.TYPES[t].is_mut
             } else {
-                ast.NODES[n].place_mut = ast.NODES[tgt].place_mut
+                ast.INFO[n].place_mut = ast.INFO[tgt].place_mut
             }
             return ast.NODES[n].ty
         }
@@ -4026,7 +4021,7 @@ fn check_field(n: int) -> int {
 }
 
 fn check_struct_lit(n: int, expect: int) -> int {
-    let x = ast.NODES[n]
+    let x = ast.full(n)
     let nloc = x.loc
     let mut st = if x.has_name { find_struct(x.name) } else { NONE }
     if st != NONE && tk(expect) == TK.Struct && types.TYPES[expect].has_name && types.TYPES[expect].name == x.name &&
@@ -4045,7 +4040,7 @@ fn check_struct_lit(n: int, expect: int) -> int {
         return set_ty(n, types.ty_void())
     }
     let tmpl = struct_type_of(st)
-    let tps = ast.NODES[st].strs
+    let tps = ast.INFO[st].strs
     let nt = tps.len
     let mut bound = []int {}
     for i in 0..nt {
@@ -4075,7 +4070,7 @@ fn check_struct_lit(n: int, expect: int) -> int {
     let inits = ast.NODES[n].kids
     for i in 0..inits.len {
         let fi = inits[i]
-        let fname = ast.NODES[fi].name
+        let fname = ast.INFO[fi].name
         let mut found = -1
         for f in 0..fnames.len {
             if fnames[f] == fname {
@@ -4084,7 +4079,7 @@ fn check_struct_lit(n: int, expect: int) -> int {
             }
         }
         if found < 0 {
-            err(ast.NODES[ast.NODES[fi].a].loc, "unknown field '{{fname}}'")
+            err(ast.INFO[ast.NODES[fi].a].loc, "unknown field '{{fname}}'")
             continue
         }
         seen[found] = true
@@ -4107,10 +4102,10 @@ fn check_struct_lit(n: int, expect: int) -> int {
         let it = r.ty
         if nt > 0 {
             if !unify(ftype, it, tps, &mut bound) {
-                err(ast.NODES[r.node].loc, "cannot match {{types.type_name(it)}} to {{types.type_name(ftype)}}")
+                err(ast.INFO[r.node].loc, "cannot match {{types.type_name(it)}} to {{types.type_name(ftype)}}")
             }
         } else if !types.type_eq(it, ftype) {
-            err(ast.NODES[r.node].loc, "field '{{fname}}' has type {{types.type_name(ftype)}}, got {{types.type_name(it)}}")
+            err(ast.INFO[r.node].loc, "field '{{fname}}' has type {{types.type_name(ftype)}}, got {{types.type_name(it)}}")
         }
     }
     let sfields = ast.NODES[st].kids
@@ -4121,7 +4116,7 @@ fn check_struct_lit(n: int, expect: int) -> int {
         let fname = fnames[f]
         let def = if f < sfields.len { ast.NODES[sfields[f]].b } else { NONE }
         let cp = clone_const(def)
-        if cp == NONE && (ast.NODES[n].marks & ast.M_ZERO_REST) != 0 {
+        if cp == NONE && (ast.INFO[n].marks & ast.M_ZERO_REST) != 0 {
             continue
         }
         if cp == NONE {
@@ -4157,7 +4152,7 @@ fn check_struct_lit(n: int, expect: int) -> int {
     } else {
         ast.NODES[n].ty = tmpl
     }
-    ast.NODES[n].place_mut = 0
+    ast.INFO[n].place_mut = 0
     return ast.NODES[n].ty
 }
 
@@ -4167,7 +4162,7 @@ fn check_expr_ty(n: int, expect: int) -> int {
     if n == NONE {
         return types.ty_void()
     }
-    let x = ast.NODES[n]
+    let x = ast.full(n)
     switch x.kind {
         case Kind.Number, Kind.Float:
             return lit_with_expect(n, expect)
@@ -4184,7 +4179,7 @@ fn check_expr_ty(n: int, expect: int) -> int {
         case Kind.IncDec:
             let o = check_expr(x.a)
             let dec = x.op != 0
-            if ast.NODES[x.a].place_mut == 0 {
+            if ast.INFO[x.a].place_mut == 0 {
                 err(x.loc, if dec { "cannot decrement immutable place" } else { "cannot increment immutable place" })
             }
             if !types.is_numeric(o) {
@@ -4212,7 +4207,7 @@ fn check_expr_ty(n: int, expect: int) -> int {
             if !ok {
                 err(x.loc, "cannot cast {{types.type_name(from)}} as {{types.type_name(to)}}")
             }
-            ast.NODES[n].place_mut = 0
+            ast.INFO[n].place_mut = 0
             return set_ty(n, to)
         case Kind.Try:
             let ot = check_expr(x.a)
@@ -4244,17 +4239,17 @@ fn check_expr_ty(n: int, expect: int) -> int {
                 err(x.loc, "`?` in a fn returning {{types.type_name(cur_ret)}}: the result must be returned, not propagated (the enclosing fn must return the same Result/Option type)")
                 return set_ty(n, val_ty)
             }
-            ast.NODES[n].place_mut = 0
+            ast.INFO[n].place_mut = 0
             return set_ty(n, val_ty)
         case Kind.Addr:
             let t = check_expr(x.a)
-            if x.op != 0 && ast.NODES[x.a].place_mut == 0 {
+            if x.op != 0 && ast.INFO[x.a].place_mut == 0 {
                 err(x.loc, "cannot take &mut of immutable place")
             }
             if x.op != 0 {
                 stale_check_write(x.a, x.loc)
             }
-            ast.NODES[n].place_mut = 0
+            ast.INFO[n].place_mut = 0
             return set_ty(n, types.type_ptr(t, x.op))
         case Kind.Deref:
             let t = check_expr(x.a)
@@ -4263,9 +4258,9 @@ fn check_expr_ty(n: int, expect: int) -> int {
                 return set_ty(n, types.ty_void())
             }
             if tk(t) == TK.Ptr {
-                ast.NODES[n].place_mut = types.TYPES[t].is_mut
+                ast.INFO[n].place_mut = types.TYPES[t].is_mut
             } else {
-                ast.NODES[n].place_mut = ast.NODES[x.a].place_mut
+                ast.INFO[n].place_mut = ast.INFO[x.a].place_mut
             }
             return set_ty(n, types.TYPES[t].elem)
         case Kind.Field:
@@ -4274,27 +4269,27 @@ fn check_expr_ty(n: int, expect: int) -> int {
             let t = check_expr(x.a)
             let ix = check_expr(x.b)
             if !types.is_int_kind(ix) {
-                err(ast.NODES[x.b].loc, "index must be int")
+                err(ast.INFO[x.b].loc, "index must be int")
             }
             let base = peel_ref(t)
             if tk(base) == TK.String {
-                ast.NODES[n].place_mut = 0
+                ast.INFO[n].place_mut = 0
                 return set_ty(n, types.ty_int())
             }
             if tk(base) != TK.Array && tk(base) != TK.Vec {
                 err(x.loc, "cannot index {{types.type_name(t)}}")
                 return set_ty(n, types.ty_void())
             }
-            ast.NODES[n].place_mut = ast.NODES[x.a].place_mut
+            ast.INFO[n].place_mut = ast.INFO[x.a].place_mut
             if tk(t) == TK.Ptr {
-                ast.NODES[n].place_mut = types.TYPES[t].is_mut
+                ast.INFO[n].place_mut = types.TYPES[t].is_mut
             }
             return set_ty(n, types.TYPES[base].elem)
         case Kind.If:
             wrap_else_if(n)
             let cond = ast.NODES[n].a
             if !types.type_eq(check_expr(cond), types.ty_bool()) {
-                err(ast.NODES[cond].loc, "if condition must be bool")
+                err(ast.INFO[cond].loc, "if condition must be bool")
             }
             if ast.NODES[n].c == NONE {
                 err(x.loc, "an `if` used as a value needs an `else` branch")
@@ -4306,7 +4301,7 @@ fn check_expr_ty(n: int, expect: int) -> int {
                 err(x.loc, "if branches have types {{types.type_name(a)}} and {{types.type_name(b)}}")
                 return set_ty(n, a)
             }
-            ast.NODES[n].place_mut = 0
+            ast.INFO[n].place_mut = 0
             return set_ty(n, a)
         case Kind.Call:
             return check_call(n, expect)
@@ -4323,7 +4318,7 @@ fn check_expr_ty(n: int, expect: int) -> int {
             for i in 0..cnt {
                 let e = check_expr_ty(x.kids[i], et)
                 if !types.type_eq(e, et) {
-                    err(ast.NODES[x.kids[i]].loc, "array element type mismatch")
+                    err(ast.INFO[x.kids[i]].loc, "array element type mismatch")
                 }
             }
             let t = if x.num < i64(0) { types.type_vec(et) } else { types.type_array(et, x.num) }
@@ -4381,7 +4376,7 @@ fn case_value(pat: int) -> CaseVal {
     }
     let k = kind(pat)
     if k == Kind.Number {
-        return CaseVal { ok: true, v: ast.NODES[pat].num }
+        return CaseVal { ok: true, v: ast.INFO[pat].num }
     }
     if k == Kind.Bool {
         return CaseVal { ok: true, v: i64(if ast.NODES[pat].op != 0 { 1 } else { 0 }) }
@@ -4399,7 +4394,7 @@ fn check_stmt(n: int) {
     if n == NONE {
         return
     }
-    let x = ast.NODES[n]
+    let x = ast.full(n)
     switch x.kind {
         case Kind.Var:
             let ann = if x.a != NONE { resolve_type(x.a) } else { NO_TYPE }
@@ -4416,7 +4411,7 @@ fn check_stmt(n: int) {
             stale_check_write(ast.NODES[n].a, x.loc)
             let aop = x.op
             let r = check_expr_ty(ast.NODES[n].b, if aop == Tok.Eq || types.is_numeric(l) { l } else { NO_TYPE })
-            if ast.NODES[ast.NODES[n].a].place_mut == 0 {
+            if ast.INFO[ast.NODES[n].a].place_mut == 0 {
                 err(x.loc, "cannot assign to immutable place")
             }
             if aop == Tok.Eq {
@@ -4461,7 +4456,7 @@ fn check_stmt(n: int) {
             break
         case Kind.If:
             if !types.type_eq(check_expr(x.a), types.ty_bool()) {
-                err(ast.NODES[x.a].loc, "if condition must be bool")
+                err(ast.INFO[x.a].loc, "if condition must be bool")
             }
             check_block(x.b)
             if x.c != NONE {
@@ -4488,7 +4483,7 @@ fn check_stmt(n: int) {
             break
         case Kind.While:
             if !types.type_eq(check_expr(x.a), types.ty_bool()) {
-                err(ast.NODES[x.a].loc, "while condition must be bool")
+                err(ast.INFO[x.a].loc, "while condition must be bool")
             }
             loop_depth = loop_depth + 1
             check_block(x.b)
@@ -4520,7 +4515,7 @@ fn check_stmt(n: int) {
                 }
                 if ast.NODES[cs].op != 0 {
                     if saw_default {
-                        err(ast.NODES[cs].loc, "a switch can have only one `default`")
+                        err(ast.INFO[cs].loc, "a switch can have only one `default`")
                     }
                     saw_default = true
                 }
@@ -4529,16 +4524,16 @@ fn check_stmt(n: int) {
                     let pat = pats[p]
                     let pt = check_expr_ty(pat, if tk(st) == TK.Int { st } else { NO_TYPE })
                     if st != NO_TYPE && pt != NO_TYPE && !types.type_eq(st, pt) {
-                        err(ast.NODES[pat].loc, "case label type {{types.type_name(pt)}} does not match {{types.type_name(st)}}")
+                        err(ast.INFO[pat].loc, "case label type {{types.type_name(pt)}} does not match {{types.type_name(st)}}")
                     }
                     let cv = case_value(pat)
                     if !cv.ok {
-                        err(ast.NODES[pat].loc, "case label must be an integer constant")
+                        err(ast.INFO[pat].loc, "case label must be an integer constant")
                         continue
                     }
                     for q in 0..seen.len {
                         if seen[q] == cv.v {
-                            err(ast.NODES[pat].loc, "duplicate case value {{cv.v}}")
+                            err(ast.INFO[pat].loc, "duplicate case value {{cv.v}}")
                             break
                         }
                     }
@@ -4560,9 +4555,9 @@ fn check_stmt(n: int) {
 fn check_fn(f: int) {
     let ft = fn_type_of(f)
     let save_tp = cur_tparams
-    cur_tparams = ast.NODES[f].strs
+    cur_tparams = ast.INFO[f].strs
     let save_gfn = cur_gfn
-    cur_gfn = if ast.NODES[f].strs.len > 0 { f } else { NONE }
+    cur_gfn = if ast.INFO[f].strs.len > 0 { f } else { NONE }
     cur_ret = ret_of(ft)
     loop_depth = 0
     switch_depth = 0
@@ -4572,7 +4567,7 @@ fn check_fn(f: int) {
     if params.len > 0 {
         let mut seen_default = false
         for i in 0..params.len {
-            let prm = ast.NODES[params[i]]
+            let prm = ast.full(params[i])
             let def = prm.b
             if def == NONE {
                 if seen_default {
@@ -4595,7 +4590,7 @@ fn check_fn(f: int) {
     }
     scope_push()
     for i in 0..params.len {
-        let prm = ast.NODES[params[i]]
+        let prm = ast.full(params[i])
         scope_add(prm.name, types.TYPES[ft].params[i], 0, 0, prm.loc, f)
     }
     if cur_ret != NO_TYPE && tk(cur_ret) != TK.Void {
@@ -4857,7 +4852,7 @@ fn proto_zero_lit(st: int, t: int, loc: Loc) -> int {
             push(fi, new_init(fns[f], init, loc))
         }
     }
-    return new_struct_lit(ast.NODES[st].name, fi, loc)
+    return new_struct_lit(ast.INFO[st].name, fi, loc)
 }
 
 fn set_more(v: int, loc: Loc) -> int {
@@ -4892,7 +4887,7 @@ fn proto_decode_body(st: int, t: int, loc: Loc) -> int {
 fn reserved_fn(m: int, fnname: string) -> bool {
     let ds = decls_of(MODS[m].root)
     for i in 0..ds.len {
-        if kind(ds[i]) == Kind.Fn && ast.NODES[ds[i]].name == fnname {
+        if kind(ds[i]) == Kind.Fn && ast.INFO[ds[i]].name == fnname {
             return true
         }
     }
@@ -4907,14 +4902,14 @@ fn clip255(s: string) -> string {
 }
 
 fn inject_proto_fn(m: int, st: int, is_encode: bool) {
-    let sname = ast.NODES[st].name
+    let sname = ast.INFO[st].name
     let verb = if is_encode { "encode" } else { "decode" }
     let fnname = clip255("{{verb}}_{{sname}}")
     if reserved_fn(m, fnname) {
-        err(ast.NODES[st].loc, "'{{fnname}}' is reserved for #[proto] struct {{sname}}")
+        err(ast.INFO[st].loc, "'{{fnname}}' is reserved for #[proto] struct {{sname}}")
         return
     }
-    let loc = ast.NODES[st].loc
+    let loc = ast.INFO[st].loc
     let t = struct_type_of(st)
     let mut prm = NONE
     let mut ret = NONE
@@ -4936,15 +4931,15 @@ fn inject_proto_codecs(m: int) {
         if kind(d) != Kind.Struct || (ast.NODES[d].op & 1) == 0 {
             continue
         }
-        if ast.NODES[d].strs.len > 0 {
-            err(ast.NODES[d].loc, "#[proto] struct cannot have type parameters")
+        if ast.INFO[d].strs.len > 0 {
+            err(ast.INFO[d].loc, "#[proto] struct cannot have type parameters")
             continue
         }
         let t = struct_type_of(d)
         let fns = types.TYPES[t].field_names
         for f in 0..fns.len {
             if !proto_field_ok(types.TYPES[t].field_types[f]) {
-                err(ast.NODES[d].loc, "#[proto] field '{{fns[f]}}' must be int, string, or a list of those")
+                err(ast.INFO[d].loc, "#[proto] field '{{fns[f]}}' must be int, string, or a list of those")
             }
         }
         inject_proto_fn(m, d, true)
@@ -5036,14 +5031,14 @@ fn json_decode_body(st: int, t: int, loc: Loc) -> int {
 }
 
 fn inject_json_fn(m: int, st: int, is_encode: bool) {
-    let sname = ast.NODES[st].name
+    let sname = ast.INFO[st].name
     let verb = if is_encode { "json_encode" } else { "json_decode" }
     let fnname = clip255("{{verb}}_{{sname}}")
     if reserved_fn(m, fnname) {
-        err(ast.NODES[st].loc, "'{{fnname}}' is reserved for #[json] struct {{sname}}")
+        err(ast.INFO[st].loc, "'{{fnname}}' is reserved for #[json] struct {{sname}}")
         return
     }
-    let loc = ast.NODES[st].loc
+    let loc = ast.INFO[st].loc
     let t = struct_type_of(st)
     if is_encode {
         let prm = new_param("m", named_type_node(sname, loc), loc)
@@ -5063,15 +5058,15 @@ fn inject_json_codecs(m: int) {
         if kind(d) != Kind.Struct || (ast.NODES[d].op & 2) == 0 {
             continue
         }
-        if ast.NODES[d].strs.len > 0 {
-            err(ast.NODES[d].loc, "#[json] struct cannot have type parameters")
+        if ast.INFO[d].strs.len > 0 {
+            err(ast.INFO[d].loc, "#[json] struct cannot have type parameters")
             continue
         }
         let t = struct_type_of(d)
         let fns = types.TYPES[t].field_names
         for f in 0..fns.len {
             if !json_field_ok(types.TYPES[t].field_types[f]) {
-                err(ast.NODES[d].loc, "#[json] field '{{fns[f]}}' must be int or string")
+                err(ast.INFO[d].loc, "#[json] field '{{fns[f]}}' must be int or string")
             }
         }
         inject_json_fn(m, d, true)
@@ -5082,7 +5077,7 @@ fn inject_json_codecs(m: int) {
 fn decl_name(d: int) -> string {
     let k = kind(d)
     if k == Kind.Fn || k == Kind.Struct || k == Kind.Enum || k == Kind.Var {
-        return ast.NODES[d].name
+        return ast.INFO[d].name
     }
     return ""
 }
@@ -5097,7 +5092,7 @@ fn check_duplicate_decls(m: int) {
         for j in 0..i {
             let b = decl_name(ds[j])
             if b.len > 0 && a == b {
-                err(ast.NODES[ds[i]].loc, "'{{a}}' is already defined in this module (first at line {{ast.NODES[ds[j]].loc.line}})")
+                err(ast.INFO[ds[i]].loc, "'{{a}}' is already defined in this module (first at line {{ast.INFO[ds[j]].loc.line}})")
                 break
             }
         }
@@ -5114,7 +5109,7 @@ fn call_generic_fn(call: int) -> int {
     let cal = ast.NODES[call].a
     if cal != NONE && (kind(cal) == Kind.Ident || kind(cal) == Kind.Field) {
         let r = ast.NODES[cal].res
-        if r != NONE && kind(r) == Kind.Fn && ast.NODES[r].strs.len > 0 {
+        if r != NONE && kind(r) == Kind.Fn && ast.INFO[r].strs.len > 0 {
             return r
         }
     }
@@ -5132,7 +5127,7 @@ fn callee_instantiate(call: int, names: []string, args: []int) {
     if ft == NO_TYPE {
         return
     }
-    let tps = ast.NODES[f].strs
+    let tps = ast.INFO[f].strs
     let mut bound = []int {}
     for i in 0..tps.len {
         push(bound, NO_TYPE)
@@ -5161,7 +5156,7 @@ fn walk_instantiate(n: int, names: []string, args: []int) {
     if n == NONE {
         return
     }
-    let x = ast.NODES[n]
+    let x = ast.full(n)
     switch x.kind {
         case Kind.Call:
             callee_instantiate(n, names, args)
@@ -5221,7 +5216,7 @@ fn instantiate_nested() {
         for i in 0..n {
             let f = MONOS[i].fn_
             let before = MONOS.len
-            walk_instantiate(ast.NODES[f].b, ast.NODES[f].strs, MONOS[i].args)
+            walk_instantiate(ast.NODES[f].b, ast.INFO[f].strs, MONOS[i].args)
             if MONOS.len > before {
                 added = true
             }
@@ -5233,16 +5228,16 @@ fn instantiate_nested() {
 fn check_selective_imports(m: int) {
     let ims = imports_of(MODS[m].root)
     for i in 0..ims.len {
-        let im = ast.NODES[ims[i]]
+        let im = ast.full(ims[i])
         if im.kids.len == 0 {
             continue
         }
         let tm = find_mod(im.name)
         for k in 0..im.kids.len {
-            let src = ast.NODES[im.kids[k]].name
-            let local = ast.NODES[im.kids[k]].text
+            let src = ast.INFO[im.kids[k]].name
+            let local = ast.INFO[im.kids[k]].text
             for j in 0..k {
-                if ast.NODES[im.kids[j]].text == local {
+                if ast.INFO[im.kids[j]].text == local {
                     err(im.loc, "duplicate import name '{{local}}'")
                 }
             }
@@ -5312,7 +5307,7 @@ fn c_param_type(t: int) -> bool {
 
 /** *A `#[c("sym")]` fn: a C name and a signature C can use. */
 fn check_c_fn(d: int) {
-    let x = ast.NODES[d]
+    let x = ast.full(d)
     let name = x.name
     let sym = x.text
     let mut valid = sym.len > 0 && !(sym[0] >= '0' && sym[0] <= '9')
@@ -5348,7 +5343,7 @@ fn check_c_fn(d: int) {
             err(x.loc, "#[c] fn '{{name}}' returns a type C cannot give (use a number, bool, or string)")
         }
     }
-    ast.NODES[d].marks = ast.NODES[d].marks | ast.M_INTRINSIC
+    ast.INFO[d].marks = ast.INFO[d].marks | ast.M_INTRINSIC
 }
 
 fn user_symbol_mod(m: int) -> bool {
@@ -5388,7 +5383,7 @@ fn claim_runtime_cnames() {
 }
 
 fn is_intrinsic(d: int) -> bool {
-    return (ast.NODES[d].marks & ast.M_INTRINSIC) != 0
+    return (ast.INFO[d].marks & ast.M_INTRINSIC) != 0
 }
 
 /** *std and seam fns claim their names first, then user fns. */
@@ -5400,18 +5395,18 @@ fn dedupe_fn_cnames() {
             for i in 0..ds.len {
                 let d = ds[i]
                 if pass == 0 && !user && kind(d) == Kind.Var {
-                    cname_add("loam_{{MODS[m].name}}_{{ast.NODES[d].name}}")
+                    cname_add("loam_{{MODS[m].name}}_{{ast.INFO[d].name}}")
                 }
-                if kind(d) != Kind.Fn || !ast.NODES[d].has_sname {
+                if kind(d) != Kind.Fn || !ast.INFO[d].has_sname {
                     continue
                 }
-                let seam = is_intrinsic(d) && !ast.NODES[d].has_text
-                let fixed = !user || seam || ast.NODES[d].sname == "main"
+                let seam = is_intrinsic(d) && !ast.INFO[d].has_text
+                let fixed = !user || seam || ast.INFO[d].sname == "main"
                 if pass == 0 && fixed {
-                    cname_add(ast.NODES[d].sname)
+                    cname_add(ast.INFO[d].sname)
                 }
                 if pass == 1 && !fixed {
-                    ast.NODES[d].sname = cname_claim(ast.NODES[d].sname)
+                    ast.INFO[d].sname = cname_claim(ast.INFO[d].sname)
                 }
             }
         }
@@ -5467,7 +5462,7 @@ fn typecheck_modules() -> int {
                 continue
             }
             fn_type_of(d)
-            let x = ast.NODES[d]
+            let x = ast.full(d)
             if (x.op & 2) != 0 {
                 if x.kids.len != 0 {
                     err(x.loc, "#[test] fn '{{x.name}}' must take no parameters")
@@ -5486,23 +5481,23 @@ fn typecheck_modules() -> int {
                 let body = ast.NODES[d].b
                 if body == NONE || (kind(body) == Kind.Block && ast.NODES[body].kids.len == 0) {
                     if x.name != "main" {
-                        ast.NODES[d].marks = ast.NODES[d].marks | ast.M_INTRINSIC
+                        ast.INFO[d].marks = ast.INFO[d].marks | ast.M_INTRINSIC
                     }
                     let hr = if ast.NODES[d].ty != NO_TYPE { types.TYPES[ast.NODES[d].ty].ret } else { NO_TYPE }
                     if is_intrinsic(d) && tk(hr) == TK.Ptr {
-                        let at = if x.a != NONE { ast.NODES[x.a].loc } else { x.loc }
+                        let at = if x.a != NONE { ast.INFO[x.a].loc } else { x.loc }
                         err(at, "C hook '{{x.name}}' cannot return a reference ({{types.type_name(hr)}}) — C cannot promise what it points at; return a value or a handle")
                     }
                 }
             }
             if is_main_mod && x.name == "main" {
-                ast.NODES[d].sname = "main"
+                ast.INFO[d].sname = "main"
             } else if is_main_mod {
-                ast.NODES[d].sname = "loam_{{x.name}}"
+                ast.INFO[d].sname = "loam_{{x.name}}"
             } else {
-                ast.NODES[d].sname = "loam_{{MODS[m].name}}_{{x.name}}"
+                ast.INFO[d].sname = "loam_{{MODS[m].name}}_{{x.name}}"
             }
-            ast.NODES[d].has_sname = true
+            ast.INFO[d].has_sname = true
         }
     }
     claim_runtime_cnames()
@@ -5526,9 +5521,9 @@ fn typecheck_modules() -> int {
                 }
                 check_stmt(d)
                 if GVARS.len >= LOAM_MAX_GLOBALS {
-                    err(ast.NODES[d].loc, "too many module globals (max {{LOAM_MAX_GLOBALS}})")
+                    err(ast.INFO[d].loc, "too many module globals (max {{LOAM_MAX_GLOBALS}})")
                 } else {
-                    let raw = if m == 0 { "loam_{{ast.NODES[d].name}}" } else { "loam_{{MODS[m].name}}_{{ast.NODES[d].name}}" }
+                    let raw = if m == 0 { "loam_{{ast.INFO[d].name}}" } else { "loam_{{MODS[m].name}}_{{ast.INFO[d].name}}" }
                     let mut cn = if raw.len > 255 { substr(raw, 0, 255) } else { raw }
                     if user_symbol_mod(m) {
                         cn = cname_claim(cn)
@@ -5552,13 +5547,13 @@ fn typecheck_modules() -> int {
                 continue
             }
             let d = GVARS[g].var
-            scope_add(ast.NODES[d].name, ast.NODES[d].ty, ast.NODES[d].op, 0, ast.NODES[d].loc, d)
+            scope_add(ast.INFO[d].name, ast.NODES[d].ty, ast.NODES[d].op, 0, ast.INFO[d].loc, d)
         }
         let ds = decls_of(MODS[m].root)
         for i in 0..ds.len {
             let d = ds[i]
-            if kind(d) == Kind.Struct && ast.NODES[d].name == "Box" && ast.NODES[d].strs.len > 0 {
-                err(ast.NODES[d].loc, "'Box' is the heap-box keyword; a struct named Box cannot take type arguments — name it something else")
+            if kind(d) == Kind.Struct && ast.INFO[d].name == "Box" && ast.INFO[d].strs.len > 0 {
+                err(ast.INFO[d].loc, "'Box' is the heap-box keyword; a struct named Box cannot take type arguments — name it something else")
             }
             if kind(d) == Kind.Fn && !is_intrinsic(d) {
                 check_fn(d)

@@ -76,6 +76,8 @@ typedef struct {
     int is_mut;         /* IR_ADDR */
     int conv_mode;      /* IR_CAST: 0 = trap, 1 = wrapping, 2 = saturating */
     int checked;        /* IR_BIN: overflow/div trap required */
+    int borrowed;       /* IR_LOAD: reads in place, takes no reference (the
+                           temp is only compared before anything can free) */
     /* IR_STRUCT_LIT: non-NULL when the literal starts from the struct's
        static default template; `lit_dflt[k]` is field k's constant default
        (in the template) and `args[k]` is -1 for every field the template
@@ -118,6 +120,8 @@ typedef struct {
     const char *cname;  /* C symbol when is_global */
     int needs_drop;     /* owns a box: dropped on every exit path */
     int zero_init;      /* declared `= {0}`: a field a literal left out (`none`) */
+    int needs_zero;     /* owning, and some read or drop of it may run before it
+                           is surely assigned: codegen declares it `= {0}` */
 } IrLocal;
 
 typedef struct {

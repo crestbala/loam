@@ -85,15 +85,14 @@ fn import_node(alias: string, spec: string, loc: Loc) -> int {
     n.has_name = true
     n.text = spec
     n.has_text = true
-    push(ast.NODES, n)
-    return ast.NODES.len - 1
+    return ast.add(n)
 }
 
 /** *compile.c's `load_module` edits after the parse: the module name, and */
 /** *outside `http` an implicit import for `#[proto]` / `#[json]` structs. */
 fn loader_edits(root: int, name: string) {
-    ast.NODES[root].sname = name
-    ast.NODES[root].has_sname = true
+    ast.INFO[root].sname = name
+    ast.INFO[root].has_sname = true
     if name == "http" {
         return
     }
@@ -103,7 +102,7 @@ fn loader_edits(root: int, name: string) {
     let mut has_http = false
     let mut has_std_json = false
     for k in 0..kids.len {
-        let d = ast.NODES[kids[k]]
+        let d = ast.full(kids[k])
         if d.kind == Kind.Struct && (d.op & parser.ST_PROTO) != 0 {
             has_proto = true
         }
@@ -119,7 +118,7 @@ fn loader_edits(root: int, name: string) {
             }
         }
     }
-    let loc = ast.NODES[root].loc
+    let loc = ast.INFO[root].loc
     if has_proto && !has_http {
         let im = import_node("http", "http", loc)
         push(ast.NODES[root].kids, im)
@@ -205,11 +204,11 @@ fn main() {
             if ast.NODES[im].kind != Kind.Import {
                 continue
             }
-            if j >= want.len || want[j].alias != ast.NODES[im].name || want[j].spec != ast.NODES[im].text {
+            if j >= want.len || want[j].alias != ast.INFO[im].name || want[j].spec != ast.INFO[im].text {
                 fail("module {{m}}: imports differ from the list")
             }
-            ast.NODES[im].sname = want[j].resolved
-            ast.NODES[im].has_sname = true
+            ast.INFO[im].sname = want[j].resolved
+            ast.INFO[im].has_sname = true
             j = j + 1
         }
         if j != want.len {

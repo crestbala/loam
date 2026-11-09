@@ -17,7 +17,7 @@ const INDEX_SAFE: int = 1
 
 /** *The identifier node a `<expr>.len` is rooted at, or `ast.NONE`. */
 fn len_container_ident(n: int) -> int {
-    if n == ast.NONE || ast.NODES[n].kind != Kind.Field || ast.NODES[n].name != "len" {
+    if n == ast.NONE || ast.NODES[n].kind != Kind.Field || ast.INFO[n].name != "len" {
         return ast.NONE
     }
     let mut base = ast.NODES[n].a
@@ -84,9 +84,10 @@ fn is_proven_index(index: int, target: int) -> bool {
     return false
 }
 
-fn walk_list(nodes: []int) {
-    for i in 0..nodes.len {
-        walk(nodes[i])
+/** *Each child of `parent`, read in place (no copy of the kids vec). */
+fn walk_list(parent: int) {
+    for i in 0..ast.NODES[parent].kids.len {
+        walk(ast.NODES[parent].kids[i])
     }
 }
 
@@ -110,7 +111,7 @@ fn walk(n: int) {
             walk(ast.NODES[n].b)
             break
         case Kind.Block:
-            walk_list(ast.NODES[n].kids)
+            walk_list(n)
             break
         case Kind.If:
             walk(ast.NODES[n].a)
@@ -124,7 +125,7 @@ fn walk(n: int) {
             let mut container = ast.NONE
             if iter != ast.NONE && ast.NODES[iter].kind == Kind.Binary && ast.NODES[iter].op == Tok.DotDot {
                 let low = ast.NODES[iter].a
-                if low != ast.NONE && ast.NODES[low].kind == Kind.Number && ast.NODES[low].num == 0 {
+                if low != ast.NONE && ast.NODES[low].kind == Kind.Number && ast.INFO[low].num == 0 {
                     let bounded = len_container_ident(ast.NODES[iter].b)
                     if bounded != ast.NONE && ast.NODES[bounded].res != ast.NONE {
                         container = bounded
@@ -141,10 +142,10 @@ fn walk(n: int) {
             break
         case Kind.Switch:
             walk(ast.NODES[n].a)
-            walk_list(ast.NODES[n].kids)
+            walk_list(n)
             break
         case Kind.Case:
-            walk_list(ast.NODES[n].kids)
+            walk_list(n)
             walk(ast.NODES[n].a)
             break
         case Kind.Return, Kind.ExprStmt, Kind.Unary, Kind.Try:
@@ -162,7 +163,7 @@ fn walk(n: int) {
             break
         case Kind.Call:
             walk(ast.NODES[n].a)
-            walk_list(ast.NODES[n].kids)
+            walk_list(n)
             break
         case Kind.Index:
             walk(ast.NODES[n].a)
@@ -178,7 +179,7 @@ fn walk(n: int) {
             }
             break
         case Kind.ArrayLit, Kind.Tuple:
-            walk_list(ast.NODES[n].kids)
+            walk_list(n)
             break
         default:
             return
@@ -198,7 +199,7 @@ fn mark_index(n: int) {
     }
     let container_kind = types.kind_of(target_type)
     if container_kind == TK.Array && index != ast.NONE && ast.NODES[index].kind == Kind.Number {
-        let literal = ast.NODES[index].num
+        let literal = ast.INFO[index].num
         if literal >= 0 && literal < types.TYPES[target_type].array_len {
             ast.NODES[n].flags = ast.NODES[n].flags | INDEX_SAFE
         }

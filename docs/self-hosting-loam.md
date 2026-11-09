@@ -584,16 +584,48 @@ beyond what the checklist requires.
       - 7d: `compiler/borrowck.loam` ports `sema/borrowck.c` (ownership and
         moves, loans and their paths, reborrows, reference escape, globals
         across calls, drop marks). With the other two passes it matches
-        `--dump-checked` on all 517 loadable entries: trees, the moved /
+        `--dump-checked` on all 518 loadable entries: trees, the moved /
         needs-drop / index-safe flags, diagnostics and exit status, the 63
         `compile_fail` entries C rejects after typecheck included.
       - The strict `selfhost_check` host stanza gates it (any difference
         fails); it shares the gate, worker and result cache of
         `selfhost_typecheck`, keyed by dump mode. A one-character change to
         a borrowck diagnostic in the Loam port fails it.
-      - Speed (open): the Loam passes cost more than C's (~0.15 s vs
-        ~0.06 s on a Zeus entry). The goal is parity with C or better, not
-        a pipeline that wins overall; that work comes before phase 8.
+      - 7e, speed: every Loam pass now beats its C twin on a Zeus entry
+        (`zeus_show`, per pass, best of repeated runs): threadcheck 1.5 ms
+        vs 3.5, borrowck 35.5 ms vs 49.7, boundscheck 1.1 ms vs 3.6; the
+        whole `--dump-checked` run 0.27 s vs 0.38 s. They started at 15, 115
+        and 14 ms. Measured, not guessed — a sampling profile per step, and
+        each change kept only if it moved the number:
+        - The AST arena is split hot/cold: `Node` (in `NODES`) is the 56
+          bytes every walk reads (kind, flags, children, resolution, type),
+          `NodeInfo` (in `INFO`, same index) the rest; nodes are built whole
+          as `NodeBuild` and stored by `ast.add`. The same walk over a
+          Zeus entry's 353k nodes took 14.3 ms at 376 bytes a node and
+          3.2 ms at 56: a tree walk is bound by the bytes it streams.
+        - Codegen, for every Loam program: a string read out of a place and
+          only compared (`BINDINGS[i].name == name`) takes no reference
+          (`load.borrow` in the IR); a return drops only the locals some
+          path to it could have set; and an owning local is declared
+          `= {0}` only where a read or drop may reach it before it is
+          surely assigned (a recursive `check_expr` zeroed 37 locals per
+          call, now 4).
+        - Runtime: `push` is an inline fast path (owned buffer with room:
+          one element copy of a known size) with growth and copy-on-write
+          out of line.
+        - Port source: list walkers read `kids` in place instead of copying
+          the vec, `types.is_copy` stops rebuilding its walk stack, borrowck
+          memoizes Copy per type and empties its bindings arena per fn
+          (peak memory 325 → 232 MB).
+      - The speed work surfaced a memory-safety hole: a push onto a `[]T`
+        copy un-shared the buffer only when it had to grow, so two copies
+        with spare capacity wrote the same slot (`let b = a; push(a, x);
+        push(b, y)` gave `a[1] == y`, and an owning element was overwritten
+        unreleased). `loam_vec_reserve*` now take their own buffer first
+        (`compile_pass/vec_cow_push.loam`).
+      - Open (green, not speed): peak memory is 237 MB against C's 68 MB on
+        that entry, mostly `NodeInfo` (~320 bytes a node); trimming it is
+        the next memory step.
 - [ ] IR and codegen ported
 - [ ] Driver (module loading, package resolution, `cc` invocation) in Loam
 - [ ] Compiler itself uses only safe Loam (arenas + integer indices; §2.7)
