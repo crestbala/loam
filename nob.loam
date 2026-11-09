@@ -2615,11 +2615,23 @@ fn ig_selfhost_typecheck() {
             cat("{{shq(exe)}} $w/mods > $w/b 2>&1 & p=$!; ( sleep 60; kill $p 2>/dev/null && : > $w/hung ) > /dev/null 2>&1 & k=$!; wait $p; st=$?; kill $k 2>/dev/null; wait $k 2>/dev/null; if [ -e $w/hung ]; then echo \"hang $f\"; rm -rf $w; exit 0; fi; echo \"exit $st\" >> $w/b; ",
                 cat("{{shq(LOAMC)}} --dump-typed \"$f\" > $w/a 2>&1; echo \"exit $?\" >> $w/a; ",
                     "if cmp -s $w/a $w/b; then echo \"match $f\"; else echo \"diff $f\"; fi; rm -rf $w\n")))))
-    let script = cat(
+    // In batches, so a run of ~70 s (286 entries pull in all of Zeus, checked
+    // and dumped twice each) reports progress instead of sitting silent.
+    let list = "{{d}}/list"
+    let v = "{{d}}/verdicts"
+    let total = int_of(trim(sys.exec(cat(
         "cd {{shq(ROOT)}} && ls packages/loam/tests/compile_pass/*.loam packages/loam/tests/compile_fail/*.loam packages/loam/tests/draw_golden/*.loam examples/language/*.loam ",
-        cat("| xargs -P 8 -n 1 sh {{shq(worker)}} > {{shq(d)}}/verdicts; v={{shq(d)}}/verdicts; ",
-            "echo \"$(grep -c '^match' $v) match, $(grep -c '^load' $v) not loadable\"; ! grep -E '^(diff|hang)' $v"))
-    let r = sys.exec(script)
+        "> {{shq(list)}}; : > {{shq(v)}}; wc -l < {{shq(list)}}"))))
+    let batch = 64
+    let mut from = 1
+    while from <= total {
+        let to = if from + batch - 1 < total { from + batch - 1 } else { total }
+        sys.exec("cd {{shq(ROOT)}} && sed -n '{{from}},{{to}}p' {{shq(list)}} | xargs -P 8 -n 1 sh {{shq(worker)}} >> {{shq(v)}} 2>/dev/null")
+        mark("selfhost typecheck {{to}}/{{total}}")
+        from = to + 1
+    }
+    let r = sys.exec(cat("v={{shq(v)}}; echo \"$(grep -c '^match' $v) match, $(grep -c '^load' $v) not loadable\"; ",
+        "! grep -E '^(diff|hang)' $v"))
     let st = sys.exec_status()
     sys.exec("rm -rf {{shq(d)}}")
     if st != 0 {
