@@ -9,6 +9,7 @@ import "std:conv"
 import "ast.loam"
 import "types.loam"
 import "dump.loam"
+import "typecheck.loam"
 import "ir.loam"
 
 let OP_NAMES: []string = []string {
@@ -88,13 +89,13 @@ fn put_inst(b: &mut []u8, i: int) {
         buf.push_str(b, " f=")
         buf.push_str(b, conv.f64_to_str(x.fimm))
     }
-    if x.has_text {
+    if x.text != ir.NONE {
         if x.op == Op.ConstStr {
             buf.push_str(b, " str=")
-            dump.put_str(b, x.text)
+            dump.put_str(b, ir.TEXTS[x.text])
         } else {
             buf.push_str(b, " callee=")
-            buf.push_str(b, x.text)
+            buf.push_str(b, ir.TEXTS[x.text])
         }
     }
     if x.nargs > 0 {
@@ -195,7 +196,7 @@ fn put_fn(b: &mut []u8, f: int) {
         buf.push_int(b, l)
         if lo.has_name {
             buf.push_str(b, " name=")
-            dump.put_str(b, lo.name)
+            dump.put_str(b, ir.local_name(f, l))
         }
         buf.push_str(b, " ty=")
         dump.put_type(b, lo.ty)
@@ -205,9 +206,9 @@ fn put_fn(b: &mut []u8, f: int) {
         if (lo.flags & ir.L_GLOBAL) != 0 {
             buf.push_str(b, " global=1")
         }
-        if lo.has_cname {
+        if lo.gvar != ir.NONE {
             buf.push_str(b, " cname=")
-            buf.push_str(b, lo.cname)
+            buf.push_str(b, typecheck.GVARS[lo.gvar].cname)
         }
         if (lo.flags & ir.L_DROP) != 0 {
             buf.push_str(b, " drop=1")

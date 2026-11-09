@@ -17,6 +17,7 @@
 
 import "std:buf"
 import "std:fmt"
+import "std:map"
 import "ast.loam"
 import "types.loam"
 import "lexer.loam"
@@ -91,9 +92,10 @@ struct Inst {
     place: int,
     imm: i64,
     fimm: f64,
-    /** *ConstStr: the string. Call, FnVal, Clos: the callee's C name. */
-    text: string,
-    has_text: bool,
+    /** *ConstStr: the string. Call, FnVal, Clos: the callee's C name. An */
+    /** *index into `TEXTS`, or `NONE`; so an instruction holds no string and */
+    /** *copies as plain data. */
+    text: int,
     /** *`ARGS[args + k]`, k < nargs; -1 a field the template supplies. */
     args: int,
     nargs: int,
@@ -141,11 +143,11 @@ const L_NEEDS_ZERO: int = 16
 
 struct Local {
     ty: int,
+    /** *A global's name is its declaration's (see `local_name`). */
     name: string,
     has_name: bool,
-    /** *The C symbol of a global. */
-    cname: string,
-    has_cname: bool,
+    /** *A global's `typecheck.GVARS` index (its C symbol is there), or `NONE`. */
+    gvar: int,
     flags: int,
 }
 
@@ -182,6 +184,7 @@ let mut DFLT: []int = []int {}
 let mut INTS: []i64 = []i64 {}
 let mut SW_VALS: []i64 = []i64 {}
 let mut SW_BLOCKS: []int = []int {}
+let mut TEXTS: []string = []string {}
 
 // --- the fn being lowered ------------------------------------------------------
 
@@ -301,6 +304,7 @@ fn begin_fn(cname: string, has_cname: bool, name: string, has_name: bool, sig: i
     SCOPE_DEPTHS = []int {}
     SDEPTH = 0
     NLOOP = 0
+    reset_global_locals()
 }
 
 /** *Copy the fn's instructions out of `SCRATCH`, block by block. */
@@ -319,6 +323,22 @@ fn finish_fn() {
     FNS[CF].nblocks = nb
 }
 
+/** *`types.needs_drop` per type id: 0 not asked yet, 1 no, 2 yes. */
+let mut DROP_MEMO: []int = []int {}
+
+fn needs_drop(t: int) -> bool {
+    if t == types.NO_TYPE {
+        return false
+    }
+    while DROP_MEMO.len < types.TYPES.len {
+        push(DROP_MEMO, 0)
+    }
+    if DROP_MEMO[t] == 0 {
+        DROP_MEMO[t] = if types.needs_drop(t) { 2 } else { 1 }
+    }
+    return DROP_MEMO[t] == 2
+}
+
 fn new_local(ty: int, name: string, has_name: bool, is_param: bool) -> int {
     let t = ir_subst(ty)
     let mut flags = 0
@@ -327,10 +347,10 @@ fn new_local(ty: int, name: string, has_name: bool, is_param: bool) -> int {
     }
     // Under string ownership a parameter is a borrowed reference: the caller
     // owns and releases it, so the callee must not drop it.
-    if types.needs_drop(t) && !(is_param && types.string_owns && tk(t) == TK.String) {
+    if needs_drop(t) && !(is_param && types.string_owns && tk(t) == TK.String) {
         flags = flags | L_DROP
     }
-    push(LOCALS, Local { ty: t, name: name, has_name: has_name, cname: "", has_cname: false, flags: flags })
+    push(LOCALS, Local { ty: t, name: name, has_name: has_name, gvar: NONE, flags: flags })
     return nlocals() - 1
 }
 
@@ -366,8 +386,7 @@ fn emit_in(b: int, op: int, loc: Loc) -> int {
         place: NONE,
         imm: i64(0),
         fimm: 0.0,
-        text: "",
-        has_text: false,
+        text: NONE,
         args: 0,
         nargs: 0,
         binop: 0,
@@ -411,8 +430,8 @@ fn set_args(i: int, args: []int) {
 }
 
 fn set_text(i: int, s: string) {
-    SCRATCH[i].text = s
-    SCRATCH[i].has_text = true
+    SCRATCH[i].text = TEXTS.len
+    push(TEXTS, s)
 }
 
 fn block_closed() -> bool {
@@ -515,7 +534,23 @@ fn scope_find(name: string) -> int {
         }
         i = i - 1
     }
+    // The module's globals, bound below every local (`bind_module_globals`).
+    if CUR_MOD >= 0 && CUR_MOD < MOD_GLOBAL_NAMES.len {
+        let g = map_get(&mut MOD_GLOBAL_NAMES[CUR_MOD], name)
+        if g != NONE {
+            return GLOBAL_LOCAL[GVAR_OF_NODE[typecheck.GVARS[g].var]]
+        }
+    }
     return NONE
+}
+
+/** *The name of local `l` of fn `f`. */
+fn local_name(f: int, l: int) -> string {
+    let x = &LOCALS[FNS[f].locals + l]
+    if x.gvar != NONE {
+        return ast.INFO[typecheck.GVARS[x.gvar].var].name
+    }
+    return x.name
 }
 
 // --- modules and callee names ------------------------------------------------------
@@ -727,54 +762,89 @@ fn callee_cname(call: int) -> string {
 
 // --- globals ------------------------------------------------------------------------
 
-fn new_global_local(gv: int, cname: string) -> int {
-    let id = new_local(ast.NODES[gv].ty, ast.INFO[gv].name, ast.INFO[gv].has_name, false)
-    set_flag(id, L_GLOBAL)
-    clear_flag(id, L_DROP)
-    LOCALS[F_LOCALS + id].cname = cname
-    LOCALS[F_LOCALS + id].has_cname = true
+/** *The first `typecheck.GVARS` entry of each `let` node, or `NONE`. */
+let mut GVAR_OF_NODE: []int = []int {}
+/** *Per module, its globals' `GVARS` indices, in order, and by name. */
+let mut MOD_GVARS: [][]int = [][]int {}
+let mut MOD_GLOBAL_NAMES: []Map<int> = []Map<int> {}
+/** *The fn being lowered: the local of each global it has one for */
+/** *(by `GVAR_OF_NODE` index), and which entries are set. A global's C */
+/** *symbol is its own, so this is C's search of the locals by C name. */
+let mut GLOBAL_LOCAL: []int = []int {}
+let mut GLOBAL_LOCAL_SET: []int = []int {}
+
+fn index_globals() {
+    GVAR_OF_NODE = []int {}
+    for i in 0..ast.NODES.len {
+        push(GVAR_OF_NODE, NONE)
+    }
+    MOD_GVARS = [][]int {}
+    MOD_GLOBAL_NAMES = []Map<int> {}
+    for m in 0..typecheck.MODS.len {
+        push(MOD_GVARS, []int {})
+        push(MOD_GLOBAL_NAMES, map_new(NONE))
+    }
+    GLOBAL_LOCAL = []int {}
+    for g in 0..typecheck.GVARS.len {
+        push(GLOBAL_LOCAL, NONE)
+        let gv = typecheck.GVARS[g].var
+        if gv == NONE {
+            continue
+        }
+        if GVAR_OF_NODE[gv] == NONE {
+            GVAR_OF_NODE[gv] = g
+        }
+        let m = typecheck.GVARS[g].mod
+        if m >= 0 && m < MOD_GVARS.len && ast.INFO[gv].has_name {
+            push(MOD_GVARS[m], g)
+            map_put(&mut MOD_GLOBAL_NAMES[m], ast.INFO[gv].name, g)
+        }
+    }
+}
+
+/** *Forget the previous fn's global locals. */
+fn reset_global_locals() {
+    for i in 0..GLOBAL_LOCAL_SET.len {
+        GLOBAL_LOCAL[GLOBAL_LOCAL_SET[i]] = NONE
+    }
+    GLOBAL_LOCAL_SET = []int {}
+}
+
+fn new_global_local(g: int) -> int {
+    let gv = typecheck.GVARS[g].var
+    push(LOCALS, Local { ty: ir_subst(ast.NODES[gv].ty), name: "", has_name: ast.INFO[gv].has_name, gvar: g, flags: L_GLOBAL })
+    let id = nlocals() - 1
+    let key = GVAR_OF_NODE[gv]
+    if GLOBAL_LOCAL[key] == NONE {
+        GLOBAL_LOCAL[key] = id
+        push(GLOBAL_LOCAL_SET, key)
+    }
     return id
 }
 
 /** *A local for each global of the module being lowered, in scope. */
 fn bind_module_globals() {
-    for g in 0..typecheck.GVARS.len {
-        if typecheck.GVARS[g].mod != CUR_MOD {
-            continue
-        }
-        let gv = typecheck.GVARS[g].var
-        if gv == NONE || !ast.INFO[gv].has_name {
-            continue
-        }
-        let id = new_global_local(gv, typecheck.GVARS[g].cname)
-        scope_push(ast.INFO[gv].name, id)
+    if CUR_MOD < 0 || CUR_MOD >= MOD_GVARS.len {
+        return
+    }
+    // Not pushed on the scope stack: `scope_find` falls back to
+    // `MOD_GLOBAL_NAMES`, and these would sit at its bottom anyway.
+    let gs = &MOD_GVARS[CUR_MOD]
+    for i in 0..gs.len {
+        new_global_local(gs[i])
     }
 }
 
 /** *The local for module `let` `gv`, also one imported as `mod.name`. */
 fn local_for_global(gv: int) -> int {
-    if gv == NONE {
+    if gv == NONE || gv >= GVAR_OF_NODE.len || GVAR_OF_NODE[gv] == NONE {
         return NONE
     }
-    let mut found = false
-    let mut cn = ""
-    for g in 0..typecheck.GVARS.len {
-        if typecheck.GVARS[g].var == gv {
-            cn = typecheck.GVARS[g].cname
-            found = true
-            break
-        }
+    let g = GVAR_OF_NODE[gv]
+    if GLOBAL_LOCAL[g] != NONE {
+        return GLOBAL_LOCAL[g]
     }
-    if !found {
-        return NONE
-    }
-    for i in 0..nlocals() {
-        let l = F_LOCALS + i
-        if (LOCALS[l].flags & L_GLOBAL) != 0 && LOCALS[l].has_cname && LOCALS[l].cname == cn {
-            return i
-        }
-    }
-    return new_global_local(gv, cn)
+    return new_global_local(g)
 }
 
 // --- places ----------------------------------------------------------------------------
@@ -1171,7 +1241,7 @@ fn lower_call(n: int) -> int {
         SCRATCH[i].ty = if ac > 1 && kids[1] != NONE { ir_subst(kid_ty(n, 1)) } else { types.ty_int() }
         // `loam_vec_push_owned` retains every refcounted leaf for the slot; a
         // Box leaf is moved in, so an element holding one is handed over.
-        if a1 >= 0 && is_local(a1) && types.needs_drop(local_ty(a1)) && push_moves(local_ty(a1)) {
+        if a1 >= 0 && is_local(a1) && needs_drop(local_ty(a1)) && push_moves(local_ty(a1)) {
             clear_flag(a1, L_DROP)
         }
         return NONE
@@ -1414,29 +1484,60 @@ fn int_list_lit(n: int) -> bool {
     return true
 }
 
+/** *For each field of struct type `t`, the first value of literal `n` that */
+/** *names it (an index into its `kids`), or `NONE`. One pass over the */
+/** *literal: each name's field is searched from the one after the last */
+/** *match, so a literal in declaration order (given fields, then defaults */
+/** *as typecheck appends them) costs a compare per field. */
+fn kid_of_field(n: int, t: int) -> []int {
+    let fnames = types.TYPES[t].field_names
+    let nf = fnames.len
+    let mut kid_of = []int {}
+    for f in 0..nf {
+        push(kid_of, NONE)
+    }
+    if nf == 0 {
+        return kid_of
+    }
+    let base = ast.NODES[n].c
+    let mut hint = 0
+    for k in 0..ast.NODES[n].kids.len {
+        let name = &ast.LIT_NAMES[base + k]
+        let mut f = hint
+        for step in 0..nf {
+            if fnames[f] == *name {
+                if kid_of[f] == NONE {
+                    kid_of[f] = k
+                }
+                hint = if f + 1 == nf { 0 } else { f + 1 }
+                break
+            }
+            f = if f + 1 == nf { 0 } else { f + 1 }
+        }
+    }
+    return kid_of
+}
+
 /** *A props literal whose left-out fields have two or more constant */
 /** *defaults starts from the struct's static template: field-indexed */
 /** *default nodes (`NONE` where the literal stores it), or empty for none. */
-fn lit_template(n: int, t: int) -> []int {
+fn lit_template(n: int, t: int, kid_of: &[]int) -> []int {
     let mut d = []int {}
-    if tk(t) != TK.Struct || types.TYPES[t].params.len > 0 || types.TYPES[t].field_names.len == 0 {
+    if tk(t) != TK.Struct || types.TYPES[t].params.len > 0 || kid_of.len == 0 {
         return d
     }
-    let fnames = types.TYPES[t].field_names
-    let kids = ast.NODES[n].kids
+    let kids = &ast.NODES[n].kids
     let mut nd = 0
-    for f in 0..fnames.len {
+    for f in 0..kid_of.len {
         push(d, NONE)
-        for k in 0..kids.len {
-            if fnames[f] != ast.init_name(n, k) {
-                continue
-            }
-            let init = kids[k]
-            if init != NONE && (ast.NODES[init].flags & typecheck.ASTF_DEFAULT) != 0 && static_const(init) {
-                d[f] = init
-                nd = nd + 1
-            }
-            break
+        let k = kid_of[f]
+        if k == NONE {
+            continue
+        }
+        let init = kids[k]
+        if init != NONE && (ast.NODES[init].flags & typecheck.ASTF_DEFAULT) != 0 && static_const(init) {
+            d[f] = init
+            nd = nd + 1
         }
     }
     if nd < 2 {
@@ -1499,7 +1600,7 @@ fn lower_read(n: int) -> int {
         SCRATCH[i].ty = ir_subst(nty)
         src = d
     }
-    if (ast.NODES[n].flags & typecheck.ASTF_MOVED) != 0 && nty != types.NO_TYPE && types.needs_drop(nty) {
+    if (ast.NODES[n].flags & typecheck.ASTF_MOVED) != 0 && nty != types.NO_TYPE && needs_drop(nty) {
         let d = temp(nty)
         let mv = emit(Op.Move, loc)
         SCRATCH[mv].dst = d
@@ -1872,21 +1973,18 @@ fn lower_struct_lit(n: int) -> int {
     let kids = ast.NODES[n].kids
     let is_struct = tk(t) == TK.Struct
     let nf = if is_struct { types.TYPES[t].field_names.len } else { kids.len }
-    let dflt = lit_template(n, t)
+    let kid_of = if is_struct { kid_of_field(n, t) } else { []int {} }
+    let dflt = lit_template(n, t, &kid_of)
     let templated = dflt.len > 0
     let mut args = []int {}
     if is_struct {
-        let fnames = types.TYPES[t].field_names
         for f in 0..nf {
             push(args, NONE)
             if templated && dflt[f] != NONE {
                 continue
             }
-            for k in 0..kids.len {
-                if fnames[f] == ast.init_name(n, k) {
-                    args[f] = lower_expr(kids[k])
-                    break
-                }
+            if kid_of[f] != NONE {
+                args[f] = lower_expr(kids[kid_of[f]])
             }
             // `none`'s payload: a zeroed temp of the field's type.
             if args[f] < 0 && (ast.INFO[n].marks & ast.M_ZERO_REST) != 0 && !templated {
@@ -1913,7 +2011,7 @@ fn lower_struct_lit(n: int) -> int {
     }
     for k in 0..nf {
         let a = args[k]
-        if !is_local(a) || !types.needs_drop(local_ty(a)) {
+        if !is_local(a) || !needs_drop(local_ty(a)) {
             continue
         }
         // An owned string (or what holds one) is copied in: the container
@@ -1956,7 +2054,7 @@ fn lower_array_lit(n: int) -> int {
         for k in 0..args.len {
             let a = args[k]
             // As `push`: only an element holding a Box moves in.
-            if is_local(a) && types.needs_drop(local_ty(a)) && push_moves(local_ty(a)) {
+            if is_local(a) && needs_drop(local_ty(a)) && push_moves(local_ty(a)) {
                 clear_flag(a, L_DROP)
             }
         }
@@ -1999,23 +2097,29 @@ fn lower_clos_value(n: int) -> int {
 
 // --- drops at exits ------------------------------------------------------------------
 
-// Bitsets: 31 bits per `int` word, so no shift reaches the sign bit.
-const WORD_BITS: int = 31
-const WORD_ALL: int = 2147483647
+// Bitsets: 16 bits per `int` word, addressed by shifts and masks (no checked
+// division) and far from the sign bit.
+const WORD_SHIFT: int = 4
+const WORD_BITS: int = 16
+const WORD_ALL: int = 65535
 
 fn bit_mask(l: int) -> int {
-    return 1 << (l % WORD_BITS)
+    return 1 << (l & 15)
 }
 
-fn mark_bit(set: &mut []int, base: int, l: int) {
-    if l >= 0 && l < nlocals() {
-        let w = base + l / WORD_BITS
+fn words_for(n: int) -> int {
+    return (n + 15) >> WORD_SHIFT
+}
+
+fn mark_bit(set: &mut []int, base: int, l: int, n: int) {
+    if l >= 0 && l < n {
+        let w = base + (l >> WORD_SHIFT)
         set[w] = set[w] | bit_mask(l)
     }
 }
 
 fn has_bit(set: &[]int, base: int, l: int) -> bool {
-    return (set[base + l / WORD_BITS] & bit_mask(l)) != 0
+    return (set[base + (l >> WORD_SHIFT)] & bit_mask(l)) != 0
 }
 
 /** *A move of a non-Copy value transfers ownership: the source no longer */
@@ -2034,32 +2138,54 @@ fn transfer_moved() {
     }
 }
 
-/** *Which successors block `b` (fn-relative, in `BLOCKS[base + b]`) has. */
-fn successors(base: int, b: int) -> []int {
-    let mut out = []int {}
-    let x = BLOCKS[base + b]
-    if x.term == Term.Jmp {
-        push(out, x.succ0)
-    } else if x.term == Term.Br {
-        push(out, x.succ0)
-        push(out, x.succ1)
-    } else if x.term == Term.Switch {
-        push(out, x.succ0)
-        for k in 0..x.sw_n {
-            push(out, SW_BLOCKS[x.sw + k])
-        }
+/** *How many successors block `blk` (an index into `BLOCKS`) has: a jump */
+/** *one, a branch two, a switch its default and each case. */
+fn succ_count(blk: int) -> int {
+    let t = BLOCKS[blk].term
+    if t == Term.Jmp {
+        return 1
     }
-    return out
+    if t == Term.Br {
+        return 2
+    }
+    if t == Term.Switch {
+        return 1 + BLOCKS[blk].sw_n
+    }
+    return 0
 }
 
-fn mark_place_bits(set: &mut []int, base: int, p: int) {
+/** *Successor `k` of block `blk`, in `succ_count`'s order. */
+fn succ_at(blk: int, k: int) -> int {
+    if k == 0 {
+        return BLOCKS[blk].succ0
+    }
+    if BLOCKS[blk].term == Term.Br {
+        return BLOCKS[blk].succ1
+    }
+    return SW_BLOCKS[BLOCKS[blk].sw + k - 1]
+}
+
+/** *Dense ids of the owning locals of the fn being lowered (`NONE` for the */
+/** *rest): only their drops depend on what a path touched. */
+let mut DROP_SLOT: []int = []int {}
+
+/** *Mark local `l` touched in the set at `base`, when it owns something. */
+fn mark_owned(set: &mut []int, base: int, l: int) {
+    if l >= 0 && l < DROP_SLOT.len && DROP_SLOT[l] != NONE {
+        let d = DROP_SLOT[l]
+        let w = base + (d >> WORD_SHIFT)
+        set[w] = set[w] | bit_mask(d)
+    }
+}
+
+fn mark_place_owned(set: &mut []int, base: int, p: int) {
     let mut q = p
     while q != NONE {
         if PLACES[q].kind == PlaceKind.Local {
-            mark_bit(set, base, PLACES[q].local)
+            mark_owned(set, base, PLACES[q].local)
         }
         if PLACES[q].kind == PlaceKind.Index {
-            mark_bit(set, base, PLACES[q].index)
+            mark_owned(set, base, PLACES[q].index)
         }
         q = PLACES[q].base
     }
@@ -2067,14 +2193,27 @@ fn mark_place_bits(set: &mut []int, base: int, p: int) {
 
 /** *Drop every owning local on each returning path that some path to it */
 /** *may have touched (an untouched one is still `{0}`), innermost first. */
+/** *Only owning locals are tracked, each with its own bit: a local's drop */
+/** *depends on its bit alone. Every block the entry reaches is visited at */
+/** *least once, even when nothing flows into it (see src/ir.c). */
 fn emit_drops_at_exits() {
     transfer_moved()
     let n_loc = nlocals()
-    let words = (n_loc + WORD_BITS - 1) / WORD_BITS
-    let nb = BLOCKS.len - F_BLOCKS
-    if words == 0 {
+    DROP_SLOT = []int {}
+    let mut owned = 0
+    for l in 0..n_loc {
+        if (LOCALS[F_LOCALS + l].flags & L_DROP) != 0 {
+            push(DROP_SLOT, owned)
+            owned = owned + 1
+        } else {
+            push(DROP_SLOT, NONE)
+        }
+    }
+    if owned == 0 {
         return
     }
+    let words = words_for(owned)
+    let nb = BLOCKS.len - F_BLOCKS
     // What each block touches (anything but a drop), then a union forward.
     let mut gen = []int {}
     let mut out = []int {}
@@ -2085,36 +2224,37 @@ fn emit_drops_at_exits() {
         push(in_set, 0)
     }
     for b in 0..nb {
+        let gb = b * words
         let mut s = BHEAD[b]
         while s != NONE {
-            let x = SCRATCH[s]
+            let x = &SCRATCH[s]
             if x.op != Op.Drop {
-                let gb = b * words
-                mark_bit(&mut gen, gb, x.dst)
-                mark_bit(&mut gen, gb, x.a)
-                mark_bit(&mut gen, gb, x.b)
+                mark_owned(&mut gen, gb, x.dst)
+                mark_owned(&mut gen, gb, x.a)
+                mark_owned(&mut gen, gb, x.b)
                 for k in 0..x.nargs {
-                    mark_bit(&mut gen, gb, ARGS[x.args + k])
+                    mark_owned(&mut gen, gb, ARGS[x.args + k])
                 }
-                mark_place_bits(&mut gen, gb, x.place)
+                mark_place_owned(&mut gen, gb, x.place)
             }
             s = NEXT[s]
         }
     }
     // Parameters and globals hold a value from the start.
     for l in 0..n_loc {
-        if has_flag(l, L_PARAM) || has_flag(l, L_GLOBAL) {
-            mark_bit(&mut in_set, 0, l)
+        if (LOCALS[F_LOCALS + l].flags & (L_PARAM | L_GLOBAL)) != 0 {
+            mark_owned(&mut in_set, 0, l)
         }
     }
     let mut work = []int {}
     let mut queued = []bool {}
+    let mut reached = []bool {}
     for b in 0..nb {
-        push(queued, false)
+        push(queued, b == 0)
+        push(reached, b == 0)
     }
     if nb > 0 {
         push(work, 0)
-        queued[0] = true
     }
     while work.len > 0 {
         let b = work[work.len - 1]
@@ -2123,13 +2263,13 @@ fn emit_drops_at_exits() {
         for w in 0..words {
             out[b * words + w] = in_set[b * words + w] | gen[b * words + w]
         }
-        let succ = successors(F_BLOCKS, b)
-        for k in 0..succ.len {
-            let s = succ[k]
+        for k in 0..succ_count(F_BLOCKS + b) {
+            let s = succ_at(F_BLOCKS + b, k)
             if s < 0 || s >= nb {
                 continue
             }
-            let mut grew = false
+            let mut grew = !reached[s]
+            reached[s] = true
             for w in 0..words {
                 let merged = in_set[s * words + w] | out[b * words + w]
                 if merged != in_set[s * words + w] {
@@ -2144,16 +2284,18 @@ fn emit_drops_at_exits() {
         }
     }
     for b in 0..nb {
-        let blk = BLOCKS[F_BLOCKS + b]
+        let blk = &BLOCKS[F_BLOCKS + b]
         if blk.term != Term.Ret {
             continue
         }
+        let term_val = blk.term_val
         let loc = Loc { file: blk.term_file, line: blk.term_line, col: 0, end_line: 0, end_col: 0 }
         let mut i = n_loc - 1
         while i >= 0 {
-            if has_flag(i, L_DROP) && i != blk.term_val && has_bit(&out, b * words, i) {
-                let d = emit_in(b, Op.Drop, loc)
-                SCRATCH[d].a = i
+            let d = DROP_SLOT[i]
+            if d != NONE && i != term_val && has_bit(&out, b * words, d) {
+                let di = emit_in(b, Op.Drop, loc)
+                SCRATCH[di].a = i
             }
             i = i - 1
         }
@@ -2181,7 +2323,7 @@ fn lower_stmt(n: int) {
             let mut v = if ast.NODES[n].a != NONE { lower_expr(ast.NODES[n].a) } else { NONE }
             // A global is never dropped, so returning one hands out an alias
             // the caller would free: return an owned copy instead.
-            if is_local(v) && has_flag(v, L_GLOBAL) && types.needs_drop(local_ty(v)) {
+            if is_local(v) && has_flag(v, L_GLOBAL) && needs_drop(local_ty(v)) {
                 let vt = local_ty(v)
                 let d = temp(vt)
                 let ld = emit(Op.Load, loc)
@@ -2694,6 +2836,7 @@ fn has_var_decl(root: int) -> bool {
 /** *Lower every module: closures, fns, `__init`s, then generic instances */
 /** *(more may be recorded while lowering them), then the post passes. */
 fn lower_modules() {
+    index_globals()
     let nmods = typecheck.MODS.len
     for i in 0..nmods {
         CUR_MOD = i
@@ -2948,10 +3091,10 @@ fn borrow_read_only_loads(f: int) {
 
 /** *The builtins codegen writes the result of in place, not `dst = f(..)`. */
 fn call_sets_dst_whole(i: int) -> bool {
-    if !INSTS[i].has_text {
+    if INSTS[i].text == NONE {
         return false
     }
-    let c = INSTS[i].text
+    let c = TEXTS[INSTS[i].text]
     if c.len >= 13 && str_prefix(c, "loam_zeus_sig") {
         return false
     }
@@ -2991,7 +3134,7 @@ fn use_local(f: int, assigned: &[]int, l: int) {
     if l < 0 || l >= FNS[f].nlocals {
         return
     }
-    if (assigned[l / WORD_BITS] & bit_mask(l)) == 0 {
+    if (assigned[l >> WORD_SHIFT] & bit_mask(l)) == 0 {
         let x = FNS[f].locals + l
         LOCALS[x].flags = LOCALS[x].flags | L_NEEDS_ZERO
     }
@@ -3013,11 +3156,12 @@ fn use_place(f: int, assigned: &[]int, p: int) {
 /** *Walk block `b` from the assigned set `cur` (updated in place); with */
 /** *`record`, mark every local some use reaches unassigned. */
 fn assigned_through_block(f: int, b: int, cur: &mut []int, record: bool) {
-    let blk = BLOCKS[FNS[f].blocks + b]
+    let first = BLOCKS[FNS[f].blocks + b].first
+    let count = BLOCKS[FNS[f].blocks + b].count
     let nl = FNS[f].nlocals
-    for k in 0..blk.count {
-        let i = blk.first + k
-        let x = INSTS[i]
+    for k in 0..count {
+        let i = first + k
+        let x = &INSTS[i]
         let fresh = x.dst >= 0 && inst_defines_fresh(i)
         if record {
             use_local(f, cur, x.a)
@@ -3031,11 +3175,11 @@ fn assigned_through_block(f: int, b: int, cur: &mut []int, record: bool) {
             }
         }
         if x.dst >= 0 && x.dst < nl {
-            cur[x.dst / WORD_BITS] = cur[x.dst / WORD_BITS] | bit_mask(x.dst)
+            cur[x.dst >> WORD_SHIFT] = cur[x.dst >> WORD_SHIFT] | bit_mask(x.dst)
         }
     }
     if record {
-        use_local(f, cur, blk.term_val)
+        use_local(f, cur, BLOCKS[FNS[f].blocks + b].term_val)
     }
 }
 
@@ -3044,7 +3188,7 @@ fn assigned_through_block(f: int, b: int, cur: &mut []int, record: bool) {
 fn mark_needs_zero(f: int) {
     let nb = FNS[f].nblocks
     let nl = FNS[f].nlocals
-    let words = (nl + WORD_BITS - 1) / WORD_BITS
+    let words = words_for(nl)
     let lbase = FNS[f].locals
     if !FNS[f].lowered || words == 0 || nb == 0 {
         for l in 0..nl {
@@ -3059,7 +3203,7 @@ fn mark_needs_zero(f: int) {
     }
     for l in 0..nl {
         if (LOCALS[lbase + l].flags & (L_PARAM | L_GLOBAL)) != 0 {
-            in_set[l / WORD_BITS] = in_set[l / WORD_BITS] | bit_mask(l)
+            in_set[l >> WORD_SHIFT] = in_set[l >> WORD_SHIFT] | bit_mask(l)
         }
     }
     let mut cur = []int {}
@@ -3081,9 +3225,8 @@ fn mark_needs_zero(f: int) {
             cur[w] = in_set[b * words + w]
         }
         assigned_through_block(f, b, &mut cur, false)
-        let succ = successors(FNS[f].blocks, b)
-        for k in 0..succ.len {
-            let s = succ[k]
+        for k in 0..succ_count(FNS[f].blocks + b) {
+            let s = succ_at(FNS[f].blocks + b, k)
             if s < 0 || s >= nb {
                 continue
             }

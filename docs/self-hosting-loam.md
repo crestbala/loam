@@ -676,9 +676,28 @@ beyond what the checklist requires.
         tables sit in pools, not a small vec per instruction. A fn is
         lowered into a reused scratch list, linked per block because
         lowering moves between blocks, then copied out block by block.
-      - Whole `--dump-ir` run on a Zeus entry: 0.42 s and ~77 MB, against
-        0.49 s and ~114 MB for C. The lowering pass alone is still slower:
-        92 ms against `ir_lower`'s 55 ms. 8d brings it to parity.
+      - 8d, speed: the lowering pass now beats `ir_lower` on a Zeus entry
+        (41 ms vs 54 ms, best of 7; it started at 92 ms). The whole
+        `--dump-ir` run takes 0.38 s and ~75 MB, against 0.49 s and ~114 MB
+        for C. Each change was profiled and kept only if it moved the number:
+        - Struct literals match their fields to the struct's in one pass,
+          searching from the last match, instead of comparing every pair
+          of names. Zeus props structs have ~66 fields.
+        - Instructions hold no string: callee names and string constants
+          sit in a `TEXTS` pool. A global's local holds its `GVARS` index,
+          not copies of its name and C name. A module's globals are found
+          through a name map, not pushed on every fn's scope stack.
+        - `needs_drop` is memoized per type. Bitsets use shifts, not checked
+          division. The drops-at-exits analysis tracks only the locals that
+          own something (a local's drop depends on its bit alone), and the
+          dataflow loops read instructions in place.
+      - The port surfaced a leak in `ir.c`. The exit-drop analysis only
+        visited a block once something flowed into it. A fn with no params,
+        in a module with no globals, whose entry block touches nothing
+        (`fn f() { while … }`) never visited the blocks after it, so its
+        exits dropped nothing. Every reachable block is now visited at least
+        once, in both compilers
+        (`compile_pass/drop_after_empty_entry.loam`; it leaked 58 MB before).
 - [ ] Driver (module loading, package resolution, `cc` invocation) in Loam
 - [ ] Compiler itself uses only safe Loam (arenas + integer indices; §2.7)
 
