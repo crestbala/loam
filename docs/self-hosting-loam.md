@@ -650,6 +650,18 @@ beyond what the checklist requires.
           `len` are never touched, so reserving up front could not help. The
           arenas end over 99% full.
 - [ ] IR and codegen ported
+      - IR lowering (phase 8). 8a done: `loamc --dump-ir` checks as
+        `--dump-checked` does, lowers to IR (no DCE, as `--emit-ir`), and
+        prints everything codegen reads from the IR (`ir_dump` in `ir.c`):
+        per fn its signature, closure id, env local, captures and init
+        module; per local its type, param / global / C name and drop / zero
+        flags; per instruction its operands, place (with each step's type),
+        constants, callee, args, operator, cast mode, overflow and
+        borrowed-load flags, template-default fields, constant tables, type
+        and source line; per block its terminator and switch table. Then
+        `verify ok` / `bad`. Types and strings are spelled as in
+        `--dump-checked`. Deterministic; all 320 `compile_pass` entries dump
+        and verify. Next: the Loam lowering and its `selfhost_ir` gate.
 - [ ] Driver (module loading, package resolution, `cc` invocation) in Loam
 - [ ] Compiler itself uses only safe Loam (arenas + integer indices; §2.7)
 

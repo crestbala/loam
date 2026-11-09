@@ -30,14 +30,23 @@
  * boundscheck as well: the same format, with their node flags (moved,
  * needs-drop, index-safe) in ` flags=`. An error from those passes prints only
  * the diagnostics (exit 3).
+ *
+ * `--dump-ir` checks as `--dump-checked` does, then lowers to IR (no DCE, as
+ * `--emit-ir`) and prints all of it that codegen reads (`ir_dump` in ir.c):
+ * the reference the self-hosted IR lowering is diffed against.
  */
 #include "ast.h"
 #include "compile.h"
 #include "parser.h"
+#include "ir.h"
 #include "sema/typecheck.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+void ast_dump_put_str(const char *s);
+void ast_dump_put_type(const Type *t);
+void ast_dump_put_f64(double v);
 
 static void put_str(const char *s) {
     putchar('"');
@@ -608,5 +617,21 @@ static int dump_checked_session(const char *path, int passes) {
 }
 
 int ast_dump_typed(const char *path) { return dump_checked_session(path, 1); }
+
+/* The printers ir.c's `ir_dump` shares, so both dumps spell a type, a string
+   and a reference the same way. */
+void ast_dump_put_str(const char *s) { put_str(s); }
+void ast_dump_put_type(const Type *t) { put_type(t); }
+void ast_dump_put_f64(double v) { put_f64(v); }
+
+int ast_dump_ir(const char *path) {
+    int rc = loam_session_typecheck(&g_sess, path, 2);
+    if (rc) return rc;
+    IrModule *ir = ir_lower(g_sess.mods, g_sess.nmods);
+    ir_dump(ir);
+    int bad = ir_verify(ir);
+    printf("verify %s\n", bad ? "bad" : "ok");
+    return bad ? 1 : 0;
+}
 
 int ast_dump_checked(const char *path) { return dump_checked_session(path, 2); }

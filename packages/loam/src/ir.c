@@ -2712,6 +2712,172 @@ void ir_print(FILE *o, const IrModule *m) {
     }
 }
 
+/* --- the full dump (`--dump-ir`) ----------------------------------------- */
+
+/* One line per local, instruction and terminator, every field codegen reads,
+   so the self-hosted lowering can be diffed exactly. Types, strings and node
+   references are spelled as `--dump-checked` spells them. A field at its zero
+   value is left out; operands (`dst a b`) are always printed. A line's source
+   file is printed only where it changes within a fn. */
+
+void ast_dump_put_str(const char *s);
+void ast_dump_put_type(const Type *t);
+void ast_dump_put_f64(double v);
+
+static const char *const IR_OP_NAMES[] = {
+    "const.int", "const.bool", "const.str", "const.float", "load", "store", "addr", "move",
+    "bin", "un", "call", "call.val", "alloc", "drop", "bound", "struct", "array", "fnval",
+    "clos", "cast", "sizeof", "panic",
+};
+
+static const char *const IR_TERM_NAMES[] = {"ret", "jmp", "br", "switch", "unreachable"};
+
+static const char *dump_last_file;
+
+static void dump_line(SourceLoc l) {
+    printf(" @%d", l.line);
+    const char *f = l.file ? l.file : "";
+    if (!dump_last_file || strcmp(dump_last_file, f) != 0) {
+        fputs(" file=", stdout);
+        ast_dump_put_str(f);
+        dump_last_file = f;
+    }
+}
+
+static void dump_place(const IrPlace *p) {
+    if (!p) {
+        fputs("-", stdout);
+        return;
+    }
+    switch (p->kind) {
+        case IR_PL_LOCAL: printf("%%%d", p->local); break;
+        case IR_PL_FIELD:
+            dump_place(p->base);
+            putchar('.');
+            fputs(p->field ? p->field : "?", stdout);
+            break;
+        case IR_PL_INDEX:
+            dump_place(p->base);
+            printf("[%%%d]", p->index);
+            break;
+        case IR_PL_DEREF:
+            fputs("*(", stdout);
+            dump_place(p->base);
+            putchar(')');
+            break;
+    }
+    putchar('{');
+    ast_dump_put_type(p->ty);
+    putchar('}');
+}
+
+static void dump_inst(const IrInst *i) {
+    printf("    %s %d %d %d", IR_OP_NAMES[i->op], i->dst, i->a, i->b);
+    dump_line(i->loc);
+    if (i->place) {
+        fputs(" place=", stdout);
+        dump_place(i->place);
+    }
+    if (i->imm) printf(" imm=%lld", (long long)i->imm);
+    if (i->fimm != 0.0) {
+        fputs(" f=", stdout);
+        ast_dump_put_f64(i->fimm);
+    }
+    if (i->str) {
+        fputs(" str=", stdout);
+        ast_dump_put_str(i->str);
+    }
+    if (i->callee) printf(" callee=%s", i->callee);
+    if (i->nargs) {
+        fputs(" args=", stdout);
+        for (int k = 0; k < i->nargs; k++) printf("%s%d", k ? "," : "", i->args[k]);
+    }
+    if (i->binop) printf(" op=%d", i->binop);
+    if (i->is_mut) fputs(" mut=1", stdout);
+    if (i->conv_mode) printf(" conv=%d", i->conv_mode);
+    if (i->checked) fputs(" chk=1", stdout);
+    if (i->borrowed) fputs(" borrowed=1", stdout);
+    if (i->nlit_ints) {
+        fputs(" ints=", stdout);
+        for (int k = 0; k < i->nlit_ints; k++)
+            printf("%s%lld", k ? "," : "", (long long)i->lit_ints[k]);
+    }
+    if (i->lit_dflt) {
+        /* `lit_dflt[k]` is always the literal's own value for field k (a
+           constant default), so which fields the template supplies is all
+           there is to compare. */
+        fputs(" dflt=", stdout);
+        int first = 1;
+        for (int k = 0; k < i->nargs; k++)
+            if (i->lit_dflt[k]) {
+                printf("%s%d", first ? "" : ",", k);
+                first = 0;
+            }
+    }
+    if (i->ty) {
+        fputs(" ty=", stdout);
+        ast_dump_put_type(i->ty);
+    }
+    putchar('\n');
+}
+
+void ir_dump(const IrModule *m) {
+    for (int f = 0; f < m->nfns; f++) {
+        const IrFn *fn = &m->fns[f];
+        dump_last_file = NULL;
+        fputs("fn ", stdout);
+        fputs(fn->cname ? fn->cname : "-", stdout);
+        if (fn->name) {
+            fputs(" name=", stdout);
+            ast_dump_put_str(fn->name);
+        }
+        fputs(" sig=", stdout);
+        ast_dump_put_type(fn->sig);
+        printf(" params=%d", fn->nparams);
+        if (fn->is_main) fputs(" main=1", stdout);
+        if (!fn->lowered) fputs(" partial=1", stdout);
+        if (fn->clos_id) printf(" clos=%d env=%d", fn->clos_id, fn->env_local);
+        if (fn->init_mod) printf(" init_mod=%d", fn->init_mod);
+        putchar('\n');
+        for (int c = 0; c < fn->ncaps; c++) {
+            fputs("  cap ", stdout);
+            ast_dump_put_str(fn->caps[c] ? fn->caps[c] : "");
+            putchar(' ');
+            ast_dump_put_type(fn->cap_types ? fn->cap_types[c] : NULL);
+            putchar('\n');
+        }
+        for (int l = 0; l < fn->nlocals; l++) {
+            const IrLocal *lo = &fn->locals[l];
+            printf("  local %d", lo->id);
+            if (lo->name) {
+                fputs(" name=", stdout);
+                ast_dump_put_str(lo->name);
+            }
+            fputs(" ty=", stdout);
+            ast_dump_put_type(lo->ty);
+            if (lo->is_param) fputs(" param=1", stdout);
+            if (lo->is_global) fputs(" global=1", stdout);
+            if (lo->cname) printf(" cname=%s", lo->cname);
+            if (lo->needs_drop) fputs(" drop=1", stdout);
+            if (lo->zero_init) fputs(" zero_init=1", stdout);
+            if (lo->needs_zero) fputs(" needs_zero=1", stdout);
+            putchar('\n');
+        }
+        for (int b = 0; b < fn->nblocks; b++) {
+            const IrBlock *bb = &fn->blocks[b];
+            printf("  bb%d\n", bb->id);
+            for (int i = 0; i < bb->ninsts; i++) dump_inst(&bb->insts[i]);
+            printf("    %s %d %d %d", IR_TERM_NAMES[bb->term], bb->term_val, bb->succ[0],
+                   bb->succ[1]);
+            for (int c = 0; c < bb->sw_n; c++)
+                printf("%s%lld:%d", c ? "," : " cases=", (long long)bb->sw_vals[c],
+                       bb->sw_blocks[c]);
+            if (bb->term != IR_TERM_UNREACHABLE) dump_line(bb->term_loc);
+            putchar('\n');
+        }
+    }
+}
+
 /* --- verification ------------------------------------------------------- */
 
 /**
