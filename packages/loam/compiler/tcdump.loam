@@ -22,6 +22,7 @@ import "dump.loam"
 import "typecheck.loam"
 import "threadcheck.loam"
 import "borrowck.loam"
+import "dce.loam"
 import "ir.loam"
 import "irdump.loam"
 import "boundscheck.loam"
@@ -134,10 +135,12 @@ fn loader_edits(root: int, name: string) {
 fn main() {
     // `--checked`: also the passes after typecheck, as `loamc --dump-checked`.
     // `--ir`: then lowered to IR and printed, as `loamc --dump-ir`.
+    // `--dce`: then the fns dead-code elimination keeps, as `loamc --dump-dce`.
     let lower_ir = sys.argc() == 3 && sys.arg(1) == "--ir"
-    let run_later_passes = sys.argc() == 3 && (sys.arg(1) == "--checked" || lower_ir)
+    let run_dce = sys.argc() == 3 && sys.arg(1) == "--dce"
+    let run_later_passes = sys.argc() == 3 && (sys.arg(1) == "--checked" || lower_ir || run_dce)
     if sys.argc() != 2 && !run_later_passes {
-        fmt.eprintln("usage: tcdump [--checked | --ir] modules.txt   (from loamc --dump-modules main.loam)")
+        fmt.eprintln("usage: tcdump [--checked | --ir | --dce] modules.txt   (from loamc --dump-modules main.loam)")
         sys.exit(2)
     }
     let module_list_path = sys.arg(sys.argc() - 1)
@@ -243,6 +246,29 @@ fn main() {
     }
     dump.TYPED = true
     let mut b = []u8 {}
+    if run_dce {
+        dce.run()
+        for m in 0..typecheck.MODS.len {
+            buf.push_str(&mut b, "module ")
+            buf.push_int(&mut b, m)
+            dump.attr_str(&mut b, "name", true, typecheck.MODS[m].name)
+            push(b, u8('\n'))
+            let root = typecheck.MODS[m].root
+            if root == ast.NONE {
+                continue
+            }
+            let decls = ast.NODES[root].kids
+            for i in 0..decls.len {
+                if ast.NODES[decls[i]].kind == Kind.Fn && dce.keep(decls[i]) {
+                    buf.push_str(&mut b, "  keep")
+                    dump.put_ref(&mut b, "fn", decls[i])
+                    push(b, u8('\n'))
+                }
+            }
+        }
+        fmt.write(buf.to_string(&b))
+        sys.exit(0)
+    }
     if lower_ir {
         ir.lower_modules()
         irdump.dump_ir(&mut b)

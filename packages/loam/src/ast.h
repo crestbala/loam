@@ -363,6 +363,8 @@ int ast_dump_file(const char *path);
 int ast_dump_modules(const char *path);
 int ast_dump_typed(const char *path);
 int ast_dump_checked(const char *path);
+/** `--dump-dce`: the fn declarations the dead-code pass keeps. */
+int ast_dump_dce(const char *path);
 /** `--dump-ir`: the checked program lowered to IR, all of it codegen reads. */
 int ast_dump_ir(const char *path);
 
