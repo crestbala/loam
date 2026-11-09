@@ -2591,54 +2591,50 @@ fn selfhost_diff(what: string, tool: string, flag: string, ok_msg: string) {
 /** *counted apart. */
 fn ig_selfhost_typecheck() {
     mark("selfhost typecheck")
-    let tmpl = tmpf("selfhost_tc.XXXXXX")
-    let d = trim(sys.exec("mkdir -p {{shq(TMP)}} && mktemp -d {{shq(tmpl)}}"))
-    if sys.exec_status() != 0 || d.len == 0 {
-        bad("selfhost typecheck (mktemp)", d)
+    let scratch_template = tmpf("selfhost_tc.XXXXXX")
+    let scratch_dir = trim(sys.exec("mkdir -p {{shq(TMP)}} && mktemp -d {{shq(scratch_template)}}"))
+    if sys.exec_status() != 0 || scratch_dir.len == 0 {
+        bad("selfhost typecheck (mktemp)", scratch_dir)
         return
     }
-    let exe = "{{d}}/tcdump"
-    let o = sys.exec("{{shq(LOAMC)}} {{shq(ROOT)}}/packages/loam/compiler/tcdump.loam -o {{shq(exe)}} 2>&1")
+    let tcdump_exe = "{{scratch_dir}}/tcdump"
+    let build_log = sys.exec("{{shq(LOAMC)}} {{shq(ROOT)}}/packages/loam/compiler/tcdump.loam -o {{shq(tcdump_exe)}} 2>&1")
     if sys.exec_status() != 0 {
-        sys.exec("rm -rf {{shq(d)}}")
-        bad("selfhost typecheck (build tcdump)", o)
+        sys.exec("rm -rf {{shq(scratch_dir)}}")
+        bad("selfhost typecheck (build tcdump)", build_log)
         return
     }
-    // One verdict line per entry file, eight at a time: `match`, `load` (C
-    // cannot load it), `hang` (the Loam checker ran past 60 s; a watchdog
-    // subshell kills it, plain sh so no `timeout` / perl is needed) or `diff`,
-    // then the path.
-    let worker = "{{d}}/one.sh"
-    write_text(worker, cat(
-        "f=$1; w=$(mktemp -d {{shq(d)}}/w.XXXXXX); ",
-        cat("{{shq(LOAMC)}} --dump-modules \"$f\" > $w/mods 2>/dev/null || { echo \"load $f\"; rm -rf $w; exit 0; }; ",
-            cat("{{shq(exe)}} $w/mods > $w/b 2>&1 & p=$!; ( sleep 60; kill $p 2>/dev/null && : > $w/hung ) > /dev/null 2>&1 & k=$!; wait $p; st=$?; kill $k 2>/dev/null; wait $k 2>/dev/null; if [ -e $w/hung ]; then echo \"hang $f\"; rm -rf $w; exit 0; fi; echo \"exit $st\" >> $w/b; ",
-                cat("{{shq(LOAMC)}} --dump-typed \"$f\" > $w/a 2>&1; echo \"exit $?\" >> $w/a; ",
-                    "if cmp -s $w/a $w/b; then echo \"match $f\"; else echo \"diff $f\"; fi; rm -rf $w\n")))))
-    // In batches, so a run of ~70 s (286 entries pull in all of Zeus, checked
-    // and dumped twice each) reports progress instead of sitting silent.
-    let list = "{{d}}/list"
-    let v = "{{d}}/verdicts"
-    let total = int_of(trim(sys.exec(cat(
-        "cd {{shq(ROOT)}} && ls packages/loam/tests/compile_pass/*.loam packages/loam/tests/compile_fail/*.loam packages/loam/tests/draw_golden/*.loam examples/language/*.loam ",
-        "> {{shq(list)}}; : > {{shq(v)}}; wc -l < {{shq(list)}}"))))
-    let batch = 64
-    let mut from = 1
-    while from <= total {
-        let to = if from + batch - 1 < total { from + batch - 1 } else { total }
-        sys.exec("cd {{shq(ROOT)}} && sed -n '{{from}},{{to}}p' {{shq(list)}} | xargs -P 8 -n 1 sh {{shq(worker)}} >> {{shq(v)}} 2>/dev/null")
-        mark("selfhost typecheck {{to}}/{{total}}")
-        from = to + 1
+    // Eight entries at a time through tools/selfhost-tc-one.sh (the verdicts,
+    // the watchdog and the result cache in TMP are described there). The
+    // workers run in the background so the run reports progress as it goes.
+    let entry_list = "{{scratch_dir}}/entries"
+    let verdicts = "{{scratch_dir}}/verdicts"
+    let done_marker = "{{scratch_dir}}/done"
+    let cache_dir = "{{TMP}}/selfhost_tc_ref"
+    let entry_count = int_of(trim(sys.exec(cat(
+        "cd {{shq(ROOT)}} && mkdir -p {{shq(cache_dir)}} && ls packages/loam/tests/compile_pass/*.loam packages/loam/tests/compile_fail/*.loam packages/loam/tests/draw_golden/*.loam examples/language/*.loam ",
+        "> {{shq(entry_list)}}; : > {{shq(verdicts)}}; wc -l < {{shq(entry_list)}}"))))
+    let worker_env = cat("LOAMC={{shq(LOAMC)}} EXE={{shq(tcdump_exe)}} SCRATCH={{shq(scratch_dir)}} REF={{shq(cache_dir)}} ",
+        "LOAMC_SUM=\"$(cksum < {{shq(LOAMC)}})\" EXE_SUM=\"$(cksum < {{shq(tcdump_exe)}})\"")
+    sys.exec(cat("cd {{shq(ROOT)}} && ( export {{worker_env}}; xargs -P 8 -n 1 sh tools/selfhost-tc-one.sh < {{shq(entry_list)}} > {{shq(verdicts)}} 2>/dev/null; ",
+        ": > {{shq(done_marker)}} ) > /dev/null 2>&1 &"))
+    let mut reported = 0
+    while sys.exists(done_marker) == 0 {
+        let finished = int_of(trim(sys.exec("sleep 1; wc -l < {{shq(verdicts)}}")))
+        if finished >= reported + 64 {
+            mark("selfhost typecheck {{finished}}/{{entry_count}}")
+            reported = finished
+        }
     }
-    let r = sys.exec(cat("v={{shq(v)}}; echo \"$(grep -c '^match' $v) match, $(grep -c '^load' $v) not loadable\"; ",
+    let summary = sys.exec(cat("v={{shq(verdicts)}}; echo \"$(grep -c '^match' $v) match, $(grep -c '^load' $v) not loadable\"; ",
         "! grep -E '^(diff|hang)' $v"))
-    let st = sys.exec_status()
-    sys.exec("rm -rf {{shq(d)}}")
-    if st != 0 {
-        bad("selfhost typecheck (dumps differ)", r)
+    let failed = sys.exec_status() != 0
+    sys.exec("rm -rf {{shq(scratch_dir)}}")
+    if failed {
+        bad("selfhost typecheck (dumps differ)", summary)
         return
     }
-    ok("selfhost typecheck vs typecheck.c: {{trim(r)}}")
+    ok("selfhost typecheck vs typecheck.c: {{trim(summary)}}")
 }
 
 fn ig_selfhost_lex() {

@@ -1,29 +1,32 @@
-// A borrow of an indexed place (`NODES[root].kids`) passed next to an argument
-// that grows the same vec: the address is taken after the other arguments, so
-// the reallocation cannot leave it dangling.
+// A borrow of an indexed place (`ITEMS[root].children`) passed next to an
+// argument that grows the same vec: the address is taken after the other
+// arguments, so the reallocation cannot leave it dangling.
 import "std:fmt"
 
-struct N { kids: []int, v: int }
-
-let mut NODES: []N = []N {}
-
-fn mk(v: int) -> int {
-    push(NODES, N { kids: []int {}, v: v })
-    return NODES.len - 1
+struct Item {
+    children: []int,
+    value: int,
 }
 
-fn add(k: &mut []int, x: int) {
-    push(k, x)
+let mut ITEMS: []Item = []Item {}
+
+fn new_item(value: int) -> int {
+    push(ITEMS, Item { children: []int {}, value: value })
+    return ITEMS.len - 1
+}
+
+fn append_child(children: &mut []int, child: int) {
+    push(children, child)
 }
 
 fn main() {
-    let root = mk(0)
+    let root = new_item(0)
     for i in 0..3000 {
-        push(NODES[root].kids, mk(i))
-        add(&mut NODES[root].kids, mk(i))
+        push(ITEMS[root].children, new_item(i))
+        append_child(&mut ITEMS[root].children, new_item(i))
     }
-    NODES[root].v = mk(7)
-    fmt.println(NODES[root].kids.len)
-    fmt.println(NODES[root].v)
-    fmt.println(NODES.len)
+    ITEMS[root].value = new_item(7)
+    fmt.println(ITEMS[root].children.len)
+    fmt.println(ITEMS[root].value)
+    fmt.println(ITEMS.len)
 }

@@ -252,4 +252,7 @@ fn main() {
         push(b, u8('\n'))
     }
     fmt.write(buf.to_string(&b))
+    // Exit now: tearing down the ~300k-node arena one release at a time costs
+    // more than the dump (the OS frees the pages at once).
+    sys.exit(0)
 }

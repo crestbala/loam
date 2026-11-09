@@ -241,53 +241,53 @@ fn type_eq(a: int, b: int) -> bool {
     if a == NO_TYPE || b == NO_TYPE {
         return false
     }
-    let x = TYPES[a]
-    let y = TYPES[b]
-    if x.kind != y.kind {
+    // Fields are read in place: copying a Ty retains and releases its strings
+    // and vecs, and this runs for every argument and assignment.
+    if TYPES[a].kind != TYPES[b].kind {
         return false
     }
-    switch x.kind {
+    switch TYPES[a].kind {
         case TK.Int:
-            return x.bits == y.bits && x.is_unsigned == y.is_unsigned
+            return TYPES[a].bits == TYPES[b].bits && TYPES[a].is_unsigned == TYPES[b].is_unsigned
         case TK.Float:
-            return x.bits == y.bits
+            return TYPES[a].bits == TYPES[b].bits
         case TK.Ptr:
-            return x.is_mut == y.is_mut && type_eq(x.elem, y.elem)
+            return TYPES[a].is_mut == TYPES[b].is_mut && type_eq(TYPES[a].elem, TYPES[b].elem)
         case TK.Box, TK.Vec:
-            return type_eq(x.elem, y.elem)
+            return type_eq(TYPES[a].elem, TYPES[b].elem)
         case TK.Array:
-            return x.array_len == y.array_len && type_eq(x.elem, y.elem)
+            return TYPES[a].array_len == TYPES[b].array_len && type_eq(TYPES[a].elem, TYPES[b].elem)
         case TK.Struct:
-            if !x.has_name || !y.has_name || x.name != y.name {
+            if !TYPES[a].has_name || !TYPES[b].has_name || TYPES[a].name != TYPES[b].name {
                 return false
             }
-            if (x.has_cname || y.has_cname) && (!x.has_cname || !y.has_cname || x.cname != y.cname) {
+            if (TYPES[a].has_cname || TYPES[b].has_cname) && (!TYPES[a].has_cname || !TYPES[b].has_cname || TYPES[a].cname != TYPES[b].cname) {
                 return false
             }
-            if x.params.len != y.params.len {
+            if TYPES[a].params.len != TYPES[b].params.len {
                 return false
             }
-            for i in 0..x.params.len {
-                if !type_eq(x.params[i], y.params[i]) {
+            for i in 0..TYPES[a].params.len {
+                if !type_eq(TYPES[a].params[i], TYPES[b].params[i]) {
                     return false
                 }
             }
             return true
         case TK.Proc:
-            if x.params.len != y.params.len {
+            if TYPES[a].params.len != TYPES[b].params.len {
                 return false
             }
-            if !type_eq(ret_or_void(x.ret), ret_or_void(y.ret)) {
+            if !type_eq(ret_or_void(TYPES[a].ret), ret_or_void(TYPES[b].ret)) {
                 return false
             }
-            for i in 0..x.params.len {
-                if !type_eq(x.params[i], y.params[i]) {
+            for i in 0..TYPES[a].params.len {
+                if !type_eq(TYPES[a].params[i], TYPES[b].params[i]) {
                     return false
                 }
             }
             return true
         case TK.Param:
-            return x.has_name && y.has_name && x.name == y.name
+            return TYPES[a].has_name && TYPES[b].has_name && TYPES[a].name == TYPES[b].name
         default:
             return true
     }

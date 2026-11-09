@@ -523,10 +523,10 @@ static int push_moves(const Type *t) {
  *  address is taken once nothing else can move the buffer. */
 static int addr_through_index(const AstNode *a) {
     if (!a || a->kind != AST_ADDR) return 0;
-    for (const AstNode *p = a->as.access.target; p;) {
-        if (p->kind == AST_INDEX) return 1;
-        if (p->kind != AST_FIELD) return 0;
-        p = p->as.access.target;
+    for (const AstNode *place = a->as.access.target; place;) {
+        if (place->kind == AST_INDEX) return 1;
+        if (place->kind != AST_FIELD) return 0;
+        place = place->as.access.target;
     }
     return 0;
 }
@@ -624,10 +624,10 @@ static int lower_call(AstNode *n) {
     if (n->as.call.is_println) return lower_println(n);
     if (n->as.call.is_vec_push) {
         int *args = (int *)calloc(2, sizeof(int));
-        int late = n->as.call.arg_count > 1 && addr_through_index(n->as.call.args[0]);
-        if (!late) args[0] = n->as.call.arg_count > 0 ? lower_expr(n->as.call.args[0]) : -1;
+        int vec_addr_last = n->as.call.arg_count > 1 && addr_through_index(n->as.call.args[0]);
+        if (!vec_addr_last) args[0] = n->as.call.arg_count > 0 ? lower_expr(n->as.call.args[0]) : -1;
         args[1] = n->as.call.arg_count > 1 ? lower_expr(n->as.call.args[1]) : -1;
-        if (late) args[0] = lower_expr(n->as.call.args[0]);
+        if (vec_addr_last) args[0] = lower_expr(n->as.call.args[0]);
         IrInst *i = emit(IR_CALL, n->loc);
         i->callee = "loam_vec_push";
         i->args = args;
@@ -722,10 +722,10 @@ static int lower_call(AstNode *n) {
                     ? (int *)calloc(n->as.call.arg_count, sizeof(int))
                     : NULL;
     /* Pass 0 lowers every other argument; pass 1 the indexed borrows. */
-    for (int pass = 0; pass < 2; pass++)
+    for (int indexed_borrow_pass = 0; indexed_borrow_pass < 2; indexed_borrow_pass++)
     for (size_t k = 0; k < n->as.call.arg_count; k++) {
-        int late = !(bind_state && k == 1) && addr_through_index(n->as.call.args[k]);
-        if (late != pass) continue;
+        int is_indexed_borrow = !(bind_state && k == 1) && addr_through_index(n->as.call.args[k]);
+        if (is_indexed_borrow != indexed_borrow_pass) continue;
         if (bind_state && k == 1) {
             args[k] = state_sig_local(n->as.call.args[k]);
             if (args[k] < 0) {
