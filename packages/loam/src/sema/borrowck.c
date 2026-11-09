@@ -19,6 +19,15 @@
  *
  * Bindings are a stack. Temps from `&x` in a statement are cleared at
  * statement end unless a binding takes them as loans.
+ *
+ * Globals: a borrow of a global (`&ITEMS[i]`, `&store.ITEMS[i]`) records the
+ * global it roots in. A call made while one is live — held by a binding, or
+ * passed to the call itself — is an error when the callee may change that
+ * global (`global_writes`: the globals a fn writes, `&mut`-borrows or pushes
+ * to, its callees' included; a call through a fn value may change any): the
+ * change may reallocate what the borrow points into. A reference into a
+ * global cannot be returned or stored through `*pp`, so a caller never holds
+ * one it cannot see. Return a copy or an index instead.
  */
 #include "borrowck.h"
 #include "typecheck.h"
@@ -58,6 +67,9 @@ typedef struct Binding {
        (`on_click = p.h`). Ownership is a static fact: no runtime zeroing. */
     char **moved_paths;
     int nmoved;
+    /* `store` in `store.ITEMS`: a module alias, standing for that module's
+       globals. It tracks borrows only; moves out of it are not checked. */
+    int is_module_alias;
     struct Binding *next;
 } Binding;
 
@@ -75,6 +87,7 @@ typedef struct Borrow {
     int depth;
     struct Binding *owner;  /* the binding holding this loan, if stored */
     struct Binding *target; /* the binding the borrowed place roots in */
+    const AstNode *global_decl; /* the global the place roots in, or NULL */
     struct Borrow *next;
 } Borrow;
 
@@ -622,6 +635,418 @@ static void end_dead_borrows(AstNode **stmts, size_t count, size_t at, int block
 static int check_expr(AstNode *n, int as_move);
 static int check_stmt(AstNode *n);
 
+/* --- Globals, and which globals each fn may change --------------------------- */
+
+static int is_ref_ty(const Type *t);
+
+/** An open-addressing set of pointers (global decls). */
+typedef struct {
+    const void **slots;
+    size_t cap;
+    size_t count;
+} PtrSet;
+
+static size_t ptr_hash(const void *key) {
+    uintptr_t bits = (uintptr_t)key;
+    bits ^= bits >> 17;
+    bits *= 0xed5ad4bbu;
+    bits ^= bits >> 11;
+    return (size_t)bits;
+}
+
+static int ptrset_has(const PtrSet *set, const void *key) {
+    if (!set->cap || !key) return 0;
+    for (size_t slot = ptr_hash(key) & (set->cap - 1);; slot = (slot + 1) & (set->cap - 1)) {
+        if (!set->slots[slot]) return 0;
+        if (set->slots[slot] == key) return 1;
+    }
+}
+
+static void ptrset_add(PtrSet *set, const void *key) {
+    if (!key || ptrset_has(set, key)) return;
+    if ((set->count + 1) * 2 > set->cap) {
+        PtrSet grown = { NULL, set->cap ? set->cap * 2 : 64, 0 };
+        grown.slots = (const void **)calloc(grown.cap, sizeof(void *));
+        if (!grown.slots) loam_fatal("out of memory");
+        for (size_t i = 0; i < set->cap; i++)
+            if (set->slots[i]) ptrset_add(&grown, set->slots[i]);
+        free(set->slots);
+        *set = grown;
+    }
+    size_t slot = ptr_hash(key) & (set->cap - 1);
+    while (set->slots[slot]) slot = (slot + 1) & (set->cap - 1);
+    set->slots[slot] = key;
+    set->count++;
+}
+
+static PtrSet global_decls; /* every module-level `let` of the session */
+
+/** The global a place roots in (`ITEMS[i].kids`, `store.ITEMS[i]`), or NULL
+ *  for a local, a parameter, or anything reached through a reference. */
+static const AstNode *global_of_place(const AstNode *place) {
+    while (place) {
+        if (place->kind == AST_IDENT) {
+            const AstNode *decl = place->as.ident.resolved;
+            return ptrset_has(&global_decls, decl) ? decl : NULL;
+        }
+        if (place->kind != AST_FIELD && place->kind != AST_INDEX) return NULL;
+        const AstNode *base = place->as.access.target;
+        if (place->kind == AST_FIELD && base && base->kind == AST_IDENT &&
+            base->as.ident.resolved && base->as.ident.resolved->kind == AST_PROGRAM) {
+            const AstNode *decl = place->as.access.resolved;
+            return ptrset_has(&global_decls, decl) ? decl : NULL;
+        }
+        if (base && is_ref_ty(base->ty)) return NULL;
+        place = base;
+    }
+    return NULL;
+}
+
+/** The globals one fn may change, directly or through what it calls. */
+typedef struct {
+    AstNode *fn;
+    const AstNode **globals;
+    int global_count, global_cap;
+    AstNode **callees;
+    int callee_count, callee_cap;
+    int writes_any; /* calls a fn value (or a hook that may): anything */
+} GlobalWrites;
+
+static GlobalWrites *global_writes;
+static int global_writes_count, global_writes_cap;
+/* fn decl -> index into global_writes, open addressing over the same hash */
+static AstNode **writes_index_keys;
+static int *writes_index_values;
+static size_t writes_index_cap;
+
+static int writes_index_find(const AstNode *fn) {
+    if (!writes_index_cap || !fn) return -1;
+    for (size_t slot = ptr_hash(fn) & (writes_index_cap - 1);;
+         slot = (slot + 1) & (writes_index_cap - 1)) {
+        if (!writes_index_keys[slot]) return -1;
+        if (writes_index_keys[slot] == fn) return writes_index_values[slot];
+    }
+}
+
+static int writes_has_global(const GlobalWrites *writes, const AstNode *global) {
+    for (int i = 0; i < writes->global_count; i++)
+        if (writes->globals[i] == global) return 1;
+    return 0;
+}
+
+/** 1 if `global` was new to `writes`. */
+static int writes_add_global(GlobalWrites *writes, const AstNode *global) {
+    if (!global || writes_has_global(writes, global)) return 0;
+    if (writes->global_count == writes->global_cap) {
+        writes->global_cap = writes->global_cap ? writes->global_cap * 2 : 4;
+        writes->globals = (const AstNode **)realloc(
+            writes->globals, (size_t)writes->global_cap * sizeof(AstNode *));
+        if (!writes->globals) loam_fatal("out of memory");
+    }
+    writes->globals[writes->global_count++] = global;
+    return 1;
+}
+
+static void writes_add_callee(GlobalWrites *writes, AstNode *callee) {
+    for (int i = 0; i < writes->callee_count; i++)
+        if (writes->callees[i] == callee) return;
+    if (writes->callee_count == writes->callee_cap) {
+        writes->callee_cap = writes->callee_cap ? writes->callee_cap * 2 : 4;
+        writes->callees = (AstNode **)realloc(writes->callees,
+                                              (size_t)writes->callee_cap * sizeof(AstNode *));
+        if (!writes->callees) loam_fatal("out of memory");
+    }
+    writes->callees[writes->callee_count++] = callee;
+}
+
+/** A call the compiler expands itself (println, push, sizeof, a numeric or C
+ *  builtin, a channel or future cell): it runs no Loam code. */
+static int is_builtin_call(const AstNode *call) {
+    return call->as.call.is_println || call->as.call.is_vec_push || call->as.call.is_vec_pop ||
+           call->as.call.is_sizeof || call->as.call.is_box_new || call->as.call.is_panic ||
+           call->as.call.value_key || call->as.call.c_builtin ||
+           call->as.call.num_builtin != NUMB_NONE || call->as.call.fut_cell ||
+           call->as.call.ch_cell || (call->as.call.sig_cell && call->as.call.sig_cell != 3);
+}
+
+/** The fn decl a call runs, or NULL with `*runs_unknown` set when it may run
+ *  any code (a fn value, a signal store that wakes subscribers, an
+ *  unresolved callee), or NULL alone for a builtin. */
+static AstNode *call_callee(const AstNode *call, int *runs_unknown) {
+    *runs_unknown = 0;
+    if (call->as.call.is_fn_val) {
+        *runs_unknown = 1;
+        return NULL;
+    }
+    if (is_builtin_call(call)) return NULL;
+    const AstNode *callee = call->as.call.callee;
+    AstNode *decl = NULL;
+    if (callee && callee->kind == AST_IDENT) decl = callee->as.ident.resolved;
+    else if (callee && callee->kind == AST_FIELD) decl = callee->as.access.resolved;
+    if (decl && decl->kind == AST_FN_DECL) return decl;
+    *runs_unknown = 1;
+    return NULL;
+}
+
+/** A value of this type may carry a fn a bodyless hook could call back. */
+static int type_holds_fn(const Type *t, int depth_left) {
+    if (!t || depth_left == 0) return 0;
+    switch (t->kind) {
+        case TY_PROC:
+            return 1;
+        case TY_PTR:
+        case TY_BOX:
+        case TY_VEC:
+        case TY_ARRAY:
+            return type_holds_fn(t->elem, depth_left - 1);
+        case TY_STRUCT:
+            for (size_t i = 0; i < t->field_count; i++)
+                if (type_holds_fn(t->field_types[i], depth_left - 1)) return 1;
+            return 0;
+        default:
+            return 0;
+    }
+}
+
+static void collect_writes(AstNode *n, GlobalWrites *writes) {
+    if (!n) return;
+    switch (n->kind) {
+        case AST_FN_DECL:
+            collect_writes(n->as.fn.body, writes);
+            break;
+        case AST_CLOSURE:
+            break; /* runs when called, and calling a fn value counts as anything */
+        case AST_BLOCK:
+            for (size_t i = 0; i < n->as.block.stmt_count; i++)
+                collect_writes(n->as.block.stmts[i], writes);
+            break;
+        case AST_IF:
+        case AST_WHILE:
+            collect_writes(n->as.if_stmt.cond, writes);
+            collect_writes(n->as.if_stmt.then_block, writes);
+            collect_writes(n->as.if_stmt.else_block, writes);
+            break;
+        case AST_FOR:
+            collect_writes(n->as.for_stmt.iter, writes);
+            collect_writes(n->as.for_stmt.body, writes);
+            break;
+        case AST_SWITCH:
+            collect_writes(n->as.switch_stmt.scrut, writes);
+            for (size_t i = 0; i < n->as.switch_stmt.case_count; i++)
+                collect_writes(n->as.switch_stmt.cases[i], writes);
+            break;
+        case AST_CASE:
+            collect_writes(n->as.switch_case.body, writes);
+            break;
+        case AST_RETURN:
+            collect_writes(n->as.ret.expr, writes);
+            break;
+        case AST_EXPR_STMT:
+            collect_writes(n->as.expr_stmt.expr, writes);
+            break;
+        case AST_VAR_DECL:
+            collect_writes(n->as.var.init, writes);
+            break;
+        case AST_ASSIGN:
+            writes_add_global(writes, global_of_place(n->as.assign.left));
+            collect_writes(n->as.assign.left, writes);
+            collect_writes(n->as.assign.right, writes);
+            break;
+        case AST_INCDEC:
+            writes_add_global(writes, global_of_place(n->as.incdec.operand));
+            collect_writes(n->as.incdec.operand, writes);
+            break;
+        case AST_ADDR:
+            if (n->as.access.is_mut)
+                writes_add_global(writes, global_of_place(n->as.access.target));
+            collect_writes(n->as.access.target, writes);
+            break;
+        case AST_BINARY:
+            collect_writes(n->as.binary.left, writes);
+            collect_writes(n->as.binary.right, writes);
+            break;
+        case AST_UNARY:
+            collect_writes(n->as.unary.operand, writes);
+            break;
+        case AST_CAST:
+            collect_writes(n->as.cast.expr, writes);
+            break;
+        case AST_TRY:
+            collect_writes(n->as.try_expr.expr, writes);
+            break;
+        case AST_CALL: {
+            int runs_unknown = 0;
+            AstNode *callee = call_callee(n, &runs_unknown);
+            if (runs_unknown) writes->writes_any = 1;
+            if (callee) writes_add_callee(writes, callee);
+            if (n->as.call.is_fn_val) collect_writes(n->as.call.callee, writes);
+            for (size_t i = 0; i < n->as.call.arg_count; i++)
+                collect_writes(n->as.call.args[i], writes);
+            break;
+        }
+        case AST_FIELD:
+        case AST_INDEX:
+        case AST_DEREF:
+            collect_writes(n->as.access.target, writes);
+            collect_writes(n->as.access.index, writes);
+            break;
+        case AST_STRUCT_LIT:
+            for (size_t i = 0; i < n->as.struct_lit.field_count; i++)
+                collect_writes(n->as.struct_lit.fields[i].init, writes);
+            break;
+        case AST_ARRAY_LIT:
+        case AST_TUPLE:
+            for (size_t i = 0; i < n->as.array_lit.count; i++)
+                collect_writes(n->as.array_lit.elems[i], writes);
+            break;
+        default:
+            break;
+    }
+}
+
+static void writes_index_put(AstNode *fn, int index) {
+    if ((size_t)(global_writes_count + 1) * 2 > writes_index_cap) {
+        size_t old_cap = writes_index_cap;
+        AstNode **old_keys = writes_index_keys;
+        int *old_values = writes_index_values;
+        writes_index_cap = old_cap ? old_cap * 2 : 1024;
+        writes_index_keys = (AstNode **)calloc(writes_index_cap, sizeof(AstNode *));
+        writes_index_values = (int *)calloc(writes_index_cap, sizeof(int));
+        if (!writes_index_keys || !writes_index_values) loam_fatal("out of memory");
+        for (size_t i = 0; i < old_cap; i++)
+            if (old_keys[i]) {
+                size_t slot = ptr_hash(old_keys[i]) & (writes_index_cap - 1);
+                while (writes_index_keys[slot]) slot = (slot + 1) & (writes_index_cap - 1);
+                writes_index_keys[slot] = old_keys[i];
+                writes_index_values[slot] = old_values[i];
+            }
+        free(old_keys);
+        free(old_values);
+    }
+    size_t slot = ptr_hash(fn) & (writes_index_cap - 1);
+    while (writes_index_keys[slot]) slot = (slot + 1) & (writes_index_cap - 1);
+    writes_index_keys[slot] = fn;
+    writes_index_values[slot] = index;
+}
+
+static void global_writes_free(void) {
+    for (int i = 0; i < global_writes_count; i++) {
+        free(global_writes[i].globals);
+        free(global_writes[i].callees);
+    }
+    free(global_writes);
+    free(writes_index_keys);
+    free(writes_index_values);
+    free(global_decls.slots);
+    global_writes = NULL;
+    global_writes_count = global_writes_cap = 0;
+    writes_index_keys = NULL;
+    writes_index_values = NULL;
+    writes_index_cap = 0;
+    memset(&global_decls, 0, sizeof global_decls);
+}
+
+/** Every fn's direct writes, then its callees' until nothing changes. */
+static void global_writes_build(LoamModule *mods, int nmods) {
+    global_writes_free();
+    for (int g = 0; g < typecheck_global_count(); g++)
+        ptrset_add(&global_decls, typecheck_global_var(g));
+    for (int m = 0; m < nmods; m++) {
+        AstNode *program = mods[m].ast;
+        if (!program) continue;
+        for (size_t i = 0; i < program->as.program.decl_count; i++) {
+            AstNode *fn = program->as.program.decls[i];
+            if (fn->kind != AST_FN_DECL || writes_index_find(fn) >= 0) continue;
+            if (global_writes_count == global_writes_cap) {
+                global_writes_cap = global_writes_cap ? global_writes_cap * 2 : 256;
+                global_writes = (GlobalWrites *)realloc(
+                    global_writes, (size_t)global_writes_cap * sizeof(GlobalWrites));
+                if (!global_writes) loam_fatal("out of memory");
+            }
+            GlobalWrites *writes = &global_writes[global_writes_count];
+            memset(writes, 0, sizeof *writes);
+            writes->fn = fn;
+            if (fn->as.fn.body && !fn->as.fn.is_intrinsic) {
+                collect_writes(fn, writes);
+            } else {
+                /* A bodyless hook runs no Loam code, unless it is handed a
+                   fn it may call back. */
+                Type *ft = fn->ty;
+                for (size_t k = 0; ft && k < ft->param_count; k++)
+                    if (type_holds_fn(ft->params[k], 6)) writes->writes_any = 1;
+            }
+            writes_index_put(fn, global_writes_count);
+            global_writes_count++;
+        }
+    }
+    for (int changed = 1; changed;) {
+        changed = 0;
+        for (int i = 0; i < global_writes_count; i++) {
+            GlobalWrites *writes = &global_writes[i];
+            if (writes->writes_any) continue;
+            for (int c = 0; c < writes->callee_count && !writes->writes_any; c++) {
+                int callee_index = writes_index_find(writes->callees[c]);
+                if (callee_index < 0) {
+                    writes->writes_any = 1; /* a fn this session did not list */
+                    changed = 1;
+                    break;
+                }
+                GlobalWrites *callee_writes = &global_writes[callee_index];
+                if (callee_writes->writes_any) {
+                    writes->writes_any = 1;
+                    changed = 1;
+                    break;
+                }
+                for (int g = 0; g < callee_writes->global_count; g++)
+                    if (writes_add_global(writes, callee_writes->globals[g])) changed = 1;
+            }
+        }
+    }
+}
+
+/** A call while a borrow of a global is live — held by a binding, or one of
+ *  the call's own arguments — must not be able to change that global. */
+static int check_call_keeps_borrowed_globals(const AstNode *call) {
+    Borrow *first = borrows;
+    while (first && !first->global_decl) first = first->next;
+    if (!first) return 0;
+    int runs_unknown = 0;
+    AstNode *callee = call_callee(call, &runs_unknown);
+    const GlobalWrites *writes = NULL;
+    if (callee) {
+        int index = writes_index_find(callee);
+        if (index < 0) runs_unknown = 1;
+        else writes = &global_writes[index];
+    }
+    if (!runs_unknown && !writes) return 0; /* a builtin */
+    for (Borrow *b = first; b; b = b->next) {
+        if (!b->global_decl) continue;
+        if (!runs_unknown && !writes->writes_any && !writes_has_global(writes, b->global_decl))
+            continue;
+        const char *callee_name = callee && callee->as.fn.name ? callee->as.fn.name : "a fn value";
+        loam_error(call->loc,
+                   "cannot call '%s' while '%s' is borrowed: the call may change the global "
+                   "'%s' and move what the borrow points into",
+                   callee_name, b->path, b->global_decl->as.var.name);
+        errn = 1;
+        return 1;
+    }
+    return 0;
+}
+
+/* The argument phases of a call (and the IR's lowering order): a borrow whose
+   place goes through an index is taken after every other argument, since an
+   argument may grow the vec it points into. */
+static int addr_through_index(const AstNode *arg) {
+    if (!arg || arg->kind != AST_ADDR) return 0;
+    for (const AstNode *place = arg->as.access.target; place;) {
+        if (place->kind == AST_INDEX) return 1;
+        if (place->kind != AST_FIELD) return 0;
+        place = place->as.access.target;
+    }
+    return 0;
+}
+
 static const char *TEMP_ROOT = "<temporary>";
 
 static int is_ref_ty(const Type *t) { return t && t->kind == TY_PTR; }
@@ -745,6 +1170,43 @@ static Root ref_root(AstNode *e) {
     }
 }
 
+/** A reference that may point into a global: `&ITEMS[i]`, a binding holding
+ *  a loan of one, or a call result made from such an argument. */
+static int refers_into_global(AstNode *e) {
+    if (!e) return 0;
+    switch (e->kind) {
+        case AST_ADDR: {
+            AstNode *place = e->as.access.target;
+            if (global_of_place(place)) return 1;
+            while (place && (place->kind == AST_FIELD || place->kind == AST_INDEX ||
+                             place->kind == AST_DEREF)) {
+                AstNode *base = place->as.access.target;
+                if (base && is_ref_ty(base->ty)) return refers_into_global(base);
+                place = base;
+            }
+            return 0;
+        }
+        case AST_IDENT: {
+            Binding *holder = find_b(e->as.ident.name);
+            if (!holder) return 0;
+            for (Borrow *b = borrows; b; b = b->next)
+                if (b->stored && b->owner == holder && b->global_decl) return 1;
+            return 0;
+        }
+        case AST_CALL:
+            for (size_t i = 0; i < e->as.call.arg_count; i++) {
+                AstNode *arg = e->as.call.args[i];
+                if (arg && is_ref_ty(arg->ty) && refers_into_global(arg)) return 1;
+            }
+            return 0;
+        case AST_IF:
+            return refers_into_global(arm_tail(e->as.if_stmt.then_block)) ||
+                   refers_into_global(arm_tail(e->as.if_stmt.else_block));
+        default:
+            return 0;
+    }
+}
+
 static void set_ref(Binding *b, Root r) {
     b->ref_depth = r.depth;
     b->ref_root = r.name;
@@ -770,6 +1232,7 @@ typedef struct {
     char *path;     /* otherwise: a copy of another binding's loan */
     int is_mut;
     Binding *target;
+    const AstNode *global_decl;
 } Loan;
 
 typedef struct {
@@ -816,7 +1279,7 @@ static int gather_loans_ex(AstNode *e, int result_mut, Loans *ls, SourceLoc loc,
             Borrow *t = find_temp(p);
             free(p);
             if (t) {
-                Loan l = { t, NULL, t->is_mut && result_mut, NULL };
+                Loan l = { t, NULL, t->is_mut && result_mut, NULL, NULL };
                 loans_add(ls, l);
             }
             return 0;
@@ -826,7 +1289,8 @@ static int gather_loans_ex(AstNode *e, int result_mut, Loans *ls, SourceLoc loc,
             if (!q || q->kind == BK_GLOBAL || !is_ref_ty(e->ty)) return 0;
             for (Borrow *b = borrows; b; b = b->next) {
                 if (!b->stored || b->owner != q) continue;
-                Loan l = { NULL, loam_dup(b->path), b->is_mut && result_mut, b->target };
+                Loan l = { NULL, loam_dup(b->path), b->is_mut && result_mut, b->target,
+                           b->global_decl };
                 loans_add(ls, l);
             }
             /* Through `q` itself: while the result lives, `q` may not be
@@ -834,7 +1298,7 @@ static int gather_loans_ex(AstNode *e, int result_mut, Loans *ls, SourceLoc loc,
             if (!reborrow) return 0;
             int m = result_mut && e->ty->is_mut;
             if (take_borrow_path(e->as.ident.name, m, loc)) return 1;
-            Loan l = { borrows, NULL, m, NULL };
+            Loan l = { borrows, NULL, m, NULL, NULL };
             loans_add(ls, l);
             return 0;
         }
@@ -884,6 +1348,7 @@ static void attach_loans(Binding *b, Loans *ls, int replace) {
         c->depth = b->depth;
         c->owner = b;
         c->target = l->target;
+        c->global_decl = l->global_decl;
         c->next = borrows;
         borrows = c;
     }
@@ -1051,7 +1516,9 @@ static int check_expr(AstNode *n, int as_move) {
                     free(p);
                     return 1;
                 }
+                Borrow *before = borrows;
                 int rc = take_borrow_path(p, n->as.access.is_mut, n->loc);
+                if (!rc && borrows != before) borrows->global_decl = global_of_place(n->as.access.target);
                 free(p);
                 return rc;
             }
@@ -1080,7 +1547,7 @@ static int check_expr(AstNode *n, int as_move) {
                 rc = 1;
             } else {
                 rc = check_use_path(p, n->loc);
-                if (!rc && v && as_move && n->ty && !type_is_copy(n->ty))
+                if (!rc && v && !v->is_module_alias && as_move && n->ty && !type_is_copy(n->ty))
                     mark_path_moved(v, p);
             }
             free(p);
@@ -1191,7 +1658,8 @@ static int check_expr(AstNode *n, int as_move) {
             for (int phase = 0; phase < 2; phase++)
             for (size_t i = 0; i < n->as.call.arg_count; i++) {
                 AstNode *a0 = n->as.call.args[i];
-                int late = a0 && a0->kind == AST_ADDR && a0->as.access.is_mut;
+                int late = a0 && a0->kind == AST_ADDR &&
+                           (a0->as.access.is_mut || addr_through_index(a0));
                 if (late != phase) continue;
                 AstNode *a = n->as.call.args[i];
                 int move_arg = 0;
@@ -1206,6 +1674,7 @@ static int check_expr(AstNode *n, int as_move) {
                 }
                 if (check_expr(a, move_arg)) return 1;
             }
+            if (check_call_keeps_borrowed_globals(n)) return 1;
             /* A `&mut` reference handed on is reborrowed mutably at the call,
                after every argument is read (`grow(m, m.cap)` is fine): it
                conflicts with a live loan through it, or a second `&mut`. */
@@ -1371,6 +1840,12 @@ static int check_stmt(AstNode *n) {
                 /* `*pp = &x`, or a global: the place is not tracked, so what
                    it receives must outlive it now. */
                 Root holder = place_root(L);
+                if (refers_into_global(R)) {
+                    loam_error(n->loc, "a reference into a global cannot be stored here: "
+                                       "store a copy or an index");
+                    errn = 1;
+                    return 1;
+                }
                 if (rr.depth > holder.depth) {
                     if (rr.name == TEMP_ROOT)
                         loam_error(n->loc, "a borrow of a temporary cannot be stored here");
@@ -1426,6 +1901,12 @@ static int check_stmt(AstNode *n) {
                 if (r.depth > 0) {
                     loam_error(n->loc, "cannot return borrow of local '%s'",
                                r.name ? r.name : "?");
+                    errn = 1;
+                    return 1;
+                }
+                if (refers_into_global(n->as.ret.expr)) {
+                    loam_error(n->loc, "cannot return a reference into a global: return a copy "
+                                       "or an index");
                     errn = 1;
                     return 1;
                 }
@@ -1580,6 +2061,7 @@ static int check_stmt(AstNode *n) {
 /** Check all non-intrinsic functions. Returns 1 if any error. */
 int borrowck_modules(LoamModule *mods, int nmods) {
     errn = 0;
+    global_writes_build(mods, nmods);
     for (int m = 0; m < nmods; m++) {
         AstNode *p = mods[m].ast;
         if (!p) continue;
@@ -1592,6 +2074,15 @@ int borrowck_modules(LoamModule *mods, int nmods) {
             nframes = 0;
             depth = 0;
             depth = 1;
+            /* `store.ITEMS`: each fully imported module, under its alias. */
+            for (size_t k = 0; k < p->as.program.import_count; k++) {
+                AstNode *import = p->as.program.imports[k];
+                if (!import || import->as.import.name_count || !import->as.import.alias) continue;
+                push_b(import->as.import.alias, NULL);
+                binds->kind = BK_GLOBAL;
+                binds->is_copy = 1;
+                binds->is_module_alias = 1;
+            }
             for (int g = 0; g < typecheck_global_count(); g++) {
                 if (typecheck_global_mod(g) != m) continue;
                 AstNode *gv = typecheck_global_var(g);
@@ -1610,5 +2101,6 @@ int borrowck_modules(LoamModule *mods, int nmods) {
             pop_to_depth(0);
         }
     }
+    global_writes_free();
     return errn;
 }

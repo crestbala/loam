@@ -1,0 +1,23 @@
+// A module whose global the global_borrow_* fixtures borrow from outside.
+
+struct Item {
+    value: int,
+    label: string,
+}
+
+let mut ITEMS: []Item = []Item {}
+
+fn add_item(value: int) {
+    push(ITEMS, Item { value: value, label: "added" })
+}
+
+/** *Grows ITEMS past any capacity it had, so its buffer moves. */
+fn grow_items() {
+    for i in 0..10000 {
+        add_item(i)
+    }
+}
+
+fn item_count() -> int {
+    return ITEMS.len
+}

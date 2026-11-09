@@ -38,6 +38,13 @@ reference type. None of these rules should break existing code.
 4. A returned reference borrows from its arguments: while the result is live,
    every reference argument stays borrowed (shared or exclusive, matching the
    parameter).
+5. While a borrow of a global is live (held by a binding, or passed to the
+   call itself), no call may change that global: a fn that writes it,
+   `&mut`-borrows it or pushes to it, directly or through what it calls. A
+   call through a fn value may change anything. Another module's global
+   (`store.ITEMS`) is the same place as in its own module.
+6. A function cannot return a reference into a global, nor store one through
+   `*pp`: the caller could not see what it borrows. Return a copy or an index.
 
 ## Phases
 
@@ -301,6 +308,46 @@ rejected for a non-borrow reason is a generator bug (`other`).
   a loop or `switch` that mentions a holder anywhere keeps it live through
   the whole statement. `aim(&mut r, …)` counts as a read of `r` by design,
   not caution: the callee may leave `r` as it was, so its old loans stay.
+
+### Phase 9: Borrows of globals across calls (rules 5, 6) — done
+
+Found while porting the checker to Loam (self-hosting phase 6). Borrowck saw
+borrows within one fn only, and not at all for another module's globals, so
+four programs read freed memory (each printed `0`, not `1`):
+
+| Shape | Program |
+|-------|---------|
+| held across a call | `let first = &ITEMS[0]; grow_items(); first.value` |
+| passed to a writer | `show_after_growth(&ITEMS[0])`, which grows ITEMS, then reads its argument |
+| another module's global | `let first = &store.ITEMS[0]; push(store.ITEMS, …)` or `store.grow_items()` |
+| returned | `fn first_item() -> &Item { return &ITEMS[0] }`, then `grow_items()` |
+
+- [x] A borrow records the global its place roots in (`global_of_place`;
+      `store.ITEMS` resolves to the same declaration). Each fully imported
+      module is a binding under its alias, so `&store.ITEMS[i]` is tracked
+      like `&ITEMS[i]` (borrows only: moves out of it are not checked, as
+      before).
+- [x] `global_writes`: per fn, the globals it may change, its callees'
+      included, to a fixpoint. A call through a fn value, a signal store, an
+      unresolved callee, or a bodyless hook handed a fn may change any.
+- [x] At every call, a live borrow of a global the callee may change is an
+      error. A borrow through an index is taken after the other arguments
+      (borrowck's argument phases and the IR's lowering agree), so
+      `push(NODES[n].kids, new_node())` stays legal.
+- [x] `return` and `*pp = …` of a reference into a global are errors
+      (`refers_into_global`: `&place`, a binding holding such a loan, a call
+      result made from one, either arm of an `if`).
+- [x] `compile_fail`: `global_borrow_across_call`,
+      `global_borrow_passed_to_writer`, `global_borrow_cross_module`,
+      `global_borrow_cross_module_push`, `return_ref_into_global`.
+      `compile_pass`: `global_borrow_reader_call` (calls that only read the
+      global or change another one, an argument that grows the vec beside an
+      indexed borrow of it, another module's global).
+- **Exit:** no new error on any of the repo's 780 non-`compile_fail` `.loam`
+  files (std, Zeus, examples, `nob.loam`, the self-hosted compiler);
+  `nob test compile_pass`, `compile_fail`, `golden` green.
+- Conservative: the global is one place, so a call that changes `G.a` is
+  refused while `G.b` is borrowed.
 
 ## Later, only if a program needs it
 

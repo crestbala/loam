@@ -1,0 +1,22 @@
+// `first` points into ITEMS' buffer; grow_items may reallocate it.
+import "std:fmt"
+
+struct Item {
+    value: int,
+    label: string,
+}
+
+let mut ITEMS: []Item = []Item {}
+
+fn grow_items() {
+    for i in 0..10000 {
+        push(ITEMS, Item { value: i, label: "grown" })
+    }
+}
+
+fn main() {
+    push(ITEMS, Item { value: 1, label: "first" })
+    let first = &ITEMS[0]
+    grow_items()
+    fmt.println(first.value)
+}

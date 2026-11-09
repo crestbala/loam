@@ -1,0 +1,52 @@
+// What a borrow of a global still allows: calls that only read it, or change
+// other globals, while the borrow is held; and an argument that grows the vec
+// beside an indexed borrow of it (the borrow is taken after that argument).
+import "std:fmt"
+import "../mod/item_store.loam"
+
+struct Node {
+    children: []int,
+    weight: int,
+}
+
+let mut NODES: []Node = []Node {}
+let mut VISITS: int = 0
+
+fn new_node(weight: int) -> int {
+    push(NODES, Node { children: []int {}, weight: weight })
+    return NODES.len - 1
+}
+
+fn total_weight() -> int {
+    let mut total = 0
+    for i in 0..NODES.len {
+        total = total + NODES[i].weight
+    }
+    return total
+}
+
+fn count_visit() {
+    VISITS = VISITS + 1
+}
+
+fn weight_of(node: &Node) -> int {
+    count_visit()
+    return node.weight + total_weight()
+}
+
+fn main() {
+    let root = new_node(1)
+    for i in 0..100 {
+        push(NODES[root].children, new_node(i))
+    }
+    let first = &NODES[root]
+    count_visit()
+    fmt.println(total_weight())
+    fmt.println(first.children.len)
+    fmt.println(weight_of(&NODES[1]))
+    item_store.add_item(5)
+    let item = &item_store.ITEMS[0]
+    fmt.println(item_store.item_count())
+    fmt.println(item.value)
+    fmt.println(VISITS)
+}

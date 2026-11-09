@@ -1,0 +1,26 @@
+// The argument points into ITEMS, and the callee grows ITEMS before it reads
+// the argument.
+import "std:fmt"
+
+struct Item {
+    value: int,
+    label: string,
+}
+
+let mut ITEMS: []Item = []Item {}
+
+fn grow_items() {
+    for i in 0..10000 {
+        push(ITEMS, Item { value: i, label: "grown" })
+    }
+}
+
+fn show_after_growth(item: &Item) {
+    grow_items()
+    fmt.println(item.value)
+}
+
+fn main() {
+    push(ITEMS, Item { value: 1, label: "first" })
+    show_after_growth(&ITEMS[0])
+}

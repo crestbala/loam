@@ -1,0 +1,10 @@
+// Another module's global, borrowed and grown in one fn.
+import "std:fmt"
+import "../mod/item_store.loam"
+
+fn main() {
+    item_store.add_item(1)
+    let first = &item_store.ITEMS[0]
+    push(item_store.ITEMS, item_store.ITEMS[0])
+    fmt.println(first.value)
+}
