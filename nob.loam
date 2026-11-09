@@ -2586,8 +2586,7 @@ fn selfhost_diff(what: string, tool: string, flag: string, ok_msg: string) {
 
 /** *The checker: `tcdump` (fed the module list C's loader resolved) against */
 /** *`loamc --dump-typed` over every compile_pass / compile_fail / draw_golden */
-/** *examples/language entry. While the port is in progress a file the Loam */
-/** *checker stops on (`unported:`, exit 3) is pending, not a pass; any real */
+/** *examples/language entry: trees, tables, diagnostics and exit status. Any */
 /** *difference fails. Files C cannot load (parse errors: selfhost_parse) are */
 /** *counted apart. */
 fn ig_selfhost_typecheck() {
@@ -2605,19 +2604,21 @@ fn ig_selfhost_typecheck() {
         bad("selfhost typecheck (build tcdump)", o)
         return
     }
-    // One verdict line per entry file, eight at a time: `match`, `pend`,
-    // `load` (C cannot load it) or `diff`, then the path.
+    // One verdict line per entry file, eight at a time: `match`, `load` (C
+    // cannot load it), `hang` (the Loam checker ran past 60 s; a watchdog
+    // subshell kills it, plain sh so no `timeout` / perl is needed) or `diff`,
+    // then the path.
     let worker = "{{d}}/one.sh"
     write_text(worker, cat(
         "f=$1; w=$(mktemp -d {{shq(d)}}/w.XXXXXX); ",
         cat("{{shq(LOAMC)}} --dump-modules \"$f\" > $w/mods 2>/dev/null || { echo \"load $f\"; rm -rf $w; exit 0; }; ",
-            cat("{{shq(exe)}} $w/mods > $w/b 2>&1; st=$?; if [ $st -eq 3 ]; then echo \"pend $f\"; rm -rf $w; exit 0; fi; echo \"exit $st\" >> $w/b; ",
+            cat("{{shq(exe)}} $w/mods > $w/b 2>&1 & p=$!; ( sleep 60; kill $p 2>/dev/null && : > $w/hung ) > /dev/null 2>&1 & k=$!; wait $p; st=$?; kill $k 2>/dev/null; wait $k 2>/dev/null; if [ -e $w/hung ]; then echo \"hang $f\"; rm -rf $w; exit 0; fi; echo \"exit $st\" >> $w/b; ",
                 cat("{{shq(LOAMC)}} --dump-typed \"$f\" > $w/a 2>&1; echo \"exit $?\" >> $w/a; ",
                     "if cmp -s $w/a $w/b; then echo \"match $f\"; else echo \"diff $f\"; fi; rm -rf $w\n")))))
     let script = cat(
         "cd {{shq(ROOT)}} && ls packages/loam/tests/compile_pass/*.loam packages/loam/tests/compile_fail/*.loam packages/loam/tests/draw_golden/*.loam examples/language/*.loam ",
         cat("| xargs -P 8 -n 1 sh {{shq(worker)}} > {{shq(d)}}/verdicts; v={{shq(d)}}/verdicts; ",
-            "echo \"$(grep -c '^match' $v) match, $(grep -c '^pend' $v) pending, $(grep -c '^load' $v) not loadable\"; ! grep '^diff' $v"))
+            "echo \"$(grep -c '^match' $v) match, $(grep -c '^load' $v) not loadable\"; ! grep -E '^(diff|hang)' $v"))
     let r = sys.exec(script)
     let st = sys.exec_status()
     sys.exec("rm -rf {{shq(d)}}")

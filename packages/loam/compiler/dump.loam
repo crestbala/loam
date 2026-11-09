@@ -472,27 +472,35 @@ fn put_type(b: &mut []u8, t: int) {
     switch x.kind {
         case TK.Void:
             buf.push_str(b, "void")
+            break
         case TK.Bool:
             buf.push_str(b, "bool")
+            break
         case TK.String:
             buf.push_str(b, "string")
+            break
         case TK.Int, TK.Float:
             buf.push_str(b, types.type_name(t))
+            break
         case TK.Ptr:
             buf.push_str(b, if x.is_mut != 0 { "&mut " } else { "&" })
             put_type(b, x.elem)
+            break
         case TK.Box:
             buf.push_str(b, "Box<")
             put_type(b, x.elem)
             buf.push_str(b, ">")
+            break
         case TK.Array:
             push(b, u8('['))
             buf.push_i64(b, x.array_len)
             push(b, u8(']'))
             put_type(b, x.elem)
+            break
         case TK.Vec:
             buf.push_str(b, "[]")
             put_type(b, x.elem)
+            break
         case TK.Struct:
             buf.push_str(b, if x.has_name { x.name } else { "struct" })
             if x.params.len > 0 {
@@ -509,9 +517,11 @@ fn put_type(b: &mut []u8, t: int) {
                 push(b, u8('#'))
                 buf.push_str(b, x.cname)
             }
+            break
         case TK.Param:
             push(b, u8('\''))
             buf.push_str(b, if x.has_name { x.name } else { "?" })
+            break
         case TK.Proc:
             buf.push_str(b, "fn(")
             for i in 0..x.params.len {
@@ -522,6 +532,7 @@ fn put_type(b: &mut []u8, t: int) {
             }
             buf.push_str(b, ") -> ")
             put_type(b, x.ret)
+            break
         default:
             buf.push_str(b, "<unknown>")
     }
@@ -578,15 +589,22 @@ fn typed_attrs(b: &mut []u8, n: Node) {
     switch n.kind {
         case Kind.Program:
             attr_str(b, "mod_name", n.has_sname, n.sname)
+            break
         case Kind.Import:
             attr_str(b, "resolved", n.has_sname, n.sname)
+            break
         case Kind.Fn, Kind.Closure:
             attr_str(b, "cname", n.has_sname, n.sname)
             mark(b, "intrinsic", n, ast.M_INTRINSIC)
             attr_nz(b, "clos_id", n.clos_id)
             mark(b, "as_value", n, ast.M_AS_VALUE)
+            break
         case Kind.Call:
-            mark(b, "println", n, ast.M_PRINTLN)
+            if (n.marks & ast.M_EPRINTLN) != 0 {
+                attr_int(b, "println", 2)
+            } else {
+                mark(b, "println", n, ast.M_PRINTLN)
+            }
             mark(b, "box_new", n, ast.M_BOX_NEW)
             mark(b, "vec_push", n, ast.M_VEC_PUSH)
             mark(b, "vec_pop", n, ast.M_VEC_POP)
@@ -600,8 +618,10 @@ fn typed_attrs(b: &mut []u8, n: Node) {
             mark(b, "value_key", n, ast.M_VALUE_KEY)
             attr_nz(b, "fut", n.fut)
             attr_nz(b, "ch", n.ch)
+            break
         case Kind.Field, Kind.Index:
             put_ref(b, "res", n.res)
+            break
         case Kind.Ident:
             put_ref(b, "res", n.res)
             if n.def_line != 0 {
@@ -610,12 +630,16 @@ fn typed_attrs(b: &mut []u8, n: Node) {
                 push(b, u8(':'))
                 buf.push_int(b, n.def_col)
             }
+            break
         case Kind.StructLit:
             mark(b, "zero_rest", n, ast.M_ZERO_REST)
+            break
         case Kind.Cast:
             attr_nz(b, "conv", n.conv)
+            break
         case Kind.Try:
             attr_str(b, "errname", n.has_sname, n.sname)
+            break
         default:
             return
     }
