@@ -21,6 +21,20 @@ fn hex_digit(d: int) -> int {
 
 fn put_str(b: &mut []u8, s: string) {
     push(b, u8('"'))
+    // Most strings need no escape: one copy instead of a push per byte.
+    let mut needs_escape = false
+    for k in 0..s.len {
+        let byte = s[k]
+        if byte == '\\' || byte == '"' || byte < 32 || byte == 127 {
+            needs_escape = true
+            break
+        }
+    }
+    if !needs_escape {
+        buf.push_str(b, s)
+        push(b, u8('"'))
+        return
+    }
     for k in 0..s.len {
         let c = s[k]
         if c == '\\' {
@@ -194,7 +208,7 @@ fn dump(b: &mut []u8, i: int, depth: int, role: string) {
         buf.push_str(b, " -\n")
         return
     }
-    let n = ast.NODES[i]
+    let n = &ast.NODES[i]
     let d = depth + 1
     head(b, depth, role, kind_name(n.kind), n.loc)
     if n.flags != 0 {
@@ -209,7 +223,7 @@ fn dump(b: &mut []u8, i: int, depth: int, role: string) {
             attr_str(b, "mod_doc", n.has_text, n.text)
             nl(b)
             for k in 0..n.kids.len {
-                let c = ast.NODES[n.kids[k]]
+                let c = &ast.NODES[n.kids[k]]
                 if c.kind == Kind.CDir {
                     head(b, d, "cdir", "CDir", c.loc)
                     attr_int(b, "link", c.op)
@@ -236,7 +250,7 @@ fn dump(b: &mut []u8, i: int, depth: int, role: string) {
             attr_str(b, "path", n.has_text, n.text)
             nl(b)
             for k in 0..n.kids.len {
-                let c = ast.NODES[n.kids[k]]
+                let c = &ast.NODES[n.kids[k]]
                 indent(b, d)
                 buf.push_str(b, "name")
                 attr_str(b, "src", true, c.name)
@@ -265,7 +279,7 @@ fn dump(b: &mut []u8, i: int, depth: int, role: string) {
                 }
             }
             for k in 0..n.kids.len {
-                let c = ast.NODES[n.kids[k]]
+                let c = &ast.NODES[n.kids[k]]
                 head(b, d, "param", "Param", c.loc)
                 attr_str(b, "name", true, c.name)
                 nl(b)
@@ -286,7 +300,7 @@ fn dump(b: &mut []u8, i: int, depth: int, role: string) {
                 leaf_str(b, d, "tparam", n.strs[k])
             }
             for k in 0..n.kids.len {
-                let c = ast.NODES[n.kids[k]]
+                let c = &ast.NODES[n.kids[k]]
                 indent(b, d)
                 buf.push_str(b, "field")
                 attr_str(b, "name", true, c.name)
@@ -300,7 +314,7 @@ fn dump(b: &mut []u8, i: int, depth: int, role: string) {
             attr_str(b, "name", n.has_name, n.name)
             nl(b)
             for k in 0..n.kids.len {
-                let c = ast.NODES[n.kids[k]]
+                let c = &ast.NODES[n.kids[k]]
                 indent(b, d)
                 buf.push_str(b, "variant")
                 attr_str(b, "name", true, c.name)
@@ -420,7 +434,7 @@ fn dump(b: &mut []u8, i: int, depth: int, role: string) {
             nl(b)
             dump_list(b, n.kids2, d, "targ")
             for k in 0..n.kids.len {
-                let c = ast.NODES[n.kids[k]]
+                let c = &ast.NODES[n.kids[k]]
                 indent(b, d)
                 buf.push_str(b, "init")
                 attr_str(b, "name", true, c.name)
@@ -463,11 +477,30 @@ fn dump(b: &mut []u8, i: int, depth: int, role: string) {
 
 /** *A type, structurally: `'T` is a type parameter, `Name#cname` a struct */
 /** *whose C name differs (ast_dump.c's `put_type`). */
+// put_type's text per type id. The dump runs after the checker, when the
+// type arena no longer changes, and nearly every node prints its type.
+let mut TYPE_TEXT: []string = []string {}
+let mut TYPE_TEXT_READY: []bool = []bool {}
+
 fn put_type(b: &mut []u8, t: int) {
     if t == types.NO_TYPE {
         buf.push_str(b, "?")
         return
     }
+    while TYPE_TEXT_READY.len < types.TYPES.len {
+        push(TYPE_TEXT, "")
+        push(TYPE_TEXT_READY, false)
+    }
+    if !TYPE_TEXT_READY[t] {
+        let mut type_text = []u8 {}
+        put_type_text(&mut type_text, t)
+        TYPE_TEXT[t] = buf.to_string(&type_text)
+        TYPE_TEXT_READY[t] = true
+    }
+    buf.push_str(b, TYPE_TEXT[t])
+}
+
+fn put_type_text(b: &mut []u8, t: int) {
     let x = types.TYPES[t]
     switch x.kind {
         case TK.Void:
@@ -574,13 +607,13 @@ fn attr_nz(b: &mut []u8, key: string, v: int) {
     }
 }
 
-fn mark(b: &mut []u8, key: string, n: Node, bit: int) {
+fn mark(b: &mut []u8, key: string, n: &Node, bit: int) {
     if (n.marks & bit) != 0 {
         attr_int(b, key, 1)
     }
 }
 
-fn typed_attrs(b: &mut []u8, n: Node) {
+fn typed_attrs(b: &mut []u8, n: &Node) {
     if n.ty != types.NO_TYPE {
         buf.push_str(b, " ty=")
         put_type(b, n.ty)
