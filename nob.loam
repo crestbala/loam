@@ -2166,7 +2166,9 @@ fn ig_serve_boot() {
 
 fn ig_wasm_smoke() {
     mark("wasm smoke")
-    let cache = tmpf("shard_wasm")
+    // A shard cache holds one program: each link prunes what it did not use,
+    // so two stanzas running at once must not share one.
+    let cache = tmpf("shard_wasm_smoke")
     let wasm = tmpf("wasm_smoke.wasm")
     let bl = tmpf("wasm_smoke_build.log")
     let rl = tmpf("wasm_smoke.log")
@@ -2181,7 +2183,7 @@ fn ig_wasm_smoke() {
 
 fn ig_wasm_trap() {
     mark("wasm trap")
-    let cache = tmpf("shard_wasm")
+    let cache = tmpf("shard_wasm_trap")
     let denodir = tmpf("deno_trap")
     let twasm = tmpf("wasm_trap.wasm")
     let tbl = tmpf("wasm_trap_build.log")

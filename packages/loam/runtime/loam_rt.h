@@ -757,8 +757,12 @@ static inline void loam_vec_unique(loam_vec *v, size_t esz, const char *f, int l
 static inline void loam_vec_reserve(loam_vec *v, int64_t n, size_t esz, const char *f, int l) {
     int64_t cap;
     void *raw;
-    if (!v || n <= v->cap) return;
+    if (!v) return;
+    /* Whoever reserves writes past `len` next, so it must own the buffer even
+       when it has room: a copy-on-write sibling with the same spare capacity
+       would otherwise see (and overwrite) the same slots. */
     loam_vec_unique(v, esz, f, l);
+    if (n <= v->cap) return;
     cap = v->cap ? v->cap : 8;
     while (cap < n) {
         if (cap > INT64_MAX / 2) loam_panic(f, l, "out of memory");
@@ -781,11 +785,32 @@ static inline void loam_vec_reserve(loam_vec *v, int64_t n, size_t esz, const ch
     v->cap = cap;
 }
 
-static inline void loam_vec_push(loam_vec *v, const void *elem, size_t esz, const char *f, int l) {
+#if defined(__GNUC__) || defined(__clang__)
+#define LOAM_NOINLINE __attribute__((noinline, unused))
+#define LOAM_LIKELY(x) __builtin_expect(!!(x), 1)
+#else
+#define LOAM_NOINLINE
+#define LOAM_LIKELY(x) (x)
+#endif
+
+/* The push that grows or un-shares the buffer: out of line, so the common
+   push below stays small enough to inline with its element size known. */
+static LOAM_NOINLINE void loam_vec_push_slow(loam_vec *v, const void *elem, size_t esz,
+                                             const char *f, int l) {
     if (!v) loam_panic(f, l, "push on null array");
     loam_vec_reserve(v, v->len + 1, esz, f, l);
     if (esz && elem) memcpy((char *)v->ptr + (size_t)v->len * esz, elem, esz);
     v->len++;
+}
+
+static inline void loam_vec_push(loam_vec *v, const void *elem, size_t esz, const char *f, int l) {
+    /* An owned buffer with room: one element copy. */
+    if (LOAM_LIKELY(v && v->ptr && v->len < v->cap && *loam_vec_rc(v->ptr) == 1)) {
+        if (esz && elem) memcpy((char *)v->ptr + (size_t)v->len * esz, elem, esz);
+        v->len++;
+        return;
+    }
+    loam_vec_push_slow(v, elem, esz, f, l);
 }
 
 /* A fresh list holding a copy of `n` plain elements, for a constant table. */
@@ -836,8 +861,10 @@ static inline void loam_vec_reserve_owned(loam_vec *v, int64_t n, size_t esz,
                                           loam_elem_fn retain, const char *f, int l) {
     int64_t cap;
     void *raw;
-    if (!v || n <= v->cap) return;
+    if (!v) return;
+    /* As loam_vec_reserve: a writer past `len` must own the buffer. */
     loam_vec_unique_owned(v, esz, retain, f, l);
+    if (n <= v->cap) return;
     cap = v->cap ? v->cap : 8;
     while (cap < n) {
         if (cap > INT64_MAX / 2) loam_panic(f, l, "out of memory");
@@ -860,13 +887,24 @@ static inline void loam_vec_reserve_owned(loam_vec *v, int64_t n, size_t esz,
     v->cap = cap;
 }
 
+static LOAM_NOINLINE void loam_vec_push_owned_slow(loam_vec *v, const void *elem, size_t esz,
+                                                   loam_elem_fn retain, const char *f, int l) {
+    loam_vec_reserve_owned(v, v->len + 1, esz, retain, f, l);
+    if (esz && elem) memcpy((char *)v->ptr + (size_t)v->len * esz, elem, esz);
+    v->len++;
+}
+
 static inline void loam_vec_push_owned(loam_vec *v, const void *elem, size_t esz,
                                        loam_elem_fn retain, const char *f, int l) {
     if (!v) loam_panic(f, l, "push on null array");
     if (retain) retain((void *)elem);
-    loam_vec_reserve_owned(v, v->len + 1, esz, retain, f, l);
-    if (esz && elem) memcpy((char *)v->ptr + (size_t)v->len * esz, elem, esz);
-    v->len++;
+    /* An owned buffer with room: one element copy (see loam_vec_push). */
+    if (LOAM_LIKELY(v->ptr && v->len < v->cap && *loam_vec_rc(v->ptr) == 1)) {
+        if (esz && elem) memcpy((char *)v->ptr + (size_t)v->len * esz, elem, esz);
+        v->len++;
+        return;
+    }
+    loam_vec_push_owned_slow(v, elem, esz, retain, f, l);
 }
 
 static inline void loam_vec_drop_owned(loam_vec *v, size_t esz, loam_elem_fn release) {

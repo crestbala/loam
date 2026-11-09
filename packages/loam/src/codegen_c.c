@@ -2594,7 +2594,7 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                end of its scope. Every consumer then balances — a `let` or a
                call argument retains again and a struct field, a `return`, or a
                `push` steals this reference. */
-            if (in->ty && type_needs_drop(in->ty))
+            if (in->ty && type_needs_drop(in->ty) && !in->borrowed)
                 emit_nested_keeps(o, lv(in->dst), in->ty, 1);
             break;
         case IR_STORE: {
@@ -3623,8 +3623,9 @@ static void emit_ir_fn_body(FILE *o, const IrFn *fn, int is_main) {
         if (fn->locals[i].is_param || fn->locals[i].is_global) continue;
         indent(o, 1);
         emit_var_decl_type(o, fn->locals[i].ty, lv(i));
-        /* SSA temps on un-taken branches are still dropped at return. */
-        if (type_needs_drop(fn->locals[i].ty) || fn->locals[i].zero_init)
+        /* An owning local some read or drop may reach before it is surely
+           assigned starts empty (ir.c: mark_needs_zero). */
+        if ((type_needs_drop(fn->locals[i].ty) && fn->locals[i].needs_zero) || fn->locals[i].zero_init)
             fprintf(o, " = {0}");
         fprintf(o, ";\n");
     }

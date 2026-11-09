@@ -209,27 +209,29 @@ fn dump(b: &mut []u8, i: int, depth: int, role: string) {
         return
     }
     let n = &ast.NODES[i]
+    let ni = &ast.INFO[i]
     let d = depth + 1
-    head(b, depth, role, kind_name(n.kind), n.loc)
+    head(b, depth, role, kind_name(n.kind), ni.loc)
     if n.flags != 0 {
         attr_int(b, "flags", n.flags)
     }
-    attr_str(b, "doc", n.has_doc, n.doc)
+    attr_str(b, "doc", ni.has_doc, ni.doc)
     if TYPED {
-        typed_attrs(b, n)
+        typed_attrs(b, n, ni)
     }
     switch n.kind {
         case Kind.Program:
-            attr_str(b, "mod_doc", n.has_text, n.text)
+            attr_str(b, "mod_doc", ni.has_text, ni.text)
             nl(b)
             for k in 0..n.kids.len {
                 let c = &ast.NODES[n.kids[k]]
+                let ci = &ast.INFO[n.kids[k]]
                 if c.kind == Kind.CDir {
-                    head(b, d, "cdir", "CDir", c.loc)
+                    head(b, d, "cdir", "CDir", ci.loc)
                     attr_int(b, "link", c.op)
                     nl(b)
-                    for s in 0..c.strs.len {
-                        leaf_str(b, d + 1, "arg", c.strs[s])
+                    for s in 0..ci.strs.len {
+                        leaf_str(b, d + 1, "arg", ci.strs[s])
                     }
                 }
             }
@@ -246,42 +248,44 @@ fn dump(b: &mut []u8, i: int, depth: int, role: string) {
             }
             break
         case Kind.Import:
-            attr_str(b, "alias", n.has_name, n.name)
-            attr_str(b, "path", n.has_text, n.text)
+            attr_str(b, "alias", ni.has_name, ni.name)
+            attr_str(b, "path", ni.has_text, ni.text)
             nl(b)
             for k in 0..n.kids.len {
                 let c = &ast.NODES[n.kids[k]]
+                let ci = &ast.INFO[n.kids[k]]
                 indent(b, d)
                 buf.push_str(b, "name")
-                attr_str(b, "src", true, c.name)
-                attr_str(b, "local", true, c.text)
+                attr_str(b, "src", true, ci.name)
+                attr_str(b, "local", true, ci.text)
                 nl(b)
             }
             break
         case Kind.Fn, Kind.Closure:
-            attr_str(b, "name", n.has_name, n.name)
+            attr_str(b, "name", ni.has_name, ni.name)
             attr_flag(b, "async", (n.op & 1) != 0)
             attr_flag(b, "test", (n.op & 2) != 0)
             attr_flag(b, "server", (n.op & 4) != 0)
-            attr_str(b, "c_sym", n.has_text, n.text)
+            attr_str(b, "c_sym", ni.has_text, ni.text)
             nl(b)
-            for k in 0..n.strs.len {
-                leaf_str(b, d, "tparam", n.strs[k])
+            for k in 0..ni.strs.len {
+                leaf_str(b, d, "tparam", ni.strs[k])
             }
             if TYPED {
-                for k in 0..n.caps.len {
+                for k in 0..ni.caps.len {
                     indent(b, d)
                     buf.push_str(b, "cap ")
-                    put_str(b, n.caps[k])
+                    put_str(b, ni.caps[k])
                     buf.push_str(b, " ty=")
-                    put_type(b, n.cap_types[k])
+                    put_type(b, ni.cap_types[k])
                     nl(b)
                 }
             }
             for k in 0..n.kids.len {
                 let c = &ast.NODES[n.kids[k]]
-                head(b, d, "param", "Param", c.loc)
-                attr_str(b, "name", true, c.name)
+                let ci = &ast.INFO[n.kids[k]]
+                head(b, d, "param", "Param", ci.loc)
+                attr_str(b, "name", true, ci.name)
                 nl(b)
                 dump(b, c.a, d + 1, "type")
                 dump(b, c.b, d + 1, "def")
@@ -290,41 +294,43 @@ fn dump(b: &mut []u8, i: int, depth: int, role: string) {
             dump(b, n.b, d, "body")
             break
         case Kind.Struct:
-            attr_str(b, "name", n.has_name, n.name)
+            attr_str(b, "name", ni.has_name, ni.name)
             attr_flag(b, "proto", (n.op & 1) != 0)
             attr_flag(b, "json", (n.op & 2) != 0)
             attr_flag(b, "must_check", (n.op & 4) != 0)
             attr_flag(b, "no_send", (n.op & 8) != 0)
             nl(b)
-            for k in 0..n.strs.len {
-                leaf_str(b, d, "tparam", n.strs[k])
+            for k in 0..ni.strs.len {
+                leaf_str(b, d, "tparam", ni.strs[k])
             }
             for k in 0..n.kids.len {
                 let c = &ast.NODES[n.kids[k]]
+                let ci = &ast.INFO[n.kids[k]]
                 indent(b, d)
                 buf.push_str(b, "field")
-                attr_str(b, "name", true, c.name)
-                attr_str(b, "doc", c.has_doc, c.doc)
+                attr_str(b, "name", true, ci.name)
+                attr_str(b, "doc", ci.has_doc, ci.doc)
                 nl(b)
                 dump(b, c.a, d + 1, "type")
                 dump(b, c.b, d + 1, "def")
             }
             break
         case Kind.Enum:
-            attr_str(b, "name", n.has_name, n.name)
+            attr_str(b, "name", ni.has_name, ni.name)
             nl(b)
             for k in 0..n.kids.len {
                 let c = &ast.NODES[n.kids[k]]
+                let ci = &ast.INFO[n.kids[k]]
                 indent(b, d)
                 buf.push_str(b, "variant")
-                attr_str(b, "name", true, c.name)
+                attr_str(b, "name", true, ci.name)
                 buf.push_str(b, " value=")
-                buf.push_i64(b, c.num)
+                buf.push_i64(b, ci.num)
                 nl(b)
             }
             break
         case Kind.Var:
-            attr_str(b, "name", n.has_name, n.name)
+            attr_str(b, "name", ni.has_name, ni.name)
             attr_int(b, "mut", n.op)
             nl(b)
             dump(b, n.a, d, "type")
@@ -341,7 +347,7 @@ fn dump(b: &mut []u8, i: int, depth: int, role: string) {
             dump(b, n.c, d, "else")
             break
         case Kind.For:
-            attr_str(b, "var", n.has_name, n.name)
+            attr_str(b, "var", ni.has_name, ni.name)
             nl(b)
             dump(b, n.a, d, "iter")
             dump(b, n.b, d, "body")
@@ -393,7 +399,7 @@ fn dump(b: &mut []u8, i: int, depth: int, role: string) {
             dump(b, n.b, d, "index")
             break
         case Kind.Field:
-            attr_str(b, "name", n.has_name, n.name)
+            attr_str(b, "name", ni.has_name, ni.name)
             attr_int(b, "colon", n.op)
             nl(b)
             dump(b, n.a, d, "target")
@@ -408,21 +414,21 @@ fn dump(b: &mut []u8, i: int, depth: int, role: string) {
             dump(b, n.a, d, "target")
             break
         case Kind.Ident:
-            attr_str(b, "name", n.has_name, n.name)
+            attr_str(b, "name", ni.has_name, ni.name)
             nl(b)
             break
         case Kind.Number:
             buf.push_str(b, " value=")
-            buf.push_i64(b, n.num)
+            buf.push_i64(b, ni.num)
             nl(b)
             break
         case Kind.Float:
             buf.push_str(b, " value=")
-            buf.push_str(b, conv.f64_to_str(n.fnum))
+            buf.push_str(b, conv.f64_to_str(ni.fnum))
             nl(b)
             break
         case Kind.String:
-            attr_str(b, "value", n.has_text, n.text)
+            attr_str(b, "value", ni.has_text, ni.text)
             nl(b)
             break
         case Kind.Bool:
@@ -430,21 +436,22 @@ fn dump(b: &mut []u8, i: int, depth: int, role: string) {
             nl(b)
             break
         case Kind.StructLit:
-            attr_str(b, "name", n.has_name, n.name)
+            attr_str(b, "name", ni.has_name, ni.name)
             nl(b)
-            dump_list(b, n.kids2, d, "targ")
+            dump_list(b, ni.kids2, d, "targ")
             for k in 0..n.kids.len {
                 let c = &ast.NODES[n.kids[k]]
+                let ci = &ast.INFO[n.kids[k]]
                 indent(b, d)
                 buf.push_str(b, "init")
-                attr_str(b, "name", true, c.name)
+                attr_str(b, "name", true, ci.name)
                 nl(b)
                 dump(b, c.a, d + 1, "value")
             }
             break
         case Kind.ArrayLit:
             buf.push_str(b, " len=")
-            buf.push_i64(b, n.num)
+            buf.push_i64(b, ni.num)
             nl(b)
             dump(b, n.a, d, "type")
             dump_list(b, n.kids, d, "elem")
@@ -455,17 +462,17 @@ fn dump(b: &mut []u8, i: int, depth: int, role: string) {
             break
         case Kind.Type:
             attr_int(b, "tag", n.op)
-            attr_str(b, "name", n.has_name, n.name)
+            attr_str(b, "name", ni.has_name, ni.name)
             buf.push_str(b, " len=")
-            buf.push_i64(b, n.num)
+            buf.push_i64(b, ni.num)
             nl(b)
             dump(b, n.a, d, "elem")
             dump_list(b, n.kids, d, "param")
-            dump_list(b, n.kids2, d, "targ")
+            dump_list(b, ni.kids2, d, "targ")
             break
         case Kind.IncDec:
             attr_int(b, "dec", n.op)
-            attr_int(b, "post", n.aux)
+            attr_int(b, "post", ni.aux)
             nl(b)
             dump(b, n.a, d, "operand")
             break
@@ -583,22 +590,23 @@ fn put_ref(b: &mut []u8, key: string, d: int) {
     if d == ast.NONE {
         return
     }
-    let n = ast.NODES[d]
+    let n = &ast.NODES[d]
+    let ni = &ast.INFO[d]
     push(b, u8(' '))
     buf.push_str(b, key)
     push(b, u8('='))
     buf.push_str(b, kind_name(n.kind))
     let named = n.kind == Kind.Var || n.kind == Kind.Fn || n.kind == Kind.Closure || n.kind == Kind.Struct || n.kind == Kind.Enum
-    if named && n.has_name {
+    if named && ni.has_name {
         push(b, u8(' '))
-        put_str(b, n.name)
+        put_str(b, ni.name)
     }
     push(b, u8(' '))
-    buf.push_str(b, path_of(n.loc.file))
+    buf.push_str(b, path_of(ni.loc.file))
     push(b, u8(':'))
-    buf.push_int(b, n.loc.line)
+    buf.push_int(b, ni.loc.line)
     push(b, u8(':'))
-    buf.push_int(b, n.loc.col)
+    buf.push_int(b, ni.loc.col)
 }
 
 fn attr_nz(b: &mut []u8, key: string, v: int) {
@@ -607,71 +615,71 @@ fn attr_nz(b: &mut []u8, key: string, v: int) {
     }
 }
 
-fn mark(b: &mut []u8, key: string, n: &Node, bit: int) {
-    if (n.marks & bit) != 0 {
+fn mark(b: &mut []u8, key: string, ni: &NodeInfo, bit: int) {
+    if (ni.marks & bit) != 0 {
         attr_int(b, key, 1)
     }
 }
 
-fn typed_attrs(b: &mut []u8, n: &Node) {
+fn typed_attrs(b: &mut []u8, n: &Node, ni: &NodeInfo) {
     if n.ty != types.NO_TYPE {
         buf.push_str(b, " ty=")
         put_type(b, n.ty)
     }
-    attr_nz(b, "place_mut", n.place_mut)
+    attr_nz(b, "place_mut", ni.place_mut)
     switch n.kind {
         case Kind.Program:
-            attr_str(b, "mod_name", n.has_sname, n.sname)
+            attr_str(b, "mod_name", ni.has_sname, ni.sname)
             break
         case Kind.Import:
-            attr_str(b, "resolved", n.has_sname, n.sname)
+            attr_str(b, "resolved", ni.has_sname, ni.sname)
             break
         case Kind.Fn, Kind.Closure:
-            attr_str(b, "cname", n.has_sname, n.sname)
-            mark(b, "intrinsic", n, ast.M_INTRINSIC)
-            attr_nz(b, "clos_id", n.clos_id)
-            mark(b, "as_value", n, ast.M_AS_VALUE)
+            attr_str(b, "cname", ni.has_sname, ni.sname)
+            mark(b, "intrinsic", ni, ast.M_INTRINSIC)
+            attr_nz(b, "clos_id", ni.clos_id)
+            mark(b, "as_value", ni, ast.M_AS_VALUE)
             break
         case Kind.Call:
-            if (n.marks & ast.M_EPRINTLN) != 0 {
+            if (ni.marks & ast.M_EPRINTLN) != 0 {
                 attr_int(b, "println", 2)
             } else {
-                mark(b, "println", n, ast.M_PRINTLN)
+                mark(b, "println", ni, ast.M_PRINTLN)
             }
-            mark(b, "box_new", n, ast.M_BOX_NEW)
-            mark(b, "vec_push", n, ast.M_VEC_PUSH)
-            mark(b, "vec_pop", n, ast.M_VEC_POP)
-            mark(b, "sizeof", n, ast.M_SIZEOF)
-            mark(b, "panic", n, ast.M_PANIC)
-            attr_nz(b, "numb", n.numb)
-            attr_str(b, "c_builtin", n.has_cbuiltin, n.cbuiltin)
-            attr_str(b, "rcname", n.has_sname, n.sname)
-            mark(b, "fn_val", n, ast.M_FN_VAL)
-            attr_nz(b, "sig", n.sig)
-            mark(b, "value_key", n, ast.M_VALUE_KEY)
-            attr_nz(b, "fut", n.fut)
-            attr_nz(b, "ch", n.ch)
+            mark(b, "box_new", ni, ast.M_BOX_NEW)
+            mark(b, "vec_push", ni, ast.M_VEC_PUSH)
+            mark(b, "vec_pop", ni, ast.M_VEC_POP)
+            mark(b, "sizeof", ni, ast.M_SIZEOF)
+            mark(b, "panic", ni, ast.M_PANIC)
+            attr_nz(b, "numb", ni.numb)
+            attr_str(b, "c_builtin", ni.has_cbuiltin, ni.cbuiltin)
+            attr_str(b, "rcname", ni.has_sname, ni.sname)
+            mark(b, "fn_val", ni, ast.M_FN_VAL)
+            attr_nz(b, "sig", ni.sig)
+            mark(b, "value_key", ni, ast.M_VALUE_KEY)
+            attr_nz(b, "fut", ni.fut)
+            attr_nz(b, "ch", ni.ch)
             break
         case Kind.Field, Kind.Index:
             put_ref(b, "res", n.res)
             break
         case Kind.Ident:
             put_ref(b, "res", n.res)
-            if n.def_line != 0 {
+            if ni.def_line != 0 {
                 buf.push_str(b, " def=")
-                buf.push_int(b, n.def_line)
+                buf.push_int(b, ni.def_line)
                 push(b, u8(':'))
-                buf.push_int(b, n.def_col)
+                buf.push_int(b, ni.def_col)
             }
             break
         case Kind.StructLit:
-            mark(b, "zero_rest", n, ast.M_ZERO_REST)
+            mark(b, "zero_rest", ni, ast.M_ZERO_REST)
             break
         case Kind.Cast:
-            attr_nz(b, "conv", n.conv)
+            attr_nz(b, "conv", ni.conv)
             break
         case Kind.Try:
-            attr_str(b, "errname", n.has_sname, n.sname)
+            attr_str(b, "errname", ni.has_sname, ni.sname)
             break
         default:
             return

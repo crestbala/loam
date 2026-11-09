@@ -405,18 +405,13 @@ fn is_copy(t: int) -> bool {
         }
         push(copy_walking, t)
         let mut copy = true
-        let fts = TYPES[t].field_types
-        for i in 0..fts.len {
-            if !is_copy(fts[i]) {
+        for i in 0..TYPES[t].field_types.len {
+            if !is_copy(TYPES[t].field_types[i]) {
                 copy = false
                 break
             }
         }
-        let mut rest = []int {}
-        for i in 0..copy_walking.len - 1 {
-            push(rest, copy_walking[i])
-        }
-        copy_walking = rest
+        pop(copy_walking)
         return copy
     }
     return false

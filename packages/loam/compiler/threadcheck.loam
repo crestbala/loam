@@ -76,11 +76,11 @@ fn is_module_global(decl: int) -> bool {
 /** *A bodyless fn of the std seam: its body is C. */
 fn decl_is_seam(fn_decl: int) -> bool {
     return fn_decl != ast.NONE && ast.NODES[fn_decl].kind == Kind.Fn &&
-        (ast.NODES[fn_decl].marks & ast.M_INTRINSIC) != 0
+        (ast.INFO[fn_decl].marks & ast.M_INTRINSIC) != 0
 }
 
 fn is_generic(fn_decl: int) -> bool {
-    return ast.NODES[fn_decl].strs.len > 0
+    return ast.INFO[fn_decl].strs.len > 0
 }
 
 /** *The fn decl an `Ident` / `Field` names, or `ast.NONE`. */
@@ -98,8 +98,8 @@ fn resolved_of(node: int) -> int {
 /** *The C symbol a call resolves to, or "". */
 fn callee_cname(call: int) -> string {
     let fn_decl = resolved_of(ast.NODES[call].a)
-    if fn_decl != ast.NONE && ast.NODES[fn_decl].kind == Kind.Fn && ast.NODES[fn_decl].has_sname {
-        return ast.NODES[fn_decl].sname
+    if fn_decl != ast.NONE && ast.NODES[fn_decl].kind == Kind.Fn && ast.INFO[fn_decl].has_sname {
+        return ast.INFO[fn_decl].sname
     }
     return ""
 }
@@ -121,18 +121,18 @@ fn walk_fn_once(fn_decl: int) {
 /** *Follow one call site in worker mode. */
 fn worker_call(call: int) {
     let callee = ast.NODES[call].a
-    let marks = ast.NODES[call].marks
+    let marks = ast.INFO[call].marks
     // Vec and interpolation builtins operate on worker-local storage only.
     if (marks & (ast.M_VEC_PUSH | ast.M_VEC_POP | ast.M_PRINTLN | ast.M_SIZEOF | ast.M_PANIC | ast.M_VALUE_KEY)) != 0 ||
-        ast.NODES[call].numb != Numb.None {
+        ast.INFO[call].numb != Numb.None {
         walk_args(call)
         return
     }
     // Pure value helpers wired by name in typecheck.
-    if ast.NODES[call].has_cbuiltin {
-        let builtin = ast.NODES[call].cbuiltin
+    if ast.INFO[call].has_cbuiltin {
+        let builtin = ast.INFO[call].cbuiltin
         if !in_worker_seam_ok(builtin) {
-            report(ast.NODES[call].loc, clip("spawned fn calls the C seam '{{builtin}}'", 128))
+            report(ast.INFO[call].loc, clip("spawned fn calls the C seam '{{builtin}}'", 128))
         }
         walk_args(call)
         return
@@ -140,14 +140,14 @@ fn worker_call(call: int) {
     // Unresolved magic names: channel cells are the sanctioned worker I/O;
     // future cells are UI-thread state.
     if callee != ast.NONE && ast.NODES[callee].kind == Kind.Ident && ast.NODES[callee].res == ast.NONE &&
-        ast.NODES[callee].has_name {
-        let magic = ast.NODES[callee].name
+        ast.INFO[callee].has_name {
+        let magic = ast.INFO[callee].name
         if magic.len >= 5 && str_prefix(magic, "__ch_") {
             walk_args(call)
             return
         }
         if magic.len >= 6 && str_prefix(magic, "__fut_") {
-            report(ast.NODES[call].loc, "spawned fn uses a future cell (UI-thread state); workers return values through channel<T> only")
+            report(ast.INFO[call].loc, "spawned fn uses a future cell (UI-thread state); workers return values through channel<T> only")
             return
         }
     }
@@ -174,7 +174,7 @@ fn worker_call(call: int) {
                 return
             }
         }
-        report(ast.NODES[call].loc, NOT_STATICALLY_VISIBLE)
+        report(ast.INFO[call].loc, NOT_STATICALLY_VISIBLE)
         walk_args(call)
         return
     }
@@ -182,10 +182,10 @@ fn worker_call(call: int) {
     let fn_decl = resolved_of(callee)
     if fn_decl != ast.NONE && ast.NODES[fn_decl].kind == Kind.Fn {
         if decl_is_seam(fn_decl) {
-            let has_cname = ast.NODES[fn_decl].has_sname
-            let cname = if has_cname { ast.NODES[fn_decl].sname } else { "?" }
+            let has_cname = ast.INFO[fn_decl].has_sname
+            let cname = if has_cname { ast.INFO[fn_decl].sname } else { "?" }
             if !has_cname || !in_worker_seam_ok(cname) {
-                report(ast.NODES[call].loc, clip("spawned fn calls the C seam '{{cname}}', which is not allowed from a worker (allowed: pure value helpers and channel ops)", 160))
+                report(ast.INFO[call].loc, clip("spawned fn calls the C seam '{{cname}}', which is not allowed from a worker (allowed: pure value helpers and channel ops)", 160))
             }
             return
         }
@@ -195,12 +195,12 @@ fn worker_call(call: int) {
         walk_args(call)
         return
     }
-    if callee != ast.NONE && ast.NODES[callee].kind == Kind.Ident && ast.NODES[callee].has_name &&
-        ast.NODES[callee].name == "push" {
+    if callee != ast.NONE && ast.NODES[callee].kind == Kind.Ident && ast.INFO[callee].has_name &&
+        ast.INFO[callee].name == "push" {
         walk_args(call)
         return
     }
-    report(ast.NODES[call].loc, NOT_STATICALLY_VISIBLE)
+    report(ast.INFO[call].loc, NOT_STATICALLY_VISIBLE)
     walk_args(call)
 }
 
@@ -216,9 +216,10 @@ fn str_prefix(text: string, prefix: string) -> bool {
     return true
 }
 
-fn worker_walk_list(nodes: []int) {
-    for i in 0..nodes.len {
-        worker_walk(nodes[i])
+/** *Each child of `parent`, read in place (no copy of the kids vec). */
+fn worker_walk_list(parent: int) {
+    for i in 0..ast.NODES[parent].kids.len {
+        worker_walk(ast.NODES[parent].kids[i])
     }
 }
 
@@ -233,13 +234,13 @@ fn worker_walk(n: int) {
             break
         case Kind.Ident:
             if ast.NODES[n].res != ast.NONE && is_module_global(ast.NODES[n].res) {
-                let name = if ast.NODES[n].has_name { ast.NODES[n].name } else { "?" }
-                report(ast.NODES[n].loc, clip("spawned fn touches module state '{{name}}'; workers may only use their captures and channels", 160))
+                let name = if ast.INFO[n].has_name { ast.INFO[n].name } else { "?" }
+                report(ast.INFO[n].loc, clip("spawned fn touches module state '{{name}}'; workers may only use their captures and channels", 160))
             }
             break
         case Kind.Field:
             if ast.NODES[n].res != ast.NONE && is_module_global(ast.NODES[n].res) {
-                report(ast.NODES[n].loc, clip("spawned fn touches module state (a module-level `let`); workers may only use their captures and channels", 160))
+                report(ast.INFO[n].loc, clip("spawned fn touches module state (a module-level `let`); workers may only use their captures and channels", 160))
             }
             worker_walk(ast.NODES[n].a)
             break
@@ -247,7 +248,7 @@ fn worker_walk(n: int) {
             worker_walk(ast.NODES[n].b)
             break
         case Kind.Block:
-            worker_walk_list(ast.NODES[n].kids)
+            worker_walk_list(n)
             break
         case Kind.If:
             worker_walk(ast.NODES[n].a)
@@ -260,7 +261,7 @@ fn worker_walk(n: int) {
             break
         case Kind.Switch:
             worker_walk(ast.NODES[n].a)
-            worker_walk_list(ast.NODES[n].kids)
+            worker_walk_list(n)
             break
         case Kind.Case, Kind.Return, Kind.ExprStmt, Kind.Unary, Kind.Cast, Kind.Try:
             worker_walk(ast.NODES[n].a)
@@ -281,7 +282,7 @@ fn worker_walk(n: int) {
             }
             break
         case Kind.ArrayLit, Kind.Tuple:
-            worker_walk_list(ast.NODES[n].kids)
+            worker_walk_list(n)
             break
         default:
             return
@@ -290,7 +291,7 @@ fn worker_walk(n: int) {
 
 /** *Validate one spawn call site and check its callback in worker mode. */
 fn scan_spawn(call: int) {
-    let loc = ast.NODES[call].loc
+    let loc = ast.INFO[call].loc
     SPAWN_FILE = dump.path_of(loc.file)
     SPAWN_LINE = loc.line
     HAS_SPAWN = true
@@ -300,11 +301,11 @@ fn scan_spawn(call: int) {
     }
     let callback = ast.NODES[call].kids[0]
     if ast.NODES[callback].kind == Kind.Closure {
-        let captures = ast.NODES[callback].caps
+        let captures = ast.INFO[callback].caps
         for i in 0..captures.len {
-            let capture_type = if i < ast.NODES[callback].cap_types.len { ast.NODES[callback].cap_types[i] } else { types.NO_TYPE }
+            let capture_type = if i < ast.INFO[callback].cap_types.len { ast.INFO[callback].cap_types[i] } else { types.NO_TYPE }
             if capture_type == types.NO_TYPE || !types.is_send(capture_type) {
-                report(ast.NODES[callback].loc, clip("thread.spawn callback captures '{{captures[i]}}' (type {{types.type_name(capture_type)}}), which is not Send: workers may carry only plain data (no []T, fn, Box, or borrows)", 256))
+                report(ast.INFO[callback].loc, clip("thread.spawn callback captures '{{captures[i]}}' (type {{types.type_name(capture_type)}}), which is not Send: workers may carry only plain data (no []T, fn, Box, or borrows)", 256))
             }
         }
         worker_walk(ast.NODES[callback].b)
@@ -326,9 +327,10 @@ fn scan_spawn(call: int) {
     report(loc, "thread.spawn callback must be a closure or a fn name, not a fn value")
 }
 
-fn scan_walk_list(nodes: []int) {
-    for i in 0..nodes.len {
-        scan_walk(nodes[i])
+/** *Each child of `parent`, read in place (no copy of the kids vec). */
+fn scan_walk_list(parent: int) {
+    for i in 0..ast.NODES[parent].kids.len {
+        scan_walk(ast.NODES[parent].kids[i])
     }
 }
 
@@ -344,7 +346,7 @@ fn scan_walk(n: int) {
                 return
             }
             scan_walk(ast.NODES[n].a)
-            scan_walk_list(ast.NODES[n].kids)
+            scan_walk_list(n)
             break
         case Kind.Field, Kind.Deref, Kind.Addr:
             scan_walk(ast.NODES[n].a)
@@ -353,7 +355,7 @@ fn scan_walk(n: int) {
             scan_walk(ast.NODES[n].b)
             break
         case Kind.Block:
-            scan_walk_list(ast.NODES[n].kids)
+            scan_walk_list(n)
             break
         case Kind.If:
             scan_walk(ast.NODES[n].a)
@@ -366,7 +368,7 @@ fn scan_walk(n: int) {
             break
         case Kind.Switch:
             scan_walk(ast.NODES[n].a)
-            scan_walk_list(ast.NODES[n].kids)
+            scan_walk_list(n)
             break
         case Kind.Case, Kind.Return, Kind.ExprStmt, Kind.Unary, Kind.Cast, Kind.Try:
             scan_walk(ast.NODES[n].a)
@@ -380,7 +382,7 @@ fn scan_walk(n: int) {
             }
             break
         case Kind.ArrayLit, Kind.Tuple:
-            scan_walk_list(ast.NODES[n].kids)
+            scan_walk_list(n)
             break
         default:
             return
@@ -417,7 +419,7 @@ fn threadcheck_modules(module_names: []string, roots: []int) -> int {
         for i in 0..ast.NODES[root].kids.len {
             let decl = ast.NODES[root].kids[i]
             let decl_kind = ast.NODES[decl].kind
-            if decl_kind == Kind.Fn && (ast.NODES[decl].marks & ast.M_INTRINSIC) == 0 {
+            if decl_kind == Kind.Fn && (ast.INFO[decl].marks & ast.M_INTRINSIC) == 0 {
                 let body = ast.NODES[decl].b
                 if body != ast.NONE && ast.NODES[body].kind == Kind.Block {
                     scan_walk(body)

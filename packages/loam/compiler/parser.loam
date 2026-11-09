@@ -162,9 +162,8 @@ fn cur_is_word(p: &Parser, w: string) -> bool {
 
 // --- nodes -------------------------------------------------------------------
 
-fn add(p: &mut Parser, n: Node) -> int {
-    push(ast.NODES, n)
-    return ast.NODES.len - 1
+fn add(p: &mut Parser, n: NodeBuild) -> int {
+    return ast.add(n)
 }
 
 /** *The `Error` node a failed parse returns (C's NULL). */
@@ -264,8 +263,8 @@ fn init_node(p: &mut Parser, name: string, value: int) -> int {
 }
 
 fn set_doc(p: &mut Parser, i: int, d: Doc) {
-    ast.NODES[i].doc = d.text
-    ast.NODES[i].has_doc = d.has
+    ast.INFO[i].doc = d.text
+    ast.INFO[i].has_doc = d.has
 }
 
 // --- literal text ------------------------------------------------------------
@@ -739,8 +738,8 @@ fn parse_type(p: &mut Parser) -> int {
         return type_node(p, 4, e, i64(0), loc)
     }
     let t = type_node(p, 2, ast.NONE, i64(0), loc)
-    ast.NODES[t].name = nm
-    ast.NODES[t].has_name = true
+    ast.INFO[t].name = nm
+    ast.INFO[t].has_name = true
     if eat(p, Tok.Lt) {
         let mut targs = []int {}
         if !check(p, Tok.Gt) {
@@ -753,7 +752,7 @@ fn parse_type(p: &mut Parser) -> int {
             }
         }
         consume_gt(p)
-        ast.NODES[t].kids2 = targs
+        ast.INFO[t].kids2 = targs
     }
     return t
 }
@@ -1156,9 +1155,9 @@ fn parse_postfix(p: &mut Parser, first: int) -> int {
             consume(p, Tok.Rparen, "expected )")
             loc.end_line = p.prev.end_line
             loc.end_col = p.prev.end_col
-            if ast.NODES[left].loc.line > 0 {
-                loc.line = ast.NODES[left].loc.line
-                loc.col = ast.NODES[left].loc.col
+            if ast.INFO[left].loc.line > 0 {
+                loc.line = ast.INFO[left].loc.line
+                loc.col = ast.INFO[left].loc.col
             }
             if props.len > 0 {
                 let mut lit = ast.node(Kind.StructLit, loc)
@@ -1330,7 +1329,7 @@ fn parse_binary(p: &mut Parser, min_prec: int) -> int {
         }
         bump(p)
         let right = parse_binary(p, pr + 1)
-        let mut n = ast.node(Kind.Binary, ast.NODES[left].loc)
+        let mut n = ast.node(Kind.Binary, ast.INFO[left].loc)
         n.op = op
         n.a = left
         n.b = right
@@ -1505,7 +1504,7 @@ fn parse_let_tuple(p: &mut Parser, loc: Loc, is_const: bool) -> int {
         for i in 0..n {
             let hidden = "__let{{p.hidden_id}}"
             p.hidden_id = p.hidden_id + 1
-            let vloc = ast.NODES[vals[i]].loc
+            let vloc = ast.INFO[vals[i]].loc
             let h = var_node(p, hidden, types[i], vals[i], 0, vloc)
             spill_stmt(p, h)
             vals[i] = ident_node(p, hidden, vloc)
@@ -1769,8 +1768,8 @@ fn parse_stmt(p: &mut Parser) -> int {
         let ps = ast.NODES[clos].kids
         for i in 0..ps.len {
             if ast.NODES[ps[i]].a == ast.NONE && !p.had_error {
-                let pname = ast.NODES[ps[i]].name
-                diag(p, ast.NODES[ps[i]].loc, "local fn '{{name}}' needs a type on parameter '{{pname}}'")
+                let pname = ast.INFO[ps[i]].name
+                diag(p, ast.INFO[ps[i]].loc, "local fn '{{name}}' needs a type on parameter '{{pname}}'")
                 p.had_error = true
                 break
             }
@@ -1857,7 +1856,7 @@ fn frame_component(p: &mut Parser, body: int, loc: Loc) {
         return
     }
     let callee = ast.NODES[e].a
-    if ast.NODES[callee].kind != Kind.Ident || ast.NODES[callee].name != "slot" {
+    if ast.NODES[callee].kind != Kind.Ident || ast.INFO[callee].name != "slot" {
         return
     }
     let bblk = one_stmt_block(p, e, loc)
@@ -2329,8 +2328,8 @@ fn parse_program(p: &mut Parser) -> int {
                     bits = bits | FN_SERVER
                 }
                 ast.NODES[f].op = bits
-                ast.NODES[f].text = c_sym
-                ast.NODES[f].has_text = has_c_sym
+                ast.INFO[f].text = c_sym
+                ast.INFO[f].has_text = has_c_sym
                 push(kids, f)
                 decl_count = decl_count + 1
             }

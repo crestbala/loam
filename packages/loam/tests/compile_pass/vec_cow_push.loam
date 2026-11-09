@@ -1,0 +1,34 @@
+// A `[]T` copy shares its buffer until one side writes. A push writes past
+// `len`, so it must take its own buffer first even when the shared one has
+// room; otherwise both sides wrote the same spare slot and saw each other's
+// element (and an owning element was overwritten without its release).
+import "std:buf"
+import "std:fmt"
+
+struct Item {
+    name: string,
+    n: int,
+}
+
+fn main() {
+    let mut items = []Item {}
+    push(items, Item { name: "zero", n: 0 })
+    let mut copy = items
+    push(items, Item { name: "from-items", n: 1 })
+    push(copy, Item { name: "from-copy", n: 2 })
+    fmt.println(items.len, copy.len, items[1].name, copy[1].name)
+
+    let mut ints = []int {}
+    push(ints, 10)
+    let mut ints_copy = ints
+    push(ints, 11)
+    push(ints_copy, 12)
+    fmt.println(ints[1], ints_copy[1])
+
+    let mut bytes = []u8 {}
+    buf.push_str(&mut bytes, "ab")
+    let mut bytes_copy = bytes
+    buf.push_str(&mut bytes, "X")
+    buf.push_str(&mut bytes_copy, "Y")
+    fmt.println(buf.to_string(&bytes), buf.to_string(&bytes_copy))
+}

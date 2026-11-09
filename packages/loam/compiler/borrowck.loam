@@ -85,6 +85,9 @@ let mut BORROWS: []Borrow = []Borrow {}
 let mut NEXT_BORROW_ID: int = 1
 let mut DEPTH: int = 0
 let mut ERRN: int = 0
+/** *`types.is_copy` per type id: 0 not asked yet, 1 Copy, 2 not. Types are */
+/** *final once typecheck ends, so an answer holds for the whole pass. */
+let mut COPY_MEMO: []int = []int {}
 
 fn report(loc: Loc, message: string) {
     let mut kept = message
@@ -140,14 +143,14 @@ fn path_of(n: int) -> string {
     }
     let node_kind = ast.NODES[n].kind
     if node_kind == Kind.Ident {
-        return ast.NODES[n].name
+        return ast.INFO[n].name
     }
     if node_kind == Kind.Field {
         let base = path_of(ast.NODES[n].a)
         if base.len == 0 {
             return ""
         }
-        return "{{base}}.{{ast.NODES[n].name}}"
+        return "{{base}}.{{ast.INFO[n].name}}"
     }
     if node_kind == Kind.Index {
         let base = path_of(ast.NODES[n].a)
@@ -181,7 +184,7 @@ fn push_b(name: string, ty: int) -> int {
         own: Own.Owned,
         shared: 0,
         mutb: 0,
-        is_copy: ty != types.NO_TYPE && types.is_copy(ty),
+        is_copy: ty != types.NO_TYPE && is_copy_memo(ty),
         is_box: ty != types.NO_TYPE && types.kind_of(ty) == TK.Box,
         depth: DEPTH,
         kind: BindKind.Local,
@@ -191,7 +194,7 @@ fn push_b(name: string, ty: int) -> int {
         dangling: false,
         must_check: false,
         checked: false,
-        loc: ast.NODES[0].loc,
+        loc: ast.INFO[0].loc,
         moved_paths: []string {},
         is_module_alias: false,
     })
@@ -351,14 +354,14 @@ fn expr_uses(n: int, name: string) -> bool {
     let node_kind = ast.NODES[n].kind
     switch node_kind {
         case Kind.Ident:
-            return ast.NODES[n].name == name
+            return ast.INFO[n].name == name
         case Kind.Addr, Kind.Deref, Kind.Field, Kind.Unary, Kind.IncDec, Kind.Cast, Kind.Try:
             return expr_uses(ast.NODES[n].a, name)
         case Kind.Index, Kind.Binary:
             return expr_uses(ast.NODES[n].a, name) || expr_uses(ast.NODES[n].b, name)
         case Kind.Closure:
-            for i in 0..ast.NODES[n].caps.len {
-                if ast.NODES[n].caps[i] == name {
+            for i in 0..ast.INFO[n].caps.len {
+                if ast.INFO[n].caps[i] == name {
                     return true
                 }
             }
@@ -529,7 +532,7 @@ fn seq_access(stmts: []int, from: int, name: string) -> int {
     for j in from..stmts.len {
         let st = stmts[j]
         // A nested `let name` shadows it for the rest of this block.
-        if st != ast.NONE && ast.NODES[st].kind == Kind.Var && ast.NODES[st].has_name && ast.NODES[st].name == name {
+        if st != ast.NONE && ast.NODES[st].kind == Kind.Var && ast.INFO[st].has_name && ast.INFO[st].name == name {
             return if expr_uses(ast.NODES[st].b, name) { Access.Read } else { Access.Untouched }
         }
         let access = first_access(st, name)
@@ -553,7 +556,7 @@ fn first_access(n: int, name: string) -> int {
             if expr_uses(ast.NODES[n].b, name) {
                 return Access.Read
             }
-            if left != ast.NONE && ast.NODES[left].kind == Kind.Ident && ast.NODES[left].name == name {
+            if left != ast.NONE && ast.NODES[left].kind == Kind.Ident && ast.INFO[left].name == name {
                 return if ast.NODES[n].op == Tok.Eq { Access.Kill } else { Access.Read }
             }
             return if expr_uses(left, name) { Access.Read } else { Access.Untouched }
@@ -774,10 +777,10 @@ fn writes_add_callee(index: int, callee: int) {
 
 /** *A call the compiler expands itself: it runs no Loam code. */
 fn is_builtin_call(call: int) -> bool {
-    let marks = ast.NODES[call].marks
+    let marks = ast.INFO[call].marks
     let builtin_marks = ast.M_PRINTLN | ast.M_VEC_PUSH | ast.M_VEC_POP | ast.M_SIZEOF | ast.M_BOX_NEW | ast.M_PANIC | ast.M_VALUE_KEY
-    return (marks & builtin_marks) != 0 || ast.NODES[call].has_cbuiltin || ast.NODES[call].numb != Numb.None ||
-        ast.NODES[call].fut != 0 || ast.NODES[call].ch != 0 || (ast.NODES[call].sig != 0 && ast.NODES[call].sig != 3)
+    return (marks & builtin_marks) != 0 || ast.INFO[call].has_cbuiltin || ast.INFO[call].numb != Numb.None ||
+        ast.INFO[call].fut != 0 || ast.INFO[call].ch != 0 || (ast.INFO[call].sig != 0 && ast.INFO[call].sig != 3)
 }
 
 /** *What a call runs: `callee` its fn decl (or `ast.NONE`), `runs_unknown` */
@@ -789,7 +792,7 @@ struct CallTarget {
 }
 
 fn call_callee(call: int) -> CallTarget {
-    if (ast.NODES[call].marks & ast.M_FN_VAL) != 0 {
+    if (ast.INFO[call].marks & ast.M_FN_VAL) != 0 {
         return CallTarget { callee: ast.NONE, runs_unknown: true }
     }
     if is_builtin_call(call) {
@@ -828,9 +831,10 @@ fn type_holds_fn(t: int, depth_left: int) -> bool {
     return false
 }
 
-fn collect_writes_list(nodes: []int, index: int) {
-    for i in 0..nodes.len {
-        collect_writes(nodes[i], index)
+/** *Each child of `parent`, read in place (no copy of the kids vec). */
+fn collect_writes_list(parent: int, index: int) {
+    for i in 0..ast.NODES[parent].kids.len {
+        collect_writes(ast.NODES[parent].kids[i], index)
     }
 }
 
@@ -844,7 +848,7 @@ fn collect_writes(n: int, index: int) {
             collect_writes(ast.NODES[n].b, index)
             break
         case Kind.Block:
-            collect_writes_list(ast.NODES[n].kids, index)
+            collect_writes_list(n, index)
             break
         case Kind.If:
             collect_writes(ast.NODES[n].a, index)
@@ -861,7 +865,7 @@ fn collect_writes(n: int, index: int) {
             break
         case Kind.Switch:
             collect_writes(ast.NODES[n].a, index)
-            collect_writes_list(ast.NODES[n].kids, index)
+            collect_writes_list(n, index)
             break
         case Kind.Case, Kind.Return, Kind.ExprStmt, Kind.Unary, Kind.Cast, Kind.Try, Kind.Field, Kind.Deref:
             collect_writes(ast.NODES[n].a, index)
@@ -892,10 +896,10 @@ fn collect_writes(n: int, index: int) {
             if target.callee != ast.NONE {
                 writes_add_callee(index, target.callee)
             }
-            if (ast.NODES[n].marks & ast.M_FN_VAL) != 0 {
+            if (ast.INFO[n].marks & ast.M_FN_VAL) != 0 {
                 collect_writes(ast.NODES[n].a, index)
             }
-            collect_writes_list(ast.NODES[n].kids, index)
+            collect_writes_list(n, index)
             break
         case Kind.StructLit:
             for i in 0..ast.NODES[n].kids.len {
@@ -903,7 +907,7 @@ fn collect_writes(n: int, index: int) {
             }
             break
         case Kind.ArrayLit, Kind.Tuple:
-            collect_writes_list(ast.NODES[n].kids, index)
+            collect_writes_list(n, index)
             break
         default:
             // A closure runs when called, and calling a fn value counts as anything.
@@ -934,7 +938,7 @@ fn global_writes_build() {
             }
             push(GLOBAL_WRITES, GlobalWrites { fn_decl: fn_decl, globals: []int {}, callees: []int {}, writes_any: false })
             let index = GLOBAL_WRITES.len - 1
-            if ast.NODES[fn_decl].b != ast.NONE && (ast.NODES[fn_decl].marks & ast.M_INTRINSIC) == 0 {
+            if ast.NODES[fn_decl].b != ast.NONE && (ast.INFO[fn_decl].marks & ast.M_INTRINSIC) == 0 {
                 collect_writes(fn_decl, index)
             } else {
                 // A bodyless hook runs no Loam code, unless handed a fn.
@@ -1014,8 +1018,8 @@ fn check_call_keeps_borrowed_globals(call: int) -> bool {
         if !runs_unknown && !GLOBAL_WRITES[writes].writes_any && !writes_has_global(writes, global) {
             continue
         }
-        let callee_name = if target.callee != ast.NONE && ast.NODES[target.callee].has_name { ast.NODES[target.callee].name } else { "a fn value" }
-        report(ast.NODES[call].loc, "cannot call '{{callee_name}}' while '{{BORROWS[i].path}}' is borrowed: the call may change the global '{{ast.NODES[global].name}}' and move what the borrow points into")
+        let callee_name = if target.callee != ast.NONE && ast.INFO[target.callee].has_name { ast.INFO[target.callee].name } else { "a fn value" }
+        report(ast.INFO[call].loc, "cannot call '{{callee_name}}' while '{{BORROWS[i].path}}' is borrowed: the call may change the global '{{ast.INFO[global].name}}' and move what the borrow points into")
         return true
     }
     return false
@@ -1096,11 +1100,11 @@ fn place_root(n: int) -> Root {
     }
     let node_kind = ast.NODES[n].kind
     if node_kind == Kind.Ident {
-        let binding = find_b(ast.NODES[n].name)
+        let binding = find_b(ast.INFO[n].name)
         if binding < 0 || BINDINGS[binding].kind == BindKind.Global {
             return no_root()
         }
-        return Root { depth: BINDINGS[binding].depth, name_kind: RootName.Named, name: ast.NODES[n].name }
+        return Root { depth: BINDINGS[binding].depth, name_kind: RootName.Named, name: ast.INFO[n].name }
     }
     if node_kind == Kind.Field || node_kind == Kind.Index {
         let target = ast.NODES[n].a
@@ -1109,7 +1113,7 @@ fn place_root(n: int) -> Root {
         }
         // `mod.g`: a module-qualified global with no alias binding.
         if node_kind == Kind.Field && target != ast.NONE && ast.NODES[target].kind == Kind.Ident &&
-            find_b(ast.NODES[target].name) < 0 {
+            find_b(ast.INFO[target].name) < 0 {
             return no_root()
         }
         return place_root(target)
@@ -1134,7 +1138,7 @@ fn ref_root(e: int) -> Root {
         return place_root(ast.NODES[e].a)
     }
     if node_kind == Kind.Ident {
-        let binding = find_b(ast.NODES[e].name)
+        let binding = find_b(ast.INFO[e].name)
         if binding < 0 || BINDINGS[binding].kind == BindKind.Global || BINDINGS[binding].ref_depth == 0 {
             return no_root()
         }
@@ -1178,7 +1182,7 @@ fn refers_into_global(e: int) -> bool {
         return false
     }
     if node_kind == Kind.Ident {
-        let holder = find_b(ast.NODES[e].name)
+        let holder = find_b(ast.INFO[e].name)
         if holder < 0 {
             return false
         }
@@ -1281,7 +1285,7 @@ fn gather_loans_ex(e: int, result_mut: bool, loans: &mut []Loan, loc: Loc, rebor
         return false
     }
     if node_kind == Kind.Ident {
-        let holder = find_b(ast.NODES[e].name)
+        let holder = find_b(ast.INFO[e].name)
         if holder < 0 || BINDINGS[holder].kind == BindKind.Global || !is_ref_ty(ast.NODES[e].ty) {
             return false
         }
@@ -1305,7 +1309,7 @@ fn gather_loans_ex(e: int, result_mut: bool, loans: &mut []Loan, loc: Loc, rebor
             return false
         }
         let through_mut = result_mut && ref_is_mut(ast.NODES[e].ty)
-        if take_borrow_path(ast.NODES[e].name, through_mut, loc) {
+        if take_borrow_path(ast.INFO[e].name, through_mut, loc) {
             return true
         }
         push(loans, Loan { temp: head_id(), path: "", is_mut: through_mut, target: -1, global_decl: ast.NONE })
@@ -1511,7 +1515,17 @@ fn check_value_arm(block: int, as_move: bool, acc: &mut Root) -> bool {
 }
 
 fn not_copy(t: int) -> bool {
-    return t != types.NO_TYPE && !types.is_copy(t)
+    return t != types.NO_TYPE && !is_copy_memo(t)
+}
+
+fn is_copy_memo(t: int) -> bool {
+    while COPY_MEMO.len < types.TYPES.len {
+        push(COPY_MEMO, 0)
+    }
+    if COPY_MEMO[t] == 0 {
+        COPY_MEMO[t] = if types.is_copy(t) { 1 } else { 2 }
+    }
+    return COPY_MEMO[t] == 1
 }
 
 /** *Walk an expression. `as_move` if this use consumes a non-Copy value. */
@@ -1522,27 +1536,27 @@ fn check_expr(n: int, as_move: bool) -> bool {
     let node_kind = ast.NODES[n].kind
     switch node_kind {
         case Kind.Ident:
-            let name = ast.NODES[n].name
+            let name = ast.INFO[n].name
             let binding = find_b(name)
             if binding < 0 {
                 return false
             }
-            if check_dangling(binding, ast.NODES[n].loc) {
+            if check_dangling(binding, ast.INFO[n].loc) {
                 return true
             }
             if BINDINGS[binding].must_check {
                 BINDINGS[binding].checked = true
             }
             if BINDINGS[binding].own == Own.Moved {
-                report(ast.NODES[n].loc, "use of moved value '{{name}}'")
+                report(ast.INFO[n].loc, "use of moved value '{{name}}'")
                 return true
             }
-            if check_use_path(name, ast.NODES[n].loc) {
+            if check_use_path(name, ast.INFO[n].loc) {
                 return true
             }
             if as_move && !BINDINGS[binding].is_copy {
                 if borrow_covers(name) {
-                    report(ast.NODES[n].loc, "cannot move '{{name}}' while borrowed")
+                    report(ast.INFO[n].loc, "cannot move '{{name}}' while borrowed")
                     return true
                 }
                 BINDINGS[binding].own = Own.Moved
@@ -1552,11 +1566,11 @@ fn check_expr(n: int, as_move: bool) -> bool {
         case Kind.Addr:
             let path = path_of(ast.NODES[n].a)
             if path.len > 0 {
-                if check_dangling(find_b(root_of_path(path)), ast.NODES[n].loc) {
+                if check_dangling(find_b(root_of_path(path)), ast.INFO[n].loc) {
                     return true
                 }
                 let before = head_id()
-                let failed = take_borrow_path(path, ast.NODES[n].op != 0, ast.NODES[n].loc)
+                let failed = take_borrow_path(path, ast.NODES[n].op != 0, ast.INFO[n].loc)
                 if !failed && head_id() != before {
                     BORROWS[BORROWS.len - 1].global_decl = global_of_place(ast.NODES[n].a)
                 }
@@ -1577,18 +1591,18 @@ fn check_expr(n: int, as_move: bool) -> bool {
             if binding >= 0 && BINDINGS[binding].must_check {
                 BINDINGS[binding].checked = true
             }
-            if check_dangling(binding, ast.NODES[n].loc) {
+            if check_dangling(binding, ast.INFO[n].loc) {
                 return true
             }
             if binding >= 0 && BINDINGS[binding].own == Own.Moved {
-                report(ast.NODES[n].loc, "use of moved value '{{root}}'")
+                report(ast.INFO[n].loc, "use of moved value '{{root}}'")
                 return true
             }
             if binding >= 0 && path_is_moved(binding, path) {
-                report(ast.NODES[n].loc, "use of moved value '{{path}}'")
+                report(ast.INFO[n].loc, "use of moved value '{{path}}'")
                 return true
             }
-            let failed = check_use_path(path, ast.NODES[n].loc)
+            let failed = check_use_path(path, ast.INFO[n].loc)
             if !failed && binding >= 0 && !BINDINGS[binding].is_module_alias && as_move && not_copy(ast.NODES[n].ty) {
                 mark_path_moved(binding, path)
             }
@@ -1635,7 +1649,7 @@ fn check_expr(n: int, as_move: bool) -> bool {
                 return true
             }
             let written = path_of(ast.NODES[n].a)
-            return written.len > 0 && check_write_path(written, ast.NODES[n].loc)
+            return written.len > 0 && check_write_path(written, ast.INFO[n].loc)
         case Kind.Closure:
             return check_closure(n)
         case Kind.Call:
@@ -1662,17 +1676,17 @@ fn check_expr(n: int, as_move: bool) -> bool {
 }
 
 fn check_closure(n: int) -> bool {
-    let captures = ast.NODES[n].caps
+    let captures = ast.INFO[n].caps
     for i in 0..captures.len {
         let source = find_b(captures[i])
         if source >= 0 && BINDINGS[source].own == Own.Moved {
-            report(ast.NODES[n].loc, "use of moved value '{{captures[i]}}'")
+            report(ast.INFO[n].loc, "use of moved value '{{captures[i]}}'")
             return true
         }
         // A non-Copy capture is moved into the closure env.
         if source >= 0 && !BINDINGS[source].is_copy {
             if borrow_covers(captures[i]) {
-                report(ast.NODES[n].loc, "cannot move '{{captures[i]}}' into a closure while borrowed")
+                report(ast.INFO[n].loc, "cannot move '{{captures[i]}}' into a closure while borrowed")
                 return true
             }
             BINDINGS[source].own = Own.Moved
@@ -1683,12 +1697,12 @@ fn check_closure(n: int) -> bool {
     let params = ast.NODES[n].kids
     for k in 0..params.len {
         let param_type = if fn_type != types.NO_TYPE && k < types.TYPES[fn_type].params.len { types.TYPES[fn_type].params[k] } else { types.NO_TYPE }
-        let param = push_b(ast.NODES[params[k]].name, param_type)
+        let param = push_b(ast.INFO[params[k]].name, param_type)
         BINDINGS[param].kind = BindKind.Param
     }
     // The body reads its captures, not the outer bindings.
     for k in 0..captures.len {
-        let capture_type = if k < ast.NODES[n].cap_types.len { ast.NODES[n].cap_types[k] } else { types.NO_TYPE }
+        let capture_type = if k < ast.INFO[n].cap_types.len { ast.INFO[n].cap_types[k] } else { types.NO_TYPE }
         push_b(captures[k], capture_type)
     }
     // The body runs later: outer holders stay as they are.
@@ -1703,7 +1717,7 @@ fn check_closure(n: int) -> bool {
 fn check_call(n: int) -> bool {
     let call_mark = head_id()
     let args = ast.NODES[n].kids
-    let marks = ast.NODES[n].marks
+    let marks = ast.INFO[n].marks
     // Two phases: every other argument first, then the `&mut place` ones and
     // the borrows through an index.
     for phase in 0..2 {
@@ -1743,7 +1757,7 @@ fn check_call(n: int) -> bool {
             continue
         }
         if arg != ast.NONE && ast.NODES[arg].kind == Kind.Ident && ref_is_mut(ast.NODES[arg].ty) &&
-            find_b(ast.NODES[arg].name) >= 0 && take_borrow_path(ast.NODES[arg].name, true, ast.NODES[arg].loc) {
+            find_b(ast.INFO[arg].name) >= 0 && take_borrow_path(ast.INFO[arg].name, true, ast.INFO[arg].loc) {
             return true
         }
     }
@@ -1765,7 +1779,7 @@ fn check_call(n: int) -> bool {
         if aimed == ast.NONE || ast.NODES[aimed].kind != Kind.Ident || !is_ref_ty(ast.NODES[aimed].ty) {
             continue
         }
-        let holder = find_b(ast.NODES[aimed].name)
+        let holder = find_b(ast.INFO[aimed].name)
         if holder < 0 || BINDINGS[holder].kind == BindKind.Global {
             continue
         }
@@ -1777,7 +1791,7 @@ fn check_call(n: int) -> bool {
                 continue
             }
             r = deeper(r, ref_root(other))
-            if gather_loans_ex(other, ref_is_mut(ast.NODES[aimed].ty), &mut loans, ast.NODES[other].loc, false) {
+            if gather_loans_ex(other, ref_is_mut(ast.NODES[aimed].ty), &mut loans, ast.INFO[other].loc, false) {
                 return true
             }
         }
@@ -1825,7 +1839,7 @@ fn check_stmt(n: int) -> bool {
             if value != ast.NONE {
                 let value_type = ast.NODES[value].ty
                 if value_type != types.NO_TYPE && types.kind_of(value_type) == TK.Struct && types.TYPES[value_type].must_check != 0 {
-                    report(ast.NODES[n].loc, "unused `#[must_check]` value of type '{{types.TYPES[value_type].name}}' — read a field or use `.or()` / `.or_trap()`")
+                    report(ast.INFO[n].loc, "unused `#[must_check]` value of type '{{types.TYPES[value_type].name}}' — read a field or use `.or()` / `.or_trap()`")
                 }
             }
             if check_expr(value, false) {
@@ -1841,15 +1855,15 @@ fn check_stmt(n: int) -> bool {
             if value != ast.NONE && is_ref_ty(ast.NODES[value].ty) {
                 let r = ref_root(value)
                 if r.depth > 0 && r.name_kind == RootName.Temporary {
-                    report(ast.NODES[n].loc, "cannot return borrow of a temporary")
+                    report(ast.INFO[n].loc, "cannot return borrow of a temporary")
                     return true
                 }
                 if r.depth > 0 {
-                    report(ast.NODES[n].loc, "cannot return borrow of local '{{root_name_text(r)}}'")
+                    report(ast.INFO[n].loc, "cannot return borrow of local '{{root_name_text(r)}}'")
                     return true
                 }
                 if refers_into_global(value) {
-                    report(ast.NODES[n].loc, "cannot return a reference into a global: return a copy or an index")
+                    report(ast.INFO[n].loc, "cannot return a reference into a global: return a copy or an index")
                     return true
                 }
             }
@@ -1903,7 +1917,7 @@ fn check_stmt(n: int) -> bool {
             }
             release_temps()
             DEPTH = DEPTH + 1
-            push_b(ast.NODES[n].name, types.ty_int())
+            push_b(ast.INFO[n].name, types.ty_int())
             // Twice: the second pass sees what the first left behind. The
             // body may run zero times: references join with the state before.
             let before_loop = snapshot()
@@ -1949,7 +1963,7 @@ fn check_var(n: int) -> bool {
     if init != ast.NONE {
         let init_kind = ast.NODES[init].kind
         // Box::new constructs a new owner; literals are new values.
-        if init_kind == Kind.Call && (ast.NODES[init].marks & ast.M_BOX_NEW) != 0 {
+        if init_kind == Kind.Call && (ast.INFO[init].marks & ast.M_BOX_NEW) != 0 {
             consumes = false
         }
         if init_kind == Kind.StructLit || init_kind == Kind.ArrayLit || init_kind == Kind.Closure {
@@ -1964,10 +1978,10 @@ fn check_var(n: int) -> bool {
     let is_ref = is_ref_ty(var_type) && init != ast.NONE
     let r = if is_ref { ref_root(init) } else { no_root() }
     let mut loans = []Loan {}
-    if is_ref && gather_loans(init, ref_is_mut(var_type), &mut loans, ast.NODES[n].loc) {
+    if is_ref && gather_loans(init, ref_is_mut(var_type), &mut loans, ast.INFO[n].loc) {
         return true
     }
-    let binding = push_b(ast.NODES[n].name, var_type)
+    let binding = push_b(ast.INFO[n].name, var_type)
     set_ref(binding, r)
     if r.depth > DEPTH {
         BINDINGS[binding].dangling = true
@@ -1975,7 +1989,7 @@ fn check_var(n: int) -> bool {
     attach_loans(binding, loans, true)
     if var_type != types.NO_TYPE && types.kind_of(var_type) == TK.Struct && types.TYPES[var_type].must_check != 0 {
         BINDINGS[binding].must_check = true
-        BINDINGS[binding].loc = ast.NODES[n].loc
+        BINDINGS[binding].loc = ast.INFO[n].loc
     }
     if types.needs_drop(var_type) {
         ast.NODES[n].flags = ast.NODES[n].flags | ASTF_NEEDS_DROP
@@ -1988,7 +2002,7 @@ fn check_assign(n: int) -> bool {
     let left = ast.NODES[n].a
     let right = ast.NODES[n].b
     let stores_ref = left != ast.NONE && is_ref_ty(ast.NODES[left].ty)
-    let left_binding = if left != ast.NONE && ast.NODES[left].kind == Kind.Ident { find_b(ast.NODES[left].name) } else { -1 }
+    let left_binding = if left != ast.NONE && ast.NODES[left].kind == Kind.Ident { find_b(ast.INFO[left].name) } else { -1 }
     // Rebinding a local reference: its old target no longer matters.
     let rebind = stores_ref && left_binding >= 0 && BINDINGS[left_binding].kind != BindKind.Global
     if rebind && !expr_uses(right, BINDINGS[left_binding].name) {
@@ -1999,7 +2013,7 @@ fn check_assign(n: int) -> bool {
     }
     let r = if stores_ref { ref_root(right) } else { no_root() }
     let mut loans = []Loan {}
-    if stores_ref && gather_loans(right, ref_is_mut(ast.NODES[left].ty), &mut loans, ast.NODES[n].loc) {
+    if stores_ref && gather_loans(right, ref_is_mut(ast.NODES[left].ty), &mut loans, ast.INFO[n].loc) {
         return true
     }
     if rebind {
@@ -2010,7 +2024,7 @@ fn check_assign(n: int) -> bool {
     }
     if !rebind {
         let written = path_of(left)
-        if written.len > 0 && check_write_path(written, ast.NODES[n].loc) {
+        if written.len > 0 && check_write_path(written, ast.INFO[n].loc) {
             return true
         }
     }
@@ -2024,14 +2038,14 @@ fn check_assign(n: int) -> bool {
         // `*pp = &x`, or a global: what it receives must outlive it now.
         let holder = place_root(left)
         if refers_into_global(right) {
-            report(ast.NODES[n].loc, "a reference into a global cannot be stored here: store a copy or an index")
+            report(ast.INFO[n].loc, "a reference into a global cannot be stored here: store a copy or an index")
             return true
         }
         if r.depth > holder.depth {
             if r.name_kind == RootName.Temporary {
-                report(ast.NODES[n].loc, "a borrow of a temporary cannot be stored here")
+                report(ast.INFO[n].loc, "a borrow of a temporary cannot be stored here")
             } else {
-                report(ast.NODES[n].loc, "'{{root_name_text(r)}}' does not live long enough to be stored here")
+                report(ast.INFO[n].loc, "'{{root_name_text(r)}}' does not live long enough to be stored here")
             }
             return true
         }
@@ -2111,8 +2125,14 @@ fn borrowck_modules() -> int {
         let imports = typecheck.imports_of(root)
         for i in 0..decls.len {
             let fn_decl = decls[i]
-            if ast.NODES[fn_decl].kind != Kind.Fn || (ast.NODES[fn_decl].marks & ast.M_INTRINSIC) != 0 {
+            if ast.NODES[fn_decl].kind != Kind.Fn || (ast.INFO[fn_decl].marks & ast.M_INTRINSIC) != 0 {
                 continue
+            }
+            // Every binding of the last fn died at its `pop_to_depth(0)`, and
+            // no table outlives a fn with a binding index in it: empty the
+            // arena (keeping its capacity), as C frees each binding.
+            while BINDINGS.len > 0 {
+                pop(BINDINGS)
             }
             ACTIVE = []int {}
             BORROWS = []Borrow {}
@@ -2121,10 +2141,10 @@ fn borrowck_modules() -> int {
             // `store.ITEMS`: each fully imported module, under its alias.
             for k in 0..imports.len {
                 let import_node = imports[k]
-                if ast.NODES[import_node].kids.len > 0 || !ast.NODES[import_node].has_name {
+                if ast.NODES[import_node].kids.len > 0 || !ast.INFO[import_node].has_name {
                     continue
                 }
-                let alias = push_b(ast.NODES[import_node].name, types.NO_TYPE)
+                let alias = push_b(ast.INFO[import_node].name, types.NO_TYPE)
                 BINDINGS[alias].kind = BindKind.Global
                 BINDINGS[alias].is_copy = true
                 BINDINGS[alias].is_module_alias = true
@@ -2135,7 +2155,7 @@ fn borrowck_modules() -> int {
                 }
                 let global_var = typecheck.GVARS[g].var
                 if global_var != ast.NONE {
-                    let global = push_b(ast.NODES[global_var].name, ast.NODES[global_var].ty)
+                    let global = push_b(ast.INFO[global_var].name, ast.NODES[global_var].ty)
                     BINDINGS[global].kind = BindKind.Global
                 }
             }
@@ -2143,7 +2163,7 @@ fn borrowck_modules() -> int {
             let params = ast.NODES[fn_decl].kids
             for k in 0..params.len {
                 let param_type = if fn_type != types.NO_TYPE && k < types.TYPES[fn_type].params.len { types.TYPES[fn_type].params[k] } else { types.NO_TYPE }
-                let param = push_b(ast.NODES[params[k]].name, param_type)
+                let param = push_b(ast.INFO[params[k]].name, param_type)
                 BINDINGS[param].kind = BindKind.Param
             }
             if ast.NODES[fn_decl].b != ast.NONE {
