@@ -99,8 +99,8 @@ workflow) are done. Phase 4 (the lexer in Loam, §4 step 3) and phase 5 (the
 parser in Loam, arena AST, diffed via `--dump-ast`; §4 step 4) are done; the
 `selfhost` workflow ran green on Linux x86_64/aarch64 and Windows x86_64.
 Phase 6 (typecheck in Loam) is done and diffed against `typecheck.c`;
-phase 7 (borrowck, threadcheck, boundscheck) is in progress, then IR and
-codegen (see the compiler-port checklist).
+phase 7 (borrowck, threadcheck, boundscheck) is done and diffed through
+`--dump-checked`. Next: IR and codegen (see the compiler-port checklist).
 
 ---
 
@@ -571,7 +571,7 @@ beyond what the checklist requires.
         was not tracked, and a reference into a global could be returned.
         Fixed in `borrowck.c` (reference-escape.md, rules 5–6, phase 9);
         no existing program needed a change.
-- [ ] Borrowck, threadcheck, boundscheck (phase 7), in progress. 7a:
+- [x] Borrowck, threadcheck, boundscheck ported (phase 7). 7a:
       `loamc --dump-checked` (`--dump-typed` after threadcheck, borrowck
       and boundscheck: their diagnostics, exit 3, and node flags) and
       `tcdump --checked`; the gate worker takes the dump mode. 7b:
@@ -580,7 +580,20 @@ beyond what the checklist requires.
       7c: `compiler/threadcheck.loam` matches all 15 thread fixtures (the 9
       it rejects: diagnostics and exit 3). `threadcheck.c` now counts its
       errors with `loam_error_count`, so `--dump-checked` (no capture) sees
-      them too. Next: 7d borrowck, then a strict `selfhost_check` stanza.
+      them too.
+      - 7d: `compiler/borrowck.loam` ports `sema/borrowck.c` (ownership and
+        moves, loans and their paths, reborrows, reference escape, globals
+        across calls, drop marks). With the other two passes it matches
+        `--dump-checked` on all 517 loadable entries: trees, the moved /
+        needs-drop / index-safe flags, diagnostics and exit status, the 63
+        `compile_fail` entries C rejects after typecheck included.
+      - The strict `selfhost_check` host stanza gates it (any difference
+        fails); it shares the gate, worker and result cache of
+        `selfhost_typecheck`, keyed by dump mode. A one-character change to
+        a borrowck diagnostic in the Loam port fails it.
+      - Speed (open): the Loam passes cost more than C's (~0.15 s vs
+        ~0.06 s on a Zeus entry). The goal is parity with C or better, not
+        a pipeline that wins overall; that work comes before phase 8.
 - [ ] IR and codegen ported
 - [ ] Driver (module loading, package resolution, `cc` invocation) in Loam
 - [ ] Compiler itself uses only safe Loam (arenas + integer indices; §2.7)

@@ -144352,7 +144352,7 @@ static int sqlite3LoadExtension(
   **    /usr/local/lib/libExample5.4.3.so ==>  sqlite3_example5_init
   */
   if( xInit==0 && zProc==0 ){
-    int iFile, IntEntry, c;
+    int iFile, iEntry, c;
     int ncFile = sqlite3Strlen30(zFile);
     int cnt = 0;
     zAltEntry = sqlite3_malloc64(ncFile+30);
@@ -144365,12 +144365,12 @@ static int sqlite3LoadExtension(
       for(iFile=ncFile-1; iFile>=0 && !DirSep(zFile[iFile]); iFile--){}
       iFile++;
       if( sqlite3_strnicmp(zFile+iFile, "lib", 3)==0 ) iFile += 3;
-      for(IntEntry=8; (c = zFile[iFile])!=0 && c!='.'; iFile++){
+      for(iEntry=8; (c = zFile[iFile])!=0 && c!='.'; iFile++){
         if( sqlite3Isalpha(c) || (cnt && sqlite3Isdigit(c)) ){
-          zAltEntry[IntEntry++] = (char)sqlite3UpperToLower[(unsigned)c];
+          zAltEntry[iEntry++] = (char)sqlite3UpperToLower[(unsigned)c];
         }
       }
-      memcpy(zAltEntry+IntEntry, "_init", 6);
+      memcpy(zAltEntry+iEntry, "_init", 6);
       zEntry = zAltEntry;
       xInit = (sqlite3_loadext_entry)sqlite3OsDlSym(pVfs, handle, zEntry);
     }while( xInit==0 && (++cnt)<2 );
