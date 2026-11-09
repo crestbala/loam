@@ -247,14 +247,14 @@ fn add_cap(clos: int, name: string, ty: int) {
     if clos == NONE {
         return
     }
-    let caps = ast.INFO[clos].caps
+    let caps = ast.EXTRA[ast.ex(clos)].caps
     for i in 0..caps.len {
         if caps[i] == name {
             return
         }
     }
-    push(ast.INFO[clos].caps, name)
-    push(ast.INFO[clos].cap_types, ty)
+    push(ast.EXTRA[ast.ex_mut(clos)].caps, name)
+    push(ast.EXTRA[ast.ex_mut(clos)].cap_types, ty)
 }
 
 // --- stale captures ------------------------------------------------------------------
@@ -319,7 +319,7 @@ fn expr_is_cap_fn(n: int) -> bool {
         return false
     }
     if kind(n) == Kind.Closure {
-        return ast.INFO[n].caps.len > 0
+        return ast.EXTRA[ast.ex(n)].caps.len > 0
     }
     if kind(n) == Kind.Ident {
         let f = scope_find_s(ast.INFO[n].name)
@@ -587,11 +587,11 @@ fn find_mod_scan(name: string) -> int {
         let ims = imports_of(MODS[Gcur].root)
         for i in 0..ims.len {
             let import_node = ims[i]
-            if !ast.INFO[import_node].has_sname || ast.INFO[import_node].name != name {
+            if !ast.EXTRA[ast.ex(import_node)].has_sname || ast.INFO[import_node].name != name {
                 continue
             }
             for m in 0..MODS.len {
-                if MODS[m].path == ast.INFO[import_node].sname {
+                if MODS[m].path == ast.EXTRA[ast.ex(import_node)].sname {
                     return m
                 }
             }
@@ -736,7 +736,7 @@ fn selective_import_source(name: string) -> SelSrc {
         let import_node = ims[i]
         for k in 0..ast.NODES[import_node].kids.len {
             let imported_name = ast.NODES[import_node].kids[k]
-            if ast.INFO[imported_name].text == name {
+            if ast.EXTRA[ast.ex(imported_name)].text == name {
                 return SelSrc { name: ast.INFO[imported_name].name, mod: find_mod(ast.INFO[import_node].name), found: true }
             }
         }
@@ -973,7 +973,7 @@ fn lit_with_expect(n: int, expect: int) -> int {
     }
     if tk(expect) == TK.Float {
         ast.NODES[n].kind = Kind.Float
-        ast.INFO[n].fnum = f64(ast.INFO[n].num)
+        ast.EXTRA[ast.ex_mut(n)].fnum = f64(ast.INFO[n].num)
         ast.NODES[n].ty = expect
         return expect
     }
@@ -1222,7 +1222,7 @@ fn tparam_index(fn_: int, name: string) -> int {
     if fn_ == NONE || name.len == 0 {
         return -1
     }
-    let tps = ast.INFO[fn_].strs
+    let tps = ast.EXTRA[ast.ex(fn_)].strs
     for i in 0..tps.len {
         if i >= 64 {
             break
@@ -1302,7 +1302,7 @@ fn check_boxed_tparams() {
             if (BOX_MASKS[cm].mask & bit(j)) == i64(0) || !type_holds_ref(g.bound[j]) {
                 continue
             }
-            err(g.loc, "'{{ast.INFO[g.callee].name}}' stores its type parameter '{{ast.INFO[g.callee].strs[j]}}' in a container, so it cannot be a reference ({{types.type_name(g.bound[j])}})")
+            err(g.loc, "'{{ast.INFO[g.callee].name}}' stores its type parameter '{{ast.EXTRA[ast.ex(g.callee)].strs[j]}}' in a container, so it cannot be a reference ({{types.type_name(g.bound[j])}})")
         }
     }
 }
@@ -1429,7 +1429,7 @@ fn signal_type() -> int {
     if st == NONE {
         return NO_TYPE
     }
-    if ast.INFO[st].strs.len == 0 {
+    if ast.EXTRA[ast.ex(st)].strs.len == 0 {
         return struct_type_of(st)
     }
     return make_struct_inst(st, []int { types.ty_int() }, ast.INFO[st].loc, false)
@@ -1514,7 +1514,7 @@ fn make_struct_inst(st: int, args: []int, at: Loc, has_at: bool) -> int {
     types.TYPES[t].field_types = ftys
     // Registered before its fields, which may name this same instance.
     push(STRUCT_INSTS, t)
-    let tps = ast.INFO[st].strs
+    let tps = ast.EXTRA[ast.ex(st)].strs
     for i in 0..fnames.len {
         let tf = types.TYPES[tmpl].field_types[i]
         let ft = subst_type(tf, tps, args)
@@ -1629,7 +1629,7 @@ fn resolve_type(tn: int) -> int {
     }
     let st = find_struct(nm)
     if st != NONE {
-        let want = ast.INFO[st].strs.len
+        let want = ast.EXTRA[ast.ex(st)].strs.len
         let got = n.kids2.len
         if want == 0 {
             if got > 0 {
@@ -1663,9 +1663,9 @@ fn fn_type_of(fn_: int) -> int {
         cur_mod_name = MODS[home].name
     }
     let save_tp = cur_tparams
-    cur_tparams = ast.INFO[fn_].strs
+    cur_tparams = ast.EXTRA[ast.ex(fn_)].strs
     let save_gfn = cur_gfn
-    cur_gfn = if ast.INFO[fn_].strs.len > 0 { fn_ } else { NONE }
+    cur_gfn = if ast.EXTRA[ast.ex(fn_)].strs.len > 0 { fn_ } else { NONE }
     let mut ps = []int {}
     let params = ast.NODES[fn_].kids
     for i in 0..params.len {
@@ -2104,7 +2104,7 @@ fn is_bare_none(arg: int) -> bool {
         return false
     }
     let f = lookup_unqualified("none", Kind.Fn)
-    if f != NONE && ast.INFO[f].strs.len == 0 {
+    if f != NONE && ast.EXTRA[ast.ex(f)].strs.len == 0 {
         return false
     }
     return true
@@ -2360,7 +2360,7 @@ fn fold_children_block(n: int) -> bool {
         return false
     }
     let f = call_target_decl(inner)
-    if f == NONE || ast.INFO[f].strs.len > 0 {
+    if f == NONE || ast.EXTRA[ast.ex(f)].strs.len > 0 {
         return false
     }
     let ft = fn_type_of(f)
@@ -2458,7 +2458,7 @@ fn finish_proc_call(n: int, ft: int, named: int) -> int {
         err(ast.INFO[n].loc, "invalid call")
         return types.ty_void()
     }
-    let tps = if named != NONE { ast.INFO[named].strs } else { []string {} }
+    let tps = if named != NONE { ast.EXTRA[ast.ex(named)].strs } else { []string {} }
     let nt = tps.len
     let mut bound = []int {}
     for i in 0..nt {
@@ -2636,12 +2636,12 @@ fn finish_proc_call(n: int, ft: int, named: int) -> int {
         }
         if concrete {
             let cn = mono_cname(named, bound)
-            ast.INFO[n].sname = cn
-            ast.INFO[n].has_sname = true
+            ast.EXTRA[ast.ex_mut(n)].sname = cn
+            ast.EXTRA[ast.ex_mut(n)].has_sname = true
             record_mono(named, bound, cn)
         }
-        let fcn = ast.INFO[named].sname
-        if ast.INFO[named].has_sname && bound[0] != NO_TYPE {
+        let fcn = ast.EXTRA[ast.ex(named)].sname
+        if ast.EXTRA[ast.ex(named)].has_sname && bound[0] != NO_TYPE {
             if (fcn == "loam_zeus_signal" || fcn == "loam_zeus_get" || fcn == "loam_zeus_set") && !types.is_copy(bound[0]) {
                 err(nloc, "Signal<{{types.type_name(bound[0])}}> requires a Copy type")
             }
@@ -2949,7 +2949,7 @@ fn as_struct_ctor(n: int) -> bool {
     ast.INFO[n].name = sname
     ast.INFO[n].has_name = true
     ast.NODES[n].kids = fi
-    ast.INFO[n].kids2 = []int {}
+    ast.EXTRA[ast.ex_mut(n)].kids2 = []int {}
     ast.NODES[n].a = NONE
     return true
 }
@@ -3006,11 +3006,11 @@ fn check_cell_op(n: int, op: CellOp, expect: int) -> int {
         return ast.NODES[n].ty
     }
     if op.family == 1 {
-        ast.INFO[n].sig = op.cell
+        ast.EXTRA[ast.ex_mut(n)].sig = op.cell
     } else if op.family == 2 {
-        ast.INFO[n].fut = op.cell
+        ast.EXTRA[ast.ex_mut(n)].fut = op.cell
     } else {
-        ast.INFO[n].ch = op.cell
+        ast.EXTRA[ast.ex_mut(n)].ch = op.cell
     }
     ast.NODES[n].ty = if op.ret == 0 { types.ty_int() } else if op.ret == 1 { types.ty_void() } else { expect }
     ast.INFO[n].place_mut = 0
@@ -3155,8 +3155,8 @@ fn check_call(n: int, expect: int) -> int {
                 if k != TK.String {
                     let w = new_call(NONE, []int { part }, ast.INFO[part].loc)
                     let cb = if k == TK.Int && types.TYPES[t].is_unsigned != 0 && types.TYPES[t].bits == 64 { "loam_str_of_u64" } else if k == TK.Int { "loam_str_of_int" } else if k == TK.Float { "loam_str_of_float" } else { "loam_str_of_bool" }
-                    ast.INFO[w].cbuiltin = cb
-                    ast.INFO[w].has_cbuiltin = true
+                    ast.EXTRA[ast.ex_mut(w)].cbuiltin = cb
+                    ast.EXTRA[ast.ex_mut(w)].has_cbuiltin = true
                     ast.NODES[w].ty = types.ty_string()
                     part = w
                 }
@@ -3165,8 +3165,8 @@ fn check_call(n: int, expect: int) -> int {
                     continue
                 }
                 let cat = new_call(NONE, []int { acc, part }, nloc)
-                ast.INFO[cat].cbuiltin = "loam_str_concat"
-                ast.INFO[cat].has_cbuiltin = true
+                ast.EXTRA[ast.ex_mut(cat)].cbuiltin = "loam_str_concat"
+                ast.EXTRA[ast.ex_mut(cat)].has_cbuiltin = true
                 ast.NODES[cat].ty = types.ty_string()
                 acc = cat
             }
@@ -3228,7 +3228,7 @@ fn check_call(n: int, expect: int) -> int {
             ast.NODES[n].kind = Kind.Cast
             ast.NODES[n].a = arg
             ast.NODES[n].b = add(tn)
-            ast.INFO[n].conv = mode
+            ast.EXTRA[ast.ex_mut(n)].conv = mode
             ast.NODES[n].kids = []int {}
             ast.NODES[n].ty = ct
             ast.INFO[n].place_mut = 0
@@ -3251,7 +3251,7 @@ fn check_call(n: int, expect: int) -> int {
             } else if arity == 2 && !types.type_eq(a, b) {
                 err(nloc, "{{nm}} requires matching int widths ({{types.type_name(a)}}, {{types.type_name(b)}})")
             }
-            ast.INFO[n].numb = nb
+            ast.EXTRA[ast.ex_mut(n)].numb = nb
             ast.NODES[n].ty = if types.is_int_kind(a) { a } else { types.ty_int() }
             return ast.NODES[n].ty
         }
@@ -3265,8 +3265,8 @@ fn check_call(n: int, expect: int) -> int {
             if !is_u8 && (tk(a) != TK.Vec || !types.type_eq(types.TYPES[a].elem, types.ty_int())) {
                 err(nloc, "string_from_bytes requires []int or []u8")
             }
-            ast.INFO[n].cbuiltin = if is_u8 { "loam_string_from_u8" } else { "loam_string_from_bytes" }
-            ast.INFO[n].has_cbuiltin = true
+            ast.EXTRA[ast.ex_mut(n)].cbuiltin = if is_u8 { "loam_string_from_u8" } else { "loam_string_from_bytes" }
+            ast.EXTRA[ast.ex_mut(n)].has_cbuiltin = true
             ast.NODES[n].ty = types.ty_string()
             return ast.NODES[n].ty
         }
@@ -3349,8 +3349,8 @@ fn check_call(n: int, expect: int) -> int {
                 push(na, old[i])
             }
             ast.NODES[n].kids = na
-            ast.INFO[n].sname = ast.INFO[f].sname
-            ast.INFO[n].has_sname = ast.INFO[f].has_sname
+            ast.EXTRA[ast.ex_mut(n)].sname = ast.EXTRA[ast.ex(f)].sname
+            ast.EXTRA[ast.ex_mut(n)].has_sname = ast.EXTRA[ast.ex(f)].has_sname
         }
     } else if cal != NONE && kind(cal) == Kind.Field && ast.NODES[cal].op == 0 && ast.NODES[cal].a != NONE &&
         kind(ast.NODES[cal].a) == Kind.Ident {
@@ -3600,8 +3600,8 @@ fn check_closure(n: int, expect0: int) -> int {
         let prm = ast.full(params[i])
         scope_add(prm.name, ps[i], 0, 0, prm.loc, n)
     }
-    if ast.INFO[n].clos_id == 0 {
-        ast.INFO[n].clos_id = next_clos_id
+    if ast.EXTRA[ast.ex(n)].clos_id == 0 {
+        ast.EXTRA[ast.ex_mut(n)].clos_id = next_clos_id
         next_clos_id = next_clos_id + 1
     }
     let body = ast.NODES[n].b
@@ -3753,7 +3753,7 @@ fn check_ident(n: int) -> int {
     }
     let f = find_fn_in(Gcur, x.name)
     if f != NONE {
-        if ast.INFO[f].strs.len > 0 {
+        if ast.EXTRA[ast.ex(f)].strs.len > 0 {
             err(x.loc, "cannot use generic function '{{x.name}}' as a value")
             return set_ty(n, types.ty_void())
         }
@@ -3770,7 +3770,7 @@ fn check_ident(n: int) -> int {
     }
     let ifn = lookup_unqualified(x.name, Kind.Fn)
     if ifn != NONE {
-        if ast.INFO[ifn].strs.len > 0 {
+        if ast.EXTRA[ast.ex(ifn)].strs.len > 0 {
             err(x.loc, "cannot use generic function '{{x.name}}' as a value")
             return set_ty(n, types.ty_void())
         }
@@ -3888,7 +3888,7 @@ fn check_unary(n: int, expect: int) -> int {
             }
             if tk(expect) == TK.Float {
                 ast.NODES[n].kind = Kind.Float
-                ast.INFO[n].fnum = 0.0 - f64(o.num)
+                ast.EXTRA[ast.ex_mut(n)].fnum = 0.0 - f64(o.num)
             } else {
                 if !int_lit_fits(v, expect) {
                     err(x.loc, "literal {{v}} does not fit {{types.type_name(expect)}}")
@@ -3902,7 +3902,7 @@ fn check_unary(n: int, expect: int) -> int {
         }
         if o.kind == Kind.Float && tk(expect) == TK.Float {
             ast.NODES[n].kind = Kind.Float
-            ast.INFO[n].fnum = 0.0 - o.fnum
+            ast.EXTRA[ast.ex_mut(n)].fnum = 0.0 - o.fnum
             ast.NODES[n].ty = expect
             ast.INFO[n].place_mut = 0
             return expect
@@ -3972,7 +3972,7 @@ fn check_field(n: int) -> int {
             }
             let mfn = if md >= 0 { lookup_through(md, x.name, Kind.Fn) } else { NONE }
             if mfn != NONE {
-                if ast.INFO[mfn].strs.len > 0 {
+                if ast.EXTRA[ast.ex(mfn)].strs.len > 0 {
                     err(x.loc, "cannot use generic function '{{x.name}}' as a value")
                     return set_ty(n, types.ty_void())
                 }
@@ -4040,7 +4040,7 @@ fn check_struct_lit(n: int, expect: int) -> int {
         return set_ty(n, types.ty_void())
     }
     let tmpl = struct_type_of(st)
-    let tps = ast.INFO[st].strs
+    let tps = ast.EXTRA[ast.ex(st)].strs
     let nt = tps.len
     let mut bound = []int {}
     for i in 0..nt {
@@ -4555,9 +4555,9 @@ fn check_stmt(n: int) {
 fn check_fn(f: int) {
     let ft = fn_type_of(f)
     let save_tp = cur_tparams
-    cur_tparams = ast.INFO[f].strs
+    cur_tparams = ast.EXTRA[ast.ex(f)].strs
     let save_gfn = cur_gfn
-    cur_gfn = if ast.INFO[f].strs.len > 0 { f } else { NONE }
+    cur_gfn = if ast.EXTRA[ast.ex(f)].strs.len > 0 { f } else { NONE }
     cur_ret = ret_of(ft)
     loop_depth = 0
     switch_depth = 0
@@ -4931,7 +4931,7 @@ fn inject_proto_codecs(m: int) {
         if kind(d) != Kind.Struct || (ast.NODES[d].op & 1) == 0 {
             continue
         }
-        if ast.INFO[d].strs.len > 0 {
+        if ast.EXTRA[ast.ex(d)].strs.len > 0 {
             err(ast.INFO[d].loc, "#[proto] struct cannot have type parameters")
             continue
         }
@@ -5058,7 +5058,7 @@ fn inject_json_codecs(m: int) {
         if kind(d) != Kind.Struct || (ast.NODES[d].op & 2) == 0 {
             continue
         }
-        if ast.INFO[d].strs.len > 0 {
+        if ast.EXTRA[ast.ex(d)].strs.len > 0 {
             err(ast.INFO[d].loc, "#[json] struct cannot have type parameters")
             continue
         }
@@ -5109,7 +5109,7 @@ fn call_generic_fn(call: int) -> int {
     let cal = ast.NODES[call].a
     if cal != NONE && (kind(cal) == Kind.Ident || kind(cal) == Kind.Field) {
         let r = ast.NODES[cal].res
-        if r != NONE && kind(r) == Kind.Fn && ast.INFO[r].strs.len > 0 {
+        if r != NONE && kind(r) == Kind.Fn && ast.EXTRA[ast.ex(r)].strs.len > 0 {
             return r
         }
     }
@@ -5127,7 +5127,7 @@ fn callee_instantiate(call: int, names: []string, args: []int) {
     if ft == NO_TYPE {
         return
     }
-    let tps = ast.INFO[f].strs
+    let tps = ast.EXTRA[ast.ex(f)].strs
     let mut bound = []int {}
     for i in 0..tps.len {
         push(bound, NO_TYPE)
@@ -5216,7 +5216,7 @@ fn instantiate_nested() {
         for i in 0..n {
             let f = MONOS[i].fn_
             let before = MONOS.len
-            walk_instantiate(ast.NODES[f].b, ast.INFO[f].strs, MONOS[i].args)
+            walk_instantiate(ast.NODES[f].b, ast.EXTRA[ast.ex(f)].strs, MONOS[i].args)
             if MONOS.len > before {
                 added = true
             }
@@ -5235,9 +5235,9 @@ fn check_selective_imports(m: int) {
         let tm = find_mod(im.name)
         for k in 0..im.kids.len {
             let src = ast.INFO[im.kids[k]].name
-            let local = ast.INFO[im.kids[k]].text
+            let local = ast.EXTRA[ast.ex(im.kids[k])].text
             for j in 0..k {
-                if ast.INFO[im.kids[j]].text == local {
+                if ast.EXTRA[ast.ex(im.kids[j])].text == local {
                     err(im.loc, "duplicate import name '{{local}}'")
                 }
             }
@@ -5397,16 +5397,16 @@ fn dedupe_fn_cnames() {
                 if pass == 0 && !user && kind(d) == Kind.Var {
                     cname_add("loam_{{MODS[m].name}}_{{ast.INFO[d].name}}")
                 }
-                if kind(d) != Kind.Fn || !ast.INFO[d].has_sname {
+                if kind(d) != Kind.Fn || !ast.EXTRA[ast.ex(d)].has_sname {
                     continue
                 }
-                let seam = is_intrinsic(d) && !ast.INFO[d].has_text
-                let fixed = !user || seam || ast.INFO[d].sname == "main"
+                let seam = is_intrinsic(d) && !ast.EXTRA[ast.ex(d)].has_text
+                let fixed = !user || seam || ast.EXTRA[ast.ex(d)].sname == "main"
                 if pass == 0 && fixed {
-                    cname_add(ast.INFO[d].sname)
+                    cname_add(ast.EXTRA[ast.ex(d)].sname)
                 }
                 if pass == 1 && !fixed {
-                    ast.INFO[d].sname = cname_claim(ast.INFO[d].sname)
+                    ast.EXTRA[ast.ex_mut(d)].sname = cname_claim(ast.EXTRA[ast.ex(d)].sname)
                 }
             }
         }
@@ -5491,13 +5491,13 @@ fn typecheck_modules() -> int {
                 }
             }
             if is_main_mod && x.name == "main" {
-                ast.INFO[d].sname = "main"
+                ast.EXTRA[ast.ex_mut(d)].sname = "main"
             } else if is_main_mod {
-                ast.INFO[d].sname = "loam_{{x.name}}"
+                ast.EXTRA[ast.ex_mut(d)].sname = "loam_{{x.name}}"
             } else {
-                ast.INFO[d].sname = "loam_{{MODS[m].name}}_{{x.name}}"
+                ast.EXTRA[ast.ex_mut(d)].sname = "loam_{{MODS[m].name}}_{{x.name}}"
             }
-            ast.INFO[d].has_sname = true
+            ast.EXTRA[ast.ex_mut(d)].has_sname = true
         }
     }
     claim_runtime_cnames()
@@ -5552,7 +5552,7 @@ fn typecheck_modules() -> int {
         let ds = decls_of(MODS[m].root)
         for i in 0..ds.len {
             let d = ds[i]
-            if kind(d) == Kind.Struct && ast.INFO[d].name == "Box" && ast.INFO[d].strs.len > 0 {
+            if kind(d) == Kind.Struct && ast.INFO[d].name == "Box" && ast.EXTRA[ast.ex(d)].strs.len > 0 {
                 err(ast.INFO[d].loc, "'Box' is the heap-box keyword; a struct named Box cannot take type arguments — name it something else")
             }
             if kind(d) == Kind.Fn && !is_intrinsic(d) {
