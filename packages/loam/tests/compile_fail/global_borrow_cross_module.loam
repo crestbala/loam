@@ -1,0 +1,10 @@
+// The same hazard through another module's global and fn.
+import "std:fmt"
+import "../mod/item_store.loam"
+
+fn main() {
+    item_store.add_item(1)
+    let first = &item_store.ITEMS[0]
+    item_store.grow_items()
+    fmt.println(first.value)
+}

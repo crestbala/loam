@@ -1,0 +1,17 @@
+// A caller could not see that the result points into ITEMS: return a copy or
+// an index instead.
+struct Item {
+    value: int,
+    label: string,
+}
+
+let mut ITEMS: []Item = []Item {}
+
+fn first_item() -> &Item {
+    return &ITEMS[0]
+}
+
+fn main() {
+    push(ITEMS, Item { value: 1, label: "first" })
+    let first = first_item()
+}
