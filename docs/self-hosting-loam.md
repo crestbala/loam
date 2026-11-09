@@ -98,7 +98,9 @@ runtime shim — §1.5, §1.6; cross-compiled, and run by the `selfhost` CI
 workflow) are done. Phase 4 (the lexer in Loam, §4 step 3) and phase 5 (the
 parser in Loam, arena AST, diffed via `--dump-ast`; §4 step 4) are done; the
 `selfhost` workflow ran green on Linux x86_64/aarch64 and Windows x86_64.
-Phase 6 (typecheck in Loam) is in progress; see the compiler-port checklist.
+Phase 6 (typecheck in Loam) is done and diffed against `typecheck.c`; the
+remaining sema passes, IR and codegen are next (see the compiler-port
+checklist).
 
 ---
 
@@ -546,10 +548,21 @@ beyond what the checklist requires.
         `types.loam` (type arena, `type.c`'s naming byte for byte),
         typecheck slots on the node arena, `tcdump.loam` (parses the listed
         modules and replays the loader's edits) and the
-        `selfhost_typecheck` stanza: a file the Loam checker stops on
-        (`unported:`) is pending, any real difference fails. Next: 6b the
-        core checker, 6c generics, 6d closures, 6e Zeus call sugar, 6f
-        codecs and attributes, then the gate goes strict.
+        `selfhost_typecheck` stanza.
+      - 6b–6f done: `compiler/typecheck.loam` ports all of `typecheck.c`
+        (the core checker, generics and monomorphization, closures and
+        captures, Zeus call sugar, codecs and attributes) and matches
+        `--dump-typed` on all 511 loadable entry files (`compile_pass`,
+        `compile_fail` diagnostics included, `draw_golden`,
+        `examples/language`): trees, mono / struct-instance / global tables,
+        diagnostics and exit status. The `unported` escape is gone and the
+        gate is strict: any difference fails. (19 files C itself cannot
+        load are counted apart.) The port surfaced a codegen bug: a borrow
+        of an indexed place passed beside an argument that grows the same
+        vec (`push(NODES[n].kids, new_node())`) took the address first and
+        wrote through it after the reallocation; such borrows are now
+        lowered last (`compile_pass/borrow_arg_realloc.loam`).
+      - Next: borrowck, boundscheck, IR, codegen.
 - [ ] Driver (module loading, package resolution, `cc` invocation) in Loam
 - [ ] Compiler itself uses only safe Loam (arenas + integer indices; §2.7)
 

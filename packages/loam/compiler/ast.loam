@@ -176,6 +176,8 @@ const M_VALUE_KEY: int = 128
 const M_INTRINSIC: int = 256
 const M_AS_VALUE: int = 512
 const M_ZERO_REST: int = 1024
+/** *With `M_PRINTLN`: `fmt.eprintln` (C's `is_println == 2`). */
+const M_EPRINTLN: int = 2048
 
 /** *A diagnostic: where, and what. */
 struct Diag {

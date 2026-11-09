@@ -594,6 +594,7 @@ fn name_of(t: int, symbol: bool) -> string {
                 default:
                     return if int64_compat { "int" } else { "i32" }
             }
+            break
         case TK.Float:
             if x.bits == 32 {
                 return if int64_compat { "f32" } else { "float" }

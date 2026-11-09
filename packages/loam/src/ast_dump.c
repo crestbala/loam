@@ -539,11 +539,14 @@ int ast_dump_modules(const char *path) {
     fputs("rt ", stdout);
     put_str(LOAM_RT_PATH);
     putchar('\n');
+    fputs("std ", stdout);
+    put_str(LOAM_STD_DIR);
+    putchar('\n');
     for (int m = 0; m < g_sess.nmods; m++) {
         LoamModule *mod = &g_sess.mods[m];
         printf("module %d", m);
         put_attr_str("name", mod->name);
-        printf(" rank=%d", mod->done_rank);
+        printf(" rank=%d std=%d", mod->done_rank, loam_is_std_path(mod->path));
         put_attr_str("path", mod->path);
         putchar('\n');
         AstNode *p = mod->ast;
