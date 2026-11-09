@@ -190,19 +190,29 @@ struct NodeInfo {
     aux: int,
     /** *Whether `name` / `text` / `doc` are present (C's non-NULL). */
     has_name: bool,
-    has_text: bool,
-    has_doc: bool,
     name: string,
-    text: string,
-    doc: string,
     num: i64,
-    fnum: f64,
-    kids2: []int,
-    strs: []string,
     place_mut: int,
     /** *Ident: where the definition is (`def_loc`), 0 when unknown. */
     def_line: int,
     def_col: int,
+    /** *`M_*` bits below. */
+    marks: int,
+    /** *Index of this node's `NodeExtra` in `EXTRA`; 0 (the shared empty */
+    /** *one) when it sets none of those fields. */
+    extra: int,
+}
+
+/** *The fields only some kinds set (text, docs, C names, call cells, */
+/** *captures): stored only for a node that sets one, so the rest pay 4 bytes. */
+struct NodeExtra {
+    has_text: bool,
+    has_doc: bool,
+    text: string,
+    doc: string,
+    fnum: f64,
+    kids2: []int,
+    strs: []string,
     /** *Fn / Closure: C name. Program: module name. Import: resolved path. */
     /** *Try: the fn's return type name. Call: the resolved callee's C name. */
     sname: string,
@@ -210,8 +220,6 @@ struct NodeInfo {
     /** *Call: the C symbol a builtin emits. */
     cbuiltin: string,
     has_cbuiltin: bool,
-    /** *`M_*` bits below. */
-    marks: int,
     /** *Call: `NumericBuiltin`, signal / future / channel cell ops. */
     numb: int,
     sig: int,
@@ -250,6 +258,9 @@ struct Diag {
 /** *the same index. */
 let mut NODES: []Node = []Node {}
 let mut INFO: []NodeInfo = []NodeInfo {}
+/** *`EXTRA[0]` is the empty one every node without extras reads; nothing */
+/** *writes it (`ex_mut` gives a node its own first). */
+let mut EXTRA: []NodeExtra = []NodeExtra { empty_extra() }
 /** *Diagnostics in the order they were reported. */
 let mut DIAGS: []Diag = []Diag {}
 
@@ -295,8 +306,75 @@ fn node(kind: int, loc: Loc) -> NodeBuild {
     }
 }
 
+fn empty_extra() -> NodeExtra {
+    return NodeExtra {
+        has_text: false,
+        has_doc: false,
+        text: "",
+        doc: "",
+        fnum: 0.0,
+        kids2: []int {},
+        strs: []string {},
+        sname: "",
+        has_sname: false,
+        cbuiltin: "",
+        has_cbuiltin: false,
+        numb: 0,
+        sig: 0,
+        fut: 0,
+        ch: 0,
+        clos_id: 0,
+        conv: 0,
+        caps: []string {},
+        cap_types: []int {},
+    }
+}
+
 /** *Store a built node; returns its index. */
 fn add(n: NodeBuild) -> int {
+    let mut extra = 0
+    if n.has_text ||
+        n.has_doc ||
+        n.text.len > 0 ||
+        n.doc.len > 0 ||
+        n.fnum != 0.0 ||
+        n.kids2.len > 0 ||
+        n.strs.len > 0 ||
+        n.sname.len > 0 ||
+        n.has_sname ||
+        n.cbuiltin.len > 0 ||
+        n.has_cbuiltin ||
+        n.numb != 0 ||
+        n.sig != 0 ||
+        n.fut != 0 ||
+        n.ch != 0 ||
+        n.clos_id != 0 ||
+        n.conv != 0 ||
+        n.caps.len > 0 ||
+        n.cap_types.len > 0 {
+        push(EXTRA, NodeExtra {
+            has_text: n.has_text,
+            has_doc: n.has_doc,
+            text: n.text,
+            doc: n.doc,
+            fnum: n.fnum,
+            kids2: n.kids2,
+            strs: n.strs,
+            sname: n.sname,
+            has_sname: n.has_sname,
+            cbuiltin: n.cbuiltin,
+            has_cbuiltin: n.has_cbuiltin,
+            numb: n.numb,
+            sig: n.sig,
+            fut: n.fut,
+            ch: n.ch,
+            clos_id: n.clos_id,
+            conv: n.conv,
+            caps: n.caps,
+            cap_types: n.cap_types,
+        })
+        extra = EXTRA.len - 1
+    }
     push(NODES, Node {
         kind: n.kind,
         flags: n.flags,
@@ -312,37 +390,34 @@ fn add(n: NodeBuild) -> int {
         loc: n.loc,
         aux: n.aux,
         has_name: n.has_name,
-        has_text: n.has_text,
-        has_doc: n.has_doc,
         name: n.name,
-        text: n.text,
-        doc: n.doc,
         num: n.num,
-        fnum: n.fnum,
-        kids2: n.kids2,
-        strs: n.strs,
         place_mut: n.place_mut,
         def_line: n.def_line,
         def_col: n.def_col,
-        sname: n.sname,
-        has_sname: n.has_sname,
-        cbuiltin: n.cbuiltin,
-        has_cbuiltin: n.has_cbuiltin,
         marks: n.marks,
-        numb: n.numb,
-        sig: n.sig,
-        fut: n.fut,
-        ch: n.ch,
-        clos_id: n.clos_id,
-        conv: n.conv,
-        caps: n.caps,
-        cap_types: n.cap_types,
+        extra: extra,
     })
     return NODES.len - 1
 }
 
+/** *Where node `i`'s rare fields are, for reading (the empty one if none). */
+fn ex(i: int) -> int {
+    return INFO[i].extra
+}
+
+/** *Where node `i`'s rare fields are, for writing: its own, made on first use. */
+fn ex_mut(i: int) -> int {
+    if INFO[i].extra == 0 {
+        push(EXTRA, empty_extra())
+        INFO[i].extra = EXTRA.len - 1
+    }
+    return INFO[i].extra
+}
+
 /** *A copy of node `i`, whole. */
 fn full(i: int) -> NodeBuild {
+    let x = INFO[i].extra
     return NodeBuild {
         kind: NODES[i].kind,
         loc: INFO[i].loc,
@@ -350,42 +425,46 @@ fn full(i: int) -> NodeBuild {
         op: NODES[i].op,
         aux: INFO[i].aux,
         has_name: INFO[i].has_name,
-        has_text: INFO[i].has_text,
-        has_doc: INFO[i].has_doc,
+        has_text: EXTRA[x].has_text,
+        has_doc: EXTRA[x].has_doc,
         name: INFO[i].name,
-        text: INFO[i].text,
-        doc: INFO[i].doc,
+        text: EXTRA[x].text,
+        doc: EXTRA[x].doc,
         num: INFO[i].num,
-        fnum: INFO[i].fnum,
+        fnum: EXTRA[x].fnum,
         a: NODES[i].a,
         b: NODES[i].b,
         c: NODES[i].c,
         kids: NODES[i].kids,
-        kids2: INFO[i].kids2,
-        strs: INFO[i].strs,
+        kids2: EXTRA[x].kids2,
+        strs: EXTRA[x].strs,
         ty: NODES[i].ty,
         place_mut: INFO[i].place_mut,
         res: NODES[i].res,
         def_line: INFO[i].def_line,
         def_col: INFO[i].def_col,
-        sname: INFO[i].sname,
-        has_sname: INFO[i].has_sname,
-        cbuiltin: INFO[i].cbuiltin,
-        has_cbuiltin: INFO[i].has_cbuiltin,
+        sname: EXTRA[x].sname,
+        has_sname: EXTRA[x].has_sname,
+        cbuiltin: EXTRA[x].cbuiltin,
+        has_cbuiltin: EXTRA[x].has_cbuiltin,
         marks: INFO[i].marks,
-        numb: INFO[i].numb,
-        sig: INFO[i].sig,
-        fut: INFO[i].fut,
-        ch: INFO[i].ch,
-        clos_id: INFO[i].clos_id,
-        conv: INFO[i].conv,
-        caps: INFO[i].caps,
-        cap_types: INFO[i].cap_types,
+        numb: EXTRA[x].numb,
+        sig: EXTRA[x].sig,
+        fut: EXTRA[x].fut,
+        ch: EXTRA[x].ch,
+        clos_id: EXTRA[x].clos_id,
+        conv: EXTRA[x].conv,
+        caps: EXTRA[x].caps,
+        cap_types: EXTRA[x].cap_types,
     }
 }
 
-/** *Node `dst` becomes a copy of node `src`. */
+/** *Node `dst` becomes a copy of node `src` (its extras copied, not shared). */
 fn copy_node(dst: int, src: int) {
     NODES[dst] = NODES[src]
     INFO[dst] = INFO[src]
+    if INFO[src].extra != 0 {
+        push(EXTRA, EXTRA[INFO[src].extra])
+        INFO[dst].extra = EXTRA.len - 1
+    }
 }

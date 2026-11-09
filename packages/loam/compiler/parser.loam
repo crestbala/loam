@@ -263,8 +263,8 @@ fn init_node(p: &mut Parser, name: string, value: int) -> int {
 }
 
 fn set_doc(p: &mut Parser, i: int, d: Doc) {
-    ast.INFO[i].doc = d.text
-    ast.INFO[i].has_doc = d.has
+    ast.EXTRA[ast.ex_mut(i)].doc = d.text
+    ast.EXTRA[ast.ex_mut(i)].has_doc = d.has
 }
 
 // --- literal text ------------------------------------------------------------
@@ -752,7 +752,7 @@ fn parse_type(p: &mut Parser) -> int {
             }
         }
         consume_gt(p)
-        ast.INFO[t].kids2 = targs
+        ast.EXTRA[ast.ex_mut(t)].kids2 = targs
     }
     return t
 }
@@ -2328,8 +2328,8 @@ fn parse_program(p: &mut Parser) -> int {
                     bits = bits | FN_SERVER
                 }
                 ast.NODES[f].op = bits
-                ast.INFO[f].text = c_sym
-                ast.INFO[f].has_text = has_c_sym
+                ast.EXTRA[ast.ex_mut(f)].text = c_sym
+                ast.EXTRA[ast.ex_mut(f)].has_text = has_c_sym
                 push(kids, f)
                 decl_count = decl_count + 1
             }

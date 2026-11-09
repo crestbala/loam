@@ -80,7 +80,7 @@ fn decl_is_seam(fn_decl: int) -> bool {
 }
 
 fn is_generic(fn_decl: int) -> bool {
-    return ast.INFO[fn_decl].strs.len > 0
+    return ast.EXTRA[ast.ex(fn_decl)].strs.len > 0
 }
 
 /** *The fn decl an `Ident` / `Field` names, or `ast.NONE`. */
@@ -98,8 +98,8 @@ fn resolved_of(node: int) -> int {
 /** *The C symbol a call resolves to, or "". */
 fn callee_cname(call: int) -> string {
     let fn_decl = resolved_of(ast.NODES[call].a)
-    if fn_decl != ast.NONE && ast.NODES[fn_decl].kind == Kind.Fn && ast.INFO[fn_decl].has_sname {
-        return ast.INFO[fn_decl].sname
+    if fn_decl != ast.NONE && ast.NODES[fn_decl].kind == Kind.Fn && ast.EXTRA[ast.ex(fn_decl)].has_sname {
+        return ast.EXTRA[ast.ex(fn_decl)].sname
     }
     return ""
 }
@@ -124,13 +124,13 @@ fn worker_call(call: int) {
     let marks = ast.INFO[call].marks
     // Vec and interpolation builtins operate on worker-local storage only.
     if (marks & (ast.M_VEC_PUSH | ast.M_VEC_POP | ast.M_PRINTLN | ast.M_SIZEOF | ast.M_PANIC | ast.M_VALUE_KEY)) != 0 ||
-        ast.INFO[call].numb != Numb.None {
+        ast.EXTRA[ast.ex(call)].numb != Numb.None {
         walk_args(call)
         return
     }
     // Pure value helpers wired by name in typecheck.
-    if ast.INFO[call].has_cbuiltin {
-        let builtin = ast.INFO[call].cbuiltin
+    if ast.EXTRA[ast.ex(call)].has_cbuiltin {
+        let builtin = ast.EXTRA[ast.ex(call)].cbuiltin
         if !in_worker_seam_ok(builtin) {
             report(ast.INFO[call].loc, clip("spawned fn calls the C seam '{{builtin}}'", 128))
         }
@@ -182,8 +182,8 @@ fn worker_call(call: int) {
     let fn_decl = resolved_of(callee)
     if fn_decl != ast.NONE && ast.NODES[fn_decl].kind == Kind.Fn {
         if decl_is_seam(fn_decl) {
-            let has_cname = ast.INFO[fn_decl].has_sname
-            let cname = if has_cname { ast.INFO[fn_decl].sname } else { "?" }
+            let has_cname = ast.EXTRA[ast.ex(fn_decl)].has_sname
+            let cname = if has_cname { ast.EXTRA[ast.ex(fn_decl)].sname } else { "?" }
             if !has_cname || !in_worker_seam_ok(cname) {
                 report(ast.INFO[call].loc, clip("spawned fn calls the C seam '{{cname}}', which is not allowed from a worker (allowed: pure value helpers and channel ops)", 160))
             }
@@ -301,9 +301,9 @@ fn scan_spawn(call: int) {
     }
     let callback = ast.NODES[call].kids[0]
     if ast.NODES[callback].kind == Kind.Closure {
-        let captures = ast.INFO[callback].caps
+        let captures = ast.EXTRA[ast.ex(callback)].caps
         for i in 0..captures.len {
-            let capture_type = if i < ast.INFO[callback].cap_types.len { ast.INFO[callback].cap_types[i] } else { types.NO_TYPE }
+            let capture_type = if i < ast.EXTRA[ast.ex(callback)].cap_types.len { ast.EXTRA[ast.ex(callback)].cap_types[i] } else { types.NO_TYPE }
             if capture_type == types.NO_TYPE || !types.is_send(capture_type) {
                 report(ast.INFO[callback].loc, clip("thread.spawn callback captures '{{captures[i]}}' (type {{types.type_name(capture_type)}}), which is not Send: workers may carry only plain data (no []T, fn, Box, or borrows)", 256))
             }

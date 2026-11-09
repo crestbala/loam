@@ -360,8 +360,8 @@ fn expr_uses(n: int, name: string) -> bool {
         case Kind.Index, Kind.Binary:
             return expr_uses(ast.NODES[n].a, name) || expr_uses(ast.NODES[n].b, name)
         case Kind.Closure:
-            for i in 0..ast.INFO[n].caps.len {
-                if ast.INFO[n].caps[i] == name {
+            for i in 0..ast.EXTRA[ast.ex(n)].caps.len {
+                if ast.EXTRA[ast.ex(n)].caps[i] == name {
                     return true
                 }
             }
@@ -779,8 +779,8 @@ fn writes_add_callee(index: int, callee: int) {
 fn is_builtin_call(call: int) -> bool {
     let marks = ast.INFO[call].marks
     let builtin_marks = ast.M_PRINTLN | ast.M_VEC_PUSH | ast.M_VEC_POP | ast.M_SIZEOF | ast.M_BOX_NEW | ast.M_PANIC | ast.M_VALUE_KEY
-    return (marks & builtin_marks) != 0 || ast.INFO[call].has_cbuiltin || ast.INFO[call].numb != Numb.None ||
-        ast.INFO[call].fut != 0 || ast.INFO[call].ch != 0 || (ast.INFO[call].sig != 0 && ast.INFO[call].sig != 3)
+    return (marks & builtin_marks) != 0 || ast.EXTRA[ast.ex(call)].has_cbuiltin || ast.EXTRA[ast.ex(call)].numb != Numb.None ||
+        ast.EXTRA[ast.ex(call)].fut != 0 || ast.EXTRA[ast.ex(call)].ch != 0 || (ast.EXTRA[ast.ex(call)].sig != 0 && ast.EXTRA[ast.ex(call)].sig != 3)
 }
 
 /** *What a call runs: `callee` its fn decl (or `ast.NONE`), `runs_unknown` */
@@ -1676,7 +1676,7 @@ fn check_expr(n: int, as_move: bool) -> bool {
 }
 
 fn check_closure(n: int) -> bool {
-    let captures = ast.INFO[n].caps
+    let captures = ast.EXTRA[ast.ex(n)].caps
     for i in 0..captures.len {
         let source = find_b(captures[i])
         if source >= 0 && BINDINGS[source].own == Own.Moved {
@@ -1702,7 +1702,7 @@ fn check_closure(n: int) -> bool {
     }
     // The body reads its captures, not the outer bindings.
     for k in 0..captures.len {
-        let capture_type = if k < ast.INFO[n].cap_types.len { ast.INFO[n].cap_types[k] } else { types.NO_TYPE }
+        let capture_type = if k < ast.EXTRA[ast.ex(n)].cap_types.len { ast.EXTRA[ast.ex(n)].cap_types[k] } else { types.NO_TYPE }
         push_b(captures[k], capture_type)
     }
     // The body runs later: outer holders stay as they are.
