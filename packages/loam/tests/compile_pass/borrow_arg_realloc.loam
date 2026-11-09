@@ -1,0 +1,29 @@
+// A borrow of an indexed place (`NODES[root].kids`) passed next to an argument
+// that grows the same vec: the address is taken after the other arguments, so
+// the reallocation cannot leave it dangling.
+import "std:fmt"
+
+struct N { kids: []int, v: int }
+
+let mut NODES: []N = []N {}
+
+fn mk(v: int) -> int {
+    push(NODES, N { kids: []int {}, v: v })
+    return NODES.len - 1
+}
+
+fn add(k: &mut []int, x: int) {
+    push(k, x)
+}
+
+fn main() {
+    let root = mk(0)
+    for i in 0..3000 {
+        push(NODES[root].kids, mk(i))
+        add(&mut NODES[root].kids, mk(i))
+    }
+    NODES[root].v = mk(7)
+    fmt.println(NODES[root].kids.len)
+    fmt.println(NODES[root].v)
+    fmt.println(NODES.len)
+}
