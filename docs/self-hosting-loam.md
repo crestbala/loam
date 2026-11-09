@@ -698,6 +698,22 @@ beyond what the checklist requires.
         exits dropped nothing. Every reachable block is now visited at least
         once, in both compilers
         (`compile_pass/drop_after_empty_entry.loam`; it leaked 58 MB before).
+      - Codegen (phase 9). Plan: 9.0 trims and fixes `codegen_c.c` before it
+        is ported; 9a ports DCE behind a `--dump-dce` gate; 9b ports codegen,
+        diffed byte for byte against `--emit-c` by a `selfhost_codegen`
+        stanza; 9c brings it to speed and memory parity.
+      - 9.0 done. Every fn body is emitted from IR: `ir.c` lowers everything
+        typecheck accepts (no entry in the tests, the draw goldens, the
+        language examples or the Zeus apps has a partially lowered fn). So
+        the AST emission path is gone, and a fn the IR could not lower is an
+        internal error. `codegen_c.c` went from 4,542 to 3,332 lines, and
+        the port needs one emission path, not two.
+      - 9.0 also fixed a bug the IR port surfaced: a parameter, struct field
+        or capture named with a word C reserves (`signed`, `register`,
+        `stdout`…) was written into the C as it is, and the C did not
+        compile. Every such name now goes through one helper, `cid`, which
+        spells a reserved name `loam_kw_<name>`
+        (`compile_pass/c_reserved_names.loam`; 20 C errors before).
 - [ ] Driver (module loading, package resolution, `cc` invocation) in Loam
 - [ ] Compiler itself uses only safe Loam (arenas + integer indices; §2.7)
 

@@ -8,8 +8,10 @@
  *   4. prototypes, closure envs, monomorphized generics
  *   5. function bodies; main returns 0
  *
- * Fully-lowered function bodies are emitted from IrModule (blocks + gotos).
- * Closures are env-struct + fn-pointer (`IR_CLOS`). Intrinsics have no C body.
+ * Every function body is emitted from IrModule (blocks + gotos): ir.c lowers
+ * everything typecheck accepts, so a fn it could not lower is an internal
+ * error, not a second emission path. Closures are env-struct + fn-pointer
+ * (`IR_CLOS`). Intrinsics have no C body.
  */
 #include "codegen_c.h"
 #include "compile.h"
@@ -23,10 +25,6 @@
 #include <stdio.h>
 #include <stdint.h>
 
-static int tmp_id;
-static int drop_sp;
-static const char *drop_names[64][64];
-static int drop_n[64];
 /* Element retain/release hooks for vectors whose elements themselves own
    something (a string leaf, a nested `[]T`, a `Box`, an owning struct/array):
    one pair per distinct element type, referenced by index from the vec calls
@@ -130,7 +128,6 @@ static void collect_elem_hooks(void) {
 }
 static const char *cur_mod_name;
 static int cur_is_main_mod;
-static AstNode *emit_clos;
 static const char **subst_names;
 static Type **subst_args;
 static size_t subst_n;
@@ -139,9 +136,6 @@ static const char *cname_override;
 static AstNode **clos_nodes;
 static int nclos_nodes;
 static int clos_cap;
-static AstNode *clos_hoist_node[64];
-static int clos_hoist_tid[64];
-static int clos_hoist_n;
 static IrModule *emit_ir_mod;
 static LoamModule *emit_mods;
 static int emit_nmods;
@@ -236,9 +230,33 @@ static void emit_line_directive(FILE *o, SourceLoc loc) {
     line_map_no = loc.line;
 }
 
-static void emit_expr(FILE *o, AstNode *n);
-static void emit_cond(FILE *o, AstNode *n);
-static void emit_stmt(FILE *o, AstNode *n, int ind);
+/* A Loam name used as a C identifier. Loam allows names C reserves
+   (`signed`, `int`, `default`, `stdout`, ...); written as they are, the C
+   would not compile. Those get a `loam_kw_` prefix (`loam_` names are the
+   compiler's). Every place a parameter, local, struct field or capture name
+   reaches the C goes through here, so all spellings of one name agree. */
+static const char *cid(const char *name) {
+    static const char *const RESERVED[] = {
+        "_Alignas", "_Alignof", "_Atomic", "_Bool", "_Complex", "_Generic", "_Imaginary",
+        "_Noreturn", "_Static_assert", "_Thread_local", "asm", "auto", "bool", "break",
+        "case", "char", "const", "continue", "default", "do", "double", "else", "enum",
+        "errno", "extern", "false", "float", "for", "goto", "if", "inline", "int", "long",
+        "NULL", "register", "restrict", "return", "short", "signed", "sizeof", "static",
+        "stderr", "stdin", "stdout", "struct", "switch", "true", "typedef", "typeof",
+        "union", "unsigned", "void", "volatile", "while",
+    };
+    static char bufs[8][160];
+    static int next;
+    if (!name) return name;
+    for (size_t i = 0; i < sizeof RESERVED / sizeof *RESERVED; i++) {
+        if (strcmp(name, RESERVED[i]) == 0) {
+            char *b = bufs[next++ & 7];
+            snprintf(b, sizeof bufs[0], "loam_kw_%s", name);
+            return b;
+        }
+    }
+    return name;
+}
 
 /** An integer literal. The most negative value has no C spelling of its own. */
 static void emit_int_lit(FILE *o, int64_t v) {
@@ -252,7 +270,6 @@ static void emit_case_label(FILE *o, int64_t v) {
     emit_int_lit(o, v);
     fprintf(o, ": ");
 }
-static void emit_block_body(FILE *o, AstNode *b, int ind, int is_main);
 static IrFn *find_ir_fn(const char *cname);
 static void lit_template_use(const IrInst *in, const char *cn);
 static const char *c_assignop(int op);
@@ -471,7 +488,7 @@ static void emit_value_key(FILE *o, Type *t, const char *place) {
             for (fi = 0; fi < t->field_count; fi++) {
                 char child[1024];
                 if (!t->field_names[fi]) continue;
-                snprintf(child, sizeof child, "%s.%s", place, t->field_names[fi]);
+                snprintf(child, sizeof child, "%s.%s", place, cid(t->field_names[fi]));
                 fprintf(o, "{ loam_str _k%d_%zu = ", id, fi);
                 emit_value_key(o, t->field_types[fi], child);
                 fprintf(o, "; _a%d = loam_key_cat(_a%d, _k%d_%zu); } ", id, id, id, fi);
@@ -575,8 +592,8 @@ static void emit_value_eq(FILE *o, Type *t, const char *a, const char *b) {
             for (fi = 0; fi < t->field_count; fi++) {
                 char ca[1024], cb[1024];
                 if (!t->field_names[fi]) continue;
-                snprintf(ca, sizeof ca, "%s.%s", a, t->field_names[fi]);
-                snprintf(cb, sizeof cb, "%s.%s", b, t->field_names[fi]);
+                snprintf(ca, sizeof ca, "%s.%s", a, cid(t->field_names[fi]));
+                snprintf(cb, sizeof cb, "%s.%s", b, cid(t->field_names[fi]));
                 fprintf(o, " && ");
                 emit_value_eq(o, t->field_types[fi], ca, cb);
             }
@@ -647,112 +664,6 @@ static void emit_sig_changed(FILE *o, Type *t, const char *id, const char *val) 
         emit_value_eq(o, t, cur, val);
         fprintf(o, "; } _chg%d; })", k);
     }
-}
-
-static const char *src_file(AstNode *n) {
-    return (n && n->loc.file) ? n->loc.file : "loam";
-}
-
-/** File and line arguments for loam_panic / loam_idx / loam_new. */
-static void emit_loc_args(FILE *o, AstNode *n) {
-    fprintf(o, "\"");
-    const char *f = public_file(src_file(n));
-    for (const char *p = f; *p; p++) {
-        if (*p == '\\' || *p == '"') fputc('\\', o);
-        fputc(*p, o);
-    }
-    fprintf(o, "\", %d", n ? n->loc.line : 0);
-}
-
-static int is_ptrish(Type *t) { return t && (t->kind == TY_PTR || t->kind == TY_BOX); }
-
-static void emit_ident_name(FILE *o, const char *name) {
-    if (emit_clos && name) {
-        for (size_t i = 0; i < emit_clos->as.fn.cap_count; i++) {
-            if (strcmp(emit_clos->as.fn.caps[i], name) == 0) {
-                fprintf(o, "_e->%s", name);
-                return;
-            }
-        }
-    }
-    fprintf(o, "%s", name);
-}
-
-/** L-value: ident (or _e->cap inside a closure), deref, field, checked index. */
-static void emit_place(FILE *o, AstNode *n) {
-    if (!n) {
-        fprintf(o, "/*place*/");
-        return;
-    }
-    switch (n->kind) {
-        case AST_IDENT:
-            emit_ident_name(o, n->as.ident.name);
-            break;
-        case AST_DEREF:
-            fprintf(o, "(*");
-            emit_expr(o, n->as.access.target);
-            fprintf(o, ")");
-            break;
-        case AST_FIELD:
-            if (is_ptrish(n->as.access.target->ty)) {
-                fprintf(o, "(");
-                emit_expr(o, n->as.access.target);
-                fprintf(o, ")->%s", n->as.access.field);
-            } else {
-                emit_place(o, n->as.access.target);
-                fprintf(o, ".%s", n->as.access.field);
-            }
-            break;
-        case AST_INDEX: {
-            Type *t = n->as.access.target->ty;
-            if (t && (t->kind == TY_PTR || t->kind == TY_BOX)) t = t->elem;
-            if (t && t->kind == TY_STRING) {
-                fprintf(o, "((int64_t)(unsigned char)");
-                emit_place(o, n->as.access.target);
-                fprintf(o, ".ptr[");
-                if (n->flags & ASTF_INDEX_SAFE)
-                    emit_expr(o, n->as.access.index);
-                else {
-                    fprintf(o, "loam_idx(");
-                    emit_expr(o, n->as.access.index);
-                    fprintf(o, ", ");
-                    emit_place(o, n->as.access.target);
-                    fprintf(o, ".len, ");
-                    emit_loc_args(o, n);
-                    fprintf(o, ")");
-                }
-                fprintf(o, "])");
-                break;
-            }
-            emit_place(o, n->as.access.target);
-            fprintf(o, "[");
-            int64_t len = (t && t->kind == TY_ARRAY) ? t->array_len : 0;
-            if (n->flags & ASTF_INDEX_SAFE)
-                emit_expr(o, n->as.access.index);
-            else {
-                fprintf(o, "loam_idx(");
-                emit_expr(o, n->as.access.index);
-                fprintf(o, ", %lld, ", (long long)len);
-                emit_loc_args(o, n);
-                fprintf(o, ")");
-            }
-            fprintf(o, "]");
-            break;
-        }
-        default:
-            emit_expr(o, n);
-            break;
-    }
-}
-
-static void emit_checked_bin(FILE *o, const char *fn, AstNode *n) {
-    fprintf(o, "%s(", fn);
-    emit_expr(o, n->as.binary.left);
-    fprintf(o, ", ");
-    emit_expr(o, n->as.binary.right);
-    fprintf(o, ", ");
-    emit_loc_args(o, n);
-    fprintf(o, ")");
 }
 
 /** Trapping arithmetic helper for integer type `t` (`loam_add_i32`). NULL for
@@ -877,30 +788,6 @@ static void emit_str_lit(FILE *o, const char *s) {
     fprintf(o, "\", %lld})", (long long)n);
 }
 
-static int is_capturing_clos(AstNode *n) {
-    return n && n->kind == AST_CLOSURE && n->as.fn.cap_count > 0;
-}
-
-static int call_has_mut_ref_arg(AstNode *n) {
-    for (size_t i = 0; i < n->as.call.arg_count; i++) {
-        Type *t = n->as.call.args[i] ? n->as.call.args[i]->ty : NULL;
-        if (t && t->kind == TY_PTR && t->is_mut) return 1;
-    }
-    return 0;
-}
-
-/**
- * 1 if this call's capturing-closure args can live on the caller's stack:
- * the result cannot store a fn, and no &mut arg could stash one.
- */
-static int can_stack_clos_args(AstNode *n) {
-    if (!n || type_can_hold_fn(n->ty) || call_has_mut_ref_arg(n)) return 0;
-    if (is_capturing_clos(n->as.call.callee)) return 1;
-    for (size_t i = 0; i < n->as.call.arg_count; i++)
-        if (is_capturing_clos(n->as.call.args[i])) return 1;
-    return 0;
-}
-
 /** Declare a stack env for `clos` and record it for emit of that node. */
 static int type_is_copy_vec(Type *t) {
     return t && t->kind == TY_VEC && type_is_copy(t);
@@ -913,1077 +800,7 @@ static int type_is_refcounted(Type *t) {
     return type_string_owns() && t && t->kind == TY_STRING;
 }
 
-/** Copy a capture into a closure env; []T must retain the buffer. */
-static void emit_cap_set_ident(FILE *o, Type *ty, const char *dst_field, const char *src) {
-    if (type_is_copy_vec(ty)) {
-        fprintf(o, "%s = loam_vec_retain(&", dst_field);
-        emit_ident_name(o, src);
-        fprintf(o, ")");
-    } else {
-        fprintf(o, "%s = ", dst_field);
-        emit_ident_name(o, src);
-    }
-}
-
-/** Declare a stack env for `clos` and record it for emit of that node. */
-static void hoist_capturing_clos(FILE *o, AstNode *clos) {
-    if (!is_capturing_clos(clos) || clos_hoist_n >= 64) return;
-    int tid = tmp_id++;
-    int id = clos->as.fn.clos_id;
-    fprintf(o, "struct loam_env_%d _ce%d; ", id, tid);
-    for (size_t i = 0; i < clos->as.fn.cap_count; i++) {
-        char dst[128];
-        snprintf(dst, sizeof dst, "_ce%d.%s", tid, clos->as.fn.caps[i]);
-        emit_cap_set_ident(o, clos->as.fn.cap_types[i], dst, clos->as.fn.caps[i]);
-        fprintf(o, "; ");
-    }
-    clos_hoist_node[clos_hoist_n] = clos;
-    clos_hoist_tid[clos_hoist_n] = tid;
-    clos_hoist_n++;
-}
-
-static int hoist_call_clos_envs(FILE *o, AstNode *n) {
-    int before = clos_hoist_n;
-    hoist_capturing_clos(o, n->as.call.callee);
-    for (size_t i = 0; i < n->as.call.arg_count; i++)
-        hoist_capturing_clos(o, n->as.call.args[i]);
-    return clos_hoist_n - before;
-}
-
-static int hoist_tid_for(AstNode *n) {
-    for (int i = 0; i < clos_hoist_n; i++)
-        if (clos_hoist_node[i] == n) return clos_hoist_tid[i];
-    return -1;
-}
-
-/** malloc a Box and write the payload (GNU statement-expr). */
-static void emit_box_new(FILE *o, AstNode *n) {
-    Type *bt = n->ty;
-    Type *et = (bt && bt->kind == TY_BOX) ? bt->elem : ty_int();
-    int id = tmp_id++;
-    fprintf(o, "({ ");
-    emit_ctype(o, et);
-    fprintf(o, " *_b%d = (", id);
-    emit_ctype(o, et);
-    fprintf(o, " *)loam_new(sizeof(");
-    emit_ctype(o, et);
-    fprintf(o, "), ");
-    emit_loc_args(o, n);
-    fprintf(o, "); *_b%d = ", id);
-    emit_expr(o, n->as.call.args[0]);
-    fprintf(o, "; _b%d; })", id);
-}
-
-/** Lower fmt.println to one writev: strings by len, ints via stack itoa. */
-static void emit_println(FILE *o, AstNode *n, int ind) {
-    size_t nargs = n->as.call.arg_count;
-    int cap = nargs == 0 ? 1 : (int)(2 * nargs);
-    indent(o, ind);
-    fprintf(o, "{\n");
-    indent(o, ind + 1);
-    fprintf(o, "struct iovec _iov[%d];\n", cap);
-    indent(o, ind + 1);
-    fprintf(o, "int _ni = 0;\n");
-    for (size_t i = 0; i < nargs; i++) {
-        if (i) {
-            indent(o, ind + 1);
-            fprintf(o, "_iov[_ni].iov_base = (void *)\" \"; _iov[_ni].iov_len = 1; _ni++;\n");
-        }
-        AstNode *a = n->as.call.args[i];
-        Type *t = a->ty;
-        if (t && t->kind == TY_STRING) {
-            if (a->kind == AST_STRING) {
-                size_t nlen = a->as.lit.str ? strlen(a->as.lit.str) : 0;
-                indent(o, ind + 1);
-                fprintf(o, "_iov[_ni].iov_base = (void *)\"");
-                emit_c_string_body(o, a->as.lit.str);
-                fprintf(o, "\"; _iov[_ni].iov_len = %llu; _ni++;\n",
-                        (unsigned long long)nlen);
-            } else {
-                indent(o, ind + 1);
-                fprintf(o, "loam_str _ss%zu = ", i);
-                emit_expr(o, a);
-                fprintf(o, ";\n");
-                indent(o, ind + 1);
-                fprintf(o, "_iov[_ni].iov_base = (void *)(_ss%zu.ptr ? _ss%zu.ptr : \"\"); ", i, i);
-                fprintf(o, "_iov[_ni].iov_len = _ss%zu.len > 0 ? (size_t)_ss%zu.len : 0; _ni++;\n", i, i);
-            }
-        } else if (t && t->kind == TY_BOOL) {
-            indent(o, ind + 1);
-            fprintf(o, "if (");
-            emit_cond(o, a);
-            fprintf(o, ") { _iov[_ni].iov_base = (void *)\"true\"; _iov[_ni].iov_len = 4; }");
-            fprintf(o, " else { _iov[_ni].iov_base = (void *)\"false\"; _iov[_ni].iov_len = 5; } _ni++;\n");
-        } else if (t && t->kind == TY_FLOAT) {
-            indent(o, ind + 1);
-            fprintf(o, "char _fb%zu[64]; loam_str _fs%zu = loam_fmt_ftoa(_fb%zu, ", i, i, i);
-            emit_expr(o, a);
-            fprintf(o, ");\n");
-            indent(o, ind + 1);
-            fprintf(o, "_iov[_ni].iov_base = (void *)_fs%zu.ptr; _iov[_ni].iov_len = (size_t)_fs%zu.len; _ni++;\n",
-                    i, i);
-        } else {
-            indent(o, ind + 1);
-            fprintf(o, "char _ib%zu[24]; loam_str _is%zu = %s(_ib%zu, ", i, i,
-                    t && t->kind == TY_INT && t->is_unsigned && t->bits == 64 ? "loam_fmt_utoa"
-                                                                               : "loam_fmt_itoa",
-                    i);
-            emit_expr(o, a);
-            fprintf(o, ");\n");
-            indent(o, ind + 1);
-            fprintf(o, "_iov[_ni].iov_base = (void *)_is%zu.ptr; _iov[_ni].iov_len = (size_t)_is%zu.len; _ni++;\n",
-                    i, i);
-        }
-    }
-    indent(o, ind + 1);
-    fprintf(o, "_iov[_ni].iov_base = (void *)\"\\n\"; _iov[_ni].iov_len = 1; _ni++;\n");
-    indent(o, ind + 1);
-    fprintf(o, "loam_writev_fd(%s, _iov, _ni);\n",
-            n->as.call.is_println == 2 ? "STDERR_FILENO" : "STDOUT_FILENO");
-    indent(o, ind);
-    fprintf(o, "}\n");
-}
-
-static const char *cname_for_call(AstNode *cal) {
-    static char buf[256];
-    if (!cal) return "unknown";
-    if (cal->kind == AST_IDENT) {
-        /* Honor the binding typecheck recorded (a default cloned into another
-           module must not re-resolve to a same-named fn there). */
-        if (cal->as.ident.resolved && cal->as.ident.resolved->kind == AST_FN_DECL &&
-            cal->as.ident.resolved->as.fn.cname)
-            return cal->as.ident.resolved->as.fn.cname;
-        if (cur_is_main_mod)
-            snprintf(buf, sizeof buf, "loam_%s", cal->as.ident.name);
-        else
-            snprintf(buf, sizeof buf, "loam_%s_%s",
-                     cur_mod_name ? cur_mod_name : "mod", cal->as.ident.name);
-        return buf;
-    }
-    if (cal->kind == AST_FIELD && cal->as.access.target &&
-        cal->as.access.target->kind == AST_IDENT) {
-        snprintf(buf, sizeof buf, "loam_%s_%s", cal->as.access.target->as.ident.name,
-                 cal->as.access.field);
-        return buf;
-    }
-    return "unknown";
-}
-
-/** Call through a loam_fn fat pointer (env first argument). */
-static void emit_fn_val_call(FILE *o, AstNode *n) {
-    Type *ft = n->as.call.callee ? n->as.call.callee->ty : NULL;
-    if (!ft || ft->kind != TY_PROC) ft = n->ty;
-    Type *ret = ty_void();
-    if (ft && ft->kind == TY_PROC && ft->ret) ret = ft->ret;
-    int stack = can_stack_clos_args(n);
-    int pushed = 0;
-    fprintf(o, "({ ");
-    if (stack) pushed = hoist_call_clos_envs(o, n);
-    int id = tmp_id++;
-    fprintf(o, "loam_fn _fv%d = ", id);
-    emit_expr(o, n->as.call.callee);
-    fprintf(o, "; ((");
-    emit_ctype(o, ret);
-    fprintf(o, "(*)(void *");
-    if (ft && ft->kind == TY_PROC) {
-        for (size_t i = 0; i < ft->param_count; i++) {
-            fprintf(o, ", ");
-            emit_ctype(o, ft->params[i]);
-        }
-    }
-    fprintf(o, "))_fv%d.fn)(_fv%d.env", id, id);
-    for (size_t i = 0; i < n->as.call.arg_count; i++) {
-        fprintf(o, ", ");
-        emit_expr(o, n->as.call.args[i]);
-    }
-    clos_hoist_n -= pushed;
-    if (ret->kind == TY_VOID)
-        fprintf(o, "); 0; })");
-    else
-        fprintf(o, "); })");
-}
-
-/** Expression as a C rvalue (GNU statement-exprs for Box, closures, fn vals). */
-/** One arm of an `if` used as a value: run its statements, then assign the
- *  trailing expression to the result temporary. */
-static void emit_if_branch(FILE *o, AstNode *blk, int id) {
-    fprintf(o, "{ ");
-    if (blk && blk->kind == AST_BLOCK) {
-        size_t c = blk->as.block.stmt_count;
-        for (size_t i = 0; i < c; i++) {
-            AstNode *st = blk->as.block.stmts[i];
-            if (i + 1 == c && st && st->kind == AST_EXPR_STMT) {
-                fprintf(o, "_iv%d = ", id);
-                emit_expr(o, st->as.expr_stmt.expr);
-                fprintf(o, "; ");
-                continue;
-            }
-            emit_stmt(o, st, 0);
-        }
-    }
-    fprintf(o, "} ");
-}
-
-static void emit_expr(FILE *o, AstNode *n) {
-    if (!n) {
-        fprintf(o, "0");
-        return;
-    }
-    switch (n->kind) {
-        case AST_IF: {
-            /* value position: a statement expression with a result temporary */
-            int id = tmp_id++;
-            fprintf(o, "({ ");
-            emit_ctype(o, n->ty);
-            fprintf(o, " _iv%d; if (", id);
-            emit_cond(o, n->as.if_stmt.cond);
-            fprintf(o, ") ");
-            emit_if_branch(o, n->as.if_stmt.then_block, id);
-            fprintf(o, "else ");
-            emit_if_branch(o, n->as.if_stmt.else_block, id);
-            fprintf(o, "_iv%d; })", id);
-            break;
-        }
-
-        case AST_NUMBER:
-            emit_int_lit(o, n->as.lit.value);
-            break;
-        case AST_FLOAT:
-            emit_float_lit(o, n->as.lit.f, n->ty && n->ty->kind == TY_FLOAT && n->ty->bits == 32);
-            break;
-        case AST_BOOL:
-            fprintf(o, "%s", n->as.lit.b ? "true" : "false");
-            break;
-        case AST_STRING:
-            emit_str_lit(o, n->as.lit.str);
-            break;
-        case AST_IDENT:
-            if (n->flags & ASTF_FN_VAL) {
-                const char *cn = cname_for_call(n);
-                fprintf(o, "((loam_fn){(void *)%s__as_fn, NULL, 0})", cn);
-            } else if ((n->flags & ASTF_MOVED) && n->ty && n->ty->kind == TY_BOX) {
-                fprintf(o, "((");
-                emit_ctype(o, n->ty);
-                fprintf(o, ")loam_move_ptr((void **)&");
-                emit_ident_name(o, n->as.ident.name);
-                fprintf(o, "))");
-            } else {
-                emit_ident_name(o, n->as.ident.name);
-            }
-            break;
-        case AST_BINARY: {
-            TokenKind op = n->as.binary.op;
-            int is_f = n->ty && n->ty->kind == TY_FLOAT;
-            if (type_is_int_kind(n->ty) && (op == TOK_SHL || op == TOK_SHR))
-                emit_checked_bin(o, shift_fn(n->ty, op), n);
-            else if (!is_f && op == TOK_PLUS) emit_checked_bin(o, arith_fn(n->ty, op), n);
-            else if (!is_f && op == TOK_MINUS) emit_checked_bin(o, arith_fn(n->ty, op), n);
-            else if (!is_f && op == TOK_STAR) emit_checked_bin(o, arith_fn(n->ty, op), n);
-            else if (!is_f && op == TOK_SLASH) emit_checked_bin(o, arith_fn(n->ty, op), n);
-            else if (!is_f && op == TOK_PERCENT) emit_checked_bin(o, arith_fn(n->ty, op), n);
-            else if (n->as.binary.left && n->as.binary.left->ty &&
-                     n->as.binary.left->ty->kind == TY_STRING &&
-                     (op == TOK_EQ_EQ || op == TOK_BANG_EQ)) {
-                fprintf(o, "%sloam_fmt_eq(", op == TOK_BANG_EQ ? "!" : "");
-                emit_expr(o, n->as.binary.left);
-                fprintf(o, ", ");
-                emit_expr(o, n->as.binary.right);
-                fprintf(o, ")");
-            } else {
-                const char *s = "?";
-                if (op == TOK_PLUS) s = "+";
-                else if (op == TOK_MINUS) s = "-";
-                else if (op == TOK_STAR) s = "*";
-                else if (op == TOK_SLASH) s = "/";
-                else if (op == TOK_PERCENT) s = "%";
-                else if (op == TOK_EQ_EQ) s = "==";
-                else if (op == TOK_BANG_EQ) s = "!=";
-                else if (op == TOK_LT) s = "<";
-                else if (op == TOK_GT) s = ">";
-                else if (op == TOK_LT_EQ) s = "<=";
-                else if (op == TOK_GT_EQ) s = ">=";
-                else if (op == TOK_AMP_AMP) s = "&&";
-                else if (op == TOK_PIPE_PIPE) s = "||";
-                else if (op == TOK_AMP) s = "&";
-                else if (op == TOK_PIPE) s = "|";
-                else if (op == TOK_CARET) s = "^";
-                else if (op == TOK_SHL) s = "<<";
-                else if (op == TOK_SHR) s = ">>";
-                fprintf(o, "(");
-                emit_expr(o, n->as.binary.left);
-                fprintf(o, " %s ", s);
-                emit_expr(o, n->as.binary.right);
-                fprintf(o, ")");
-            }
-            break;
-        }
-        case AST_UNARY: {
-            TokenKind uop = n->as.unary.op;
-            if (uop == TOK_BANG) {
-                fprintf(o, "(!");
-                emit_expr(o, n->as.unary.operand);
-                fprintf(o, ")");
-            } else if (uop == TOK_TILDE) {
-                fprintf(o, "((");
-                emit_ctype(o, n->ty);
-                fprintf(o, ")(~");
-                emit_expr(o, n->as.unary.operand);
-                fprintf(o, "))");
-            } else if (type_is_int_kind(n->ty)) {
-                fprintf(o, "%s(", neg_fn(n->ty));
-                emit_expr(o, n->as.unary.operand);
-                fprintf(o, ", ");
-                emit_loc_args(o, n);
-                fprintf(o, ")");
-            } else {
-                fprintf(o, "(-");
-                emit_expr(o, n->as.unary.operand);
-                fprintf(o, ")");
-            }
-            break;
-        }
-        case AST_INCDEC: {
-            /* Read-modify-write of the operand place. GCC/Clang statement
-               expression: the place is addressed once (side effects in an
-               index or field base run once). */
-            fprintf(o, "({ ");
-            emit_ctype(o, n->ty);
-            fprintf(o, " *_p = &");
-            emit_place(o, n->as.incdec.operand);
-            fprintf(o, "; ");
-            if (n->as.incdec.is_post) {
-                emit_ctype(o, n->ty);
-                fprintf(o, " _old = *_p; ");
-            }
-            if (type_is_int_kind(n->ty)) {
-                fprintf(o, "*_p = %s(*_p, (", arith_fn(n->ty, n->as.incdec.is_dec ? TOK_MINUS : TOK_PLUS));
-                emit_ctype(o, n->ty);
-                fprintf(o, ")1, ");
-                emit_loc_args(o, n);
-                fprintf(o, "); ");
-            } else {
-                fprintf(o, "*_p = *_p ");
-                fprintf(o, n->as.incdec.is_dec ? "- 1; " : "+ 1; ");
-            }
-            fprintf(o, n->as.incdec.is_post ? "_old; })" : "*_p; })");
-            break;
-        }
-        case AST_CAST: {
-            Type *from = n->as.cast.expr ? n->as.cast.expr->ty : NULL;
-            char fn[32];
-            CastShape cs = cast_shape(from, n->ty, n->as.cast.conv_mode, fn, sizeof fn);
-            if (cs == CAST_PLAIN) {
-                fprintf(o, "((");
-                emit_ctype(o, n->ty);
-                fprintf(o, ")");
-                emit_expr(o, n->as.cast.expr);
-                fprintf(o, ")");
-            } else {
-                fprintf(o, "%s(", fn);
-                if (cs == CAST_CONV || cs == CAST_SAT)
-                    fprintf(o, "(int64_t)");
-                else if (cs == CAST_CONVU || cs == CAST_SATU)
-                    fprintf(o, "(uint64_t)");
-                else
-                    fprintf(o, "(double)");
-                emit_expr(o, n->as.cast.expr);
-                if (cs == CAST_CONV || cs == CAST_CONVU || cs == CAST_CONVF) {
-                    fprintf(o, ", ");
-                    emit_loc_args(o, n);
-                }
-                fprintf(o, ")");
-            }
-            break;
-        }
-        case AST_ADDR:
-            fprintf(o, "&");
-            emit_place(o, n->as.access.target);
-            break;
-        case AST_DEREF:
-            fprintf(o, "(*");
-            emit_expr(o, n->as.access.target);
-            fprintf(o, ")");
-            break;
-        case AST_FIELD:
-            emit_place(o, n);
-            break;
-        case AST_INDEX:
-            emit_place(o, n);
-            break;
-        case AST_CALL:
-            if (n->as.call.is_box_new) {
-                emit_box_new(o, n);
-                break;
-            }
-            if (n->as.call.sig_cell == 1 && n->as.call.arg_count == 1) {
-                fprintf(o, "({ loam_arena_ensure(); int64_t _sid = ");
-                if (n->as.call.args[0]->ty && n->as.call.args[0]->ty->kind == TY_INT &&
-                    n->as.call.args[0]->ty->bits == 32) {
-                    fprintf(o, "loam_zeus_sig_alloc_int(");
-                    emit_expr(o, n->as.call.args[0]);
-                    fprintf(o, "); ");
-                } else {
-                    fprintf(o, "loam_zeus_sig_alloc_zero(); ");
-                    emit_ctype(o, n->as.call.args[0]->ty);
-                    fprintf(o, " _sv = ");
-                    emit_expr(o, n->as.call.args[0]);
-                    fprintf(o, "; ");
-                    if (n->as.call.args[0]->ty && n->as.call.args[0]->ty->kind == TY_STRUCT &&
-                        type_needs_drop(n->as.call.args[0]->ty)) {
-                        /* As the IR form: the cell takes its own references. */
-                        emit_nested_keeps(o, "_sv", n->as.call.args[0]->ty, 0);
-                        emit_sig_bind_owned(o, n->as.call.args[0]->ty, "_sid", "_sv");
-                        fprintf(o, " ");
-                    } else if (type_is_copy_vec(n->as.call.args[0]->ty))
-                    {
-                        fprintf(o, "{ loam_vec _kept = loam_vec_retain(&_sv); ");
-                        emit_sig_bind_vec(o, n->as.call.args[0]->ty, "_sid", "_kept");
-                        fprintf(o, " } ");
-                    }
-                    else
-                        fprintf(o, "loam_zeus_sig_bind(_sid, &_sv, sizeof(_sv)); ");
-                }
-                fprintf(o, "_sid; })");
-                break;
-            }
-            if (n->as.call.sig_cell == 2 && n->as.call.arg_count == 1) {
-                fprintf(o, "({ ");
-                emit_ctype(o, n->ty);
-                fprintf(o, " _sv; loam_zeus_sig_load(");
-                emit_expr(o, n->as.call.args[0]);
-                fprintf(o, ", &_sv, sizeof(_sv)); ");
-                if (type_is_copy_vec(n->ty))
-                    fprintf(o, "_sv = loam_vec_retain(&_sv); ");
-                else if (n->ty && n->ty->kind == TY_STRUCT && type_needs_drop(n->ty))
-                    emit_nested_keeps(o, "_sv", n->ty, 0);
-                fprintf(o, "_sv; })");
-                break;
-            }
-            if (n->as.call.sig_cell == 3 && n->as.call.arg_count == 2) {
-                Type *vt = n->as.call.args[1]->ty;
-                if (vt && vt->kind == TY_INT && vt->bits == 32) {
-                    fprintf(o, "(loam_arena_store_sig(");
-                    emit_expr(o, n->as.call.args[0]);
-                    fprintf(o, ", ");
-                    emit_expr(o, n->as.call.args[1]);
-                    fprintf(o, "), 0)");
-                } else if (vt && vt->kind == TY_STRUCT && type_needs_drop(vt)) {
-                    /* As the IR form: the new value takes references for the
-                       cell, the one it held is released. */
-                    fprintf(o, "({ ");
-                    emit_ctype(o, vt);
-                    fprintf(o, " _sv = ");
-                    emit_expr(o, n->as.call.args[1]);
-                    fprintf(o, "; int64_t _sid = ");
-                    emit_expr(o, n->as.call.args[0]);
-                    fprintf(o, "; if (");
-                    emit_sig_changed(o, vt, "_sid", "_sv");
-                    fprintf(o, ") { ");
-                    emit_ctype(o, vt);
-                    fprintf(o, " _old; loam_zeus_sig_load(_sid, &_old, sizeof(_old)); ");
-                    emit_ctype(o, vt);
-                    fprintf(o, " _new = _sv;\n");
-                    emit_nested_keeps(o, "_new", vt, 0);
-                    emit_sig_bind_owned(o, vt, "_sid", "_new");
-                    fprintf(o, "\n");
-                    emit_drop_place(o, "_old", vt, 0);
-                    fprintf(o, "loam_arena_note_write(_sid); } 0; })");
-                } else if (type_is_copy_vec(vt)) {
-                    fprintf(o, "({ loam_vec _sv = ");
-                    emit_expr(o, n->as.call.args[1]);
-                    fprintf(o, "; int64_t _sid = ");
-                    emit_expr(o, n->as.call.args[0]);
-                    fprintf(o, "; if (");
-                    emit_sig_changed(o, vt, "_sid", "_sv");
-                    /* `_old` is the cell's own reference: the new value takes
-                       its reference first (it may be the same buffer), then the
-                       old one is dropped. Retaining `_old` as well leaked every
-                       list a signal ever held. */
-                    fprintf(o, ") { "
-                               "loam_vec _old; loam_zeus_sig_load(_sid, &_old, sizeof(_old)); "
-                               "loam_vec _new = loam_vec_retain(&_sv); ");
-                    emit_sig_bind_vec(o, vt, "_sid", "_new");
-                    fprintf(o, "\n");
-                    emit_drop_place(o, "_old", vt, 0);
-                    fprintf(o, "loam_arena_note_write(_sid); } 0; })");
-                } else {
-                    fprintf(o, "({ ");
-                    emit_ctype(o, vt);
-                    fprintf(o, " _sv = ");
-                    emit_expr(o, n->as.call.args[1]);
-                    fprintf(o, "; int64_t _sid = ");
-                    emit_expr(o, n->as.call.args[0]);
-                    fprintf(o, "; if (");
-                    emit_sig_changed(o, vt, "_sid", "_sv");
-                    fprintf(o, ") { "
-                               "loam_zeus_sig_bind(_sid, &_sv, sizeof(_sv)); loam_arena_note_write(_sid); "
-                               "} 0; })");
-                }
-                break;
-            }
-            if (n->as.call.fut_cell == 1 && n->as.call.arg_count == 1) {
-                Type *vt = n->as.call.args[0]->ty;
-                fprintf(o, "({ ");
-                if (type_is_copy_vec(vt)) {
-                    fprintf(o, "loam_vec _fv = loam_vec_retain(&");
-                    emit_expr(o, n->as.call.args[0]);
-                    fprintf(o, "); loam_fut_push(&_fv, sizeof(_fv)); })");
-                } else {
-                    emit_ctype(o, vt);
-                    fprintf(o, " _fv = ");
-                    emit_expr(o, n->as.call.args[0]);
-                    fprintf(o, "; loam_fut_push(&_fv, sizeof(_fv)); })");
-                }
-                break;
-            }
-            if (n->as.call.fut_cell == 2 && n->as.call.arg_count == 1) {
-                fprintf(o, "({ ");
-                emit_ctype(o, n->ty);
-                fprintf(o, " _fv; loam_fut_load(");
-                emit_expr(o, n->as.call.args[0]);
-                fprintf(o, ", &_fv, sizeof(_fv)); ");
-                if (type_is_copy_vec(n->ty))
-                    fprintf(o, "_fv = loam_vec_retain(&_fv); ");
-                fprintf(o, "_fv; })");
-                break;
-            }
-            if (n->as.call.fut_cell == 3 && n->as.call.arg_count == 2) {
-                Type *vt = n->as.call.args[1]->ty;
-                if (type_is_copy_vec(vt)) {
-                    fprintf(o, "({ int64_t _fid = ");
-                    emit_expr(o, n->as.call.args[0]);
-                    fprintf(o, "; loam_vec _old; loam_fut_load(_fid, &_old, sizeof(_old)); "
-                               "loam_vec _new = loam_vec_retain(&");
-                    emit_expr(o, n->as.call.args[1]);
-                    fprintf(o, "); loam_fut_store(_fid, &_new, sizeof(_new)); "
-                               "loam_vec_drop(&_old); 0; })");
-                } else {
-                    fprintf(o, "({ ");
-                    emit_ctype(o, vt);
-                    fprintf(o, " _fv = ");
-                    emit_expr(o, n->as.call.args[1]);
-                    fprintf(o, "; loam_fut_store(");
-                    emit_expr(o, n->as.call.args[0]);
-                    fprintf(o, ", &_fv, sizeof(_fv)); 0; })");
-                }
-                break;
-            }
-            if (n->as.call.fut_cell == 4 && n->as.call.arg_count == 1) {
-                fprintf(o, "loam_fut_ready(");
-                emit_expr(o, n->as.call.args[0]);
-                fprintf(o, ")");
-                break;
-            }
-            if (n->as.call.fut_cell == 5 && n->as.call.arg_count == 1) {
-                fprintf(o, "(loam_fut_clear(");
-                emit_expr(o, n->as.call.args[0]);
-                fprintf(o, "), 0)");
-                break;
-            }
-            if (n->as.call.ch_cell == 1 && n->as.call.arg_count == 2) {
-                Type *vt = n->as.call.args[1]->ty;
-                fprintf(o, "({ ");
-                emit_ctype(o, vt);
-                fprintf(o, " _cv = ");
-                emit_expr(o, n->as.call.args[1]);
-                fprintf(o, "; loam_ch_alloc(");
-                emit_expr(o, n->as.call.args[0]);
-                fprintf(o, ", sizeof(_cv)); })");
-                break;
-            }
-            if (n->as.call.ch_cell == 2 && n->as.call.arg_count == 2) {
-                Type *vt = n->as.call.args[1]->ty;
-                fprintf(o, "({ ");
-                emit_ctype(o, vt);
-                fprintf(o, " _cv = ");
-                emit_expr(o, n->as.call.args[1]);
-                fprintf(o, "; loam_ch_send(");
-                emit_expr(o, n->as.call.args[0]);
-                fprintf(o, ", &_cv, sizeof(_cv)); 0; })");
-                break;
-            }
-            if (n->as.call.ch_cell == 3 && n->as.call.arg_count == 2) {
-                Type *vt = n->as.call.args[1]->ty;
-                fprintf(o, "({ ");
-                emit_ctype(o, vt);
-                fprintf(o, " _cv = ");
-                emit_expr(o, n->as.call.args[1]);
-                fprintf(o, "; loam_ch_try_send(");
-                emit_expr(o, n->as.call.args[0]);
-                fprintf(o, ", &_cv, sizeof(_cv)); })");
-                break;
-            }
-            if (n->as.call.ch_cell == 4 && n->as.call.arg_count == 1) {
-                fprintf(o, "({ ");
-                emit_ctype(o, n->ty);
-                fprintf(o, " _cv; loam_ch_recv(");
-                emit_expr(o, n->as.call.args[0]);
-                fprintf(o, ", &_cv, sizeof(_cv)); _cv; })");
-                break;
-            }
-            if (n->as.call.ch_cell == 5 && n->as.call.arg_count == 1) {
-                fprintf(o, "({ ");
-                emit_ctype(o, n->ty);
-                fprintf(o, " _cv; loam_ch_pop(");
-                emit_expr(o, n->as.call.args[0]);
-                fprintf(o, ", &_cv, sizeof(_cv)); _cv; })");
-                break;
-            }
-            if (n->as.call.ch_cell == 6 && n->as.call.arg_count == 1) {
-                fprintf(o, "loam_ch_ready(");
-                emit_expr(o, n->as.call.args[0]);
-                fprintf(o, ")");
-                break;
-            }
-            if (n->as.call.value_key && n->as.call.arg_count == 1) {
-                fprintf(o, "({ ");
-                emit_ctype(o, n->as.call.args[0]->ty);
-                fprintf(o, " _vk = ");
-                emit_expr(o, n->as.call.args[0]);
-                fprintf(o, "; ");
-                emit_value_key(o, n->as.call.args[0]->ty, "_vk");
-                fprintf(o, "; })");
-                break;
-            }
-            if (n->as.call.is_sizeof && n->as.call.arg_count == 1) {
-                Type *at = n->as.call.args[0]->ty;
-                size_t nel = (at && at->kind == TY_ARRAY && at->array_len > 0)
-                                 ? (size_t)at->array_len
-                                 : 1;
-                fprintf(o, "((int32_t)(sizeof(");
-                emit_ctype(o, at && at->kind == TY_ARRAY ? at->elem : at);
-                fprintf(o, ") * %zu))", nel);
-                break;
-            }
-            if (n->as.call.is_panic && n->as.call.arg_count == 1) {
-                fprintf(o, "loam_panic_str(");
-                emit_loc_args(o, n);
-                fprintf(o, ", ");
-                emit_expr(o, n->as.call.args[0]);
-                fprintf(o, ")");
-                break;
-            }
-            if (n->as.call.num_builtin != NUMB_NONE) {
-                fprintf(o, "%s(", numeric_builtin_cname(n->as.call.num_builtin, n->ty));
-                for (size_t k = 0; k < n->as.call.arg_count; k++) {
-                    if (k) fprintf(o, ", ");
-                    emit_expr(o, n->as.call.args[k]);
-                }
-                fprintf(o, ")");
-                break;
-            }
-            if (n->as.call.c_builtin) {
-                fprintf(o, "%s(", n->as.call.c_builtin);
-                for (size_t k = 0; k < n->as.call.arg_count; k++) {
-                    if (k) fprintf(o, ", ");
-                    emit_expr(o, n->as.call.args[k]);
-                }
-                fprintf(o, ")");
-                break;
-            }
-            if (n->as.call.is_println) {
-                fprintf(o, "0 /* println as expr */");
-                break;
-            }
-            if (n->as.call.is_fn_val) {
-                emit_fn_val_call(o, n);
-                break;
-            }
-            {
-                int stack = can_stack_clos_args(n);
-                int pushed = 0;
-                if (stack) {
-                    fprintf(o, "({ ");
-                    pushed = hoist_call_clos_envs(o, n);
-                }
-                {
-                    const char *cn = NULL;
-                    if (subst_n)
-                        cn = typecheck_callee_cname(n, subst_names, subst_args, subst_n);
-                    if (!cn) cn = n->as.call.resolved_cname;
-                    if (!cn) cn = cname_for_call(n->as.call.callee);
-                    fprintf(o, "%s(", cn ? cn : "unknown");
-                }
-                for (size_t i = 0; i < n->as.call.arg_count; i++) {
-                    if (i) fprintf(o, ", ");
-                    emit_expr(o, n->as.call.args[i]);
-                }
-                fprintf(o, ")");
-                if (stack) {
-                    clos_hoist_n -= pushed;
-                    fprintf(o, "; })");
-                }
-            }
-            break;
-        case AST_STRUCT_LIT: {
-            fprintf(o, "(%s){ ", n->as.struct_lit.type_name);
-            for (size_t i = 0; i < n->as.struct_lit.field_count; i++) {
-                if (i) fprintf(o, ", ");
-                fprintf(o, ".%s = ", n->as.struct_lit.fields[i].name);
-                emit_expr(o, n->as.struct_lit.fields[i].init);
-            }
-            fprintf(o, " }");
-            break;
-        }
-        case AST_ARRAY_LIT: {
-            /* A fixed-size `[N]T{...}` gets a compound-literal cast so it's a
-             * valid expression anywhere (`return [3]int{...}[i]`, a call arg,
-             * …), not only as a `let` initializer. Bare `{ ... }` is only
-             * legal in that one declaration position. `[]T{...}` (TY_VEC) is
-             * a different runtime representation and unaffected. */
-            if (n->ty && n->ty->kind == TY_ARRAY) {
-                fprintf(o, "(");
-                emit_ctype(o, n->ty->elem);
-                fprintf(o, "[%lld]", (long long)n->ty->array_len);
-                fprintf(o, "){ ");
-            } else {
-                fprintf(o, "{ ");
-            }
-            for (size_t i = 0; i < n->as.array_lit.count; i++) {
-                if (i) fprintf(o, ", ");
-                emit_expr(o, n->as.array_lit.elems[i]);
-            }
-            fprintf(o, " }");
-            break;
-        }
-        case AST_CLOSURE: {
-            int id = n->as.fn.clos_id;
-            int hid = hoist_tid_for(n);
-            if (hid >= 0) {
-                fprintf(o, "((loam_fn){(void *)loam_clos_%d, &_ce%d, sizeof(struct loam_env_%d)})",
-                        id, hid, id);
-                break;
-            }
-            if (!n->as.fn.cap_count) {
-                fprintf(o, "((loam_fn){(void *)loam_clos_%d, NULL, 0})", id);
-                break;
-            }
-            int tid = tmp_id++;
-            fprintf(o, "({ struct loam_env_%d *_ce%d = (struct loam_env_%d *)loam_new(sizeof(struct loam_env_%d), ",
-                    id, tid, id, id);
-            emit_loc_args(o, n);
-            fprintf(o, "); ");
-            for (size_t i = 0; i < n->as.fn.cap_count; i++) {
-                char dst[128];
-                snprintf(dst, sizeof dst, "_ce%d->%s", tid, n->as.fn.caps[i]);
-                emit_cap_set_ident(o, n->as.fn.cap_types[i], dst, n->as.fn.caps[i]);
-                fprintf(o, "; ");
-            }
-            fprintf(o, "(loam_fn){(void *)loam_clos_%d, _ce%d, sizeof(struct loam_env_%d)}; })",
-                    id, tid, id);
-            break;
-        }
-        default:
-            fprintf(o, "0");
-            break;
-    }
-}
-
-/* Comparisons parenthesize in emit_expr so they nest safely. `if ((x == 0))`
-   trips clang -Wparentheses-equality, so if-conditions omit that wrapper. */
-static void emit_cond(FILE *o, AstNode *n) {
-    if (n && n->kind == AST_BINARY) {
-        TokenKind op = n->as.binary.op;
-        const char *s = NULL;
-        if (op == TOK_EQ_EQ) s = "==";
-        else if (op == TOK_BANG_EQ) s = "!=";
-        else if (op == TOK_LT) s = "<";
-        else if (op == TOK_GT) s = ">";
-        else if (op == TOK_LT_EQ) s = "<=";
-        else if (op == TOK_GT_EQ) s = ">=";
-        else if (op == TOK_AMP_AMP) s = "&&";
-        else if (op == TOK_PIPE_PIPE) s = "||";
-        if (s) {
-            emit_expr(o, n->as.binary.left);
-            fprintf(o, " %s ", s);
-            emit_expr(o, n->as.binary.right);
-            return;
-        }
-    }
-    emit_expr(o, n);
-}
-
-/** loam_drop Box bindings recorded for this scope, reverse order. */
-static void emit_drops_scope(FILE *o, int ind, int sp) {
-    for (int i = drop_n[sp] - 1; i >= 0; i--) {
-        indent(o, ind);
-        fprintf(o, "loam_drop((void **)&%s);\n", drop_names[sp][i]);
-    }
-}
-
-static void emit_drops_all(FILE *o, int ind) {
-    for (int s = drop_sp; s >= 1; s--) emit_drops_scope(o, ind, s);
-}
-
-static void emit_assign(FILE *o, AstNode *n, int ind) {
-    indent(o, ind);
-    if (n->as.assign.op == TOK_EQ) {
-        emit_place(o, n->as.assign.left);
-        fprintf(o, " = ");
-        emit_expr(o, n->as.assign.right);
-        fprintf(o, ";\n");
-        return;
-    }
-    Type *lt = n->as.assign.left ? n->as.assign.left->ty : NULL;
-    if (type_is_int_kind(lt) &&
-        (n->as.assign.op == TOK_SHL_EQ || n->as.assign.op == TOK_SHR_EQ)) {
-        emit_place(o, n->as.assign.left);
-        fprintf(o, " = %s(", shift_fn(lt, n->as.assign.op == TOK_SHR_EQ ? TOK_SHR : TOK_SHL));
-        emit_place(o, n->as.assign.left);
-        fprintf(o, ", ");
-        emit_expr(o, n->as.assign.right);
-        fprintf(o, ", ");
-        emit_loc_args(o, n);
-        fprintf(o, ");\n");
-        return;
-    }
-    const char *aop = c_assignop(n->as.assign.op);
-    if (aop) {
-        emit_place(o, n->as.assign.left);
-        fprintf(o, " %s ", aop);
-        emit_expr(o, n->as.assign.right);
-        fprintf(o, ";\n");
-        return;
-    }
-    if (lt && lt->kind == TY_FLOAT) {
-        const char *op = "+=";
-        if (n->as.assign.op == TOK_MINUS_EQ) op = "-=";
-        else if (n->as.assign.op == TOK_STAR_EQ) op = "*=";
-        else if (n->as.assign.op == TOK_SLASH_EQ) op = "/=";
-        emit_place(o, n->as.assign.left);
-        fprintf(o, " %s ", op);
-        emit_expr(o, n->as.assign.right);
-        fprintf(o, ";\n");
-        return;
-    }
-    const char *fn = arith_fn(lt, (int)n->as.assign.op);
-    if (!fn) fn = "loam_add_i64";
-    emit_place(o, n->as.assign.left);
-    fprintf(o, " = %s(", fn);
-    emit_place(o, n->as.assign.left);
-    fprintf(o, ", ");
-    emit_expr(o, n->as.assign.right);
-    fprintf(o, ", ");
-    emit_loc_args(o, n);
-    fprintf(o, ");\n");
-}
-
 /** Statement: let (including stack closure env), assign, if, for, return, … */
-
-static void emit_stmt(FILE *o, AstNode *n, int ind) {
-    if (!n) return;
-    emit_line_directive(o, n->loc);
-    switch (n->kind) {
-        case AST_VAR_DECL: {
-            if (n->as.var.init && n->as.var.init->kind == AST_CLOSURE &&
-                n->as.var.init->as.fn.cap_count) {
-                AstNode *cl = n->as.var.init;
-                int id = cl->as.fn.clos_id;
-                int tid = tmp_id++;
-                indent(o, ind);
-                fprintf(o, "struct loam_env_%d _ce%d;\n", id, tid);
-                for (size_t i = 0; i < cl->as.fn.cap_count; i++) {
-                    indent(o, ind);
-                    {
-                        char dst[128];
-                        snprintf(dst, sizeof dst, "_ce%d.%s", tid, cl->as.fn.caps[i]);
-                        emit_cap_set_ident(o, cl->as.fn.cap_types[i], dst, cl->as.fn.caps[i]);
-                    }
-                    fprintf(o, ";\n");
-                }
-                indent(o, ind);
-                emit_var_decl_type(o, n->ty, n->as.var.name);
-                fprintf(o, " = (loam_fn){(void *)loam_clos_%d, &_ce%d, sizeof(struct loam_env_%d)};\n",
-                        id, tid, id);
-                break;
-            }
-            indent(o, ind);
-            emit_var_decl_type(o, n->ty, n->as.var.name);
-            if (n->as.var.init && n->as.var.init->kind == AST_CALL &&
-                n->as.var.init->as.call.is_box_new) {
-                fprintf(o, " = (");
-                emit_ctype(o, n->ty);
-                fprintf(o, ")loam_new(sizeof(");
-                emit_ctype(o, n->ty->elem);
-                fprintf(o, "), ");
-                emit_loc_args(o, n);
-                fprintf(o, ");\n");
-                indent(o, ind);
-                fprintf(o, "*%s = ", n->as.var.name);
-                emit_expr(o, n->as.var.init->as.call.args[0]);
-                fprintf(o, ";\n");
-            } else {
-                fprintf(o, " = ");
-                if (n->as.var.init) emit_expr(o, n->as.var.init);
-                else fprintf(o, "{0}");
-                fprintf(o, ";\n");
-            }
-            if (n->ty && n->ty->kind == TY_BOX && drop_n[drop_sp] < 64)
-                drop_names[drop_sp][drop_n[drop_sp]++] = n->as.var.name;
-            break;
-        }
-        case AST_ASSIGN:
-            emit_assign(o, n, ind);
-            break;
-        case AST_EXPR_STMT:
-            if (n->as.expr_stmt.expr && n->as.expr_stmt.expr->kind == AST_CALL &&
-                n->as.expr_stmt.expr->as.call.is_println) {
-                emit_println(o, n->as.expr_stmt.expr, ind);
-                break;
-            }
-            indent(o, ind);
-            emit_expr(o, n->as.expr_stmt.expr);
-            fprintf(o, ";\n");
-            break;
-        case AST_RETURN:
-            emit_drops_all(o, ind);
-            indent(o, ind);
-            fprintf(o, "return");
-            if (n->as.ret.expr) {
-                fprintf(o, " ");
-                emit_expr(o, n->as.ret.expr);
-            }
-            fprintf(o, ";\n");
-            break;
-        case AST_IF:
-            indent(o, ind);
-            fprintf(o, "if (");
-            emit_cond(o, n->as.if_stmt.cond);
-            fprintf(o, ") {\n");
-            drop_sp++;
-            drop_n[drop_sp] = 0;
-            if (n->as.if_stmt.then_block && n->as.if_stmt.then_block->kind == AST_BLOCK)
-                emit_block_body(o, n->as.if_stmt.then_block, ind + 1, 0);
-            emit_drops_scope(o, ind + 1, drop_sp);
-            drop_sp--;
-            indent(o, ind);
-            fprintf(o, "}");
-            if (n->as.if_stmt.else_block) {
-                fprintf(o, " else ");
-                if (n->as.if_stmt.else_block->kind == AST_IF) {
-                    fprintf(o, "\n");
-                    emit_stmt(o, n->as.if_stmt.else_block, ind);
-                    break;
-                }
-                fprintf(o, "{\n");
-                drop_sp++;
-                drop_n[drop_sp] = 0;
-                if (n->as.if_stmt.else_block->kind == AST_BLOCK)
-                    emit_block_body(o, n->as.if_stmt.else_block, ind + 1, 0);
-                emit_drops_scope(o, ind + 1, drop_sp);
-                drop_sp--;
-                indent(o, ind);
-                fprintf(o, "}\n");
-            } else {
-                fprintf(o, "\n");
-            }
-            break;
-        case AST_FOR: {
-            int id = tmp_id++;
-            indent(o, ind);
-            fprintf(o, "{\n");
-            indent(o, ind + 1);
-            fprintf(o, "int64_t _lo%d = ", id);
-            emit_expr(o, n->as.for_stmt.iter->as.binary.left);
-            fprintf(o, ";\n");
-            indent(o, ind + 1);
-            fprintf(o, "int64_t _hi%d = ", id);
-            emit_expr(o, n->as.for_stmt.iter->as.binary.right);
-            fprintf(o, ";\n");
-            indent(o, ind + 1);
-            fprintf(o, "for (int64_t %s = _lo%d; %s < _hi%d; %s = loam_add_i64(%s, 1, ",
-                    n->as.for_stmt.var, id, n->as.for_stmt.var, id, n->as.for_stmt.var,
-                    n->as.for_stmt.var);
-            emit_loc_args(o, n);
-            fprintf(o, ")) {\n");
-            drop_sp++;
-            drop_n[drop_sp] = 0;
-            if (n->as.for_stmt.body && n->as.for_stmt.body->kind == AST_BLOCK)
-                emit_block_body(o, n->as.for_stmt.body, ind + 2, 0);
-            emit_drops_scope(o, ind + 2, drop_sp);
-            drop_sp--;
-            indent(o, ind + 1);
-            fprintf(o, "}\n");
-            indent(o, ind);
-            fprintf(o, "}\n");
-            break;
-        }
-        case AST_WHILE:
-            indent(o, ind);
-            fprintf(o, "while (");
-            emit_cond(o, n->as.if_stmt.cond);
-            fprintf(o, ") {\n");
-            drop_sp++;
-            drop_n[drop_sp] = 0;
-            if (n->as.if_stmt.then_block && n->as.if_stmt.then_block->kind == AST_BLOCK)
-                emit_block_body(o, n->as.if_stmt.then_block, ind + 1, 0);
-            emit_drops_scope(o, ind + 1, drop_sp);
-            drop_sp--;
-            indent(o, ind);
-            fprintf(o, "}\n");
-            break;
-        case AST_BREAK:
-            indent(o, ind);
-            fprintf(o, "break;\n");
-            break;
-        case AST_CONTINUE:
-            indent(o, ind);
-            fprintf(o, "continue;\n");
-            break;
-        case AST_SWITCH: {
-            Type *st = n->as.switch_stmt.scrut->ty;
-            indent(o, ind);
-            fprintf(o, "switch (%s", st && st->kind == TY_BOOL ? "(int)" : "");
-            emit_expr(o, n->as.switch_stmt.scrut);
-            fprintf(o, ") {\n");
-            for (size_t i = 0; i < n->as.switch_stmt.case_count; i++) {
-                AstNode *cs = n->as.switch_stmt.cases[i];
-                if (!cs) continue;
-                indent(o, ind + 1);
-                for (size_t p = 0; p < cs->as.switch_case.pat_count; p++) {
-                    int64_t v = 0;
-                    (void)ast_case_value(cs->as.switch_case.pats[p], &v);
-                    emit_case_label(o, v);
-                }
-                if (cs->as.switch_case.is_default) fprintf(o, "default: ");
-                /* Each case is a C block, so a jump into a later case does not
-                   cross a declaration; falling off the end enters the next. */
-                fprintf(o, "{\n");
-                drop_sp++;
-                drop_n[drop_sp] = 0;
-                if (cs->as.switch_case.body && cs->as.switch_case.body->kind == AST_BLOCK)
-                    emit_block_body(o, cs->as.switch_case.body, ind + 2, 0);
-                emit_drops_scope(o, ind + 2, drop_sp);
-                drop_sp--;
-                indent(o, ind + 1);
-                fprintf(o, "}\n");
-            }
-            indent(o, ind);
-            fprintf(o, "}\n");
-            break;
-        }
-        case AST_BLOCK:
-            indent(o, ind);
-            fprintf(o, "{\n");
-            drop_sp++;
-            drop_n[drop_sp] = 0;
-            emit_block_body(o, n, ind + 1, 0);
-            emit_drops_scope(o, ind + 1, drop_sp);
-            drop_sp--;
-            indent(o, ind);
-            fprintf(o, "}\n");
-            break;
-        default:
-            break;
-    }
-}
-
-static void emit_block_body(FILE *o, AstNode *b, int ind, int is_main) {
-    if (!b || b->kind != AST_BLOCK) return;
-    for (size_t i = 0; i < b->as.block.stmt_count; i++)
-        emit_stmt(o, b->as.block.stmts[i], ind);
-    (void)is_main;
-}
 
 /* A type argument names a type parameter anywhere inside it
    (`Option<Box<List<T>>>`, built while `List<T>` itself resolves). Walks type
@@ -2013,7 +830,7 @@ static void emit_struct_type(FILE *o, Type *t) {
     fprintf(o, "struct %s {\n", cn);
     for (size_t i = 0; i < t->field_count; i++) {
         fprintf(o, "    ");
-        emit_var_decl_type(o, t->field_types[i], t->field_names[i]);
+        emit_var_decl_type(o, t->field_types[i], cid(t->field_names[i]));
         fprintf(o, ";\n");
     }
     fprintf(o, "};\n\n");
@@ -2141,7 +958,7 @@ static void emit_fn_sig(FILE *o, AstNode *fn, int is_main) {
     for (size_t i = 0; i < fn->as.fn.param_count; i++) {
         if (i) fprintf(o, ", ");
         Type *pt = (ft && i < ft->param_count) ? ft->params[i] : ty_int();
-        emit_var_decl_type(o, pt, fn->as.fn.params[i].name);
+        emit_var_decl_type(o, pt, cid(fn->as.fn.params[i].name));
     }
     fprintf(o, ")");
 }
@@ -2152,7 +969,7 @@ static const char *lv(int id) {
     if (!CF || id < 0 || id >= CF->nlocals) return "/*err*/";
     const IrLocal *l = &CF->locals[id];
     if (l->is_global && l->cname) return l->cname;
-    if (l->is_param && l->name) return l->name;
+    if (l->is_param && l->name) return cid(l->name);
     char *b = bufs[n++ & 7];
     snprintf(b, sizeof bufs[0], "_l%d", id);
     return b;
@@ -2185,14 +1002,14 @@ static void emit_ir_place(FILE *o, const IrPlace *p) {
                 char tag[300];
                 env_tag(CF->clos_id, CF->cname, tag, sizeof tag);
                 fprintf(o, "((struct %s *)%s)->%s", tag, lv(CF->env_local),
-                        p->field ? p->field : "?");
+                        p->field ? cid(p->field) : "?");
             } else if (is_ptrish_ty(p->base ? p->base->ty : NULL)) {
                 fprintf(o, "(");
                 emit_ir_place(o, p->base);
-                fprintf(o, ")->%s", p->field ? p->field : "?");
+                fprintf(o, ")->%s", p->field ? cid(p->field) : "?");
             } else {
                 emit_ir_place(o, p->base);
-                fprintf(o, ".%s", p->field ? p->field : "?");
+                fprintf(o, ".%s", p->field ? cid(p->field) : "?");
             }
             break;
         case IR_PL_INDEX: {
@@ -2363,7 +1180,7 @@ static void emit_steal(FILE *o, const char *place, Type *t, int ind) {
         for (size_t i = 0; i < t->field_count; i++) {
             if (!type_needs_drop(t->field_types[i])) continue;
             char buf[256];
-            snprintf(buf, sizeof buf, "%s.%s", place, t->field_names[i]);
+            snprintf(buf, sizeof buf, "%s.%s", place, cid(t->field_names[i]));
             emit_steal(o, buf, t->field_types[i], ind);
         }
     }
@@ -2439,7 +1256,7 @@ static void emit_drop_place(FILE *o, const char *place, Type *t, int ind) {
         for (size_t i = 0; i < t->field_count; i++) {
             if (!type_needs_drop(t->field_types[i])) continue;
             char buf[256];
-            snprintf(buf, sizeof buf, "%s.%s", place, t->field_names[i]);
+            snprintf(buf, sizeof buf, "%s.%s", place, cid(t->field_names[i]));
             emit_drop_place(o, buf, t->field_types[i], ind);
         }
     }
@@ -2506,7 +1323,7 @@ static void emit_nested_keeps(FILE *o, const char *place, Type *t, int ind) {
         for (size_t i = 0; i < t->field_count; i++) {
             if (!type_needs_drop(t->field_types[i])) continue;
             char buf[256];
-            snprintf(buf, sizeof buf, "%s.%s", place, t->field_names[i]);
+            snprintf(buf, sizeof buf, "%s.%s", place, cid(t->field_names[i]));
             emit_nested_keeps(o, buf, t->field_types[i], ind);
         }
     }
@@ -2549,7 +1366,7 @@ static void emit_nested_transfers(FILE *o, const char *place, Type *t, int ind) 
         for (size_t i = 0; i < t->field_count; i++) {
             if (!type_needs_drop(t->field_types[i])) continue;
             char buf[256];
-            snprintf(buf, sizeof buf, "%s.%s", place, t->field_names[i]);
+            snprintf(buf, sizeof buf, "%s.%s", place, cid(t->field_names[i]));
             emit_nested_transfers(o, buf, t->field_types[i], ind);
         }
     }
@@ -3218,14 +2035,14 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                 for (int k = 0; k < in->nargs; k++) {
                     if (in->args[k] < 0) continue;
                     indent(o, 1);
-                    fprintf(o, "%s.%s = %s;\n", dbuf, t->field_names[k], lv(in->args[k]));
+                    fprintf(o, "%s.%s = %s;\n", dbuf, cid(t->field_names[k]), lv(in->args[k]));
                 }
             } else {
                 fprintf(o, "%s = (%s){ ", lv(in->dst), cn);
                 for (int k = 0; k < in->nargs; k++) {
                     if (k) fprintf(o, ", ");
                     if (t && k < (int)t->field_count && t->field_names[k])
-                        fprintf(o, ".%s = %s", t->field_names[k], lv(in->args[k]));
+                        fprintf(o, ".%s = %s", cid(t->field_names[k]), lv(in->args[k]));
                     else
                         fprintf(o, "%s", lv(in->args[k]));
                 }
@@ -3242,7 +2059,7 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                     for (int k = 0; k < in->nargs; k++) {
                         if (in->args[k] < 0) continue;
                         char fbuf[320];
-                        snprintf(fbuf, sizeof fbuf, "%s.%s", dbuf, t->field_names[k]);
+                        snprintf(fbuf, sizeof fbuf, "%s.%s", dbuf, cid(t->field_names[k]));
                         emit_nested_keeps(o, fbuf, t->field_types[k], 1);
                     }
                 } else {
@@ -3320,7 +2137,7 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                 emit_ir_loc(o, in->loc);
                 fprintf(o, ");\n");
                 for (int k = 0; k < in->nargs; k++) {
-                    const char *fnm = (cf && k < cf->ncaps && cf->caps[k]) ? cf->caps[k] : "f";
+                    const char *fnm = (cf && k < cf->ncaps && cf->caps[k]) ? cid(cf->caps[k]) : "f";
                     Type *ct = (cf && k < cf->ncaps && cf->cap_types) ? cf->cap_types[k] : NULL;
                     indent(o, 2);
                     if (type_is_copy_vec(ct)) {
@@ -3652,20 +2469,10 @@ static void emit_fn(FILE *o, AstNode *fn, int is_main) {
     shard_mark(o, cn);
     emit_line_directive(o, fn->loc);
     emit_fn_sig(o, fn, is_main);
-    if (irf && irf->lowered) {
-        emit_ir_fn_body(o, irf, is_main);
-        return;
-    }
-    fprintf(o, " {\n");
-    if (is_main) emit_main_args(o);
-    drop_sp = 1;
-    drop_n[1] = 0;
-    tmp_id = 0;
-    clos_hoist_n = 0;
-    if (fn->as.fn.body) emit_block_body(o, fn->as.fn.body, 1, is_main);
-    emit_drops_scope(o, 1, 1);
-    if (is_main) fprintf(o, "    return 0;\n");
-    fprintf(o, "}\n\n");
+    /* ir.c lowers every construct typecheck accepts; a fn it could not lower
+       is a compiler bug, not something to emit another way. */
+    if (!irf || !irf->lowered) loam_fatal("internal: fn '%s' was not lowered to IR", cn);
+    emit_ir_fn_body(o, irf, is_main);
 }
 
 /** Paste loam_rt.h into the translation unit (fallback includes if missing). */
@@ -3804,7 +2611,7 @@ static void emit_clos_sig(FILE *o, AstNode *fn, int proto) {
     for (size_t i = 0; i < fn->as.fn.param_count; i++) {
         fprintf(o, ", ");
         Type *pt = (ft && i < ft->param_count) ? ft->params[i] : ty_int();
-        emit_var_decl_type(o, pt, fn->as.fn.params[i].name);
+        emit_var_decl_type(o, pt, cid(fn->as.fn.params[i].name));
     }
     fprintf(o, ")");
     if (proto) fprintf(o, ";\n");
@@ -3815,7 +2622,7 @@ static void emit_clos_env(FILE *o, AstNode *fn) {
     fprintf(o, "struct loam_env_%d {\n", fn->as.fn.clos_id);
     for (size_t i = 0; i < fn->as.fn.cap_count; i++) {
         fprintf(o, "    ");
-        emit_var_decl_type(o, fn->as.fn.cap_types[i], fn->as.fn.caps[i]);
+        emit_var_decl_type(o, fn->as.fn.cap_types[i], cid(fn->as.fn.caps[i]));
         fprintf(o, ";\n");
     }
     fprintf(o, "};\n");
@@ -3849,7 +2656,7 @@ static void emit_own_helpers(FILE *o) {
             for (size_t f = 0; f < t->field_count; f++) {
                 if (!type_needs_drop(t->field_types[f])) continue;
                 char buf[256];
-                snprintf(buf, sizeof buf, "p->%s", t->field_names[f]);
+                snprintf(buf, sizeof buf, "p->%s", cid(t->field_names[f]));
                 if (k == 0) emit_nested_keeps(o, buf, t->field_types[f], 1);
                 else if (k == 1) emit_drop_place(o, buf, t->field_types[f], 1);
                 else emit_steal(o, buf, t->field_types[f], 1);
@@ -3897,7 +2704,7 @@ static void emit_const_init(FILE *o, const AstNode *e) {
             fprintf(o, "{ ");
             for (size_t k = 0; k < e->as.struct_lit.field_count; k++) {
                 if (k) fprintf(o, ", ");
-                fprintf(o, ".%s = ", e->as.struct_lit.fields[k].name);
+                fprintf(o, ".%s = ", cid(e->as.struct_lit.fields[k].name));
                 emit_const_init(o, e->as.struct_lit.fields[k].init);
             }
             fprintf(o, " }");
@@ -3987,7 +2794,7 @@ static void emit_lit_template_defs(FILE *o) {
         int first = 1;
         for (size_t k = 0; k < lt->t->field_count; k++) {
             if (!lt->d[k]) continue;
-            fprintf(o, "%s.%s = ", first ? "" : ", ", lt->t->field_names[k]);
+            fprintf(o, "%s.%s = ", first ? "" : ", ", cid(lt->t->field_names[k]));
             emit_const_init(o, lt->d[k]);
             first = 0;
         }
@@ -4049,7 +2856,7 @@ static void emit_mono_clos_env(FILE *o, const IrFn *fn, int *seen, int *nseen, i
     for (int k = 0; k < fn->ncaps; k++) {
         fprintf(o, "    ");
         emit_var_decl_type(o, fn->cap_types ? fn->cap_types[k] : ty_int(),
-                           fn->caps ? fn->caps[k] : "c");
+                           fn->caps ? cid(fn->caps[k]) : "c");
         fprintf(o, ";\n");
     }
     fprintf(o, "};\n");
@@ -4075,25 +2882,8 @@ static void emit_closure_fn(FILE *o, AstNode *fn) {
     snprintf(cn, sizeof cn, "loam_clos_%d", fn->as.fn.clos_id);
     IrFn *irf = find_ir_fn(cn);
     emit_clos_sig(o, fn, 0);
-    if (irf && irf->lowered) {
-        emit_ir_fn_body(o, irf, 0);
-        return;
-    }
-    fprintf(o, " {\n");
-    if (fn->as.fn.cap_count)
-        fprintf(o, "    struct loam_env_%d *_e = (struct loam_env_%d *)_env;\n",
-                fn->as.fn.clos_id, fn->as.fn.clos_id);
-    else
-        fprintf(o, "    (void)_env;\n");
-    emit_clos = fn;
-    drop_sp = 1;
-    drop_n[1] = 0;
-    tmp_id = 0;
-    clos_hoist_n = 0;
-    if (fn->as.fn.body) emit_block_body(o, fn->as.fn.body, 1, 0);
-    emit_drops_scope(o, 1, 1);
-    emit_clos = NULL;
-    fprintf(o, "}\n\n");
+    if (!irf || !irf->lowered) loam_fatal("internal: closure '%s' was not lowered to IR", cn);
+    emit_ir_fn_body(o, irf, 0);
 }
 
 /** The C type a `#[c]` fn's parameter or return has at the call. */
@@ -4152,7 +2942,7 @@ static void emit_c_bindings(FILE *o, LoamModule *mods, int nmods) {
             for (size_t k = 0; k < np; k++)
                 if (ft->params[k]->kind == TY_STRING)
                     fprintf(o, "    char *_cs%zu = loam_csym_cstr(%s);\n", k,
-                            d->as.fn.params[k].name);
+                            cid(d->as.fn.params[k].name));
             fprintf(o, "    ");
             if (ret->kind == TY_STRING) fprintf(o, "const char *_p = ");
             else if (ret->kind != TY_VOID) {
@@ -4172,8 +2962,8 @@ static void emit_c_bindings(FILE *o, LoamModule *mods, int nmods) {
                 if (k) fprintf(o, ", ");
                 if (ft->params[k]->kind == TY_STRING) fprintf(o, "_cs%zu", k);
                 else if (ft->params[k]->kind == TY_VEC)
-                    fprintf(o, "%s.ptr", d->as.fn.params[k].name);
-                else fprintf(o, "%s", d->as.fn.params[k].name);
+                    fprintf(o, "%s.ptr", cid(d->as.fn.params[k].name));
+                else fprintf(o, "%s", cid(d->as.fn.params[k].name));
             }
             fprintf(o, ");\n");
             if (ret->kind == TY_STRING) fprintf(o, "    loam_str _r = loam_csym_str(_p);\n");
@@ -4181,7 +2971,7 @@ static void emit_c_bindings(FILE *o, LoamModule *mods, int nmods) {
                 if (ft->params[k]->kind == TY_STRING) fprintf(o, "    free(_cs%zu);\n", k);
                 /* The caller retained it for the callee, and this is the callee. */
                 else if (ft->params[k]->kind == TY_VEC)
-                    fprintf(o, "    loam_vec_drop(&%s);\n", d->as.fn.params[k].name);
+                    fprintf(o, "    loam_vec_drop(&%s);\n", cid(d->as.fn.params[k].name));
             }
             if (ret->kind != TY_VOID) fprintf(o, "    return _r;\n");
             fprintf(o, "}\n");
@@ -4201,7 +2991,7 @@ static void emit_as_fn_tramp(FILE *o, AstNode *fn, int proto) {
     for (size_t i = 0; i < fn->as.fn.param_count; i++) {
         fprintf(o, ", ");
         Type *pt = (ft && i < ft->param_count) ? ft->params[i] : ty_int();
-        emit_var_decl_type(o, pt, fn->as.fn.params[i].name);
+        emit_var_decl_type(o, pt, cid(fn->as.fn.params[i].name));
     }
     if (proto) {
         fprintf(o, ");\n");
@@ -4212,7 +3002,7 @@ static void emit_as_fn_tramp(FILE *o, AstNode *fn, int proto) {
     fprintf(o, "%s(", cn);
     for (size_t i = 0; i < fn->as.fn.param_count; i++) {
         if (i) fprintf(o, ", ");
-        fprintf(o, "%s", fn->as.fn.params[i].name);
+        fprintf(o, "%s", cid(fn->as.fn.params[i].name));
     }
     fprintf(o, ");\n}\n\n");
 }

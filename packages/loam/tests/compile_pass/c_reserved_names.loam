@@ -1,0 +1,38 @@
+// Names Loam allows but C reserves, as parameters, struct fields (with
+// constant defaults, so literals start from a template), captures and
+// locals. The generated C used to spell them as they are and not compile.
+
+import "std:fmt"
+
+struct Reg {
+    signed: int,
+    unsigned: int = 7,
+    register: int = 8,
+    volatile: string = "v",
+    stdout: bool = true,
+}
+
+fn sum(signed: int, double: int, static: int) -> int {
+    let extern = signed + double
+    return extern + static
+}
+
+fn take(r: Reg) -> int {
+    return r.signed + r.unsigned + r.register
+}
+
+fn apply(f: fn(int) -> int, v: int) -> int {
+    return f(v)
+}
+
+fn main() {
+    let auto = 5
+    let short = sum(auto, 2, 3)
+    let r = Reg { signed: short }
+    let goto = fn(x: int) -> int { return x + auto + r.signed }
+    fmt.println(short, take(r), r.volatile, r.stdout, apply(goto, 1))
+    let mut union = []Reg {}
+    push(union, r)
+    push(union, Reg { signed: 1, unsigned: 2 })
+    fmt.println(union.len, union[1].unsigned, union[1].register)
+}
