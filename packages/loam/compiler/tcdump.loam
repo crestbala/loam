@@ -22,6 +22,8 @@ import "dump.loam"
 import "typecheck.loam"
 import "threadcheck.loam"
 import "borrowck.loam"
+import "ir.loam"
+import "irdump.loam"
 import "boundscheck.loam"
 
 /** *An import line of the module list. */
@@ -131,9 +133,11 @@ fn loader_edits(root: int, name: string) {
 
 fn main() {
     // `--checked`: also the passes after typecheck, as `loamc --dump-checked`.
-    let run_later_passes = sys.argc() == 3 && sys.arg(1) == "--checked"
+    // `--ir`: then lowered to IR and printed, as `loamc --dump-ir`.
+    let lower_ir = sys.argc() == 3 && sys.arg(1) == "--ir"
+    let run_later_passes = sys.argc() == 3 && (sys.arg(1) == "--checked" || lower_ir)
     if sys.argc() != 2 && !run_later_passes {
-        fmt.eprintln("usage: tcdump [--checked] modules.txt   (from loamc --dump-modules main.loam)")
+        fmt.eprintln("usage: tcdump [--checked | --ir] modules.txt   (from loamc --dump-modules main.loam)")
         sys.exit(2)
     }
     let module_list_path = sys.arg(sys.argc() - 1)
@@ -239,6 +243,14 @@ fn main() {
     }
     dump.TYPED = true
     let mut b = []u8 {}
+    if lower_ir {
+        ir.lower_modules()
+        irdump.dump_ir(&mut b)
+        let bad = ir.verify()
+        buf.push_str(&mut b, if bad { "verify bad\n" } else { "verify ok\n" })
+        fmt.write(buf.to_string(&b))
+        sys.exit(if bad { 1 } else { 0 })
+    }
     for m in 0..typecheck.MODS.len {
         buf.push_str(&mut b, "module ")
         buf.push_int(&mut b, m)
