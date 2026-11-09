@@ -6,7 +6,7 @@
 // names, the implicit `http` / `std:json` imports, resolved import paths).
 //
 // With `--checked`, the passes after typecheck run too (`loamc
-// --dump-checked`); ported so far: threadcheck, boundscheck.
+// --dump-checked`): threadcheck, borrowck, boundscheck.
 //
 // Exit status: 0 typed, 1 a parse error, 2 a type error (diagnostics on
 // stderr, as C), 3 an error from a later pass, 4 a bad module list.
@@ -21,6 +21,7 @@ import "parser.loam"
 import "dump.loam"
 import "typecheck.loam"
 import "threadcheck.loam"
+import "borrowck.loam"
 import "boundscheck.loam"
 
 /** *An import line of the module list. */
@@ -229,7 +230,8 @@ fn main() {
             push(module_names, typecheck.MODS[m].name)
             push(module_roots, typecheck.MODS[m].root)
         }
-        let later_errors = threadcheck.threadcheck_modules(module_names, module_roots)
+        let mut later_errors = threadcheck.threadcheck_modules(module_names, module_roots)
+        later_errors = later_errors + borrowck.borrowck_modules()
         boundscheck.boundscheck_modules(module_roots)
         if later_errors > 0 {
             dump.print_diags()

@@ -1,0 +1,2156 @@
+// borrowck — moves, shared vs exclusive borrows, and reference escape. The
+// self-hosted twin of src/sema/borrowck.c, function for function in the C
+// file's order (its header has the rules; docs/reference-escape.md the
+// design).
+//
+// The C pass is a pointer graph; here it is arenas and indices:
+//   - BINDINGS is an arena that never reuses a slot, ACTIVE the stack of live
+//     ones (top last), so a binding is its arena index;
+//   - BORROWS is C's linked list with the head last. Each borrow has a serial
+//     id: where C keeps a pointer to the head ("the borrows made since"), this
+//     keeps that id, and a copied list gets fresh ids as C's copies get fresh
+//     addresses, so the same marks match the same segments.
+
+import "std:intmap"
+import "ast.loam"
+import "types.loam"
+import "lexer.loam"
+import "typecheck.loam"
+
+enum Own {
+    Owned = 0,
+    Moved = 1,
+}
+
+/** *Where a binding lives: a global outlives every call, a parameter of */
+/** *reference type points into the caller, a local dies with the frame. */
+enum BindKind {
+    Local = 0,
+    Param = 1,
+    Global = 2,
+}
+
+/** *What a reference points into: nothing known, a temporary, or a binding. */
+enum RootName {
+    Nothing = 0,
+    Temporary = 1,
+    Named = 2,
+}
+
+const TEMP_ROOT_TEXT: string = "<temporary>"
+const ASTF_NEEDS_DROP: int = 2
+const ASTF_MOVED: int = 4
+
+struct Binding {
+    name: string,
+    own: int,
+    shared: int,
+    mutb: int,
+    is_copy: bool,
+    is_box: bool,
+    depth: int,
+    kind: int,
+    /* Reference binding: depth of the deepest frame binding it may point */
+    /* into (0 = caller or global data), and that binding's name. */
+    ref_depth: int,
+    ref_root_kind: int,
+    ref_root: string,
+    dangling: bool,
+    must_check: bool,
+    checked: bool,
+    loc: Loc,
+    moved_paths: []string,
+    /* `store` in `store.ITEMS`: tracks borrows only, never moves. */
+    is_module_alias: bool,
+}
+
+/** *A live borrow, keyed by the place it covers (`p[]` for any index of p). */
+struct Borrow {
+    id: int,
+    path: string,
+    is_mut: bool,
+    /* Held by a live binding as a loan, not a statement temp. */
+    stored: bool,
+    depth: int,
+    /* The binding holding this loan, if stored; the binding the place */
+    /* roots in; the global it roots in. Each -1 when none. */
+    owner: int,
+    target: int,
+    global_decl: int,
+}
+
+let mut BINDINGS: []Binding = []Binding {}
+let mut ACTIVE: []int = []int {}
+let mut BORROWS: []Borrow = []Borrow {}
+let mut NEXT_BORROW_ID: int = 1
+let mut DEPTH: int = 0
+let mut ERRN: int = 0
+
+fn report(loc: Loc, message: string) {
+    let mut kept = message
+    if kept.len > 1023 {
+        kept = typecheck.substr(kept, 0, 1023)
+    }
+    push(ast.DIAGS, Diag { loc: loc, msg: kept })
+    ERRN = 1
+}
+
+fn new_borrow_id() -> int {
+    let id = NEXT_BORROW_ID
+    NEXT_BORROW_ID = NEXT_BORROW_ID + 1
+    return id
+}
+
+/** *The id of the newest borrow (C's head pointer), or -1 for none. */
+fn head_id() -> int {
+    if BORROWS.len == 0 {
+        return -1
+    }
+    return BORROWS[BORROWS.len - 1].id
+}
+
+fn is_ref_ty(t: int) -> bool {
+    return t != types.NO_TYPE && types.kind_of(t) == TK.Ptr
+}
+
+fn ref_is_mut(t: int) -> bool {
+    return is_ref_ty(t) && types.TYPES[t].is_mut != 0
+}
+
+/** *Two places conflict when they are equal or one contains the other. */
+fn paths_conflict(a: string, b: string) -> bool {
+    let shorter = if a.len < b.len { a.len } else { b.len }
+    for i in 0..shorter {
+        if a[i] != b[i] {
+            return false
+        }
+    }
+    if a.len == b.len {
+        return true
+    }
+    // The shorter must end on a component boundary of the longer.
+    let next = if a.len < b.len { b[shorter] } else { a[shorter] }
+    return next == '.' || next == '['
+}
+
+/** *Textual place for an lvalue expression, or "" if it is not one. */
+fn path_of(n: int) -> string {
+    if n == ast.NONE {
+        return ""
+    }
+    let node_kind = ast.NODES[n].kind
+    if node_kind == Kind.Ident {
+        return ast.NODES[n].name
+    }
+    if node_kind == Kind.Field {
+        let base = path_of(ast.NODES[n].a)
+        if base.len == 0 {
+            return ""
+        }
+        return "{{base}}.{{ast.NODES[n].name}}"
+    }
+    if node_kind == Kind.Index {
+        let base = path_of(ast.NODES[n].a)
+        if base.len == 0 {
+            return ""
+        }
+        return "{{base}}[]"
+    }
+    if node_kind == Kind.Deref {
+        return path_of(ast.NODES[n].a)
+    }
+    return ""
+}
+
+/** *The innermost live binding named `name`, or -1. */
+fn find_b(name: string) -> int {
+    let mut i = ACTIVE.len
+    while i > 0 {
+        i = i - 1
+        if BINDINGS[ACTIVE[i]].name == name {
+            return ACTIVE[i]
+        }
+    }
+    return -1
+}
+
+/** *Push a binding; returns its arena index. */
+fn push_b(name: string, ty: int) -> int {
+    push(BINDINGS, Binding {
+        name: name,
+        own: Own.Owned,
+        shared: 0,
+        mutb: 0,
+        is_copy: ty != types.NO_TYPE && types.is_copy(ty),
+        is_box: ty != types.NO_TYPE && types.kind_of(ty) == TK.Box,
+        depth: DEPTH,
+        kind: BindKind.Local,
+        ref_depth: 0,
+        ref_root_kind: RootName.Nothing,
+        ref_root: "",
+        dangling: false,
+        must_check: false,
+        checked: false,
+        loc: ast.NODES[0].loc,
+        moved_paths: []string {},
+        is_module_alias: false,
+    })
+    let binding = BINDINGS.len - 1
+    push(ACTIVE, binding)
+    return binding
+}
+
+fn pop_to_depth(target_depth: int) {
+    drop_borrows_deeper_than(target_depth)
+    while ACTIVE.len > 0 && BINDINGS[ACTIVE[ACTIVE.len - 1]].depth > target_depth {
+        let binding = ACTIVE[ACTIVE.len - 1]
+        pop(ACTIVE)
+        // A `#[must_check]` value neither read nor moved out: the caller
+        // ignored a failure.
+        if BINDINGS[binding].must_check && !BINDINGS[binding].checked && BINDINGS[binding].own != Own.Moved {
+            report(BINDINGS[binding].loc, "unused `#[must_check]` value '{{BINDINGS[binding].name}}' — read a field or use `.or()` / `.or_trap()`")
+        }
+        release_owned(binding)
+        drop_borrows_of(binding)
+    }
+    // A reference that outlives the binding it points at is dangling until
+    // it is assigned again.
+    for i in 0..ACTIVE.len {
+        if BINDINGS[ACTIVE[i]].ref_depth > target_depth {
+            BINDINGS[ACTIVE[i]].dangling = true
+        }
+    }
+}
+
+/** *Root variable of a place, for the move/ownership checks. */
+fn root_of_path(path: string) -> string {
+    let mut end = 0
+    while end < path.len && path[end] != '.' && path[end] != '[' && end < 255 {
+        end = end + 1
+    }
+    return typecheck.substr(path, 0, end)
+}
+
+/** *Record a shared or exclusive borrow of `path`. True if already an error. */
+fn take_borrow_path(path: string, is_mut: bool, loc: Loc) -> bool {
+    let root = root_of_path(path)
+    let rooted = find_b(root)
+    if rooted < 0 {
+        return false
+    }
+    if BINDINGS[rooted].own == Own.Moved {
+        report(loc, "borrow of moved value '{{root}}'")
+        return true
+    }
+    let mut i = BORROWS.len
+    while i > 0 {
+        i = i - 1
+        if !paths_conflict(BORROWS[i].path, path) {
+            continue
+        }
+        if !BORROWS[i].is_mut && !is_mut {
+            continue
+        }
+        if is_mut {
+            report(loc, "cannot borrow '{{path}}' as mutable more than once, or while shared-borrowed")
+        } else {
+            report(loc, "cannot borrow '{{path}}' as shared while mutably borrowed")
+        }
+        return true
+    }
+    push(BORROWS, Borrow {
+        id: new_borrow_id(),
+        path: path,
+        is_mut: is_mut,
+        stored: false,
+        depth: DEPTH,
+        owner: -1,
+        target: rooted,
+        global_decl: ast.NONE,
+    })
+    return false
+}
+
+/** *Writing `path` (assignment, `++`) while a loan covers it. */
+fn check_write_path(path: string, loc: Loc) -> bool {
+    let mut i = BORROWS.len
+    while i > 0 {
+        i = i - 1
+        if BORROWS[i].stored && paths_conflict(BORROWS[i].path, path) {
+            report(loc, "cannot assign to '{{path}}' while it is borrowed")
+            return true
+        }
+    }
+    return false
+}
+
+/** *Any live borrow overlapping `path`: a value cannot move out from under one. */
+fn borrow_covers(path: string) -> bool {
+    for i in 0..BORROWS.len {
+        if paths_conflict(BORROWS[i].path, path) {
+            return true
+        }
+    }
+    return false
+}
+
+fn path_is_moved(binding: int, path: string) -> bool {
+    for i in 0..BINDINGS[binding].moved_paths.len {
+        if paths_conflict(BINDINGS[binding].moved_paths[i], path) {
+            return true
+        }
+    }
+    return false
+}
+
+fn mark_path_moved(binding: int, path: string) {
+    if path_is_moved(binding, path) {
+        return
+    }
+    push(BINDINGS[binding].moved_paths, path)
+}
+
+fn check_use_path(path: string, loc: Loc) -> bool {
+    let mut i = BORROWS.len
+    while i > 0 {
+        i = i - 1
+        if BORROWS[i].is_mut && paths_conflict(BORROWS[i].path, path) {
+            report(loc, "cannot use '{{path}}' while mutably borrowed")
+            return true
+        }
+    }
+    return false
+}
+
+fn drop_borrows_deeper_than(target_depth: int) {
+    let mut kept = []Borrow {}
+    for i in 0..BORROWS.len {
+        if BORROWS[i].depth <= target_depth {
+            push(kept, BORROWS[i])
+        }
+    }
+    BORROWS = kept
+}
+
+/** *Drop statement-temp borrows; keep those stored in live bindings. */
+fn release_temps() {
+    let mut kept = []Borrow {}
+    for i in 0..BORROWS.len {
+        if BORROWS[i].stored {
+            push(kept, BORROWS[i])
+        }
+    }
+    BORROWS = kept
+}
+
+/** *Does expression `n` mention identifier `name`? */
+fn expr_uses(n: int, name: string) -> bool {
+    if n == ast.NONE {
+        return false
+    }
+    let node_kind = ast.NODES[n].kind
+    switch node_kind {
+        case Kind.Ident:
+            return ast.NODES[n].name == name
+        case Kind.Addr, Kind.Deref, Kind.Field, Kind.Unary, Kind.IncDec, Kind.Cast, Kind.Try:
+            return expr_uses(ast.NODES[n].a, name)
+        case Kind.Index, Kind.Binary:
+            return expr_uses(ast.NODES[n].a, name) || expr_uses(ast.NODES[n].b, name)
+        case Kind.Closure:
+            for i in 0..ast.NODES[n].caps.len {
+                if ast.NODES[n].caps[i] == name {
+                    return true
+                }
+            }
+            return stmt_uses(ast.NODES[n].b, name)
+        case Kind.Call:
+            if expr_uses(ast.NODES[n].a, name) {
+                return true
+            }
+            for i in 0..ast.NODES[n].kids.len {
+                if expr_uses(ast.NODES[n].kids[i], name) {
+                    return true
+                }
+            }
+            return false
+        case Kind.StructLit:
+            for i in 0..ast.NODES[n].kids.len {
+                if expr_uses(ast.NODES[ast.NODES[n].kids[i]].a, name) {
+                    return true
+                }
+            }
+            return false
+        case Kind.ArrayLit, Kind.Tuple:
+            for i in 0..ast.NODES[n].kids.len {
+                if expr_uses(ast.NODES[n].kids[i], name) {
+                    return true
+                }
+            }
+            return false
+        case Kind.If:
+            return expr_uses(ast.NODES[n].a, name) || stmt_uses(ast.NODES[n].b, name) ||
+                stmt_uses(ast.NODES[n].c, name)
+        default:
+            return false
+    }
+}
+
+/** *Does statement `n` (or anything nested in it) mention `name`? */
+fn stmt_uses(n: int, name: string) -> bool {
+    if n == ast.NONE {
+        return false
+    }
+    let node_kind = ast.NODES[n].kind
+    switch node_kind {
+        case Kind.Var:
+            return expr_uses(ast.NODES[n].b, name)
+        case Kind.Assign:
+            return expr_uses(ast.NODES[n].a, name) || expr_uses(ast.NODES[n].b, name)
+        case Kind.ExprStmt, Kind.Return:
+            return expr_uses(ast.NODES[n].a, name)
+        case Kind.Block:
+            for i in 0..ast.NODES[n].kids.len {
+                if stmt_uses(ast.NODES[n].kids[i], name) {
+                    return true
+                }
+            }
+            return false
+        case Kind.If:
+            return expr_uses(ast.NODES[n].a, name) || stmt_uses(ast.NODES[n].b, name) ||
+                stmt_uses(ast.NODES[n].c, name)
+        case Kind.For, Kind.While:
+            return expr_uses(ast.NODES[n].a, name) || stmt_uses(ast.NODES[n].b, name)
+        case Kind.Switch:
+            if expr_uses(ast.NODES[n].a, name) {
+                return true
+            }
+            for i in 0..ast.NODES[n].kids.len {
+                if stmt_uses(ast.NODES[n].kids[i], name) {
+                    return true
+                }
+            }
+            return false
+        case Kind.Case:
+            return stmt_uses(ast.NODES[n].a, name)
+        default:
+            return false
+    }
+}
+
+/** *End every loan `binding` holds. */
+fn release_owned(binding: int) {
+    let mut kept = []Borrow {}
+    for i in 0..BORROWS.len {
+        if !(BORROWS[i].stored && BORROWS[i].owner == binding) {
+            push(kept, BORROWS[i])
+        }
+    }
+    BORROWS = kept
+}
+
+/** *`binding` is gone: no place rooted in it can still be borrowed. */
+fn drop_borrows_of(binding: int) {
+    let mut kept = []Borrow {}
+    for i in 0..BORROWS.len {
+        if BORROWS[i].target != binding {
+            push(kept, BORROWS[i])
+        }
+    }
+    BORROWS = kept
+}
+
+fn holds_loans(binding: int) -> bool {
+    for i in 0..BORROWS.len {
+        if BORROWS[i].stored && BORROWS[i].owner == binding {
+            return true
+        }
+    }
+    return false
+}
+
+// --- Loan sets, saved across branches -------------------------------------------
+
+/** *A copy of a borrow list; the copies are new borrows (fresh ids). */
+fn dup_borrows(list: []Borrow) -> []Borrow {
+    let mut copy = []Borrow {}
+    for i in 0..list.len {
+        let mut borrow = list[i]
+        borrow.id = new_borrow_id()
+        push(copy, borrow)
+    }
+    return copy
+}
+
+/** *Add to `dst` every loan of `other` it lacks (join after a branch); */
+/** *`temps`: statement temps too. C prepends each in head order, so the */
+/** *oldest of `other` ends up newest. */
+fn union_into_ex(dst: &mut []Borrow, other: []Borrow, temps: bool) {
+    let mut i = other.len
+    while i > 0 {
+        i = i - 1
+        let candidate = other[i]
+        if !candidate.stored && !temps {
+            continue
+        }
+        let mut have = false
+        let mut k = dst.len
+        while k > 0 && !have {
+            k = k - 1
+            have = dst[k].stored && dst[k].owner == candidate.owner && dst[k].is_mut == candidate.is_mut &&
+                dst[k].path == candidate.path
+        }
+        if have {
+            continue
+        }
+        let mut copy = candidate
+        copy.id = new_borrow_id()
+        push(dst, copy)
+    }
+}
+
+fn union_borrows(other: []Borrow) {
+    union_into_ex(&mut BORROWS, other, false)
+}
+
+fn set_borrows(list: []Borrow) {
+    BORROWS = dup_borrows(list)
+}
+
+// --- Liveness: is a holder read again before it is overwritten? -----------------
+
+enum Access {
+    Untouched = 0,
+    Read = 1,
+    Kill = 2,
+}
+
+/** *First access to `name` along a run of statements. */
+fn seq_access(stmts: []int, from: int, name: string) -> int {
+    for j in from..stmts.len {
+        let st = stmts[j]
+        // A nested `let name` shadows it for the rest of this block.
+        if st != ast.NONE && ast.NODES[st].kind == Kind.Var && ast.NODES[st].has_name && ast.NODES[st].name == name {
+            return if expr_uses(ast.NODES[st].b, name) { Access.Read } else { Access.Untouched }
+        }
+        let access = first_access(st, name)
+        if access != Access.Untouched {
+            return access
+        }
+    }
+    return Access.Untouched
+}
+
+/** *How statement `n` first touches `name` on any path: Read if some path */
+/** *may read it before writing it, Kill if every path overwrites it first. */
+fn first_access(n: int, name: string) -> int {
+    if n == ast.NONE {
+        return Access.Untouched
+    }
+    let node_kind = ast.NODES[n].kind
+    switch node_kind {
+        case Kind.Assign:
+            let left = ast.NODES[n].a
+            if expr_uses(ast.NODES[n].b, name) {
+                return Access.Read
+            }
+            if left != ast.NONE && ast.NODES[left].kind == Kind.Ident && ast.NODES[left].name == name {
+                return if ast.NODES[n].op == Tok.Eq { Access.Kill } else { Access.Read }
+            }
+            return if expr_uses(left, name) { Access.Read } else { Access.Untouched }
+        case Kind.Block:
+            return seq_access(ast.NODES[n].kids, 0, name)
+        case Kind.If:
+            if expr_uses(ast.NODES[n].a, name) {
+                return Access.Read
+            }
+            let then_access = first_access(ast.NODES[n].b, name)
+            let else_access = first_access(ast.NODES[n].c, name)
+            if then_access == Access.Read || else_access == Access.Read {
+                return Access.Read
+            }
+            if then_access == Access.Kill && else_access == Access.Kill {
+                return Access.Kill
+            }
+            return Access.Untouched
+        case Kind.For, Kind.While:
+            if expr_uses(ast.NODES[n].a, name) {
+                return Access.Read
+            }
+            // The body may not run, so a kill inside it proves nothing.
+            return if first_access(ast.NODES[n].b, name) == Access.Read { Access.Read } else { Access.Untouched }
+        case Kind.Switch:
+            if expr_uses(ast.NODES[n].a, name) {
+                return Access.Read
+            }
+            for i in 0..ast.NODES[n].kids.len {
+                if first_access(ast.NODES[n].kids[i], name) == Access.Read {
+                    return Access.Read
+                }
+            }
+            return Access.Untouched
+        case Kind.Case:
+            return first_access(ast.NODES[n].a, name)
+        default:
+            return if stmt_uses(n, name) { Access.Read } else { Access.Untouched }
+    }
+}
+
+// --- The blocks being walked, for the liveness of outer bindings ------------------
+
+struct Frame {
+    /* `has_stmts` false: a closure body starts here (runs later). */
+    stmts: []int,
+    has_stmts: bool,
+    /* The statement being checked. */
+    idx: int,
+    depth: int,
+    /* An `if` expression arm: leaving it keeps outer holders live. */
+    stop_live: bool,
+}
+
+let mut FRAMES: []Frame = []Frame {}
+
+fn push_frame(stmts: []int, has_stmts: bool, frame_depth: int, stop_live: bool) {
+    push(FRAMES, Frame { stmts: stmts, has_stmts: has_stmts, idx: 0, depth: frame_depth, stop_live: stop_live })
+}
+
+fn pop_frame() {
+    if FRAMES.len > 0 {
+        pop(FRAMES)
+    }
+}
+
+/** *Is outer binding `binding` read again, before being overwritten, from */
+/** *the innermost frame's current statement on? */
+fn outer_live(binding: int) -> bool {
+    if FRAMES.len == 0 {
+        return true
+    }
+    let name = BINDINGS[binding].name
+    let top = FRAMES.len - 1
+    let mut access = seq_access(FRAMES[top].stmts, FRAMES[top].idx, name)
+    if access != Access.Untouched {
+        return access == Access.Read
+    }
+    let mut f = FRAMES.len - 2
+    while f >= 0 {
+        if FRAMES[f + 1].stop_live || !FRAMES[f].has_stmts || FRAMES[f].idx >= FRAMES[f].stmts.len {
+            return true
+        }
+        let statement = FRAMES[f].stmts[FRAMES[f].idx]
+        if statement == ast.NONE {
+            return true
+        }
+        let statement_kind = ast.NODES[statement].kind
+        if statement_kind == Kind.For || statement_kind == Kind.While {
+            if first_access(statement, name) == Access.Read {
+                return true
+            }
+        } else if statement_kind == Kind.Switch {
+            if stmt_uses(statement, name) {
+                return true
+            }
+        } else if statement_kind != Kind.If && statement_kind != Kind.Block {
+            return true
+        }
+        access = seq_access(FRAMES[f].stmts, FRAMES[f].idx + 1, name)
+        if access != Access.Untouched {
+            return access == Access.Read
+        }
+        if FRAMES[f].depth <= BINDINGS[binding].depth {
+            return false
+        }
+        f = f - 1
+    }
+    return true
+}
+
+/** *NLL: end the loans of any binding of this block not read again from */
+/** *statement `at` on, along any path, before being overwritten. */
+fn end_dead_borrows(stmts: []int, at: int, block_depth: int) {
+    let mut i = ACTIVE.len
+    while i > 0 {
+        i = i - 1
+        if i >= ACTIVE.len {
+            continue
+        }
+        let binding = ACTIVE[i]
+        if BINDINGS[binding].depth > block_depth || BINDINGS[binding].kind != BindKind.Local || !holds_loans(binding) {
+            continue
+        }
+        if BINDINGS[binding].depth == block_depth {
+            if seq_access(stmts, at, BINDINGS[binding].name) == Access.Read {
+                continue
+            }
+        } else if outer_live(binding) {
+            continue
+        }
+        release_owned(binding)
+    }
+}
+
+// --- Globals, and which globals each fn may change --------------------------
+
+/** *Every module-level `let` of the session. */
+let mut GLOBAL_DECLS: IntMap<int> = intmap.imap_new(0)
+
+fn is_global_decl(decl: int) -> bool {
+    return decl != ast.NONE && intmap.imap_get(&mut GLOBAL_DECLS, decl) != 0
+}
+
+/** *The global a place roots in (`ITEMS[i].kids`, `store.ITEMS[i]`), or */
+/** *`ast.NONE` for a local, a parameter, or anything through a reference. */
+fn global_of_place(start: int) -> int {
+    let mut place = start
+    while place != ast.NONE {
+        let place_kind = ast.NODES[place].kind
+        if place_kind == Kind.Ident {
+            let decl = ast.NODES[place].res
+            return if is_global_decl(decl) { decl } else { ast.NONE }
+        }
+        if place_kind != Kind.Field && place_kind != Kind.Index {
+            return ast.NONE
+        }
+        let base = ast.NODES[place].a
+        if place_kind == Kind.Field && base != ast.NONE && ast.NODES[base].kind == Kind.Ident &&
+            ast.NODES[base].res != ast.NONE && ast.NODES[ast.NODES[base].res].kind == Kind.Program {
+            let decl = ast.NODES[place].res
+            return if is_global_decl(decl) { decl } else { ast.NONE }
+        }
+        if base != ast.NONE && is_ref_ty(ast.NODES[base].ty) {
+            return ast.NONE
+        }
+        place = base
+    }
+    return ast.NONE
+}
+
+/** *The globals one fn may change, directly or through what it calls. */
+struct GlobalWrites {
+    fn_decl: int,
+    globals: []int,
+    callees: []int,
+    /* Calls a fn value (or a hook that may): anything. */
+    writes_any: bool,
+}
+
+let mut GLOBAL_WRITES: []GlobalWrites = []GlobalWrites {}
+/** *fn decl -> index into GLOBAL_WRITES, plus one (0 = none). */
+let mut WRITES_INDEX: IntMap<int> = intmap.imap_new(0)
+
+fn writes_index_find(fn_decl: int) -> int {
+    if fn_decl == ast.NONE {
+        return -1
+    }
+    return intmap.imap_get(&mut WRITES_INDEX, fn_decl) - 1
+}
+
+fn writes_has_global(index: int, global: int) -> bool {
+    for i in 0..GLOBAL_WRITES[index].globals.len {
+        if GLOBAL_WRITES[index].globals[i] == global {
+            return true
+        }
+    }
+    return false
+}
+
+/** *True if `global` was new to the fn's set. */
+fn writes_add_global(index: int, global: int) -> bool {
+    if global == ast.NONE || writes_has_global(index, global) {
+        return false
+    }
+    push(GLOBAL_WRITES[index].globals, global)
+    return true
+}
+
+fn writes_add_callee(index: int, callee: int) {
+    for i in 0..GLOBAL_WRITES[index].callees.len {
+        if GLOBAL_WRITES[index].callees[i] == callee {
+            return
+        }
+    }
+    push(GLOBAL_WRITES[index].callees, callee)
+}
+
+/** *A call the compiler expands itself: it runs no Loam code. */
+fn is_builtin_call(call: int) -> bool {
+    let marks = ast.NODES[call].marks
+    let builtin_marks = ast.M_PRINTLN | ast.M_VEC_PUSH | ast.M_VEC_POP | ast.M_SIZEOF | ast.M_BOX_NEW | ast.M_PANIC | ast.M_VALUE_KEY
+    return (marks & builtin_marks) != 0 || ast.NODES[call].has_cbuiltin || ast.NODES[call].numb != Numb.None ||
+        ast.NODES[call].fut != 0 || ast.NODES[call].ch != 0 || (ast.NODES[call].sig != 0 && ast.NODES[call].sig != 3)
+}
+
+/** *What a call runs: `callee` its fn decl (or `ast.NONE`), `runs_unknown` */
+/** *when it may run any code (a fn value, a signal store, an unresolved */
+/** *callee). Neither: a builtin. */
+struct CallTarget {
+    callee: int,
+    runs_unknown: bool,
+}
+
+fn call_callee(call: int) -> CallTarget {
+    if (ast.NODES[call].marks & ast.M_FN_VAL) != 0 {
+        return CallTarget { callee: ast.NONE, runs_unknown: true }
+    }
+    if is_builtin_call(call) {
+        return CallTarget { callee: ast.NONE, runs_unknown: false }
+    }
+    let callee = ast.NODES[call].a
+    let mut decl = ast.NONE
+    if callee != ast.NONE && (ast.NODES[callee].kind == Kind.Ident || ast.NODES[callee].kind == Kind.Field) {
+        decl = ast.NODES[callee].res
+    }
+    if decl != ast.NONE && ast.NODES[decl].kind == Kind.Fn {
+        return CallTarget { callee: decl, runs_unknown: false }
+    }
+    return CallTarget { callee: ast.NONE, runs_unknown: true }
+}
+
+/** *A value of this type may carry a fn a bodyless hook could call back. */
+fn type_holds_fn(t: int, depth_left: int) -> bool {
+    if t == types.NO_TYPE || depth_left == 0 {
+        return false
+    }
+    let type_kind = types.kind_of(t)
+    if type_kind == TK.Proc {
+        return true
+    }
+    if type_kind == TK.Ptr || type_kind == TK.Box || type_kind == TK.Vec || type_kind == TK.Array {
+        return type_holds_fn(types.TYPES[t].elem, depth_left - 1)
+    }
+    if type_kind == TK.Struct {
+        for i in 0..types.TYPES[t].field_types.len {
+            if type_holds_fn(types.TYPES[t].field_types[i], depth_left - 1) {
+                return true
+            }
+        }
+    }
+    return false
+}
+
+fn collect_writes_list(nodes: []int, index: int) {
+    for i in 0..nodes.len {
+        collect_writes(nodes[i], index)
+    }
+}
+
+fn collect_writes(n: int, index: int) {
+    if n == ast.NONE {
+        return
+    }
+    let node_kind = ast.NODES[n].kind
+    switch node_kind {
+        case Kind.Fn:
+            collect_writes(ast.NODES[n].b, index)
+            break
+        case Kind.Block:
+            collect_writes_list(ast.NODES[n].kids, index)
+            break
+        case Kind.If:
+            collect_writes(ast.NODES[n].a, index)
+            collect_writes(ast.NODES[n].b, index)
+            collect_writes(ast.NODES[n].c, index)
+            break
+        case Kind.While:
+            collect_writes(ast.NODES[n].a, index)
+            collect_writes(ast.NODES[n].b, index)
+            break
+        case Kind.For, Kind.Binary, Kind.Index:
+            collect_writes(ast.NODES[n].a, index)
+            collect_writes(ast.NODES[n].b, index)
+            break
+        case Kind.Switch:
+            collect_writes(ast.NODES[n].a, index)
+            collect_writes_list(ast.NODES[n].kids, index)
+            break
+        case Kind.Case, Kind.Return, Kind.ExprStmt, Kind.Unary, Kind.Cast, Kind.Try, Kind.Field, Kind.Deref:
+            collect_writes(ast.NODES[n].a, index)
+            break
+        case Kind.Var:
+            collect_writes(ast.NODES[n].b, index)
+            break
+        case Kind.Assign:
+            writes_add_global(index, global_of_place(ast.NODES[n].a))
+            collect_writes(ast.NODES[n].a, index)
+            collect_writes(ast.NODES[n].b, index)
+            break
+        case Kind.IncDec:
+            writes_add_global(index, global_of_place(ast.NODES[n].a))
+            collect_writes(ast.NODES[n].a, index)
+            break
+        case Kind.Addr:
+            if ast.NODES[n].op != 0 {
+                writes_add_global(index, global_of_place(ast.NODES[n].a))
+            }
+            collect_writes(ast.NODES[n].a, index)
+            break
+        case Kind.Call:
+            let target = call_callee(n)
+            if target.runs_unknown {
+                GLOBAL_WRITES[index].writes_any = true
+            }
+            if target.callee != ast.NONE {
+                writes_add_callee(index, target.callee)
+            }
+            if (ast.NODES[n].marks & ast.M_FN_VAL) != 0 {
+                collect_writes(ast.NODES[n].a, index)
+            }
+            collect_writes_list(ast.NODES[n].kids, index)
+            break
+        case Kind.StructLit:
+            for i in 0..ast.NODES[n].kids.len {
+                collect_writes(ast.NODES[ast.NODES[n].kids[i]].a, index)
+            }
+            break
+        case Kind.ArrayLit, Kind.Tuple:
+            collect_writes_list(ast.NODES[n].kids, index)
+            break
+        default:
+            // A closure runs when called, and calling a fn value counts as anything.
+            return
+    }
+}
+
+/** *Every fn's direct writes, then its callees' until nothing changes. */
+fn global_writes_build() {
+    GLOBAL_DECLS = intmap.imap_new(0)
+    GLOBAL_WRITES = []GlobalWrites {}
+    WRITES_INDEX = intmap.imap_new(0)
+    for g in 0..typecheck.GVARS.len {
+        if typecheck.GVARS[g].var != ast.NONE {
+            intmap.imap_put(&mut GLOBAL_DECLS, typecheck.GVARS[g].var, 1)
+        }
+    }
+    for m in 0..typecheck.MODS.len {
+        let root = typecheck.MODS[m].root
+        if root == ast.NONE {
+            continue
+        }
+        let decls = typecheck.decls_of(root)
+        for i in 0..decls.len {
+            let fn_decl = decls[i]
+            if ast.NODES[fn_decl].kind != Kind.Fn || writes_index_find(fn_decl) >= 0 {
+                continue
+            }
+            push(GLOBAL_WRITES, GlobalWrites { fn_decl: fn_decl, globals: []int {}, callees: []int {}, writes_any: false })
+            let index = GLOBAL_WRITES.len - 1
+            if ast.NODES[fn_decl].b != ast.NONE && (ast.NODES[fn_decl].marks & ast.M_INTRINSIC) == 0 {
+                collect_writes(fn_decl, index)
+            } else {
+                // A bodyless hook runs no Loam code, unless handed a fn.
+                let fn_type = ast.NODES[fn_decl].ty
+                if fn_type != types.NO_TYPE {
+                    for k in 0..types.TYPES[fn_type].params.len {
+                        if type_holds_fn(types.TYPES[fn_type].params[k], 6) {
+                            GLOBAL_WRITES[index].writes_any = true
+                        }
+                    }
+                }
+            }
+            intmap.imap_put(&mut WRITES_INDEX, fn_decl, index + 1)
+        }
+    }
+    let mut changed = true
+    while changed {
+        changed = false
+        for i in 0..GLOBAL_WRITES.len {
+            if GLOBAL_WRITES[i].writes_any {
+                continue
+            }
+            let mut c = 0
+            while c < GLOBAL_WRITES[i].callees.len && !GLOBAL_WRITES[i].writes_any {
+                let callee_index = writes_index_find(GLOBAL_WRITES[i].callees[c])
+                if callee_index < 0 {
+                    GLOBAL_WRITES[i].writes_any = true
+                    changed = true
+                    break
+                }
+                if GLOBAL_WRITES[callee_index].writes_any {
+                    GLOBAL_WRITES[i].writes_any = true
+                    changed = true
+                    break
+                }
+                for g in 0..GLOBAL_WRITES[callee_index].globals.len {
+                    if writes_add_global(i, GLOBAL_WRITES[callee_index].globals[g]) {
+                        changed = true
+                    }
+                }
+                c = c + 1
+            }
+        }
+    }
+}
+
+/** *A call while a borrow of a global is live must not be able to change it. */
+fn check_call_keeps_borrowed_globals(call: int) -> bool {
+    let mut any_global = false
+    for i in 0..BORROWS.len {
+        if BORROWS[i].global_decl != ast.NONE {
+            any_global = true
+        }
+    }
+    if !any_global {
+        return false
+    }
+    let target = call_callee(call)
+    let mut runs_unknown = target.runs_unknown
+    let mut writes = -1
+    if target.callee != ast.NONE {
+        writes = writes_index_find(target.callee)
+        if writes < 0 {
+            runs_unknown = true
+        }
+    }
+    if !runs_unknown && writes < 0 {
+        return false
+    }
+    let mut i = BORROWS.len
+    while i > 0 {
+        i = i - 1
+        let global = BORROWS[i].global_decl
+        if global == ast.NONE {
+            continue
+        }
+        if !runs_unknown && !GLOBAL_WRITES[writes].writes_any && !writes_has_global(writes, global) {
+            continue
+        }
+        let callee_name = if target.callee != ast.NONE && ast.NODES[target.callee].has_name { ast.NODES[target.callee].name } else { "a fn value" }
+        report(ast.NODES[call].loc, "cannot call '{{callee_name}}' while '{{BORROWS[i].path}}' is borrowed: the call may change the global '{{ast.NODES[global].name}}' and move what the borrow points into")
+        return true
+    }
+    return false
+}
+
+/** *A borrow whose place goes through an index is taken after the other */
+/** *arguments (the IR lowers it last too). */
+fn addr_through_index(arg: int) -> bool {
+    if arg == ast.NONE || ast.NODES[arg].kind != Kind.Addr {
+        return false
+    }
+    let mut place = ast.NODES[arg].a
+    while place != ast.NONE {
+        if ast.NODES[place].kind == Kind.Index {
+            return true
+        }
+        if ast.NODES[place].kind != Kind.Field {
+            return false
+        }
+        place = ast.NODES[place].a
+    }
+    return false
+}
+
+// --- Roots: what a place lives in, what a reference points into -------------------
+
+struct Root {
+    depth: int,
+    name_kind: int,
+    name: string,
+}
+
+fn no_root() -> Root {
+    return Root { depth: 0, name_kind: RootName.Nothing, name: "" }
+}
+
+fn deeper(a: Root, b: Root) -> Root {
+    return if b.depth > a.depth { b } else { a }
+}
+
+fn root_name_text(r: Root) -> string {
+    return if r.name_kind == RootName.Nothing { "?" } else { r.name }
+}
+
+/* What an `if` expression's value points into, recorded while its arms' */
+/* bindings were live. */
+let mut IF_ROOTS: IntMap<int> = intmap.imap_new(0)
+let mut IF_ROOT_VALUES: []Root = []Root {}
+
+fn set_if_root(n: int, r: Root) {
+    let slot = intmap.imap_get(&mut IF_ROOTS, n)
+    if slot > 0 {
+        IF_ROOT_VALUES[slot - 1] = r
+        return
+    }
+    push(IF_ROOT_VALUES, r)
+    intmap.imap_put(&mut IF_ROOTS, n, IF_ROOT_VALUES.len)
+}
+
+fn get_if_root(n: int) -> Root {
+    let slot = intmap.imap_get(&mut IF_ROOTS, n)
+    return if slot > 0 { IF_ROOT_VALUES[slot - 1] } else { no_root() }
+}
+
+/** *The value expression an `if` arm ends in, or `ast.NONE`. */
+fn arm_tail(block: int) -> int {
+    if block == ast.NONE || ast.NODES[block].kind != Kind.Block || ast.NODES[block].kids.len == 0 {
+        return ast.NONE
+    }
+    let last = ast.NODES[block].kids[ast.NODES[block].kids.len - 1]
+    return if last != ast.NONE && ast.NODES[last].kind == Kind.ExprStmt { ast.NODES[last].a } else { ast.NONE }
+}
+
+/** *Where place `n` lives. */
+fn place_root(n: int) -> Root {
+    if n == ast.NONE {
+        return no_root()
+    }
+    let node_kind = ast.NODES[n].kind
+    if node_kind == Kind.Ident {
+        let binding = find_b(ast.NODES[n].name)
+        if binding < 0 || BINDINGS[binding].kind == BindKind.Global {
+            return no_root()
+        }
+        return Root { depth: BINDINGS[binding].depth, name_kind: RootName.Named, name: ast.NODES[n].name }
+    }
+    if node_kind == Kind.Field || node_kind == Kind.Index {
+        let target = ast.NODES[n].a
+        if target != ast.NONE && is_ref_ty(ast.NODES[target].ty) {
+            return ref_root(target)
+        }
+        // `mod.g`: a module-qualified global with no alias binding.
+        if node_kind == Kind.Field && target != ast.NONE && ast.NODES[target].kind == Kind.Ident &&
+            find_b(ast.NODES[target].name) < 0 {
+            return no_root()
+        }
+        return place_root(target)
+    }
+    if node_kind == Kind.Deref {
+        let target = ast.NODES[n].a
+        if target != ast.NONE && is_ref_ty(ast.NODES[target].ty) {
+            return ref_root(target)
+        }
+        return place_root(target)
+    }
+    return Root { depth: DEPTH, name_kind: RootName.Temporary, name: TEMP_ROOT_TEXT }
+}
+
+/** *What an expression of reference type points into. */
+fn ref_root(e: int) -> Root {
+    if e == ast.NONE {
+        return no_root()
+    }
+    let node_kind = ast.NODES[e].kind
+    if node_kind == Kind.Addr {
+        return place_root(ast.NODES[e].a)
+    }
+    if node_kind == Kind.Ident {
+        let binding = find_b(ast.NODES[e].name)
+        if binding < 0 || BINDINGS[binding].kind == BindKind.Global || BINDINGS[binding].ref_depth == 0 {
+            return no_root()
+        }
+        return Root { depth: BINDINGS[binding].ref_depth, name_kind: BINDINGS[binding].ref_root_kind, name: BINDINGS[binding].ref_root }
+    }
+    if node_kind == Kind.Call {
+        let mut r = no_root()
+        for i in 0..ast.NODES[e].kids.len {
+            let arg = ast.NODES[e].kids[i]
+            if arg != ast.NONE && is_ref_ty(ast.NODES[arg].ty) {
+                r = deeper(r, ref_root(arg))
+            }
+        }
+        return r
+    }
+    if node_kind == Kind.If {
+        return get_if_root(e)
+    }
+    return no_root()
+}
+
+/** *A reference that may point into a global. */
+fn refers_into_global(e: int) -> bool {
+    if e == ast.NONE {
+        return false
+    }
+    let node_kind = ast.NODES[e].kind
+    if node_kind == Kind.Addr {
+        let mut place = ast.NODES[e].a
+        if global_of_place(place) != ast.NONE {
+            return true
+        }
+        while place != ast.NONE && (ast.NODES[place].kind == Kind.Field || ast.NODES[place].kind == Kind.Index ||
+            ast.NODES[place].kind == Kind.Deref) {
+            let base = ast.NODES[place].a
+            if base != ast.NONE && is_ref_ty(ast.NODES[base].ty) {
+                return refers_into_global(base)
+            }
+            place = base
+        }
+        return false
+    }
+    if node_kind == Kind.Ident {
+        let holder = find_b(ast.NODES[e].name)
+        if holder < 0 {
+            return false
+        }
+        for i in 0..BORROWS.len {
+            if BORROWS[i].stored && BORROWS[i].owner == holder && BORROWS[i].global_decl != ast.NONE {
+                return true
+            }
+        }
+        return false
+    }
+    if node_kind == Kind.Call {
+        for i in 0..ast.NODES[e].kids.len {
+            let arg = ast.NODES[e].kids[i]
+            if arg != ast.NONE && is_ref_ty(ast.NODES[arg].ty) && refers_into_global(arg) {
+                return true
+            }
+        }
+        return false
+    }
+    if node_kind == Kind.If {
+        return refers_into_global(arm_tail(ast.NODES[e].b)) || refers_into_global(arm_tail(ast.NODES[e].c))
+    }
+    return false
+}
+
+fn set_ref(binding: int, r: Root) {
+    BINDINGS[binding].ref_depth = r.depth
+    BINDINGS[binding].ref_root_kind = r.name_kind
+    BINDINGS[binding].ref_root = r.name
+    BINDINGS[binding].dangling = false
+}
+
+/** *Reading a reference whose target's scope has ended. */
+fn check_dangling(binding: int, loc: Loc) -> bool {
+    if binding < 0 || !BINDINGS[binding].dangling {
+        return false
+    }
+    if BINDINGS[binding].ref_root_kind == RootName.Temporary {
+        report(loc, "'{{BINDINGS[binding].name}}' is used after the temporary it borrows was dropped")
+    } else {
+        let root = if BINDINGS[binding].ref_root_kind == RootName.Nothing { "?" } else { BINDINGS[binding].ref_root }
+        report(loc, "'{{BINDINGS[binding].name}}' is used after '{{root}}', which it borrows, went out of scope")
+    }
+    return true
+}
+
+// --- Loans a reference takes on ---------------------------------------------------
+
+struct Loan {
+    /* A statement temp to keep (its id), or -1. */
+    temp: int,
+    /* Otherwise: a copy of another binding's loan. */
+    path: string,
+    is_mut: bool,
+    target: int,
+    global_decl: int,
+}
+
+/** *The unkept temp borrow of `path` made by this statement (its id), or -1. */
+fn find_temp(path: string) -> int {
+    let mut i = BORROWS.len
+    while i > 0 {
+        i = i - 1
+        if !BORROWS[i].stored && BORROWS[i].path == path {
+            return BORROWS[i].id
+        }
+    }
+    return -1
+}
+
+fn borrow_index(id: int) -> int {
+    for i in 0..BORROWS.len {
+        if BORROWS[i].id == id {
+            return i
+        }
+    }
+    return -1
+}
+
+/** *The loans a reference made from `e` must hold. True if an error. */
+fn gather_loans(e: int, result_mut: bool, loans: &mut []Loan, loc: Loc) -> bool {
+    return gather_loans_ex(e, result_mut, loans, loc, true)
+}
+
+fn gather_loans_ex(e: int, result_mut: bool, loans: &mut []Loan, loc: Loc, reborrow: bool) -> bool {
+    if e == ast.NONE {
+        return false
+    }
+    let node_kind = ast.NODES[e].kind
+    if node_kind == Kind.Addr {
+        let path = path_of(ast.NODES[e].a)
+        if path.len == 0 {
+            return false
+        }
+        let temp = find_temp(path)
+        if temp >= 0 {
+            let temp_mut = BORROWS[borrow_index(temp)].is_mut
+            push(loans, Loan { temp: temp, path: "", is_mut: temp_mut && result_mut, target: -1, global_decl: ast.NONE })
+        }
+        return false
+    }
+    if node_kind == Kind.Ident {
+        let holder = find_b(ast.NODES[e].name)
+        if holder < 0 || BINDINGS[holder].kind == BindKind.Global || !is_ref_ty(ast.NODES[e].ty) {
+            return false
+        }
+        let mut i = BORROWS.len
+        while i > 0 {
+            i = i - 1
+            if !BORROWS[i].stored || BORROWS[i].owner != holder {
+                continue
+            }
+            push(loans, Loan {
+                temp: -1,
+                path: BORROWS[i].path,
+                is_mut: BORROWS[i].is_mut && result_mut,
+                target: BORROWS[i].target,
+                global_decl: BORROWS[i].global_decl,
+            })
+        }
+        // Through the holder itself: while the result lives, it may not be
+        // used to write what it points at.
+        if !reborrow {
+            return false
+        }
+        let through_mut = result_mut && ref_is_mut(ast.NODES[e].ty)
+        if take_borrow_path(ast.NODES[e].name, through_mut, loc) {
+            return true
+        }
+        push(loans, Loan { temp: head_id(), path: "", is_mut: through_mut, target: -1, global_decl: ast.NONE })
+        return false
+    }
+    if node_kind == Kind.Call {
+        if !is_ref_ty(ast.NODES[e].ty) {
+            return false
+        }
+        for i in 0..ast.NODES[e].kids.len {
+            let arg = ast.NODES[e].kids[i]
+            if arg != ast.NONE && is_ref_ty(ast.NODES[arg].ty) && gather_loans_ex(arg, result_mut, loans, loc, reborrow) {
+                return true
+            }
+        }
+        return false
+    }
+    if node_kind == Kind.If {
+        if gather_loans_ex(arm_tail(ast.NODES[e].b), result_mut, loans, loc, reborrow) {
+            return true
+        }
+        return gather_loans_ex(arm_tail(ast.NODES[e].c), result_mut, loans, loc, reborrow)
+    }
+    return false
+}
+
+/** *Hand `loans` to `binding`. `replace`: drop the loans it held before. */
+fn attach_loans(binding: int, loans: []Loan, replace: bool) {
+    if replace {
+        release_owned(binding)
+    }
+    for i in 0..loans.len {
+        let loan = loans[i]
+        if loan.temp >= 0 {
+            let at = borrow_index(loan.temp)
+            if at >= 0 {
+                BORROWS[at].stored = true
+                BORROWS[at].owner = binding
+                BORROWS[at].depth = BINDINGS[binding].depth
+                BORROWS[at].is_mut = loan.is_mut
+            }
+            continue
+        }
+        push(BORROWS, Borrow {
+            id: new_borrow_id(),
+            path: loan.path,
+            is_mut: loan.is_mut,
+            stored: true,
+            depth: BINDINGS[binding].depth,
+            owner: binding,
+            target: loan.target,
+            global_decl: loan.global_decl,
+        })
+    }
+}
+
+// --- Ownership state of the live bindings, saved across branches ------------------
+
+struct BindingSnap {
+    binding: int,
+    own: int,
+    shared: int,
+    mutb: int,
+    ref_depth: int,
+    ref_root_kind: int,
+    ref_root: string,
+    dangling: bool,
+}
+
+fn snapshot() -> []BindingSnap {
+    let mut snaps = []BindingSnap {}
+    let mut i = ACTIVE.len
+    while i > 0 {
+        i = i - 1
+        let binding = ACTIVE[i]
+        push(snaps, BindingSnap {
+            binding: binding,
+            own: BINDINGS[binding].own,
+            shared: BINDINGS[binding].shared,
+            mutb: BINDINGS[binding].mutb,
+            ref_depth: BINDINGS[binding].ref_depth,
+            ref_root_kind: BINDINGS[binding].ref_root_kind,
+            ref_root: BINDINGS[binding].ref_root,
+            dangling: BINDINGS[binding].dangling,
+        })
+    }
+    return snaps
+}
+
+fn restore(snaps: []BindingSnap) {
+    for i in 0..snaps.len {
+        let snap = snaps[i]
+        BINDINGS[snap.binding].own = snap.own
+        BINDINGS[snap.binding].shared = snap.shared
+        BINDINGS[snap.binding].mutb = snap.mutb
+        BINDINGS[snap.binding].ref_depth = snap.ref_depth
+        BINDINGS[snap.binding].ref_root_kind = snap.ref_root_kind
+        BINDINGS[snap.binding].ref_root = snap.ref_root
+        BINDINGS[snap.binding].dangling = snap.dangling
+    }
+}
+
+/** *A reference may point at what it pointed at on either path. */
+fn join_refs(snaps: []BindingSnap) {
+    for i in 0..snaps.len {
+        let snap = snaps[i]
+        if snap.ref_depth > BINDINGS[snap.binding].ref_depth {
+            BINDINGS[snap.binding].ref_depth = snap.ref_depth
+            BINDINGS[snap.binding].ref_root_kind = snap.ref_root_kind
+            BINDINGS[snap.binding].ref_root = snap.ref_root
+        }
+        if snap.dangling {
+            BINDINGS[snap.binding].dangling = true
+        }
+    }
+}
+
+/** *Moved on either path is moved after the join. */
+fn join_moved(snaps: []BindingSnap) {
+    for i in 0..snaps.len {
+        if snaps[i].own == Own.Moved {
+            BINDINGS[snaps[i].binding].own = Own.Moved
+        }
+    }
+}
+
+/** *False only if `n` always leaves its block. */
+fn stmt_continues(n: int) -> bool {
+    if n == ast.NONE {
+        return true
+    }
+    let node_kind = ast.NODES[n].kind
+    if node_kind == Kind.Return || node_kind == Kind.Break || node_kind == Kind.Continue {
+        return false
+    }
+    if node_kind == Kind.Block {
+        for i in 0..ast.NODES[n].kids.len {
+            if !stmt_continues(ast.NODES[n].kids[i]) {
+                return false
+            }
+        }
+        return true
+    }
+    if node_kind == Kind.If {
+        return ast.NODES[n].c == ast.NONE || stmt_continues(ast.NODES[n].b) || stmt_continues(ast.NODES[n].c)
+    }
+    return true
+}
+
+/** *Running case `case_node` can reach the next case. */
+fn case_falls_through(case_node: int) -> bool {
+    return case_node == ast.NONE || ast.NODES[case_node].kind != Kind.Case || stmt_continues(ast.NODES[case_node].a)
+}
+
+// --- The checker -------------------------------------------------------------------
+
+/** *One arm of an `if` expression: its statements, then its value, folded */
+/** *into `acc` while the arm's bindings are live. */
+fn check_value_arm(block: int, as_move: bool, acc: &mut Root) -> bool {
+    if block == ast.NONE {
+        return false
+    }
+    if ast.NODES[block].kind != Kind.Block {
+        return check_expr(block, as_move)
+    }
+    DEPTH = DEPTH + 1
+    let stmts = ast.NODES[block].kids
+    let mut failed = false
+    push_frame(stmts, true, DEPTH, true)
+    let mut i = 0
+    while i < stmts.len && !failed {
+        FRAMES[FRAMES.len - 1].idx = i
+        end_dead_borrows(stmts, i, DEPTH)
+        let st = stmts[i]
+        if i + 1 == stmts.len && st != ast.NONE && ast.NODES[st].kind == Kind.ExprStmt {
+            let value = ast.NODES[st].a
+            let before = head_id()
+            failed = check_expr(value, as_move)
+            // Borrows the value makes belong to the enclosing statement.
+            let mut k = BORROWS.len
+            while k > 0 {
+                k = k - 1
+                if BORROWS[k].id == before {
+                    break
+                }
+                if !BORROWS[k].stored {
+                    BORROWS[k].depth = DEPTH - 1
+                }
+            }
+            if !failed && value != ast.NONE && is_ref_ty(ast.NODES[value].ty) {
+                let folded = deeper(*acc, ref_root(value))
+                *acc = folded
+            }
+        } else {
+            failed = check_stmt(st)
+        }
+        i = i + 1
+    }
+    pop_frame()
+    pop_to_depth(DEPTH - 1)
+    DEPTH = DEPTH - 1
+    return failed
+}
+
+fn not_copy(t: int) -> bool {
+    return t != types.NO_TYPE && !types.is_copy(t)
+}
+
+/** *Walk an expression. `as_move` if this use consumes a non-Copy value. */
+fn check_expr(n: int, as_move: bool) -> bool {
+    if n == ast.NONE {
+        return false
+    }
+    let node_kind = ast.NODES[n].kind
+    switch node_kind {
+        case Kind.Ident:
+            let name = ast.NODES[n].name
+            let binding = find_b(name)
+            if binding < 0 {
+                return false
+            }
+            if check_dangling(binding, ast.NODES[n].loc) {
+                return true
+            }
+            if BINDINGS[binding].must_check {
+                BINDINGS[binding].checked = true
+            }
+            if BINDINGS[binding].own == Own.Moved {
+                report(ast.NODES[n].loc, "use of moved value '{{name}}'")
+                return true
+            }
+            if check_use_path(name, ast.NODES[n].loc) {
+                return true
+            }
+            if as_move && !BINDINGS[binding].is_copy {
+                if borrow_covers(name) {
+                    report(ast.NODES[n].loc, "cannot move '{{name}}' while borrowed")
+                    return true
+                }
+                BINDINGS[binding].own = Own.Moved
+                ast.NODES[n].flags = ast.NODES[n].flags | ASTF_MOVED
+            }
+            return false
+        case Kind.Addr:
+            let path = path_of(ast.NODES[n].a)
+            if path.len > 0 {
+                if check_dangling(find_b(root_of_path(path)), ast.NODES[n].loc) {
+                    return true
+                }
+                let before = head_id()
+                let failed = take_borrow_path(path, ast.NODES[n].op != 0, ast.NODES[n].loc)
+                if !failed && head_id() != before {
+                    BORROWS[BORROWS.len - 1].global_decl = global_of_place(ast.NODES[n].a)
+                }
+                return failed
+            }
+            return check_expr(ast.NODES[n].a, false)
+        case Kind.Deref:
+            return check_expr(ast.NODES[n].a, false)
+        case Kind.Field:
+            // Checked as a whole place: reading p.b stays legal while p.a is
+            // mutably borrowed.
+            let path = path_of(n)
+            if path.len == 0 {
+                return check_expr(ast.NODES[n].a, false)
+            }
+            let root = root_of_path(path)
+            let binding = find_b(root)
+            if binding >= 0 && BINDINGS[binding].must_check {
+                BINDINGS[binding].checked = true
+            }
+            if check_dangling(binding, ast.NODES[n].loc) {
+                return true
+            }
+            if binding >= 0 && BINDINGS[binding].own == Own.Moved {
+                report(ast.NODES[n].loc, "use of moved value '{{root}}'")
+                return true
+            }
+            if binding >= 0 && path_is_moved(binding, path) {
+                report(ast.NODES[n].loc, "use of moved value '{{path}}'")
+                return true
+            }
+            let failed = check_use_path(path, ast.NODES[n].loc)
+            if !failed && binding >= 0 && !BINDINGS[binding].is_module_alias && as_move && not_copy(ast.NODES[n].ty) {
+                mark_path_moved(binding, path)
+            }
+            return failed
+        case Kind.Index:
+            if check_expr(ast.NODES[n].a, false) {
+                return true
+            }
+            return check_expr(ast.NODES[n].b, false)
+        case Kind.If:
+            // An `if` expression: each arm from the state before it, joined
+            // after. Temps made in an arm's value belong to the statement.
+            if check_expr(ast.NODES[n].a, false) {
+                return true
+            }
+            let before_arms = snapshot()
+            let loans_before = dup_borrows(BORROWS)
+            let mut acc = no_root()
+            let mut failed = check_value_arm(ast.NODES[n].b, as_move, &mut acc)
+            if !failed {
+                let after_then = snapshot()
+                let then_loans = dup_borrows(BORROWS)
+                restore(before_arms)
+                set_borrows(loans_before)
+                failed = check_value_arm(ast.NODES[n].c, as_move, &mut acc)
+                if !failed {
+                    join_moved(after_then)
+                    join_refs(after_then)
+                    union_into_ex(&mut BORROWS, then_loans, true)
+                }
+            }
+            set_if_root(n, acc)
+            return failed
+        case Kind.Binary:
+            if check_expr(ast.NODES[n].a, false) {
+                return true
+            }
+            return check_expr(ast.NODES[n].b, false)
+        case Kind.Unary, Kind.Cast, Kind.Try:
+            return check_expr(ast.NODES[n].a, false)
+        case Kind.IncDec:
+            // Reads and writes the operand place, like an assignment.
+            if check_expr(ast.NODES[n].a, false) {
+                return true
+            }
+            let written = path_of(ast.NODES[n].a)
+            return written.len > 0 && check_write_path(written, ast.NODES[n].loc)
+        case Kind.Closure:
+            return check_closure(n)
+        case Kind.Call:
+            return check_call(n)
+        case Kind.StructLit:
+            for i in 0..ast.NODES[n].kids.len {
+                let init = ast.NODES[ast.NODES[n].kids[i]].a
+                let consumes = init != ast.NONE && not_copy(ast.NODES[init].ty)
+                if check_expr(init, consumes) {
+                    return true
+                }
+            }
+            return false
+        case Kind.ArrayLit, Kind.Tuple:
+            for i in 0..ast.NODES[n].kids.len {
+                if check_expr(ast.NODES[n].kids[i], false) {
+                    return true
+                }
+            }
+            return false
+        default:
+            return false
+    }
+}
+
+fn check_closure(n: int) -> bool {
+    let captures = ast.NODES[n].caps
+    for i in 0..captures.len {
+        let source = find_b(captures[i])
+        if source >= 0 && BINDINGS[source].own == Own.Moved {
+            report(ast.NODES[n].loc, "use of moved value '{{captures[i]}}'")
+            return true
+        }
+        // A non-Copy capture is moved into the closure env.
+        if source >= 0 && !BINDINGS[source].is_copy {
+            if borrow_covers(captures[i]) {
+                report(ast.NODES[n].loc, "cannot move '{{captures[i]}}' into a closure while borrowed")
+                return true
+            }
+            BINDINGS[source].own = Own.Moved
+        }
+    }
+    DEPTH = DEPTH + 1
+    let fn_type = ast.NODES[n].ty
+    let params = ast.NODES[n].kids
+    for k in 0..params.len {
+        let param_type = if fn_type != types.NO_TYPE && k < types.TYPES[fn_type].params.len { types.TYPES[fn_type].params[k] } else { types.NO_TYPE }
+        let param = push_b(ast.NODES[params[k]].name, param_type)
+        BINDINGS[param].kind = BindKind.Param
+    }
+    // The body reads its captures, not the outer bindings.
+    for k in 0..captures.len {
+        let capture_type = if k < ast.NODES[n].cap_types.len { ast.NODES[n].cap_types[k] } else { types.NO_TYPE }
+        push_b(captures[k], capture_type)
+    }
+    // The body runs later: outer holders stay as they are.
+    push_frame([]int {}, false, DEPTH, true)
+    let failed = if ast.NODES[n].b != ast.NONE { check_stmt(ast.NODES[n].b) } else { false }
+    pop_frame()
+    pop_to_depth(DEPTH - 1)
+    DEPTH = DEPTH - 1
+    return failed
+}
+
+fn check_call(n: int) -> bool {
+    let call_mark = head_id()
+    let args = ast.NODES[n].kids
+    let marks = ast.NODES[n].marks
+    // Two phases: every other argument first, then the `&mut place` ones and
+    // the borrows through an index.
+    for phase in 0..2 {
+        for i in 0..args.len {
+            let arg = args[i]
+            let late = arg != ast.NONE && ast.NODES[arg].kind == Kind.Addr && (ast.NODES[arg].op != 0 || addr_through_index(arg))
+            if (if late { 1 } else { 0 }) != phase {
+                continue
+            }
+            let mut move_arg = arg != ast.NONE && ast.NODES[arg].kind != Kind.Addr && not_copy(ast.NODES[arg].ty) &&
+                types.kind_of(ast.NODES[arg].ty) != TK.Ptr
+            if (marks & (ast.M_PRINTLN | ast.M_BOX_NEW | ast.M_VALUE_KEY)) != 0 {
+                move_arg = false
+            }
+            if (marks & ast.M_BOX_NEW) != 0 && not_copy(ast.NODES[arg].ty) {
+                move_arg = true
+            }
+            if check_expr(arg, move_arg) {
+                return true
+            }
+        }
+    }
+    if check_call_keeps_borrowed_globals(n) {
+        return true
+    }
+    // A `&mut` reference handed on is reborrowed mutably at the call.
+    let callee = ast.NODES[n].a
+    let mut callee_type = if callee != ast.NONE { ast.NODES[callee].ty } else { types.NO_TYPE }
+    if callee_type != types.NO_TYPE && types.kind_of(callee_type) != TK.Proc {
+        callee_type = types.NO_TYPE
+    }
+    let before_reborrows = head_id()
+    for i in 0..args.len {
+        let arg = args[i]
+        let param_type = if callee_type != types.NO_TYPE && i < types.TYPES[callee_type].params.len { types.TYPES[callee_type].params[i] } else { types.NO_TYPE }
+        if param_type != types.NO_TYPE && !ref_is_mut(param_type) {
+            continue
+        }
+        if arg != ast.NONE && ast.NODES[arg].kind == Kind.Ident && ref_is_mut(ast.NODES[arg].ty) &&
+            find_b(ast.NODES[arg].name) >= 0 && take_borrow_path(ast.NODES[arg].name, true, ast.NODES[arg].loc) {
+            return true
+        }
+    }
+    // They last for the call only.
+    while BORROWS.len > 0 && head_id() != before_reborrows {
+        pop(BORROWS)
+    }
+    if callee != ast.NONE && ast.NODES[callee].kind != Kind.Field {
+        check_expr(callee, false)
+    }
+    // `aim(&mut p, &v)` with `p` a reference: the callee may store any of its
+    // other reference arguments in `p`.
+    for i in 0..args.len {
+        let arg = args[i]
+        if arg == ast.NONE || ast.NODES[arg].kind != Kind.Addr || ast.NODES[arg].op == 0 {
+            continue
+        }
+        let aimed = ast.NODES[arg].a
+        if aimed == ast.NONE || ast.NODES[aimed].kind != Kind.Ident || !is_ref_ty(ast.NODES[aimed].ty) {
+            continue
+        }
+        let holder = find_b(ast.NODES[aimed].name)
+        if holder < 0 || BINDINGS[holder].kind == BindKind.Global {
+            continue
+        }
+        let mut r = Root { depth: BINDINGS[holder].ref_depth, name_kind: BINDINGS[holder].ref_root_kind, name: BINDINGS[holder].ref_root }
+        let mut loans = []Loan {}
+        for k in 0..args.len {
+            let other = args[k]
+            if k == i || other == ast.NONE || !is_ref_ty(ast.NODES[other].ty) {
+                continue
+            }
+            r = deeper(r, ref_root(other))
+            if gather_loans_ex(other, ref_is_mut(ast.NODES[aimed].ty), &mut loans, ast.NODES[other].loc, false) {
+                return true
+            }
+        }
+        BINDINGS[holder].ref_depth = r.depth
+        BINDINGS[holder].ref_root_kind = r.name_kind
+        BINDINGS[holder].ref_root = r.name
+        attach_loans(holder, loans, false)
+    }
+    // The call's own `&x` arguments end with it, unless a reference result
+    // keeps them (the binding it lands in takes them as loans).
+    if !is_ref_ty(ast.NODES[n].ty) {
+        let mut segment_end = -1
+        let mut k = BORROWS.len
+        while k > 0 {
+            k = k - 1
+            if BORROWS[k].id == call_mark {
+                segment_end = k
+                break
+            }
+        }
+        let mut kept = []Borrow {}
+        for j in 0..BORROWS.len {
+            if j > segment_end && !BORROWS[j].stored {
+                continue
+            }
+            push(kept, BORROWS[j])
+        }
+        BORROWS = kept
+    }
+    return false
+}
+
+fn check_stmt(n: int) -> bool {
+    if n == ast.NONE {
+        return false
+    }
+    let node_kind = ast.NODES[n].kind
+    switch node_kind {
+        case Kind.Var:
+            return check_var(n)
+        case Kind.Assign:
+            return check_assign(n)
+        case Kind.ExprStmt:
+            let value = ast.NODES[n].a
+            if value != ast.NONE {
+                let value_type = ast.NODES[value].ty
+                if value_type != types.NO_TYPE && types.kind_of(value_type) == TK.Struct && types.TYPES[value_type].must_check != 0 {
+                    report(ast.NODES[n].loc, "unused `#[must_check]` value of type '{{types.TYPES[value_type].name}}' — read a field or use `.or()` / `.or_trap()`")
+                }
+            }
+            if check_expr(value, false) {
+                return true
+            }
+            release_temps()
+            return false
+        case Kind.Return:
+            let value = ast.NODES[n].a
+            if value != ast.NONE && check_expr(value, not_copy(ast.NODES[value].ty) && ast.NODES[value].kind != Kind.Addr) {
+                return true
+            }
+            if value != ast.NONE && is_ref_ty(ast.NODES[value].ty) {
+                let r = ref_root(value)
+                if r.depth > 0 && r.name_kind == RootName.Temporary {
+                    report(ast.NODES[n].loc, "cannot return borrow of a temporary")
+                    return true
+                }
+                if r.depth > 0 {
+                    report(ast.NODES[n].loc, "cannot return borrow of local '{{root_name_text(r)}}'")
+                    return true
+                }
+                if refers_into_global(value) {
+                    report(ast.NODES[n].loc, "cannot return a reference into a global: return a copy or an index")
+                    return true
+                }
+            }
+            release_temps()
+            return false
+        case Kind.Block:
+            DEPTH = DEPTH + 1
+            let stmts = ast.NODES[n].kids
+            push_frame(stmts, true, DEPTH, false)
+            for i in 0..stmts.len {
+                FRAMES[FRAMES.len - 1].idx = i
+                end_dead_borrows(stmts, i, DEPTH)
+                if check_stmt(stmts[i]) {
+                    pop_frame()
+                    pop_to_depth(DEPTH - 1)
+                    DEPTH = DEPTH - 1
+                    return true
+                }
+            }
+            pop_frame()
+            pop_to_depth(DEPTH - 1)
+            DEPTH = DEPTH - 1
+            return false
+        case Kind.If:
+            if check_expr(ast.NODES[n].a, false) {
+                return true
+            }
+            release_temps()
+            // Each arm starts from the state before the branch.
+            let before_arms = snapshot()
+            let loans_before = dup_borrows(BORROWS)
+            let mut failed = check_stmt(ast.NODES[n].b)
+            if !failed {
+                let after_then = snapshot()
+                let then_loans = dup_borrows(BORROWS)
+                restore(before_arms)
+                set_borrows(loans_before)
+                if ast.NODES[n].c != ast.NONE {
+                    failed = check_stmt(ast.NODES[n].c)
+                }
+                if !failed {
+                    join_moved(after_then)
+                    join_refs(after_then)
+                    union_borrows(then_loans)
+                }
+            }
+            return failed
+        case Kind.For:
+            if check_expr(ast.NODES[n].a, false) {
+                return true
+            }
+            release_temps()
+            DEPTH = DEPTH + 1
+            push_b(ast.NODES[n].name, types.ty_int())
+            // Twice: the second pass sees what the first left behind. The
+            // body may run zero times: references join with the state before.
+            let before_loop = snapshot()
+            let mut failed = check_stmt(ast.NODES[n].b)
+            if !failed {
+                join_refs(before_loop)
+                failed = check_stmt(ast.NODES[n].b)
+            }
+            if !failed {
+                join_refs(before_loop)
+            }
+            pop_to_depth(DEPTH - 1)
+            DEPTH = DEPTH - 1
+            return failed
+        case Kind.While:
+            if check_expr(ast.NODES[n].a, false) {
+                return true
+            }
+            release_temps()
+            let before_loop = snapshot()
+            let mut failed = check_stmt(ast.NODES[n].b)
+            if !failed {
+                join_refs(before_loop)
+                failed = check_stmt(ast.NODES[n].b)
+            }
+            if !failed {
+                join_refs(before_loop)
+            }
+            return failed
+        case Kind.Switch:
+            return check_switch(n)
+        default:
+            return false
+    }
+}
+
+fn check_var(n: int) -> bool {
+    let init = ast.NODES[n].b
+    let mut consumes = false
+    if init != ast.NONE && not_copy(ast.NODES[init].ty) && ast.NODES[init].kind != Kind.Addr && ast.NODES[init].kind != Kind.Call {
+        consumes = true
+    }
+    if init != ast.NONE {
+        let init_kind = ast.NODES[init].kind
+        // Box::new constructs a new owner; literals are new values.
+        if init_kind == Kind.Call && (ast.NODES[init].marks & ast.M_BOX_NEW) != 0 {
+            consumes = false
+        }
+        if init_kind == Kind.StructLit || init_kind == Kind.ArrayLit || init_kind == Kind.Closure {
+            consumes = false
+        }
+        if check_expr(init, consumes) {
+            return true
+        }
+    }
+    // Resolved before the push, so `let x = &x` sees the outer x.
+    let var_type = ast.NODES[n].ty
+    let is_ref = is_ref_ty(var_type) && init != ast.NONE
+    let r = if is_ref { ref_root(init) } else { no_root() }
+    let mut loans = []Loan {}
+    if is_ref && gather_loans(init, ref_is_mut(var_type), &mut loans, ast.NODES[n].loc) {
+        return true
+    }
+    let binding = push_b(ast.NODES[n].name, var_type)
+    set_ref(binding, r)
+    if r.depth > DEPTH {
+        BINDINGS[binding].dangling = true
+    }
+    attach_loans(binding, loans, true)
+    if var_type != types.NO_TYPE && types.kind_of(var_type) == TK.Struct && types.TYPES[var_type].must_check != 0 {
+        BINDINGS[binding].must_check = true
+        BINDINGS[binding].loc = ast.NODES[n].loc
+    }
+    if types.needs_drop(var_type) {
+        ast.NODES[n].flags = ast.NODES[n].flags | ASTF_NEEDS_DROP
+    }
+    release_temps()
+    return false
+}
+
+fn check_assign(n: int) -> bool {
+    let left = ast.NODES[n].a
+    let right = ast.NODES[n].b
+    let stores_ref = left != ast.NONE && is_ref_ty(ast.NODES[left].ty)
+    let left_binding = if left != ast.NONE && ast.NODES[left].kind == Kind.Ident { find_b(ast.NODES[left].name) } else { -1 }
+    // Rebinding a local reference: its old target no longer matters.
+    let rebind = stores_ref && left_binding >= 0 && BINDINGS[left_binding].kind != BindKind.Global
+    if rebind && !expr_uses(right, BINDINGS[left_binding].name) {
+        release_owned(left_binding)
+    }
+    if check_expr(right, not_copy(ast.NODES[right].ty) && ast.NODES[right].kind != Kind.Addr) {
+        return true
+    }
+    let r = if stores_ref { ref_root(right) } else { no_root() }
+    let mut loans = []Loan {}
+    if stores_ref && gather_loans(right, ref_is_mut(ast.NODES[left].ty), &mut loans, ast.NODES[n].loc) {
+        return true
+    }
+    if rebind {
+        BINDINGS[left_binding].dangling = false
+    }
+    if check_expr(left, false) {
+        return true
+    }
+    if !rebind {
+        let written = path_of(left)
+        if written.len > 0 && check_write_path(written, ast.NODES[n].loc) {
+            return true
+        }
+    }
+    if rebind {
+        set_ref(left_binding, r)
+        if r.depth > DEPTH {
+            BINDINGS[left_binding].dangling = true
+        }
+        attach_loans(left_binding, loans, true)
+    } else if stores_ref {
+        // `*pp = &x`, or a global: what it receives must outlive it now.
+        let holder = place_root(left)
+        if refers_into_global(right) {
+            report(ast.NODES[n].loc, "a reference into a global cannot be stored here: store a copy or an index")
+            return true
+        }
+        if r.depth > holder.depth {
+            if r.name_kind == RootName.Temporary {
+                report(ast.NODES[n].loc, "a borrow of a temporary cannot be stored here")
+            } else {
+                report(ast.NODES[n].loc, "'{{root_name_text(r)}}' does not live long enough to be stored here")
+            }
+            return true
+        }
+        // `*pp = &x` with `pp` aimed at a local reference `q`: `q` holds the
+        // loan now.
+        let aimed = place_root(left)
+        let q = if aimed.name_kind == RootName.Named { find_b(aimed.name) } else { -1 }
+        if q >= 0 && BINDINGS[q].depth == aimed.depth && BINDINGS[q].kind != BindKind.Global {
+            if r.depth > BINDINGS[q].ref_depth {
+                BINDINGS[q].ref_depth = r.depth
+                BINDINGS[q].ref_root_kind = r.name_kind
+                BINDINGS[q].ref_root = r.name
+            }
+            attach_loans(q, loans, false)
+        }
+    }
+    release_temps()
+    return false
+}
+
+fn check_switch(n: int) -> bool {
+    if check_expr(ast.NODES[n].a, false) {
+        return true
+    }
+    release_temps()
+    let before_switch = snapshot()
+    // Loans: each case starts from those before the switch, plus the case
+    // above's by fallthrough; after it, any case's (or none).
+    let loans_before = dup_borrows(BORROWS)
+    let mut all_loans = dup_borrows(BORROWS)
+    let cases = ast.NODES[n].kids
+    let mut case_snaps: [][]BindingSnap = [][]BindingSnap {}
+    let mut failed = false
+    for i in 0..cases.len {
+        // Entered from the dispatch, and by falling out of the case above.
+        restore(before_switch)
+        let fell = i > 0 && case_falls_through(cases[i - 1])
+        let above = if fell { dup_borrows(BORROWS) } else { []Borrow {} }
+        set_borrows(loans_before)
+        union_borrows(above)
+        if fell {
+            join_moved(case_snaps[i - 1])
+            join_refs(case_snaps[i - 1])
+        }
+        let case_node = cases[i]
+        if case_node != ast.NONE && ast.NODES[case_node].kind == Kind.Case {
+            failed = check_stmt(ast.NODES[case_node].a)
+        }
+        if failed {
+            break
+        }
+        union_into_ex(&mut all_loans, BORROWS, false)
+        push(case_snaps, snapshot())
+    }
+    if !failed {
+        for i in 0..case_snaps.len {
+            join_moved(case_snaps[i])
+            join_refs(case_snaps[i])
+        }
+        // No case may match.
+        join_refs(before_switch)
+        set_borrows(all_loans)
+    }
+    return failed
+}
+
+/** *Check every non-intrinsic fn of the session. Returns 1 if any error. */
+fn borrowck_modules() -> int {
+    ERRN = 0
+    global_writes_build()
+    for m in 0..typecheck.MODS.len {
+        let root = typecheck.MODS[m].root
+        if root == ast.NONE {
+            continue
+        }
+        let decls = typecheck.decls_of(root)
+        let imports = typecheck.imports_of(root)
+        for i in 0..decls.len {
+            let fn_decl = decls[i]
+            if ast.NODES[fn_decl].kind != Kind.Fn || (ast.NODES[fn_decl].marks & ast.M_INTRINSIC) != 0 {
+                continue
+            }
+            ACTIVE = []int {}
+            BORROWS = []Borrow {}
+            FRAMES = []Frame {}
+            DEPTH = 1
+            // `store.ITEMS`: each fully imported module, under its alias.
+            for k in 0..imports.len {
+                let import_node = imports[k]
+                if ast.NODES[import_node].kids.len > 0 || !ast.NODES[import_node].has_name {
+                    continue
+                }
+                let alias = push_b(ast.NODES[import_node].name, types.NO_TYPE)
+                BINDINGS[alias].kind = BindKind.Global
+                BINDINGS[alias].is_copy = true
+                BINDINGS[alias].is_module_alias = true
+            }
+            for g in 0..typecheck.GVARS.len {
+                if typecheck.GVARS[g].mod != m {
+                    continue
+                }
+                let global_var = typecheck.GVARS[g].var
+                if global_var != ast.NONE {
+                    let global = push_b(ast.NODES[global_var].name, ast.NODES[global_var].ty)
+                    BINDINGS[global].kind = BindKind.Global
+                }
+            }
+            let fn_type = ast.NODES[fn_decl].ty
+            let params = ast.NODES[fn_decl].kids
+            for k in 0..params.len {
+                let param_type = if fn_type != types.NO_TYPE && k < types.TYPES[fn_type].params.len { types.TYPES[fn_type].params[k] } else { types.NO_TYPE }
+                let param = push_b(ast.NODES[params[k]].name, param_type)
+                BINDINGS[param].kind = BindKind.Param
+            }
+            if ast.NODES[fn_decl].b != ast.NONE {
+                check_stmt(ast.NODES[fn_decl].b)
+            }
+            pop_to_depth(0)
+        }
+    }
+    return ERRN
+}
