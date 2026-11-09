@@ -1,0 +1,3293 @@
+// codegen — the IR written out as one gnu99 C translation unit. The
+// self-hosted twin of src/codegen_c.c, diffed byte for byte against `loamc
+// --dump-c` (the C a default build emits).
+//
+// Layout of the generated file:
+//   1. loam_rt.h pasted in, then zeus_rt.h / net_rt.h / maya_rt.h /
+//      raygui_rt.h when those modules are loaded
+//   2. struct typedefs, then definitions in by-value dependency order
+//   3. element hook and ownership helper prototypes, globals, prototypes,
+//      closure envs, `#[c]` bindings, fn-value trampolines
+//   4. fn bodies, from the IR (blocks and gotos)
+//   5. element hook bodies and literal default templates
+//
+// Every fn body comes from the IR: ir.loam lowers everything typecheck
+// accepts, so a fn it did not lower is an internal error. The output is built
+// in `OUT` and written to stdout in 64 KB pieces.
+
+import "std:buf"
+import "std:conv"
+import "std:fmt"
+import "std:map"
+import "std:result"
+import "std:sys"
+import "ast.loam"
+import "types.loam"
+import "lexer.loam"
+import "typecheck.loam"
+import "dce.loam"
+import "ir.loam"
+
+const NONE: int = -1
+const NO_TYPE: int = -1
+
+// --- output ------------------------------------------------------------------------
+
+let mut OUT: []u8 = []u8 {}
+
+fn w(s: string) {
+    buf.push_str(&mut OUT, s)
+}
+
+fn wc(c: int) {
+    push(OUT, u8(c))
+}
+
+fn wi(n: int) {
+    buf.push_int(&mut OUT, n)
+}
+
+fn wl(n: i64) {
+    buf.push_i64(&mut OUT, n)
+}
+
+/** *Write out what is built once it passes 64 KB. */
+fn flush_big() {
+    if OUT.len >= 65536 {
+        flush()
+    }
+}
+
+fn flush() {
+    if OUT.len > 0 {
+        fmt.write(buf.to_string(&OUT))
+        OUT = []u8 {}
+    }
+}
+
+fn indent(n: int) {
+    for i in 0..n {
+        w("    ")
+    }
+}
+
+fn fatal(msg: string) {
+    flush()
+    fmt.eprintln("loam: {{msg}}")
+    sys.exit(1)
+}
+
+// --- names -----------------------------------------------------------------------------
+
+let RESERVED: []string = []string {
+    "_Alignas", "_Alignof", "_Atomic", "_Bool", "_Complex", "_Generic", "_Imaginary",
+    "_Noreturn", "_Static_assert", "_Thread_local", "asm", "auto", "bool", "break",
+    "case", "char", "const", "continue", "default", "do", "double", "else", "enum",
+    "errno", "extern", "false", "float", "for", "goto", "if", "inline", "int", "long",
+    "NULL", "register", "restrict", "return", "short", "signed", "sizeof", "static",
+    "stderr", "stdin", "stdout", "struct", "switch", "true", "typedef", "typeof",
+    "union", "unsigned", "void", "volatile", "while",
+}
+
+let mut RESERVED_SET: Map<int> = map_new(0)
+
+/** *A Loam name as a C identifier: one C reserves gets a `loam_kw_` prefix. */
+fn cid(name: string) -> string {
+    if RESERVED_SET.len == 0 {
+        for i in 0..RESERVED.len {
+            map_put(&mut RESERVED_SET, RESERVED[i], 1)
+        }
+    }
+    if map_has(&mut RESERVED_SET, name) {
+        return "loam_kw_{{name}}"
+    }
+    return name
+}
+
+/** *The bytes C sees of `s`: up to its first NUL. */
+fn c_len(s: string) -> int {
+    for i in 0..s.len {
+        if s[i] == 0 {
+            return i
+        }
+    }
+    return s.len
+}
+
+/** *Path safe to embed: an absolute path contributes its final component. */
+fn public_file(file: string) -> string {
+    if file.len == 0 {
+        return "loam"
+    }
+    if file[0] == '/' {
+        let mut slash = file.len - 1
+        while slash >= 0 && file[slash] != '/' {
+            slash = slash - 1
+        }
+        if slash + 1 < file.len {
+            let mut b = []u8 {}
+            for i in slash + 1..file.len {
+                push(b, u8(file[i]))
+            }
+            return buf.to_string(&b)
+        }
+    }
+    return file
+}
+
+fn path_of(file: int) -> string {
+    if file < 0 || file >= typecheck.MODS.len {
+        return ""
+    }
+    return typecheck.MODS[file].path
+}
+
+fn w_escaped_path(p: string) {
+    let n = c_len(p)
+    for i in 0..n {
+        if p[i] == '\\' || p[i] == '"' {
+            wc('\\')
+        }
+        wc(p[i])
+    }
+}
+
+// `#line` directives, only where the (file, line) changes.
+let mut LINE_FILE: int = NONE
+let mut LINE_NO: int = 0
+
+fn line_directive(file: int, line: int) {
+    if file < 0 || line <= 0 {
+        return
+    }
+    let same_file = LINE_FILE != NONE && LINE_FILE == file
+    if same_file && LINE_NO == line {
+        return
+    }
+    if same_file {
+        w("#line ")
+        wi(line)
+        wc('\n')
+    } else {
+        w("#line ")
+        wi(line)
+        w(" \"")
+        w_escaped_path(public_file(path_of(file)))
+        w("\"\n")
+        LINE_FILE = file
+    }
+    LINE_NO = line
+}
+
+/** *An integer literal; the most negative value has no C spelling of its own. */
+fn int_lit(v: i64) {
+    if v == i64(-9223372036854775807) - i64(1) {
+        w("INT64_MIN")
+    } else {
+        wl(v)
+    }
+}
+
+fn c_string_body(s: string) {
+    let n = c_len(s)
+    for i in 0..n {
+        let c = s[i]
+        if c == '\\' || c == '"' {
+            wc('\\')
+            wc(c)
+        } else if c == '\n' {
+            w("\\n")
+        } else if c == '\r' {
+            w("\\r")
+        } else if c == '\t' {
+            w("\\t")
+        } else {
+            wc(c)
+        }
+    }
+}
+
+fn has_byte(s: string, c: int) -> bool {
+    for i in 0..s.len {
+        if s[i] == c {
+            return true
+        }
+    }
+    return false
+}
+
+fn float_lit(f: f64, is_f32: bool) {
+    let s = conv.f64_to_g17(f)
+    w(s)
+    let need_dot = !has_byte(s, '.') && !has_byte(s, 'e') && !has_byte(s, 'E')
+    if need_dot {
+        w(".0")
+    }
+    if is_f32 {
+        wc('f')
+    }
+}
+
+/** *A `loam_str` compound literal with its length known at compile time. */
+fn str_lit(s: string) {
+    w("((loam_str){(const char *)\"")
+    c_string_body(s)
+    w("\", ")
+    wi(c_len(s))
+    w("})")
+}
+
+// --- types ---------------------------------------------------------------------------
+
+fn tkind(t: int) -> int {
+    return types.kind_of(t)
+}
+
+fn elem_of(t: int) -> int {
+    if t == NO_TYPE {
+        return NO_TYPE
+    }
+    return types.TYPES[t].elem
+}
+
+/** *The generic instance being emitted: its type parameters and arguments, */
+/** *and its C name ("" when not an instance). */
+let mut SUBST_NAMES: []string = []string {}
+let mut SUBST_ARGS: []int = []int {}
+let mut CNAME_OVERRIDE: string = ""
+
+/** *`t` with the instance's parameters substituted. Only a type that names a */
+/** *parameter is rebuilt: substituting any other gives an equal type. */
+fn resolve(t: int) -> int {
+    if t == NO_TYPE || SUBST_NAMES.len == 0 || !typecheck.type_has_param(t) {
+        return t
+    }
+    let s = typecheck.subst_type(t, SUBST_NAMES, SUBST_ARGS)
+    if s != NO_TYPE && types.TYPES[s].kind == TK.Param && types.TYPES[s].has_name {
+        let n = if SUBST_NAMES.len < SUBST_ARGS.len { SUBST_NAMES.len } else { SUBST_ARGS.len }
+        for i in 0..n {
+            if SUBST_NAMES[i] == types.TYPES[s].name && SUBST_ARGS[i] != NO_TYPE {
+                return resolve(SUBST_ARGS[i])
+            }
+        }
+    }
+    return s
+}
+
+/** *`&T` / `&mut T` over an already spelled `inner`. A shared ref to a */
+/** *pointer is `T * const *`. */
+fn ptr_ctype(inner: string, is_mut: bool) -> string {
+    if is_mut {
+        return "{{inner}} *"
+    }
+    if inner.len > 0 && inner[inner.len - 1] == '*' {
+        return "{{inner}} const *"
+    }
+    return "const {{inner}} *"
+}
+
+// The C spelling of each type id, outside a generic instance.
+let mut CTYPE_MEMO: []string = []string {}
+let mut CTYPE_READY: []bool = []bool {}
+
+/** *The C type of a Loam type (`int32_t`, `loam_str`, `Pair__int`, `T *`). */
+fn ctype(t0: int) -> string {
+    let t = resolve(t0)
+    if t == NO_TYPE {
+        return "int64_t"
+    }
+    if t < CTYPE_READY.len && CTYPE_READY[t] {
+        return CTYPE_MEMO[t]
+    }
+    let kind = types.TYPES[t].kind
+    let e = types.TYPES[t].elem
+    let mut s = "int64_t"
+    switch kind {
+        case TK.Int, TK.Float:
+            s = types.c_scalar(t)
+            break
+        case TK.Bool:
+            s = "bool"
+            break
+        case TK.String:
+            s = "loam_str"
+            break
+        case TK.Void:
+            s = "void"
+            break
+        case TK.Struct:
+            s = types.type_c_name(t)
+            break
+        case TK.Vec:
+            s = "loam_vec"
+            break
+        case TK.Proc:
+            s = "loam_fn"
+            break
+        case TK.Ptr:
+            s = ptr_ctype(ctype(e), types.TYPES[t].is_mut != 0)
+            break
+        case TK.Box:
+            s = "{{ctype(e)}} *"
+            break
+        case TK.Array:
+            s = ctype(e)
+            break
+        default:
+            s = "int64_t"
+            break
+    }
+    // Memoized only where no substitution could reach inside it.
+    if SUBST_NAMES.len == 0 {
+        while CTYPE_READY.len < types.TYPES.len {
+            push(CTYPE_READY, false)
+            push(CTYPE_MEMO, "")
+        }
+        CTYPE_READY[t] = true
+        CTYPE_MEMO[t] = s
+    }
+    return s
+}
+
+fn w_ctype(t: int) {
+    w(ctype(t))
+}
+
+/** *`T name`, with `[N]` after the name for a fixed array. */
+fn var_decl(t: int, name: string) {
+    w(ctype(t))
+    wc(' ')
+    w(name)
+    if tkind(t) == TK.Array {
+        wc('[')
+        wl(types.TYPES[t].array_len)
+        wc(']')
+    }
+}
+
+fn is_ptrish(t: int) -> bool {
+    let k = tkind(t)
+    return k == TK.Ptr || k == TK.Box
+}
+
+fn is_copy_vec(t: int) -> bool {
+    return tkind(t) == TK.Vec && types.is_copy(t)
+}
+
+/** *A Copy handle whose refcount the backend manages: a Copy `[]T`, and an */
+/** *owned `string`. */
+fn is_refcounted(t: int) -> bool {
+    if is_copy_vec(t) {
+        return true
+    }
+    return types.string_owns && tkind(t) == TK.String
+}
+
+/** *`types.needs_drop`, memoized per type id. */
+let mut DROP_MEMO: []int = []int {}
+
+fn needs_drop(t: int) -> bool {
+    if t == NO_TYPE {
+        return false
+    }
+    while DROP_MEMO.len < types.TYPES.len {
+        push(DROP_MEMO, 0)
+    }
+    if DROP_MEMO[t] == 0 {
+        DROP_MEMO[t] = if types.needs_drop(t) { 2 } else { 1 }
+    }
+    return DROP_MEMO[t] == 2
+}
+
+/** *A type argument names a type parameter anywhere inside it. A fn type is */
+/** *one C handle whatever its signature, so it is not looked inside. */
+fn targ_concrete(t: int) -> bool {
+    if t == NO_TYPE || types.TYPES[t].kind == TK.Param {
+        return false
+    }
+    if types.TYPES[t].kind == TK.Proc {
+        return true
+    }
+    let e = types.TYPES[t].elem
+    if e != NO_TYPE && !targ_concrete(e) {
+        return false
+    }
+    let ps = &types.TYPES[t].params
+    for i in 0..ps.len {
+        if !targ_concrete(ps[i]) {
+            return false
+        }
+    }
+    return true
+}
+
+fn struct_targs_concrete(t: int) -> bool {
+    if t == NO_TYPE {
+        return false
+    }
+    let ps = &types.TYPES[t].params
+    for i in 0..ps.len {
+        if !targ_concrete(ps[i]) {
+            return false
+        }
+    }
+    return true
+}
+
+// --- element hooks ----------------------------------------------------------------------
+
+/** *One retain/release hook pair per element type that owns something; the */
+/** *prototypes are emitted for every id up front, so the table is fixed. */
+const ELEM_HOOK_MAX: int = 256
+let mut ELEM_HOOK_TYPES: []int = []int {}
+
+fn elem_hook_id(t: int) -> int {
+    if t == NO_TYPE {
+        return 0
+    }
+    for i in 0..ELEM_HOOK_TYPES.len {
+        if types.type_eq(ELEM_HOOK_TYPES[i], t) {
+            return i + 1
+        }
+    }
+    if ELEM_HOOK_TYPES.len >= ELEM_HOOK_MAX {
+        fatal("more than {{ELEM_HOOK_MAX}} owning element types in one program")
+    }
+    push(ELEM_HOOK_TYPES, t)
+    return ELEM_HOOK_TYPES.len
+}
+
+/** *The hook id for elements of type `e`, 0 when they own nothing. */
+fn elem_hook(e: int) -> int {
+    if e != NO_TYPE && needs_drop(e) {
+        return elem_hook_id(e)
+    }
+    return 0
+}
+
+/** *C's pool: every type `type_new` made, after the scalars, at most 4096. */
+const SCALAR_COUNT: int = 13
+const POOL_MAX: int = 4096
+
+fn collect_elem_hooks() {
+    let mut end = types.TYPES.len
+    if end > SCALAR_COUNT + POOL_MAX {
+        end = SCALAR_COUNT + POOL_MAX
+    }
+    for t in SCALAR_COUNT..end {
+        if types.TYPES[t].kind != TK.Vec {
+            continue
+        }
+        let e = types.TYPES[t].elem
+        if e != NO_TYPE && needs_drop(e) && struct_targs_concrete(e) {
+            elem_hook_id(e)
+        }
+    }
+}
+
+fn sig_bind_vec(vt: int, id: string, val: string) {
+    let e = elem_of(vt)
+    let h = elem_hook(e)
+    let cn = if vt != NO_TYPE && e != NO_TYPE { ctype(e) } else { "char" }
+    w("loam_zeus_sig_bind_vec({{id}}, &{{val}}, sizeof({{val}}), sizeof({{cn}}), ")
+    if h > 0 {
+        w("loam_elem_release_")
+        wi(h)
+    } else {
+        w("NULL")
+    }
+    w(");")
+}
+
+fn sig_bind_owned(vt: int, id: string, val: string) {
+    let h = elem_hook(vt)
+    w("loam_zeus_sig_bind_owned({{id}}, &{{val}}, sizeof({{val}}), ")
+    if h > 0 {
+        w("loam_elem_release_")
+        wi(h)
+    } else {
+        w("NULL")
+    }
+    w(");")
+}
+
+// --- value keys and value equality --------------------------------------------------------
+
+// `__value_key(x)`: a string that matches iff the value matches. A cycle (a
+// struct that holds a vec of itself) stops at `~`.
+let mut VK_STACK: []int = []int {}
+let mut VK_TMP: int = 0
+
+fn vk_resolve(t: int) -> int {
+    return resolve(t)
+}
+
+fn vk_seen(t: int) -> bool {
+    for i in 0..VK_STACK.len {
+        if VK_STACK[i] == t {
+            return true
+        }
+    }
+    return false
+}
+
+fn int_bits(t: int) -> int {
+    let b = types.TYPES[t].bits
+    return if b != 0 { b } else { 64 }
+}
+
+fn value_key(t0: int, place: string) {
+    let t = vk_resolve(t0)
+    if t == NO_TYPE {
+        w("loam_key_static(\"~\", 1)")
+        return
+    }
+    let k = types.TYPES[t].kind
+    let compound = k == TK.Struct || k == TK.Vec || k == TK.Array
+    if compound && (VK_STACK.len >= 24 || vk_seen(t)) {
+        w("loam_key_static(\"~\", 1)")
+        return
+    }
+    if compound {
+        push(VK_STACK, t)
+    }
+    let id = VK_TMP
+    VK_TMP = VK_TMP + 1
+    switch k {
+        case TK.String:
+            w("loam_key_str({{place}})")
+            break
+        case TK.Bool:
+            w("loam_key_static(({{place}}) ? \"b1\" : \"b0\", 2)")
+            break
+        case TK.Int:
+            if types.TYPES[t].is_unsigned != 0 {
+                w("loam_key_int((int64_t)(uint64_t)({{place}}), {{int_bits(t)}}, 1)")
+            } else {
+                w("loam_key_int((int64_t)({{place}}), {{int_bits(t)}}, 0)")
+            }
+            break
+        case TK.Float:
+            w("loam_key_fbits(&({{place}}), {{int_bits(t)}})")
+            break
+        case TK.Ptr:
+            w("loam_key_addr((uint64_t)(uintptr_t)({{place}}), 'p')")
+            break
+        case TK.Box:
+            w("loam_key_addr((uint64_t)(uintptr_t)({{place}}), 'x')")
+            break
+        case TK.Proc:
+            w("loam_key_addr((uint64_t)(uintptr_t)({{place}}).fn, 'F')")
+            break
+        case TK.Struct:
+            let names = types.TYPES[t].field_names
+            let fts = types.TYPES[t].field_types
+            w("({ loam_str _a{{id}} = loam_key_tag('R', {{names.len}}, '{'); ")
+            for fi in 0..names.len {
+                w("{ loam_str _k{{id}}_{{fi}} = ")
+                value_key(fts[fi], "{{place}}.{{cid(names[fi])}}")
+                w("; _a{{id}} = loam_key_cat(_a{{id}}, _k{{id}}_{{fi}}); } ")
+            }
+            w("_a{{id}} = loam_key_cat(_a{{id}}, loam_key_static(\"}\", 1)); _a{{id}}; })")
+            break
+        case TK.Vec, TK.Array:
+            let e = types.TYPES[t].elem
+            let is_vec = k == TK.Vec
+            let alen = if types.TYPES[t].array_len > i64(0) { types.TYPES[t].array_len } else { i64(0) }
+            let ename = "_e{{id}}"
+            if is_vec {
+                w("({ loam_str _a{{id}} = loam_key_tag('V', {{place}}.len, '['); int64_t _i{{id}}; ")
+                w("for (_i{{id}} = 0; _i{{id}} < {{place}}.len; _i{{id}}++) { ")
+            } else {
+                w("({ loam_str _a{{id}} = loam_key_tag('A', {{alen}}, '['); int64_t _i{{id}}; ")
+                w("for (_i{{id}} = 0; _i{{id}} < {{alen}}; _i{{id}}++) { ")
+            }
+            var_decl(e, ename)
+            w(" = {0}; ")
+            if is_vec {
+                w("if ({{place}}.ptr) memcpy(&{{ename}}, (const char *){{place}}.ptr + (size_t)_i{{id}} * sizeof({{ename}}), sizeof({{ename}})); ")
+            } else {
+                w("memcpy(&{{ename}}, &({{place}})[_i{{id}}], sizeof({{ename}})); ")
+            }
+            w("{ loam_str _k{{id}} = ")
+            value_key(e, ename)
+            w("; _a{{id}} = loam_key_cat(_a{{id}}, _k{{id}}); } } ")
+            w("_a{{id}} = loam_key_cat(_a{{id}}, loam_key_static(\"]\", 1)); _a{{id}}; })")
+            break
+        default:
+            w("loam_key_static(\"~\", 1)")
+            break
+    }
+    if compound {
+        pop(VK_STACK)
+    }
+}
+
+/** *Whether equality of `t` must look past its bytes (a string, a vec, or */
+/** *something holding one). */
+fn ve_deep(t0: int) -> bool {
+    let t = vk_resolve(t0)
+    if t == NO_TYPE {
+        return false
+    }
+    let k = types.TYPES[t].kind
+    if k == TK.String || k == TK.Vec {
+        return true
+    }
+    if vk_seen(t) {
+        return false
+    }
+    if k == TK.Array {
+        push(VK_STACK, t)
+        let r = ve_deep(types.TYPES[t].elem)
+        pop(VK_STACK)
+        return r
+    }
+    if k == TK.Struct {
+        if VK_STACK.len >= 24 {
+            return false
+        }
+        push(VK_STACK, t)
+        let fts = types.TYPES[t].field_types
+        for i in 0..fts.len {
+            if ve_deep(fts[i]) {
+                pop(VK_STACK)
+                return true
+            }
+        }
+        pop(VK_STACK)
+    }
+    return false
+}
+
+fn memcmp_eq(a: string, b: string) {
+    w("(memcmp(&({{a}}), &({{b}}), sizeof({{a}})) == 0)")
+}
+
+/** *By-value equality of two lvalues of type `t`, as a C expression. */
+fn value_eq(t0: int, a: string, b: string) {
+    let t = vk_resolve(t0)
+    if t == NO_TYPE || !ve_deep(t) || VK_STACK.len >= 24 || vk_seen(t) {
+        memcmp_eq(a, b)
+        return
+    }
+    let id = VK_TMP
+    VK_TMP = VK_TMP + 1
+    let k = types.TYPES[t].kind
+    switch k {
+        case TK.String:
+            w("(({{a}}).len == ({{b}}).len && (({{a}}).ptr == ({{b}}).ptr || ({{a}}).len == 0 || ")
+            w("memcmp(({{a}}).ptr, ({{b}}).ptr, (size_t)({{a}}).len) == 0))")
+            break
+        case TK.Struct:
+            push(VK_STACK, t)
+            w("(1")
+            let names = types.TYPES[t].field_names
+            let fts = types.TYPES[t].field_types
+            for fi in 0..names.len {
+                w(" && ")
+                let f = cid(names[fi])
+                value_eq(fts[fi], "{{a}}.{{f}}", "{{b}}.{{f}}")
+            }
+            w(")")
+            pop(VK_STACK)
+            break
+        case TK.Vec, TK.Array:
+            let e = types.TYPES[t].elem
+            let is_vec = k == TK.Vec
+            let ea = "_qa{{id}}"
+            let eb = "_qb{{id}}"
+            let alen = if types.TYPES[t].array_len > i64(0) { types.TYPES[t].array_len } else { i64(0) }
+            let len = if is_vec { "({{a}}).len" } else { "{{alen}}" }
+            push(VK_STACK, t)
+            w("({ int _qr{{id}} = 1; int64_t _qi{{id}}; ")
+            if is_vec {
+                w("_qr{{id}} = ({{a}}).len == ({{b}}).len; if (_qr{{id}} && ({{a}}).ptr != ({{b}}).ptr) ")
+            }
+            w("for (_qi{{id}} = 0; _qr{{id}} && _qi{{id}} < {{len}}; _qi{{id}}++) { ")
+            var_decl(e, ea)
+            w(" = {0}; ")
+            var_decl(e, eb)
+            w(" = {0}; ")
+            if is_vec {
+                w("memcpy(&{{ea}}, (const char *)({{a}}).ptr + (size_t)_qi{{id}} * sizeof({{ea}}), sizeof({{ea}})); ")
+                w("memcpy(&{{eb}}, (const char *)({{b}}).ptr + (size_t)_qi{{id}} * sizeof({{eb}}), sizeof({{eb}})); ")
+            } else {
+                w("memcpy(&{{ea}}, &({{a}})[_qi{{id}}], sizeof({{ea}})); ")
+                w("memcpy(&{{eb}}, &({{b}})[_qi{{id}}], sizeof({{eb}})); ")
+            }
+            w("_qr{{id}} = ")
+            value_eq(e, ea, eb)
+            w("; } _qr{{id}}; })")
+            pop(VK_STACK)
+            break
+        default:
+            memcmp_eq(a, b)
+            break
+    }
+}
+
+/** *`loam_zeus_sig_changed(id, &val, sizeof val)`, refined by value for a type */
+/** *whose bytes name storage. */
+fn sig_changed(t: int, id: string, val: string) {
+    if !ve_deep(t) {
+        w("loam_zeus_sig_changed({{id}}, &{{val}}, sizeof({{val}}))")
+        return
+    }
+    let k = VK_TMP
+    VK_TMP = VK_TMP + 1
+    w("({ int64_t _chg{{k}} = loam_zeus_sig_changed({{id}}, &{{val}}, sizeof({{val}})); ")
+    w("if (_chg{{k}} && loam_zeus_sig_sized({{id}}, sizeof({{val}}))) { ")
+    let cur = "_cur{{k}}"
+    var_decl(t, cur)
+    w("; loam_zeus_sig_load({{id}}, &{{cur}}, sizeof({{cur}})); _chg{{k}} = !")
+    value_eq(t, cur, val)
+    w("; } _chg{{k}}; })")
+}
+
+// --- operators and casts ---------------------------------------------------------------
+
+/** *Trapping arithmetic helper for integer type `t` (`loam_add_i32`), "" */
+/** *for a non-integer type or another operator. */
+fn arith_fn(t: int, op: int) -> string {
+    let sfx = types.int_suffix(t)
+    if sfx.len == 0 {
+        return ""
+    }
+    let mut base = ""
+    if op == Tok.Plus || op == Tok.PlusEq {
+        base = "add"
+    } else if op == Tok.Minus || op == Tok.MinusEq {
+        base = "sub"
+    } else if op == Tok.Star || op == Tok.StarEq {
+        base = "mul"
+    } else if op == Tok.Slash || op == Tok.SlashEq {
+        base = "div"
+    } else if op == Tok.Percent || op == Tok.PercentEq {
+        base = "mod"
+    } else {
+        return ""
+    }
+    return "loam_{{base}}_{{sfx}}"
+}
+
+fn shift_fn(t: int, op: int) -> string {
+    let sfx = types.int_suffix(t)
+    if sfx.len == 0 {
+        return ""
+    }
+    let base = if op == Tok.Shr { "shr" } else { "shl" }
+    return "loam_{{base}}_{{sfx}}"
+}
+
+fn neg_fn(t: int) -> string {
+    let sfx = types.int_suffix(t)
+    if sfx.len == 0 {
+        return "(null)"
+    }
+    return "loam_neg_{{sfx}}"
+}
+
+fn c_binop(op: int) -> string {
+    switch op {
+        case Tok.Plus:
+            return "+"
+        case Tok.Minus:
+            return "-"
+        case Tok.Star:
+            return "*"
+        case Tok.Slash:
+            return "/"
+        case Tok.Percent:
+            return "%"
+        case Tok.EqEq:
+            return "=="
+        case Tok.BangEq:
+            return "!="
+        case Tok.Lt:
+            return "<"
+        case Tok.Gt:
+            return ">"
+        case Tok.LtEq:
+            return "<="
+        case Tok.GtEq:
+            return ">="
+        case Tok.AmpAmp:
+            return "&&"
+        case Tok.PipePipe:
+            return "||"
+        case Tok.Amp:
+            return "&"
+        case Tok.Pipe:
+            return "|"
+        case Tok.Caret:
+            return "^"
+        case Tok.Shl:
+            return "<<"
+        case Tok.Shr:
+            return ">>"
+        default:
+            return "?"
+    }
+}
+
+/** *`op=` for the non-arithmetic compound assignments, "" for any other. */
+fn c_assignop(op: int) -> string {
+    switch op {
+        case Tok.AmpEq:
+            return "&="
+        case Tok.PipeEq:
+            return "|="
+        case Tok.CaretEq:
+            return "^="
+        case Tok.ShlEq:
+            return "<<="
+        case Tok.ShrEq:
+            return ">>="
+        default:
+            return ""
+    }
+}
+
+// How a numeric conversion is emitted.
+const CAST_PLAIN: int = 0
+/** *`fn((int64_t)(src), f, l)` */
+const CAST_CONV: int = 1
+/** *`fn((uint64_t)(src), f, l)` */
+const CAST_CONVU: int = 2
+/** *`fn((double)(src), f, l)` */
+const CAST_CONVF: int = 3
+/** *`fn((int64_t)(src))` */
+const CAST_SAT: int = 4
+/** *`fn((uint64_t)(src))` */
+const CAST_SATU: int = 5
+
+struct CastPlan {
+    shape: int,
+    helper: string,
+}
+
+fn cast_plan(from: int, to: int, mode: int) -> CastPlan {
+    let plain = CastPlan { shape: CAST_PLAIN, helper: "" }
+    if from == NO_TYPE || to == NO_TYPE || types.TYPES[to].kind != TK.Int {
+        return plain
+    }
+    let sfx = types.int_suffix(to)
+    if sfx.len == 0 {
+        return plain
+    }
+    let fk = types.TYPES[from].kind
+    if fk == TK.Float {
+        if mode != 0 {
+            return plain
+        }
+        return CastPlan { shape: CAST_CONVF, helper: "loam_convf_{{sfx}}" }
+    }
+    if fk != TK.Int || mode == 1 {
+        return plain
+    }
+    let f = &types.TYPES[from]
+    let tt = &types.TYPES[to]
+    if f.bits == tt.bits && f.is_unsigned == tt.is_unsigned {
+        return plain
+    }
+    let from_u64 = f.bits == 64 && f.is_unsigned != 0
+    let to_u64 = tt.bits == 64 && tt.is_unsigned != 0
+    if from_u64 && !to_u64 {
+        if mode == 2 {
+            return CastPlan { shape: CAST_SATU, helper: "loam_satu_{{sfx}}" }
+        }
+        return CastPlan { shape: CAST_CONVU, helper: "loam_convu_{{sfx}}" }
+    }
+    if mode == 2 {
+        return CastPlan { shape: CAST_SAT, helper: "loam_sat_{{sfx}}" }
+    }
+    return CastPlan { shape: CAST_CONV, helper: "loam_conv_{{sfx}}" }
+}
+
+// --- structs ----------------------------------------------------------------------------
+
+/** *Struct definitions in by-value dependency order: every definition goes */
+/** *through this list, and its inline field structs are emitted before it. */
+let mut SE_TYPES: []int = []int {}
+let mut SE_NAMES: []string = []string {}
+/** *0 pending, 1 emitting, 2 emitted. */
+let mut SE_STATE: []int = []int {}
+let mut SE_INDEX: Map<int> = map_new(-1)
+
+fn se_find(cn: string) -> int {
+    return map_get(&mut SE_INDEX, cn)
+}
+
+fn se_add(t: int) {
+    let cn = types.type_c_name(t)
+    if se_find(cn) >= 0 {
+        return
+    }
+    push(SE_TYPES, t)
+    push(SE_NAMES, cn)
+    push(SE_STATE, 0)
+    map_put(&mut SE_INDEX, cn, SE_TYPES.len - 1)
+}
+
+fn struct_body(t: int) {
+    let cn = types.type_c_name(t)
+    w("struct {{cn}} {\n")
+    let names = types.TYPES[t].field_names
+    let fts = types.TYPES[t].field_types
+    for i in 0..fts.len {
+        w("    ")
+        var_decl(fts[i], cid(names[i]))
+        w(";\n")
+    }
+    w("};\n\n")
+}
+
+/** *A field stores a struct inline when it is one, or a fixed array of one. */
+fn se_emit_dep(ft0: int) {
+    let mut ft = ft0
+    while ft != NO_TYPE && types.TYPES[ft].kind == TK.Array {
+        ft = types.TYPES[ft].elem
+    }
+    if ft == NO_TYPE || types.TYPES[ft].kind != TK.Struct {
+        return
+    }
+    let j = se_find(types.type_c_name(ft))
+    if j >= 0 {
+        se_emit(j)
+    }
+}
+
+fn se_emit(i: int) {
+    if SE_STATE[i] != 0 {
+        return
+    }
+    SE_STATE[i] = 1
+    let t = SE_TYPES[i]
+    let fts = types.TYPES[t].field_types
+    for f in 0..fts.len {
+        se_emit_dep(fts[f])
+    }
+    struct_body(t)
+    SE_STATE[i] = 2
+}
+
+fn struct_decl(st: int) {
+    let name = ast.INFO[st].name
+    if ast.INFO[st].has_name && name == "Future" {
+        w("typedef struct Future {\n    int64_t id;\n} Future;\n\n")
+        return
+    }
+    if ast.INFO[st].has_name && name == "Chan" {
+        w("typedef struct Chan {\n    int64_t id;\n} Chan;\n\n")
+        return
+    }
+    if ast.EXTRA[ast.ex(st)].strs.len > 0 {
+        return
+    }
+    if ast.NODES[st].ty != NO_TYPE {
+        se_add(ast.NODES[st].ty)
+    }
+}
+
+/** *Modules that declare the Zeus handle types, which zeus_rt.h defines. */
+fn zeus_handle_mod(name: string) -> bool {
+    return name == "zeus" || name == "zeusbase" || name == "structs"
+}
+
+fn is_handle_struct(d: int) -> bool {
+    let n = ast.INFO[d].name
+    return ast.INFO[d].has_name && (n == "Node" || n == "Signal")
+}
+
+fn uses_zeus_handles() -> bool {
+    for i in 0..typecheck.MODS.len {
+        let root = typecheck.MODS[i].root
+        if !zeus_handle_mod(typecheck.MODS[i].name) || root == NONE {
+            continue
+        }
+        let decls = &ast.NODES[root].kids
+        for k in 0..decls.len {
+            if ast.NODES[decls[k]].kind == Kind.Struct && is_handle_struct(decls[k]) {
+                return true
+            }
+        }
+    }
+    return false
+}
+
+fn mods_use(name: string) -> bool {
+    for m in 0..typecheck.MODS.len {
+        if typecheck.MODS[m].name == name {
+            return true
+        }
+    }
+    return false
+}
+
+// --- fn signatures ---------------------------------------------------------------------
+
+fn fn_cname(d: int) -> string {
+    if CNAME_OVERRIDE.len > 0 {
+        return CNAME_OVERRIDE
+    }
+    let x = ast.ex(d)
+    if ast.EXTRA[x].has_sname {
+        return ast.EXTRA[x].sname
+    }
+    return ast.INFO[d].name
+}
+
+fn param_type(ft: int, i: int) -> int {
+    if ft != NO_TYPE && i < types.TYPES[ft].params.len {
+        return types.TYPES[ft].params[i]
+    }
+    return types.ty_int()
+}
+
+fn ret_type(ft: int) -> int {
+    if ft != NO_TYPE && types.TYPES[ft].ret != NO_TYPE {
+        return types.TYPES[ft].ret
+    }
+    return types.ty_void()
+}
+
+fn param_name(d: int, i: int) -> string {
+    return ast.INFO[ast.NODES[d].kids[i]].name
+}
+
+fn fn_sig(d: int, is_main: bool) {
+    if is_main {
+        w("#if defined(LOAM_IOS) || defined(LOAM_ANDROID)\n")
+        w("int loam_app_main(void)\n")
+        w("#elif defined(__wasm32__)\n")
+        w("int main(void)\n")
+        w("#else\n")
+        w("int main(int argc, char **argv)\n")
+        w("#endif\n")
+        return
+    }
+    let ft = ast.NODES[d].ty
+    w_ctype(ret_type(ft))
+    wc(' ')
+    w(fn_cname(d))
+    wc('(')
+    let np = ast.NODES[d].kids.len
+    if np == 0 {
+        w("void")
+    }
+    for i in 0..np {
+        if i > 0 {
+            w(", ")
+        }
+        var_decl(param_type(ft, i), cid(param_name(d, i)))
+    }
+    wc(')')
+}
+
+// --- the fn being emitted ----------------------------------------------------------------
+
+/** *Its `ir.FNS` index (`NONE` outside a body), where its locals start, and */
+/** *each local's C spelling. */
+let mut CF: int = NONE
+let mut CF_LOCALS: int = 0
+let mut LV: []string = []string {}
+
+fn lv(id: int) -> string {
+    if CF == NONE || id < 0 || id >= LV.len {
+        return "/*err*/"
+    }
+    return LV[id]
+}
+
+fn spell_local(f: int, id: int) -> string {
+    let l = &ir.LOCALS[ir.FNS[f].locals + id]
+    if (l.flags & ir.L_GLOBAL) != 0 && l.gvar != NONE {
+        return typecheck.GVARS[l.gvar].cname
+    }
+    if (l.flags & ir.L_PARAM) != 0 && l.has_name {
+        return cid(l.name)
+    }
+    return "_l{{id}}"
+}
+
+fn local_ty(id: int) -> int {
+    if CF == NONE || id < 0 || id >= LV.len {
+        return NO_TYPE
+    }
+    return ir.LOCALS[CF_LOCALS + id].ty
+}
+
+fn ir_loc(file: int, line: int) {
+    wc('"')
+    w_escaped_path(public_file(if file >= 0 { path_of(file) } else { "loam" }))
+    w("\", ")
+    wi(line)
+}
+
+/** *The C name of a closure's environment struct: per instance for a */
+/** *closure in a generic fn (`loam_env_<id>_<inst>`). */
+fn env_tag(id: int, cname: string) -> string {
+    let pre = "loam_clos_{{id}}_"
+    if cname.len > pre.len && starts_with(cname, pre) {
+        let mut b = []u8 {}
+        buf.push_str(&mut b, "loam_env_{{id}}_")
+        for i in pre.len..cname.len {
+            push(b, u8(cname[i]))
+        }
+        return buf.to_string(&b)
+    }
+    return "loam_env_{{id}}"
+}
+
+fn starts_with(s: string, pre: string) -> bool {
+    if s.len < pre.len {
+        return false
+    }
+    for i in 0..pre.len {
+        if s[i] != pre[i] {
+            return false
+        }
+    }
+    return true
+}
+
+fn place(p: int) {
+    if p == NONE {
+        w("/*place*/")
+        return
+    }
+    let x = &ir.PLACES[p]
+    switch x.kind {
+        case PlaceKind.Local:
+            w(lv(x.local))
+            break
+        case PlaceKind.Field:
+            let f = &ir.FNS[CF]
+            let base = x.base
+            if f.clos_id != 0 && f.env_local >= 0 && base != NONE && ir.PLACES[base].kind == PlaceKind.Local &&
+                ir.PLACES[base].local == f.env_local {
+                w("((struct {{env_tag(f.clos_id, f.cname)}} *){{lv(f.env_local)}})->{{cid(x.field)}}")
+            } else if base != NONE && is_ptrish(ir.PLACES[base].ty) {
+                wc('(')
+                place(base)
+                w(")->{{cid(x.field)}}")
+            } else {
+                place(base)
+                w(".{{cid(x.field)}}")
+            }
+            break
+        case PlaceKind.Index:
+            let bt = if x.base != NONE { ir.PLACES[x.base].ty } else { NO_TYPE }
+            let mut vt = bt
+            if is_ptrish(vt) {
+                vt = types.TYPES[vt].elem
+            }
+            let vk = tkind(vt)
+            if vk == TK.Vec {
+                w("((")
+                w_ctype(types.TYPES[vt].elem)
+                w(" *)(")
+                place(x.base)
+                if is_ptrish(bt) {
+                    w(")->ptr)[{{lv(x.index)}}]")
+                } else {
+                    w(".ptr))[{{lv(x.index)}}]")
+                }
+            } else if vk == TK.String {
+                w("((int64_t)(unsigned char)(")
+                place(x.base)
+                if is_ptrish(bt) {
+                    w(")->ptr[{{lv(x.index)}}]))")
+                } else {
+                    w(".ptr[{{lv(x.index)}}]))")
+                }
+            } else {
+                place(x.base)
+                w("[{{lv(x.index)}}]")
+            }
+            break
+        default:
+            w("(*")
+            place(x.base)
+            wc(')')
+            break
+    }
+}
+
+// --- ownership: steal, drop, keep, transfer ----------------------------------------------
+
+/** *Structs with out-of-line `loam_keep__T` / `loam_rel__T` / */
+/** *`loam_steal__T` helpers, by C name; at most 4095, as C's table. */
+let mut OWN_HELPERS: Map<int> = map_new(0)
+let mut OWN_HELPER_COUNT: int = 0
+const OWN_HELPER_LIMIT: int = 4095
+
+fn own_helper_add(cn: string) -> bool {
+    if map_has(&mut OWN_HELPERS, cn) {
+        return true
+    }
+    if OWN_HELPER_COUNT >= OWN_HELPER_LIMIT {
+        return false
+    }
+    map_put(&mut OWN_HELPERS, cn, 1)
+    OWN_HELPER_COUNT = OWN_HELPER_COUNT + 1
+    return true
+}
+
+/** *Owning leaves (string, vec, box, fn) a value of `t` holds inline. */
+fn own_leaves(t: int) -> int {
+    if t == NO_TYPE || !needs_drop(t) {
+        return 0
+    }
+    let k = types.TYPES[t].kind
+    if k == TK.Struct {
+        let mut n = 0
+        let fts = types.TYPES[t].field_types
+        for i in 0..fts.len {
+            n = n + own_leaves(fts[i])
+        }
+        return n
+    }
+    if k == TK.Array {
+        return 2
+    }
+    return 1
+}
+
+/** *`t`'s C name when it has ownership helpers, else "". */
+fn own_helper_for(t: int) -> string {
+    if tkind(t) != TK.Struct || OWN_HELPER_COUNT == 0 {
+        return ""
+    }
+    let cn = types.type_c_name(t)
+    if map_has(&mut OWN_HELPERS, cn) {
+        return cn
+    }
+    return ""
+}
+
+fn steal(pl: string, t: int, ind: int) {
+    if t == NO_TYPE {
+        return
+    }
+    let cn = own_helper_for(t)
+    if cn.len > 0 {
+        indent(ind)
+        w("loam_steal__{{cn}}(&{{pl}});\n")
+        return
+    }
+    let k = types.TYPES[t].kind
+    if k == TK.Box {
+        indent(ind)
+        w("{{pl}} = NULL;\n")
+        return
+    }
+    if k == TK.String {
+        if !types.string_owns {
+            return
+        }
+        indent(ind)
+        w("{{pl}}.ptr = NULL; {{pl}}.len = 0; {{pl}}.own = 0;\n")
+        return
+    }
+    if k == TK.Proc {
+        indent(ind)
+        w("{{pl}}.fn = NULL; {{pl}}.env = NULL;\n")
+        return
+    }
+    if k == TK.Vec {
+        indent(ind)
+        w("{{pl}}.ptr = NULL; {{pl}}.len = 0; {{pl}}.cap = 0;\n")
+        return
+    }
+    if k == TK.Array {
+        let e = types.TYPES[t].elem
+        if e != NO_TYPE && needs_drop(e) {
+            let n = types.TYPES[t].array_len
+            let mut i = i64(0)
+            while i < n {
+                steal("{{pl}}[{{i}}]", e, ind)
+                i = i + i64(1)
+            }
+        }
+        return
+    }
+    if k == TK.Struct {
+        let names = types.TYPES[t].field_names
+        let fts = types.TYPES[t].field_types
+        for i in 0..fts.len {
+            if needs_drop(fts[i]) {
+                steal("{{pl}}.{{cid(names[i])}}", fts[i], ind)
+            }
+        }
+    }
+}
+
+fn drop_place(pl: string, t: int, ind: int) {
+    if !needs_drop(t) {
+        return
+    }
+    let cn = own_helper_for(t)
+    if cn.len > 0 {
+        indent(ind)
+        w("loam_rel__{{cn}}(&{{pl}});\n")
+        return
+    }
+    let k = types.TYPES[t].kind
+    if k == TK.Box {
+        indent(ind)
+        w("loam_drop((void **)&{{pl}});\n")
+        return
+    }
+    if k == TK.String {
+        indent(ind)
+        w("loam_str_release(&{{pl}});\n")
+        return
+    }
+    if k == TK.Proc {
+        indent(ind)
+        w("loam_fn_drop(&{{pl}});\n")
+        return
+    }
+    if k == TK.Vec {
+        let e = types.TYPES[t].elem
+        let h = elem_hook(e)
+        if h > 0 {
+            // The buffer owns its elements: they go only when this handle
+            // frees it.
+            indent(ind)
+            w("loam_vec_drop_owned(&{{pl}}, sizeof({{ctype(e)}}), loam_elem_release_{{h}});\n")
+            return
+        }
+        if e != NO_TYPE && needs_drop(e) {
+            let cn2 = ctype(e)
+            indent(ind)
+            w("{ int64_t _di; for (_di = 0; _di < {{pl}}.len; _di++) {\n")
+            drop_place("(({{cn2}} *){{pl}}.ptr)[_di]", e, ind + 1)
+            indent(ind)
+            w("} }\n")
+        }
+        indent(ind)
+        w("loam_vec_drop(&{{pl}});\n")
+        return
+    }
+    if k == TK.Array {
+        let e = types.TYPES[t].elem
+        if e != NO_TYPE && needs_drop(e) {
+            indent(ind)
+            w("{ int64_t _di; for (_di = 0; _di < {{types.TYPES[t].array_len}}; _di++) {\n")
+            drop_place("{{pl}}[_di]", e, ind + 1)
+            indent(ind)
+            w("} }\n")
+        }
+        return
+    }
+    if k == TK.Struct {
+        let names = types.TYPES[t].field_names
+        let fts = types.TYPES[t].field_types
+        for i in 0..fts.len {
+            if needs_drop(fts[i]) {
+                drop_place("{{pl}}.{{cid(names[i])}}", fts[i], ind)
+            }
+        }
+    }
+}
+
+/** *Take a reference for every owning leaf of `pl` the callee or the new */
+/** *owner will drop. */
+fn nested_keeps(pl: string, t: int, ind: int) {
+    if t == NO_TYPE || !needs_drop(t) {
+        return
+    }
+    let cn = own_helper_for(t)
+    if cn.len > 0 {
+        indent(ind)
+        w("loam_keep__{{cn}}(&{{pl}});\n")
+        return
+    }
+    let k = types.TYPES[t].kind
+    if k == TK.String {
+        indent(ind)
+        w("loam_str_retain({{pl}});\n")
+        return
+    }
+    if k == TK.Vec {
+        indent(ind)
+        w("loam_vec_retain(&{{pl}});\n")
+        let e = types.TYPES[t].elem
+        // Elements belong to the buffer, so a copy shares them.
+        if elem_hook(e) > 0 {
+            return
+        }
+        if e != NO_TYPE && needs_drop(e) {
+            let cn2 = ctype(e)
+            indent(ind)
+            w("{ int64_t _di; for (_di = 0; _di < {{pl}}.len; _di++) {\n")
+            nested_keeps("(({{cn2}} *){{pl}}.ptr)[_di]", e, ind + 1)
+            indent(ind)
+            w("} }\n")
+        }
+        return
+    }
+    if k == TK.Array {
+        let e = types.TYPES[t].elem
+        if e != NO_TYPE && needs_drop(e) {
+            indent(ind)
+            w("{ int64_t _ai; for (_ai = 0; _ai < {{types.TYPES[t].array_len}}; _ai++) {\n")
+            nested_keeps("{{pl}}[_ai]", e, ind + 1)
+            indent(ind)
+            w("} }\n")
+        }
+        return
+    }
+    if k == TK.Struct {
+        let names = types.TYPES[t].field_names
+        let fts = types.TYPES[t].field_types
+        for i in 0..fts.len {
+            if needs_drop(fts[i]) {
+                nested_keeps("{{pl}}.{{cid(names[i])}}", fts[i], ind)
+            }
+        }
+    }
+}
+
+/** *Clear the `Box` / fn leaves a call adopted, so the caller's own drop */
+/** *does not release them again; a retained `[]T` leaf stays. */
+fn nested_transfers(pl: string, t: int, ind: int) {
+    if t == NO_TYPE || !needs_drop(t) {
+        return
+    }
+    let k = types.TYPES[t].kind
+    if k == TK.Box {
+        indent(ind)
+        w("{{pl}} = NULL;\n")
+        return
+    }
+    if k == TK.Proc {
+        indent(ind)
+        w("{{pl}}.fn = NULL; {{pl}}.env = NULL;\n")
+        return
+    }
+    if k == TK.Vec {
+        return
+    }
+    if k == TK.Array {
+        let e = types.TYPES[t].elem
+        if e != NO_TYPE && needs_drop(e) {
+            indent(ind)
+            w("{ int64_t _ti; for (_ti = 0; _ti < {{types.TYPES[t].array_len}}; _ti++) {\n")
+            nested_transfers("{{pl}}[_ti]", e, ind + 1)
+            indent(ind)
+            w("} }\n")
+        }
+        return
+    }
+    if k == TK.Struct {
+        let names = types.TYPES[t].field_names
+        let fts = types.TYPES[t].field_types
+        for i in 0..fts.len {
+            if needs_drop(fts[i]) {
+                nested_transfers("{{pl}}.{{cid(names[i])}}", fts[i], ind)
+            }
+        }
+    }
+}
+
+fn array_copy(dst: int, src: int, t: int) {
+    let n = if tkind(t) == TK.Array { types.TYPES[t].array_len } else { i64(0) }
+    w("    { int64_t _ci; for (_ci = 0; _ci < {{n}}; _ci++) {{lv(dst)}}[_ci] = {{lv(src)}}[_ci]; }\n")
+}
+
+// --- instructions -------------------------------------------------------------------------
+
+fn callee_of(x: &Inst) -> string {
+    if x.text == NONE {
+        return "unknown"
+    }
+    return ir.TEXTS[x.text]
+}
+
+fn is_callee(x: &Inst, name: string) -> bool {
+    return x.op == Op.Call && x.text != NONE && ir.TEXTS[x.text] == name
+}
+
+fn arg_of(x: &Inst, k: int) -> int {
+    return ir.ARGS[x.args + k]
+}
+
+/** *The type an argument has at a call: its local's, or for an indirect call */
+/** *to a fn value, the fn type's parameter. */
+fn call_arg_type(x: &Inst, k: int) -> int {
+    let a = arg_of(x, k)
+    let mut at = local_ty(a)
+    if x.op == Op.CallVal && at == NO_TYPE {
+        let ft = local_ty(x.a)
+        if tkind(ft) == TK.Proc && k < types.TYPES[ft].params.len {
+            at = types.TYPES[ft].params[k]
+        }
+    }
+    return at
+}
+
+/** *An argument the caller keeps a reference for across the call. */
+fn arg_kept(at: int) -> bool {
+    let k = tkind(at)
+    return at != NO_TYPE && needs_drop(at) && k != TK.Box && k != TK.Proc && k != TK.String
+}
+
+fn hook_suffix(h: int) {
+    if h > 0 {
+        w("), loam_elem_retain_{{h}}, ")
+    } else {
+        w("), ")
+    }
+}
+
+fn store(x: &Inst) {
+    let op = x.binop
+    let is_shift = op == Tok.ShlEq || op == Tok.ShrEq
+    let mut cf = ""
+    if types.is_int_kind(x.ty) {
+        cf = if is_shift { shift_fn(x.ty, if op == Tok.ShrEq { Tok.Shr } else { Tok.Shl }) } else { arith_fn(x.ty, op) }
+    }
+    let arith = op == Tok.PlusEq || op == Tok.MinusEq || op == Tok.StarEq || op == Tok.SlashEq || op == Tok.PercentEq
+    if cf.len > 0 && (arith || is_shift) {
+        place(x.place)
+        w(" = {{cf}}(")
+        place(x.place)
+        w(", {{lv(x.a)}}, ")
+        ir_loc(x.file, x.line)
+        w(");\n")
+        return
+    }
+    if arith {
+        let mut sym = "+="
+        if op == Tok.MinusEq {
+            sym = "-="
+        } else if op == Tok.StarEq {
+            sym = "*="
+        } else if op == Tok.SlashEq {
+            sym = "/="
+        } else if op == Tok.PercentEq {
+            sym = "%="
+        }
+        place(x.place)
+        w(" {{sym}} {{lv(x.a)}};\n")
+        return
+    }
+    let aop = c_assignop(op)
+    let k = tkind(x.ty)
+    if aop.len > 0 {
+        place(x.place)
+        w(" {{aop}} {{lv(x.a)}};\n")
+    } else if k == TK.Vec && types.is_copy(x.ty) {
+        w("{\n        loam_vec _repl = ")
+        place(x.place)
+        w(";\n        ")
+        place(x.place)
+        w(" = loam_vec_retain(&{{lv(x.a)}});\n")
+        drop_place("_repl", x.ty, 1)
+        w("    }\n")
+    } else if k == TK.String && types.string_owns {
+        w("{\n        loam_str _repl = ")
+        place(x.place)
+        w(";\n        ")
+        place(x.place)
+        w(" = {{lv(x.a)}};\n        ")
+        indent(1)
+        w("loam_str_retain(")
+        place(x.place)
+        w(");\n")
+        drop_place("_repl", x.ty, 1)
+        w("    }\n")
+    } else if x.ty != NO_TYPE && needs_drop(x.ty) && k != TK.Array {
+        w("{\n        {{ctype(x.ty)}} _repl = ")
+        place(x.place)
+        w(";\n        ")
+        place(x.place)
+        w(" = {{lv(x.a)}};\n")
+        steal(lv(x.a), x.ty, 1)
+        drop_place("_repl", x.ty, 1)
+        w("    }\n")
+    } else {
+        place(x.place)
+        w(" = {{lv(x.a)}};\n")
+    }
+}
+
+fn move_inst(x: &Inst) {
+    let ty = if x.ty != NO_TYPE { x.ty } else { local_ty(x.dst) }
+    let k = tkind(ty)
+    let d = lv(x.dst)
+    let a = lv(x.a)
+    if k == TK.Box {
+        w("{{d}} = (")
+        w_ctype(ty)
+        w(")loam_move_ptr((void **)&{{a}});\n")
+    } else if k == TK.Proc {
+        if types.is_copy(ty) {
+            w("{{d}} = {{a}};\n")
+        } else {
+            w("{{d}} = loam_fn_move(&{{a}});\n")
+        }
+    } else if k == TK.Vec {
+        if types.is_copy(ty) {
+            w("{{d}} = loam_vec_retain(&{{a}});\n")
+        } else {
+            w("{{d}} = loam_vec_move(&{{a}});\n")
+        }
+    } else if k == TK.String {
+        w("{{d}} = {{a}};\n")
+        if types.string_owns {
+            indent(1)
+            w("loam_str_retain({{d}});\n")
+        }
+    } else if k == TK.Array {
+        w("\n")
+        array_copy(x.dst, x.a, ty)
+    } else if ty != NO_TYPE && needs_drop(ty) && k == TK.Struct {
+        w("{{d}} = {{a}};\n")
+        if types.is_copy(ty) {
+            nested_keeps(d, ty, 1)
+        } else {
+            steal(a, ty, 1)
+        }
+    } else {
+        w("{{d}} = {{a}};\n")
+    }
+}
+
+/** *The signal / future / channel / vec builtins; false when `x` is none. */
+fn builtin_call(x: &Inst) -> bool {
+    if x.op != Op.Call || x.text == NONE {
+        return false
+    }
+    let name = ir.TEXTS[x.text]
+    let has_dst = x.dst >= 0
+    if name == "loam_value_key" && x.nargs >= 1 && has_dst {
+        w("{{lv(x.dst)}} = ")
+        value_key(x.ty, lv(arg_of(x, 0)))
+        w(";\n")
+        return true
+    }
+    if name == "loam_sig_push" && x.nargs >= 1 && has_dst {
+        let vt = x.ty
+        let d = lv(x.dst)
+        let a0 = lv(arg_of(x, 0))
+        w("loam_arena_ensure();\n")
+        indent(1)
+        if tkind(vt) == TK.Int && types.TYPES[vt].bits == 32 {
+            w("{{d}} = loam_zeus_sig_alloc_int({{a0}});\n")
+        } else {
+            w("{{d}} = loam_zeus_sig_alloc_zero();\n")
+        }
+        indent(1)
+        if is_copy_vec(vt) {
+            w("{ loam_vec _sigv = loam_vec_retain(&{{a0}}); ")
+            sig_bind_vec(vt, d, "_sigv")
+            w(" }\n")
+        } else if is_refcounted(vt) {
+            w("{ loam_str _sigv = {{a0}}; loam_str_retain(_sigv); ")
+            w("loam_zeus_sig_bind_str({{d}}, &_sigv, sizeof(_sigv)); }\n")
+        } else if tkind(vt) == TK.Struct && needs_drop(vt) {
+            w("{ ")
+            w_ctype(vt)
+            w(" _sigv = {{a0}};\n")
+            nested_keeps("_sigv", vt, 2)
+            indent(2)
+            sig_bind_owned(vt, d, "_sigv")
+            w(" }\n")
+        } else {
+            w("loam_zeus_sig_bind({{d}}, &{{a0}}, sizeof(")
+            w_ctype(vt)
+            w("));\n")
+        }
+        return true
+    }
+    if name == "loam_sig_load" && x.nargs >= 1 && has_dst {
+        let d = lv(x.dst)
+        w("loam_zeus_sig_load({{lv(arg_of(x, 0))}}, &{{d}}, sizeof(")
+        w_ctype(x.ty)
+        w("));\n")
+        if is_copy_vec(x.ty) {
+            indent(1)
+            w("{{d}} = loam_vec_retain(&{{d}});\n")
+        } else if is_refcounted(x.ty) {
+            indent(1)
+            w("loam_str_retain({{d}});\n")
+        } else if tkind(x.ty) == TK.Struct && needs_drop(x.ty) {
+            nested_keeps(d, x.ty, 1)
+        }
+        return true
+    }
+    if name == "loam_sig_store" && x.nargs >= 2 {
+        let mut vt = x.ty
+        let a1 = arg_of(x, 1)
+        if tkind(vt) == TK.Void && a1 >= 0 && a1 < LV.len {
+            vt = local_ty(a1)
+        }
+        let s = lv(arg_of(x, 0))
+        let v = lv(a1)
+        if tkind(vt) == TK.Int && types.TYPES[vt].bits == 32 {
+            w("loam_arena_store_sig({{s}}, {{v}});\n")
+        } else if is_copy_vec(vt) {
+            w("if (")
+            sig_changed(vt, s, v)
+            w(") {\n")
+            indent(2)
+            w("loam_vec _old; loam_zeus_sig_load({{s}}, &_old, sizeof(_old));\n")
+            indent(2)
+            w("loam_vec _new = loam_vec_retain(&{{v}}); ")
+            sig_bind_vec(vt, s, "_new")
+            w("\n")
+            drop_place("_old", vt, 2)
+            indent(2)
+            w("loam_arena_note_write({{s}});\n")
+            indent(1)
+            w("}\n")
+        } else if is_refcounted(vt) {
+            w("if (")
+            sig_changed(vt, s, v)
+            w(") {\n")
+            indent(2)
+            w("loam_str _old; loam_zeus_sig_load({{s}}, &_old, sizeof(_old));\n")
+            indent(2)
+            w("loam_str _new = {{v}}; loam_str_retain(_new); ")
+            w("loam_zeus_sig_bind_str({{s}}, &_new, sizeof(_new));\n")
+            indent(2)
+            w("loam_str_release(&_old); loam_arena_note_write({{s}});\n")
+            indent(1)
+            w("}\n")
+        } else if tkind(vt) == TK.Struct && needs_drop(vt) {
+            w("if (")
+            sig_changed(vt, s, v)
+            w(") {\n")
+            indent(2)
+            w_ctype(vt)
+            w(" _old; loam_zeus_sig_load({{s}}, &_old, sizeof(_old));\n")
+            indent(2)
+            w_ctype(vt)
+            w(" _new = {{v}};\n")
+            nested_keeps("_new", vt, 2)
+            indent(2)
+            sig_bind_owned(vt, s, "_new")
+            w("\n")
+            drop_place("_old", vt, 2)
+            indent(2)
+            w("loam_arena_note_write({{s}});\n")
+            indent(1)
+            w("}\n")
+        } else {
+            let ct = ctype(vt)
+            w("if (loam_zeus_sig_changed({{s}}, &{{v}}, sizeof({{ct}}))) { loam_zeus_sig_bind({{s}}, &{{v}}, sizeof({{ct}})); loam_arena_note_write({{s}}); }\n")
+        }
+        return true
+    }
+    if name == "loam_fut_push" && x.nargs >= 1 && has_dst {
+        let a0 = lv(arg_of(x, 0))
+        if is_copy_vec(x.ty) {
+            w("{ loam_vec _fv = loam_vec_retain(&{{a0}}); {{lv(x.dst)}} = loam_fut_push(&_fv, sizeof(_fv)); }\n")
+        } else {
+            w("{{lv(x.dst)}} = loam_fut_push(&{{a0}}, sizeof(")
+            w_ctype(x.ty)
+            w("));\n")
+        }
+        return true
+    }
+    if name == "loam_fut_load" && x.nargs >= 1 && has_dst {
+        let d = lv(x.dst)
+        w("loam_fut_load({{lv(arg_of(x, 0))}}, &{{d}}, sizeof(")
+        w_ctype(x.ty)
+        w("));\n")
+        if is_copy_vec(x.ty) {
+            indent(1)
+            w("{{d}} = loam_vec_retain(&{{d}});\n")
+        }
+        return true
+    }
+    if name == "loam_fut_store" && x.nargs >= 2 {
+        let mut vt = x.ty
+        let a1 = arg_of(x, 1)
+        if tkind(vt) == TK.Void && a1 >= 0 && a1 < LV.len {
+            vt = local_ty(a1)
+        }
+        let s = lv(arg_of(x, 0))
+        let v = lv(a1)
+        if is_copy_vec(vt) {
+            w("{ loam_vec _old; loam_fut_load({{s}}, &_old, sizeof(_old)); ")
+            w("loam_vec _new = loam_vec_retain(&{{v}}); loam_fut_store({{s}}, &_new, sizeof(_new)); ")
+            w("loam_vec_drop(&_old); }\n")
+        } else {
+            w("loam_fut_store({{s}}, &{{v}}, sizeof(")
+            w_ctype(vt)
+            w("));\n")
+        }
+        return true
+    }
+    if name == "loam_ch_alloc" && x.nargs >= 1 && has_dst {
+        w("{{lv(x.dst)}} = loam_ch_alloc({{lv(arg_of(x, 0))}}, sizeof(")
+        w_ctype(x.ty)
+        w("));\n")
+        return true
+    }
+    if (name == "loam_ch_send" && x.nargs >= 2) || (name == "loam_ch_try_send" && x.nargs >= 2 && has_dst) {
+        let h = elem_hook(x.ty)
+        if name == "loam_ch_try_send" {
+            w("{{lv(x.dst)}} = ")
+        }
+        w(name)
+        if h > 0 {
+            w("_owned")
+        }
+        w("({{lv(arg_of(x, 0))}}, &{{lv(arg_of(x, 1))}}, sizeof(")
+        w_ctype(x.ty)
+        if h > 0 {
+            w("), loam_elem_retain_{{h}});\n")
+        } else {
+            w("));\n")
+        }
+        return true
+    }
+    if (name == "loam_ch_recv" || name == "loam_ch_pop") && x.nargs >= 1 && has_dst {
+        w("{{name}}({{lv(arg_of(x, 0))}}, &{{lv(x.dst)}}, sizeof(")
+        w_ctype(x.ty)
+        w("));\n")
+        return true
+    }
+    if name == "loam_ch_ready" && x.nargs >= 1 && has_dst {
+        w("{{lv(x.dst)}} = loam_ch_ready({{lv(arg_of(x, 0))}});\n")
+        return true
+    }
+    if name == "loam_vec_push" && x.nargs >= 2 {
+        let a0 = arg_of(x, 0)
+        // The vec may arrive by value or by address (`let mut v`).
+        let amp = if tkind(local_ty(a0)) == TK.Vec { "&" } else { "" }
+        let h = elem_hook(x.ty)
+        w("loam_vec_push")
+        if h > 0 {
+            w("_owned")
+        }
+        w("({{amp}}{{lv(a0)}}, &{{lv(arg_of(x, 1))}}, sizeof(")
+        w_ctype(x.ty)
+        hook_suffix(h)
+        ir_loc(x.file, x.line)
+        w(");\n")
+        return true
+    }
+    if name == "loam_vec_pop" && x.nargs >= 1 && has_dst {
+        let a0 = arg_of(x, 0)
+        let raw = local_ty(a0)
+        let amp = if tkind(raw) == TK.Vec { "&" } else { "" }
+        let mut vt = raw
+        if is_ptrish(vt) {
+            vt = types.TYPES[vt].elem
+        }
+        let et = if tkind(vt) == TK.Vec && types.TYPES[vt].elem != NO_TYPE { types.TYPES[vt].elem } else { x.ty }
+        let h = elem_hook(et)
+        w("loam_vec_pop")
+        if h > 0 {
+            w("_owned")
+        }
+        w("({{amp}}{{lv(a0)}}, &{{lv(x.dst)}}, sizeof(")
+        w_ctype(x.ty)
+        hook_suffix(h)
+        ir_loc(x.file, x.line)
+        w(");\n")
+        return true
+    }
+    return false
+}
+
+fn call_inst(x: &Inst) {
+    if builtin_call(x) {
+        return
+    }
+    // Owning arguments share storage with the caller, but the callee drops its
+    // params on exit: keep them alive across the call.
+    let mut nkeep = 0
+    for k in 0..x.nargs {
+        if arg_kept(call_arg_type(x, k)) {
+            nkeep = nkeep + 1
+        }
+    }
+    if nkeep > 0 {
+        indent(1)
+        w("{\n")
+        for k in 0..x.nargs {
+            let at = call_arg_type(x, k)
+            if arg_kept(at) {
+                nested_keeps(lv(arg_of(x, k)), at, 2)
+            }
+        }
+        indent(1)
+    }
+    if x.dst >= 0 {
+        w("{{lv(x.dst)}} = ")
+    }
+    if x.op == Op.Call {
+        w(callee_of(x))
+        wc('(')
+        for k in 0..x.nargs {
+            if k > 0 {
+                w(", ")
+            }
+            w(lv(arg_of(x, k)))
+        }
+        w(");\n")
+    } else {
+        let ft = local_ty(x.a)
+        let is_proc = tkind(ft) == TK.Proc
+        let ret = if is_proc && types.TYPES[ft].ret != NO_TYPE { types.TYPES[ft].ret } else { types.ty_void() }
+        let fv = lv(x.a)
+        w("((")
+        w_ctype(ret)
+        w("(*)(void *")
+        if is_proc {
+            let ps = types.TYPES[ft].params
+            for k in 0..ps.len {
+                w(", ")
+                w_ctype(ps[k])
+            }
+        }
+        w(")){{fv}}.fn)({{fv}}.env")
+        for k in 0..x.nargs {
+            w(", ")
+            w(lv(arg_of(x, k)))
+        }
+        w(");\n")
+    }
+    if nkeep > 0 {
+        // After the call: the callee owns the handles it adopted.
+        for k in 0..x.nargs {
+            let at = call_arg_type(x, k)
+            if at == NO_TYPE || !needs_drop(at) {
+                continue
+            }
+            if !types.arg_transfers(at) {
+                nested_transfers(lv(arg_of(x, k)), at, 2)
+            }
+        }
+        w("    }\n")
+    }
+}
+
+fn struct_lit(x: &Inst) {
+    let t = x.ty
+    let is_struct = tkind(t) == TK.Struct
+    let cn = if is_struct { types.type_c_name(t) } else if t != NO_TYPE && types.TYPES[t].has_name { types.TYPES[t].name } else { "struct" }
+    let d = lv(x.dst)
+    let names = if t != NO_TYPE { types.TYPES[t].field_names } else { []string {} }
+    if x.dflt != NONE {
+        // Start from the struct's default template and store only the fields
+        // it does not supply.
+        lit_template_use(x, cn)
+        w("{{d}} = loam_dflt_{{cn}};\n")
+        for k in 0..x.nargs {
+            let a = arg_of(x, k)
+            if a < 0 {
+                continue
+            }
+            indent(1)
+            w("{{d}}.{{cid(names[k])}} = {{lv(a)}};\n")
+        }
+    } else {
+        w("{{d}} = ({{cn}}){ ")
+        for k in 0..x.nargs {
+            if k > 0 {
+                w(", ")
+            }
+            if k < names.len {
+                w(".{{cid(names[k])}} = {{lv(arg_of(x, k))}}")
+            } else {
+                w(lv(arg_of(x, k)))
+            }
+        }
+        w(" };\n")
+    }
+    // A struct that owns a string retains every refcounted leaf it was given.
+    if types.string_owns && is_struct && types.owns_string(t) {
+        if x.dflt != NONE {
+            let fts = types.TYPES[t].field_types
+            for k in 0..x.nargs {
+                if arg_of(x, k) < 0 {
+                    continue
+                }
+                nested_keeps("{{d}}.{{cid(names[k])}}", fts[k], 1)
+            }
+        } else {
+            nested_keeps(d, t, 1)
+        }
+    }
+}
+
+fn array_lit(x: &Inst) {
+    let d = lv(x.dst)
+    if x.nints > 0 {
+        w("{\n")
+        indent(2)
+        w("static const ")
+        w_ctype(types.TYPES[x.ty].elem)
+        w(" _t[] = {")
+        for k in 0..x.nints {
+            if k > 0 {
+                wc(',')
+            }
+            wl(ir.INTS[x.ints + k])
+        }
+        w("};\n")
+        indent(2)
+        w("{{d}} = loam_vec_of(_t, {{x.nints}}, sizeof _t[0], ")
+        ir_loc(x.file, x.line)
+        w(");\n")
+        indent(1)
+        w("}\n")
+    } else if tkind(x.ty) == TK.Vec {
+        let e = types.TYPES[x.ty].elem
+        let h = elem_hook(e)
+        w("{{d}} = loam_vec_new();\n")
+        for k in 0..x.nargs {
+            let a = arg_of(x, k)
+            indent(1)
+            w("loam_vec_push")
+            if h > 0 {
+                w("_owned")
+            }
+            w("(&{{d}}, &{{lv(a)}}, sizeof(")
+            w_ctype(e)
+            hook_suffix(h)
+            ir_loc(x.file, x.line)
+            w(");\n")
+            // An owning element's source keeps its own reference (the push
+            // took one for the slot); a plain element is moved.
+            if h == 0 && a >= 0 && a < LV.len && needs_drop(local_ty(a)) {
+                steal(lv(a), local_ty(a), 1)
+            }
+        }
+    } else {
+        for k in 0..x.nargs {
+            if k > 0 {
+                indent(1)
+            }
+            w("{{d}}[{{k}}] = {{lv(arg_of(x, k))}};\n")
+        }
+        if x.nargs == 0 {
+            w("(void){{d}};\n")
+        }
+    }
+}
+
+fn clos_inst(x: &Inst) {
+    let d = lv(x.dst)
+    let callee = callee_of(x)
+    if x.nargs == 0 {
+        w("{{d}} = ((loam_fn){(void *){{callee}}, NULL, 0});\n")
+        return
+    }
+    let id = int(x.imm)
+    let cf = find_ir_fn(if x.text == NONE { "" } else { callee })
+    let tag = env_tag(id, callee)
+    w("{\n")
+    indent(2)
+    w("struct {{tag}} *_ce = (struct {{tag}} *)loam_new(sizeof(struct {{tag}}), ")
+    ir_loc(x.file, x.line)
+    w(");\n")
+    for k in 0..x.nargs {
+        let mut fnm = "f"
+        let mut ct = NO_TYPE
+        if cf != NONE {
+            let caps = &ir.FNS[cf].caps
+            if k < caps.len {
+                fnm = cid(caps[k])
+                if k < ir.FNS[cf].cap_types.len {
+                    ct = ir.FNS[cf].cap_types[k]
+                }
+            }
+        }
+        let a = lv(arg_of(x, k))
+        indent(2)
+        if is_copy_vec(ct) {
+            w("_ce->{{fnm}} = loam_vec_retain(&{{a}});\n")
+        } else if ct != NO_TYPE && !types.is_copy(ct) && needs_drop(ct) {
+            // A non-Copy owned capture is moved into the env.
+            w("_ce->{{fnm}} = {{a}};\n")
+            steal(a, ct, 2)
+        } else {
+            w("_ce->{{fnm}} = {{a}};\n")
+            // The env outlives the frame that captured it: its own reference
+            // to every []T the capture reaches.
+            if ct != NO_TYPE && needs_drop(ct) && !types.arg_transfers(ct) {
+                nested_keeps("_ce->{{fnm}}", ct, 2)
+            }
+        }
+    }
+    indent(2)
+    w("{{d}} = ((loam_fn){(void *){{callee}}, _ce, sizeof(struct {{tag}})});\n")
+    indent(1)
+    w("}\n")
+}
+
+fn inst(i: int) {
+    let x = &ir.INSTS[i]
+    indent(1)
+    switch x.op {
+        case Op.ConstInt:
+            w("{{lv(x.dst)}} = ")
+            int_lit(x.imm)
+            w(";\n")
+            break
+        case Op.ConstFloat:
+            w("{{lv(x.dst)}} = ")
+            float_lit(x.fimm, tkind(x.ty) == TK.Float && types.TYPES[x.ty].bits == 32)
+            w(";\n")
+            break
+        case Op.ConstBool:
+            w(lv(x.dst))
+            w(if x.imm != i64(0) { " = true;\n" } else { " = false;\n" })
+            break
+        case Op.ConstStr:
+            w("{{lv(x.dst)}} = ")
+            str_lit(if x.text == NONE { "" } else { ir.TEXTS[x.text] })
+            w(";\n")
+            break
+        case Op.Load:
+            w("{{lv(x.dst)}} = ")
+            place(x.place)
+            w(";\n")
+            // A read of an owning value is an owned copy, unless it is only
+            // compared (borrowed).
+            if x.ty != NO_TYPE && needs_drop(x.ty) && (x.bits & ir.I_BORROWED) == 0 {
+                nested_keeps(lv(x.dst), x.ty, 1)
+            }
+            break
+        case Op.Store:
+            store(x)
+            break
+        case Op.Addr:
+            w("{{lv(x.dst)}} = &")
+            place(x.place)
+            w(";\n")
+            break
+        case Op.Move:
+            move_inst(x)
+            break
+        case Op.Bin:
+            let at = local_ty(x.a)
+            let mut cf = ""
+            if (x.binop == Tok.Shl || x.binop == Tok.Shr) && types.is_int_kind(x.ty) {
+                cf = shift_fn(x.ty, x.binop)
+            } else if (x.bits & ir.I_CHECKED) != 0 {
+                cf = arith_fn(x.ty, x.binop)
+            }
+            if (x.binop == Tok.EqEq || x.binop == Tok.BangEq) && tkind(at) == TK.String {
+                let neg = if x.binop == Tok.BangEq { "!" } else { "" }
+                w("{{lv(x.dst)}} = {{neg}}loam_fmt_eq({{lv(x.a)}}, {{lv(x.b)}});\n")
+            } else if cf.len > 0 {
+                w("{{lv(x.dst)}} = {{cf}}({{lv(x.a)}}, {{lv(x.b)}}, ")
+                ir_loc(x.file, x.line)
+                w(");\n")
+            } else {
+                w("{{lv(x.dst)}} = ({{lv(x.a)}} {{c_binop(x.binop)}} {{lv(x.b)}});\n")
+            }
+            break
+        case Op.Un:
+            let at = local_ty(x.a)
+            if x.binop == Tok.Tilde && types.is_int_kind(at) {
+                w("{{lv(x.dst)}} = (")
+                w_ctype(x.ty)
+                w(")(~{{lv(x.a)}});\n")
+            } else if x.binop != Tok.Bang && x.binop != Tok.Tilde && types.is_int_kind(at) {
+                w("{{lv(x.dst)}} = {{neg_fn(x.ty)}}({{lv(x.a)}}, ")
+                ir_loc(x.file, x.line)
+                w(");\n")
+            } else {
+                let sym = if x.binop == Tok.Bang { "!" } else if x.binop == Tok.Tilde { "~" } else { "-" }
+                w("{{lv(x.dst)}} = ({{sym}}{{lv(x.a)}});\n")
+            }
+            break
+        case Op.Cast:
+            let plan = cast_plan(local_ty(x.a), x.ty, x.conv)
+            if plan.shape == CAST_PLAIN {
+                w("{{lv(x.dst)}} = (")
+                w_ctype(x.ty)
+                w("){{lv(x.a)}};\n")
+            } else {
+                w("{{lv(x.dst)}} = {{plan.helper}}(")
+                if plan.shape == CAST_CONV || plan.shape == CAST_SAT {
+                    w("(int64_t)")
+                } else if plan.shape == CAST_CONVU || plan.shape == CAST_SATU {
+                    w("(uint64_t)")
+                } else {
+                    w("(double)")
+                }
+                w(lv(x.a))
+                if plan.shape == CAST_CONV || plan.shape == CAST_CONVU || plan.shape == CAST_CONVF {
+                    w(", ")
+                    ir_loc(x.file, x.line)
+                }
+                w(");\n")
+            }
+            break
+        case Op.Sizeof:
+            let at = x.ty
+            let is_arr = tkind(at) == TK.Array
+            let nel = if is_arr && types.TYPES[at].array_len > i64(0) { types.TYPES[at].array_len } else { i64(1) }
+            w("{{lv(x.dst)}} = (int32_t)(sizeof(")
+            w_ctype(if is_arr { types.TYPES[at].elem } else { at })
+            w(") * {{nel}});\n")
+            break
+        case Op.Panic:
+            w("loam_panic_str(")
+            ir_loc(x.file, x.line)
+            w(", {{lv(x.a)}});\n")
+            break
+        case Op.Call, Op.CallVal:
+            call_inst(x)
+            break
+        case Op.Alloc:
+            let et = if tkind(x.ty) == TK.Box { types.TYPES[x.ty].elem } else { types.ty_int() }
+            let ec = ctype(et)
+            w("{{lv(x.dst)}} = ({{ec}} *)loam_new(sizeof({{ec}}), ")
+            ir_loc(x.file, x.line)
+            w(");\n")
+            if x.a >= 0 {
+                indent(1)
+                w("*{{lv(x.dst)}} = {{lv(x.a)}};\n")
+            }
+            break
+        case Op.Drop:
+            let ty = local_ty(x.a)
+            if ty != NO_TYPE && needs_drop(ty) {
+                drop_place(lv(x.a), ty, 0)
+            } else {
+                w("loam_drop((void **)&{{lv(x.a)}});\n")
+            }
+            break
+        case Op.Bound:
+            if x.b >= 0 {
+                w("(void)loam_idx({{lv(x.a)}}, {{lv(x.b)}}, ")
+            } else {
+                w("(void)loam_idx({{lv(x.a)}}, {{x.imm}}, ")
+            }
+            ir_loc(x.file, x.line)
+            w(");\n")
+            break
+        case Op.StructLit:
+            struct_lit(x)
+            break
+        case Op.ArrayLit:
+            array_lit(x)
+            break
+        case Op.FnVal:
+            w("{{lv(x.dst)}} = ((loam_fn){(void *){{callee_of(x)}}__as_fn, NULL, 0});\n")
+            break
+        case Op.Clos:
+            clos_inst(x)
+            break
+        default:
+            break
+    }
+}
+
+// --- terminators and bodies -----------------------------------------------------------------
+
+fn zero_ret(t: int) {
+    let k = tkind(t)
+    if t == NO_TYPE || k == TK.Void {
+        w("return;\n")
+        return
+    }
+    w("return ")
+    switch k {
+        case TK.Bool:
+            w("false")
+            break
+        case TK.Float:
+            w("0.0")
+            break
+        case TK.String:
+            w("((loam_str){0})")
+            break
+        case TK.Ptr, TK.Box:
+            w("NULL")
+            break
+        case TK.Struct:
+            let nm = if types.TYPES[t].has_name { types.TYPES[t].name } else { "struct" }
+            w("({{nm}}){0}")
+            break
+        case TK.Proc:
+            w("((loam_fn){0})")
+            break
+        default:
+            w("0")
+            break
+    }
+    w(";\n")
+}
+
+fn term(b: int, is_main: bool) {
+    let bb = &ir.BLOCKS[b]
+    indent(1)
+    switch bb.term {
+        case Term.Ret:
+            let v = bb.term_val
+            // Returning a borrowed string parameter hands the caller an owned
+            // reference.
+            if v >= 0 && v < LV.len && (ir.LOCALS[CF_LOCALS + v].flags & ir.L_PARAM) != 0 && types.string_owns &&
+                tkind(local_ty(v)) == TK.String {
+                w("loam_str_retain({{lv(v)}});\n")
+                indent(1)
+            }
+            if is_main && v < 0 {
+                w("return 0;\n")
+            } else if v >= 0 {
+                w("return {{lv(v)}};\n")
+            } else {
+                let sig = ir.FNS[CF].sig
+                let ret = if tkind(sig) == TK.Proc && types.TYPES[sig].ret != NO_TYPE { types.TYPES[sig].ret } else { types.ty_void() }
+                zero_ret(if is_main { types.ty_int() } else { ret })
+            }
+            break
+        case Term.Jmp:
+            w("goto bb{{bb.succ0}};\n")
+            break
+        case Term.Br:
+            w("if ({{lv(bb.term_val)}}) goto bb{{bb.succ0}}; else goto bb{{bb.succ1}};\n")
+            break
+        case Term.Switch:
+            let cast = if tkind(local_ty(bb.term_val)) == TK.Bool { "(int)" } else { "" }
+            w("switch ({{cast}}{{lv(bb.term_val)}}) {\n")
+            for c in 0..bb.sw_n {
+                indent(1)
+                w("case ")
+                int_lit(ir.SW_VALS[bb.sw + c])
+                w(": goto bb{{ir.SW_BLOCKS[bb.sw + c]}};\n")
+            }
+            indent(1)
+            w("default: goto bb{{bb.succ0}};\n")
+            indent(1)
+            w("}\n")
+            break
+        case Term.Unreachable:
+            w("loam_panic(\"loam\", 0, \"unreachable\");\n")
+            break
+        default:
+            break
+    }
+}
+
+/** *The first IR fn with each C name. */
+let mut IR_FN_BY_NAME: Map<int> = map_new(-1)
+let mut IR_FN_INDEXED: bool = false
+
+fn find_ir_fn(cname: string) -> int {
+    if !IR_FN_INDEXED {
+        IR_FN_INDEXED = true
+        for f in 0..ir.FNS.len {
+            if ir.FNS[f].has_cname && !map_has(&mut IR_FN_BY_NAME, ir.FNS[f].cname) {
+                map_put(&mut IR_FN_BY_NAME, ir.FNS[f].cname, f)
+            }
+        }
+    }
+    if cname.len == 0 {
+        return NONE
+    }
+    return map_get(&mut IR_FN_BY_NAME, cname)
+}
+
+fn is_init_fn(f: int) -> bool {
+    return ir.FNS[f].has_name && ir.FNS[f].name == "__init"
+}
+
+/** *Every module's `__init`, each after the inits of everything it imports. */
+fn init_calls() {
+    let nmods = typecheck.MODS.len
+    for r in 0..nmods {
+        for f in 0..ir.FNS.len {
+            if !is_init_fn(f) || !ir.FNS[f].has_cname {
+                continue
+            }
+            let m = ir.FNS[f].init_mod
+            if m < 0 || m >= nmods || typecheck.MODS[m].rank != r {
+                continue
+            }
+            w("    {{ir.FNS[f].cname}}();\n")
+        }
+    }
+}
+
+fn fn_body(f: int, is_main: bool) {
+    CF = f
+    let fx = &ir.FNS[f]
+    CF_LOCALS = fx.locals
+    LV = []string {}
+    for l in 0..fx.nlocals {
+        push(LV, spell_local(f, l))
+    }
+    w(" {\n")
+    if fx.is_main {
+        w("#if !defined(LOAM_IOS) && !defined(LOAM_ANDROID) && !defined(__wasm32__)\n")
+        w("    loam_argv_set(argc, argv);\n")
+        w("#endif\n")
+    }
+    if fx.clos_id != 0 && fx.caps.len == 0 {
+        w("    (void)_env;\n")
+    }
+    if fx.is_main {
+        init_calls()
+    }
+    for l in 0..fx.nlocals {
+        let lo = &ir.LOCALS[fx.locals + l]
+        if (lo.flags & (ir.L_PARAM | ir.L_GLOBAL)) != 0 {
+            continue
+        }
+        indent(1)
+        var_decl(lo.ty, LV[l])
+        // An owning local some read or drop may reach before it is surely
+        // assigned starts empty.
+        if (needs_drop(lo.ty) && (lo.flags & ir.L_NEEDS_ZERO) != 0) || (lo.flags & ir.L_ZERO_INIT) != 0 {
+            w(" = {0}")
+        }
+        w(";\n")
+    }
+    for b in 0..fx.nblocks {
+        let blk = fx.blocks + b
+        w("bb{{b}}:;\n")
+        let first = ir.BLOCKS[blk].first
+        for k in 0..ir.BLOCKS[blk].count {
+            line_directive(ir.INSTS[first + k].file, ir.INSTS[first + k].line)
+            inst(first + k)
+        }
+        term(blk, is_main || fx.is_main)
+    }
+    w("}\n\n")
+    CF = NONE
+    LV = []string {}
+    flush_big()
+}
+
+fn emit_fn(d: int, is_main: bool) {
+    let cn = fn_cname(d)
+    let f = find_ir_fn(cn)
+    line_directive(ast.INFO[d].loc.file, ast.INFO[d].loc.line)
+    fn_sig(d, is_main)
+    if f == NONE || !ir.FNS[f].lowered {
+        fatal("internal: fn '{{cn}}' was not lowered to IR")
+    }
+    fn_body(f, is_main)
+}
+
+// --- closures ------------------------------------------------------------------------------
+
+/** *Closures of the kept fn bodies and module-level inits. */
+let mut CLOS_NODES: []int = []int {}
+let mut CLOS_IDS: Map<int> = map_new(0)
+
+fn collect_list(nodes: &[]int) {
+    for i in 0..nodes.len {
+        collect_clos(nodes[i])
+    }
+}
+
+fn collect_clos(n: int) {
+    if n == NONE {
+        return
+    }
+    let x = &ast.NODES[n]
+    switch x.kind {
+        case Kind.Closure:
+            push(CLOS_NODES, n)
+            map_put(&mut CLOS_IDS, "{{ast.EXTRA[ast.ex(n)].clos_id}}", 1)
+            collect_clos(x.b)
+            break
+        case Kind.Program, Kind.Block, Kind.StructLit, Kind.ArrayLit, Kind.Tuple:
+            collect_list(&x.kids)
+            break
+        case Kind.Fn:
+            if ast.EXTRA[ast.ex(n)].strs.len == 0 {
+                collect_clos(x.b)
+            }
+            break
+        case Kind.If:
+            collect_clos(x.a)
+            collect_clos(x.b)
+            collect_clos(x.c)
+            break
+        case Kind.For, Kind.While, Kind.Assign, Kind.Binary, Kind.Index:
+            collect_clos(x.a)
+            collect_clos(x.b)
+            break
+        case Kind.Switch, Kind.Call:
+            collect_clos(x.a)
+            collect_list(&x.kids)
+            break
+        case Kind.Case:
+            collect_list(&x.kids)
+            collect_clos(x.a)
+            break
+        case Kind.Return, Kind.ExprStmt, Kind.Var, Kind.Unary, Kind.IncDec, Kind.Cast, Kind.Try, Kind.Field,
+            Kind.Deref, Kind.Addr:
+            if x.kind == Kind.Var {
+                collect_clos(x.b)
+            } else {
+                collect_clos(x.a)
+            }
+            break
+        default:
+            break
+    }
+}
+
+fn clos_sig(n: int, proto: bool) {
+    let ft = ast.NODES[n].ty
+    w_ctype(ret_type(ft))
+    w(" loam_clos_{{ast.EXTRA[ast.ex(n)].clos_id}}(void *_env")
+    let np = ast.NODES[n].kids.len
+    for i in 0..np {
+        w(", ")
+        var_decl(param_type(ft, i), cid(param_name(n, i)))
+    }
+    wc(')')
+    if proto {
+        w(";\n")
+    }
+}
+
+fn clos_env(n: int) {
+    let x = ast.ex(n)
+    let caps = ast.EXTRA[x].caps
+    if caps.len == 0 {
+        return
+    }
+    w("struct loam_env_{{ast.EXTRA[x].clos_id}} {\n")
+    let cts = ast.EXTRA[x].cap_types
+    for i in 0..caps.len {
+        w("    ")
+        var_decl(if i < cts.len { cts[i] } else { NO_TYPE }, cid(caps[i]))
+        w(";\n")
+    }
+    w("};\n")
+}
+
+fn closure_fn(n: int) {
+    let cn = "loam_clos_{{ast.EXTRA[ast.ex(n)].clos_id}}"
+    let f = find_ir_fn(cn)
+    clos_sig(n, false)
+    if f == NONE || !ir.FNS[f].lowered {
+        fatal("internal: closure '{{cn}}' was not lowered to IR")
+    }
+    fn_body(f, false)
+}
+
+/** *A closure lowered from a generic instance: `loam_clos_<id>_<mono>`. */
+fn is_mono_clos(f: int) -> bool {
+    if !ir.FNS[f].has_cname {
+        return false
+    }
+    let cn = ir.FNS[f].cname
+    if !starts_with(cn, "loam_clos_") {
+        return false
+    }
+    let mut p = 10
+    while p < cn.len && cn[p] >= '0' && cn[p] <= '9' {
+        p = p + 1
+    }
+    return p < cn.len && cn[p] == '_'
+}
+
+fn mono_clos_env(f: int, seen: &mut Map<int>) {
+    let fx = &ir.FNS[f]
+    if fx.caps.len == 0 {
+        return
+    }
+    let tag = env_tag(fx.clos_id, fx.cname)
+    // Only a shared env (`loam_env_<id>`) can already exist.
+    if tag == "loam_env_{{fx.clos_id}}" {
+        let key = "{{fx.clos_id}}"
+        if map_has(&mut CLOS_IDS, key) || map_has(seen, key) {
+            return
+        }
+        map_put(seen, key, 1)
+    }
+    w("struct {{tag}} {\n")
+    for k in 0..fx.caps.len {
+        w("    ")
+        var_decl(if k < fx.cap_types.len { fx.cap_types[k] } else { types.ty_int() }, cid(fx.caps[k]))
+        w(";\n")
+    }
+    w("};\n")
+}
+
+fn mono_clos_sig(f: int, proto: bool) {
+    let fx = &ir.FNS[f]
+    let sig = fx.sig
+    let ret = if tkind(sig) == TK.Proc && types.TYPES[sig].ret != NO_TYPE { types.TYPES[sig].ret } else { types.ty_void() }
+    w_ctype(ret)
+    w(" {{fx.cname}}(void *_env")
+    for l in 0..fx.nlocals {
+        let lo = &ir.LOCALS[fx.locals + l]
+        if (lo.flags & ir.L_PARAM) == 0 || lo.name == "_env" {
+            continue
+        }
+        w(", ")
+        var_decl(lo.ty, lo.name)
+    }
+    wc(')')
+    if proto {
+        w(";\n")
+    }
+}
+
+// --- constants and literal templates ------------------------------------------------------
+
+/** *A constant default (`ir.static_const`) as a C static initializer. */
+fn const_init(e: int) {
+    let fnv = ir.const_fn_val(e)
+    if fnv.len > 0 {
+        w("{(void *){{fnv}}__as_fn, NULL, 0}")
+        return
+    }
+    if ir.const_empty_vec(e) {
+        w("{0}")
+        return
+    }
+    switch ast.NODES[e].kind {
+        case Kind.Number:
+            int_lit(ast.INFO[e].num)
+            break
+        case Kind.Float:
+            w(conv.f64_to_g17(ast.EXTRA[ast.ex(e)].fnum))
+            break
+        case Kind.Bool:
+            w(if ast.NODES[e].op != 0 { "1" } else { "0" })
+            break
+        case Kind.String:
+            let s = ast.EXTRA[ast.ex(e)].text
+            w("{(const char *)\"")
+            c_string_body(s)
+            w("\", {{c_len(s)}}}")
+            break
+        case Kind.StructLit:
+            let kids = ast.NODES[e].kids
+            if kids.len == 0 {
+                w("{0}")
+                break
+            }
+            w("{ ")
+            for k in 0..kids.len {
+                if k > 0 {
+                    w(", ")
+                }
+                w(".{{cid(ast.init_name(e, k))}} = ")
+                const_init(kids[k])
+            }
+            w(" }")
+            break
+        default:
+            wc('0')
+            break
+    }
+}
+
+// One `static const T loam_dflt_T` per struct whose literals start from a
+// default template: the union of the constant defaults of the sites emitted.
+let mut LT_NAMES: []string = []string {}
+let mut LT_TYPES: []int = []int {}
+/** *Per template, each field's default node (`NONE` none), or empty when no */
+/** *emitted site used it. */
+let mut LT_DEFAULTS: [][]int = [][]int {}
+let mut LT_INDEX: Map<int> = map_new(-1)
+
+fn lit_tmpl_add(t: int, cn: string) -> int {
+    let j = map_get(&mut LT_INDEX, cn)
+    if j >= 0 {
+        return j
+    }
+    push(LT_NAMES, cn)
+    push(LT_TYPES, t)
+    push(LT_DEFAULTS, []int {})
+    map_put(&mut LT_INDEX, cn, LT_NAMES.len - 1)
+    return LT_NAMES.len - 1
+}
+
+fn lit_template_use(x: &Inst, cn: string) {
+    let j = lit_tmpl_add(x.ty, cn)
+    let nf = types.TYPES[x.ty].field_types.len
+    if LT_DEFAULTS[j].len == 0 {
+        for k in 0..nf {
+            push(LT_DEFAULTS[j], NONE)
+        }
+    }
+    let mut k = 0
+    while k < x.nargs && k < nf {
+        let dv = ir.DFLT[x.dflt + k]
+        if dv != NONE && LT_DEFAULTS[j][k] == NONE {
+            LT_DEFAULTS[j][k] = dv
+        }
+        k = k + 1
+    }
+}
+
+fn lit_template_decls() {
+    for f in 0..ir.FNS.len {
+        if !ir.FNS[f].lowered {
+            continue
+        }
+        let b0 = ir.FNS[f].blocks
+        for b in b0..b0 + ir.FNS[f].nblocks {
+            let first = ir.BLOCKS[b].first
+            for i in first..first + ir.BLOCKS[b].count {
+                if ir.INSTS[i].op != Op.StructLit || ir.INSTS[i].dflt == NONE {
+                    continue
+                }
+                let t = ir.INSTS[i].ty
+                let cn = types.type_c_name(t)
+                if map_get(&mut LT_INDEX, cn) >= 0 {
+                    continue
+                }
+                lit_tmpl_add(t, cn)
+                w("__attribute__((unused)) static const {{cn}} loam_dflt_{{cn}};\n")
+            }
+        }
+    }
+    if LT_NAMES.len > 0 {
+        wc('\n')
+    }
+}
+
+fn lit_template_defs() {
+    for j in 0..LT_NAMES.len {
+        let d = LT_DEFAULTS[j]
+        // A template no emitted site used keeps its tentative zero.
+        if d.len == 0 {
+            continue
+        }
+        let cn = LT_NAMES[j]
+        w("static const {{cn}} loam_dflt_{{cn}} = { ")
+        let names = types.TYPES[LT_TYPES[j]].field_names
+        let mut first = true
+        for k in 0..names.len {
+            if k >= d.len || d[k] == NONE {
+                continue
+            }
+            if !first {
+                w(", ")
+            }
+            w(".{{cid(names[k])}} = ")
+            const_init(d[k])
+            first = false
+        }
+        w(" };\n")
+    }
+}
+
+// --- ownership helpers ---------------------------------------------------------------------
+
+/** *Prototypes, then bodies, of the ownership helpers of every emitted struct */
+/** *with two or more owning leaves. */
+fn own_helpers() {
+    OWN_HELPERS = map_new(0)
+    OWN_HELPER_COUNT = 0
+    let mut want = []bool {}
+    for i in 0..SE_TYPES.len {
+        let ok = SE_STATE[i] == 2 && own_leaves(SE_TYPES[i]) >= 2 && own_helper_add(SE_NAMES[i])
+        push(want, ok)
+        if !ok {
+            continue
+        }
+        let cn = SE_NAMES[i]
+        w("static void loam_keep__{{cn}}({{cn}} *p);\n")
+        w("static void loam_rel__{{cn}}({{cn}} *p);\n")
+        w("static void loam_steal__{{cn}}({{cn}} *p);\n")
+    }
+    for i in 0..SE_TYPES.len {
+        if !want[i] {
+            continue
+        }
+        let t = SE_TYPES[i]
+        let cn = SE_NAMES[i]
+        let names = types.TYPES[t].field_names
+        let fts = types.TYPES[t].field_types
+        for k in 0..3 {
+            let what = if k == 0 { "keep" } else if k == 1 { "rel" } else { "steal" }
+            w("__attribute__((unused)) static void loam_{{what}}__{{cn}}({{cn}} *p) {\n")
+            for f in 0..fts.len {
+                if !needs_drop(fts[f]) {
+                    continue
+                }
+                let pl = "p->{{cid(names[f])}}"
+                if k == 0 {
+                    nested_keeps(pl, fts[f], 1)
+                } else if k == 1 {
+                    drop_place(pl, fts[f], 1)
+                } else {
+                    steal(pl, fts[f], 1)
+                }
+            }
+            w("}\n")
+        }
+    }
+    if SE_TYPES.len > 0 {
+        wc('\n')
+    }
+}
+
+// --- `#[c]` bindings and fn-value trampolines --------------------------------------------
+
+fn c_abi_type(t: int) {
+    let k = tkind(t)
+    if k == TK.String {
+        w("const char *")
+    } else if k == TK.Vec {
+        w("void *")
+    } else {
+        w_ctype(t)
+    }
+}
+
+fn c_sym_of(d: int) -> string {
+    let x = ast.ex(d)
+    if ast.EXTRA[x].has_text {
+        return ast.EXTRA[x].text
+    }
+    return ""
+}
+
+fn c_bindings() {
+    let mut any = false
+    for m in 0..typecheck.MODS.len {
+        let root = typecheck.MODS[m].root
+        if root == NONE {
+            continue
+        }
+        let decls = ast.NODES[root].kids
+        for i in 0..decls.len {
+            let d = decls[i]
+            if ast.NODES[d].kind != Kind.Fn || c_sym_of(d).len == 0 || !dce.keep(d) {
+                continue
+            }
+            if !any {
+                any = true
+                w("#define LOAM_CSYM_S2(x) #x\n")
+                w("#define LOAM_CSYM_S(x) LOAM_CSYM_S2(x)\n")
+                w("#define LOAM_CSYM(s) __asm__(LOAM_CSYM_S(__USER_LABEL_PREFIX__) s)\n")
+                w("static inline char *loam_csym_cstr(loam_str s) {\n")
+                w("    char *b = (char *)malloc((size_t)s.len + 1);\n")
+                w("    if (s.len) memcpy(b, s.ptr, (size_t)s.len);\n")
+                w("    b[s.len] = 0;\n")
+                w("    return b;\n")
+                w("}\n")
+                w("static inline loam_str loam_csym_str(const char *p) {\n")
+                w("    if (!p) return (loam_str){\"\", 0, 0};\n")
+                w("    int64_t n = (int64_t)strlen(p);\n")
+                w("    char *b = loam_str_bytes(n);\n")
+                w("    memcpy(b, p, (size_t)n);\n")
+                w("    b[n] = 0;\n")
+                w("    return loam_str_owned(b, n);\n")
+                w("}\n")
+            }
+            let cn = fn_cname(d)
+            let ft = ast.NODES[d].ty
+            let ret = ret_type(ft)
+            let rk = tkind(ret)
+            let np = ast.NODES[d].kids.len
+            w("extern void {{cn}}__csym(void) LOAM_CSYM(\"{{c_sym_of(d)}}\");\n")
+            w("static ")
+            fn_sig(d, false)
+            w(" {\n")
+            for k in 0..np {
+                if tkind(param_type(ft, k)) == TK.String {
+                    w("    char *_cs{{k}} = loam_csym_cstr({{cid(param_name(d, k))}});\n")
+                }
+            }
+            w("    ")
+            if rk == TK.String {
+                w("const char *_p = ")
+            } else if rk != TK.Void {
+                w_ctype(ret)
+                w(" _r = ")
+            }
+            w("((")
+            c_abi_type(ret)
+            w(" (*)(")
+            if np == 0 {
+                w("void")
+            }
+            for k in 0..np {
+                if k > 0 {
+                    w(", ")
+                }
+                c_abi_type(param_type(ft, k))
+            }
+            w("))(void *){{cn}}__csym)(")
+            for k in 0..np {
+                if k > 0 {
+                    w(", ")
+                }
+                let pk = tkind(param_type(ft, k))
+                if pk == TK.String {
+                    w("_cs{{k}}")
+                } else if pk == TK.Vec {
+                    w("{{cid(param_name(d, k))}}.ptr")
+                } else {
+                    w(cid(param_name(d, k)))
+                }
+            }
+            w(");\n")
+            if rk == TK.String {
+                w("    loam_str _r = loam_csym_str(_p);\n")
+            }
+            for k in 0..np {
+                let pk = tkind(param_type(ft, k))
+                if pk == TK.String {
+                    w("    free(_cs{{k}});\n")
+                } else if pk == TK.Vec {
+                    w("    loam_vec_drop(&{{cid(param_name(d, k))}});\n")
+                }
+            }
+            if rk != TK.Void {
+                w("    return _r;\n")
+            }
+            w("}\n")
+        }
+    }
+    if any {
+        wc('\n')
+    }
+}
+
+/** *Adapter so a named fn can be stored in a `loam_fn` (env unused). */
+fn as_fn_tramp(d: int) {
+    let ft = ast.NODES[d].ty
+    let ret = ret_type(ft)
+    let x = ast.ex(d)
+    let cn = if ast.EXTRA[x].has_sname { ast.EXTRA[x].sname } else { ast.INFO[d].name }
+    w_ctype(ret)
+    w(" {{cn}}__as_fn(void *_env")
+    let np = ast.NODES[d].kids.len
+    for i in 0..np {
+        w(", ")
+        var_decl(param_type(ft, i), cid(param_name(d, i)))
+    }
+    w(") {\n    (void)_env;\n    ")
+    if tkind(ret) != TK.Void {
+        w("return ")
+    }
+    w("{{cn}}(")
+    for i in 0..np {
+        if i > 0 {
+            w(", ")
+        }
+        w(cid(param_name(d, i)))
+    }
+    w(");\n}\n\n")
+}
+
+fn set_mono_subst(i: int) {
+    let f = typecheck.MONOS[i].fn_
+    SUBST_NAMES = if f != NONE { ast.EXTRA[ast.ex(f)].strs } else { []string {} }
+    SUBST_ARGS = typecheck.MONOS[i].args
+    CNAME_OVERRIDE = typecheck.MONOS[i].cname
+}
+
+fn clear_subst() {
+    SUBST_NAMES = []string {}
+    SUBST_ARGS = []int {}
+    CNAME_OVERRIDE = ""
+}
+
+// --- the translation unit -----------------------------------------------------------------
+
+fn is_fn(d: int) -> bool {
+    return ast.NODES[d].kind == Kind.Fn
+}
+
+fn is_generic(d: int) -> bool {
+    return ast.EXTRA[ast.ex(d)].strs.len > 0
+}
+
+fn is_intrinsic(d: int) -> bool {
+    return (ast.INFO[d].marks & ast.M_INTRINSIC) != 0
+}
+
+fn copy_runtime() {
+    w("#define LOAM_RT_DEFINE_JMP 1\n")
+    w("#define LOAM_RT_DEFINE_ALLOC 1\n")
+    let r = if typecheck.RT_PATH.len > 0 { sys.read(typecheck.RT_PATH) } else { res_err("no runtime", "") }
+    if r.tag == ResultTag.Ok {
+        w(r.val)
+        wc('\n')
+        return
+    }
+    w("#include <stdio.h>\n#include <stdint.h>\n#include <stdlib.h>\n#include <stdbool.h>\n\n")
+}
+
+/** *Write the whole C translation unit to stdout. Dead-code elimination and */
+/** *IR lowering run first. */
+fn emit_c() {
+    dce.run()
+    ir.lower_modules()
+    collect_elem_hooks()
+    let nmods = typecheck.MODS.len
+
+    w("/* Generated by loam */\n")
+    copy_runtime()
+    if uses_zeus_handles() {
+        w("#include \"zeus_rt.h\"\n")
+    }
+    if mods_use("net") {
+        w("#include \"net_rt.h\"\n")
+    }
+    if mods_use("maya") {
+        w("#include \"maya_rt.h\"\n")
+    }
+    if mods_use("raygui") {
+        w("#include \"raygui_rt.h\"\n")
+    }
+    wc('\n')
+    flush()
+
+    // Closures only from kept fn bodies, plus module-level inits.
+    for m in 0..nmods {
+        let root = typecheck.MODS[m].root
+        if root == NONE {
+            continue
+        }
+        let decls = ast.NODES[root].kids
+        for i in 0..decls.len {
+            let d = decls[i]
+            if is_fn(d) {
+                if is_generic(d) || !dce.keep(d) {
+                    continue
+                }
+                collect_clos(ast.NODES[d].b)
+            } else if ast.NODES[d].kind == Kind.Var {
+                collect_clos(ast.NODES[d].b)
+            }
+        }
+    }
+
+    for m in 0..nmods {
+        let root = typecheck.MODS[m].root
+        if root == NONE {
+            continue
+        }
+        let mod_name = typecheck.MODS[m].name
+        let decls = ast.NODES[root].kids
+        for i in 0..decls.len {
+            let d = decls[i]
+            if ast.NODES[d].kind != Kind.Struct {
+                continue
+            }
+            // Handle types live in the runtime headers.
+            if mod_name == "maya" {
+                continue
+            }
+            if zeus_handle_mod(mod_name) && is_handle_struct(d) {
+                continue
+            }
+            struct_decl(d)
+        }
+    }
+    for i in 0..typecheck.STRUCT_INSTS.len {
+        let t = typecheck.STRUCT_INSTS[i]
+        if t == NO_TYPE {
+            continue
+        }
+        if types.TYPES[t].has_name {
+            let n = types.TYPES[t].name
+            if n == "Signal" || n == "Future" || n == "Chan" {
+                continue
+            }
+        }
+        if struct_targs_concrete(t) {
+            se_add(t)
+        }
+    }
+    // Every struct name first, so a field may point at a struct defined later.
+    for i in 0..SE_NAMES.len {
+        w("typedef struct {{SE_NAMES[i]}} {{SE_NAMES[i]}};\n")
+    }
+    if SE_NAMES.len > 0 {
+        wc('\n')
+    }
+    for i in 0..SE_NAMES.len {
+        se_emit(i)
+        flush_big()
+    }
+
+    // A prototype per possible hook id: monomorphized bodies can register an
+    // element type after this point.
+    for i in 1..ELEM_HOOK_MAX + 1 {
+        w("static void loam_elem_retain_{{i}}(void *p);\nstatic void loam_elem_release_{{i}}(void *p);\n")
+    }
+    wc('\n')
+    own_helpers()
+    flush_big()
+
+    for i in 0..typecheck.GVARS.len {
+        let gv = typecheck.GVARS[i].var
+        if gv == NONE {
+            continue
+        }
+        var_decl(ast.NODES[gv].ty, typecheck.GVARS[i].cname)
+        let init = ast.NODES[gv].b
+        if ir.static_data(init) {
+            w(" = ")
+            const_init(init)
+        }
+        w(";\n")
+    }
+    if typecheck.GVARS.len > 0 {
+        wc('\n')
+    }
+    for f in 0..ir.FNS.len {
+        if is_init_fn(f) && ir.FNS[f].has_cname {
+            w("void {{ir.FNS[f].cname}}(void);\n")
+        }
+    }
+
+    for m in 0..nmods {
+        let root = typecheck.MODS[m].root
+        if root == NONE {
+            continue
+        }
+        // std seams are declared by the runtime headers; a bodyless fn in a
+        // user module is an app C seam and gets an extern prototype.
+        let std_mod = typecheck.MODS[m].is_std
+        let decls = ast.NODES[root].kids
+        for i in 0..decls.len {
+            let d = decls[i]
+            if !is_fn(d) || is_generic(d) || !dce.keep(d) {
+                continue
+            }
+            if is_intrinsic(d) {
+                if std_mod || c_sym_of(d).len > 0 {
+                    continue
+                }
+                fn_sig(d, false)
+                w(";\n")
+                continue
+            }
+            if m == 0 && ast.INFO[d].name == "main" {
+                continue
+            }
+            fn_sig(d, false)
+            w(";\n")
+        }
+        flush_big()
+    }
+    for i in 0..CLOS_NODES.len {
+        clos_env(CLOS_NODES[i])
+    }
+    for i in 0..CLOS_NODES.len {
+        clos_sig(CLOS_NODES[i], true)
+    }
+    let mut seen_envs: Map<int> = map_new(0)
+    for f in 0..ir.FNS.len {
+        if !is_mono_clos(f) {
+            continue
+        }
+        mono_clos_env(f, &mut seen_envs)
+        mono_clos_sig(f, true)
+    }
+    for i in 0..typecheck.MONOS.len {
+        let f = typecheck.MONOS[i].fn_
+        if f == NONE || !dce.keep(f) {
+            continue
+        }
+        set_mono_subst(i)
+        fn_sig(f, false)
+        w(";\n")
+        clear_subst()
+    }
+    wc('\n')
+    c_bindings()
+    flush_big()
+
+    for m in 0..nmods {
+        let root = typecheck.MODS[m].root
+        if root == NONE {
+            continue
+        }
+        let std_mod = typecheck.MODS[m].is_std
+        let decls = ast.NODES[root].kids
+        for i in 0..decls.len {
+            let d = decls[i]
+            // A user seam has a prototype above, so it can be a value too.
+            if is_fn(d) && (ast.INFO[d].marks & ast.M_AS_VALUE) != 0 &&
+                (!is_intrinsic(d) || c_sym_of(d).len > 0 || !std_mod) && !is_generic(d) && dce.keep(d) {
+                as_fn_tramp(d)
+            }
+        }
+    }
+
+    lit_template_decls()
+    flush_big()
+
+    for i in 0..CLOS_NODES.len {
+        closure_fn(CLOS_NODES[i])
+    }
+    for f in 0..ir.FNS.len {
+        if !is_mono_clos(f) || !ir.FNS[f].lowered {
+            continue
+        }
+        mono_clos_sig(f, false)
+        fn_body(f, false)
+    }
+
+    for i in 0..typecheck.MONOS.len {
+        let f = typecheck.MONOS[i].fn_
+        if f == NONE || !dce.keep(f) {
+            continue
+        }
+        set_mono_subst(i)
+        emit_fn(f, false)
+        clear_subst()
+    }
+
+    for f in 0..ir.FNS.len {
+        if !is_init_fn(f) || !ir.FNS[f].lowered {
+            continue
+        }
+        w("void {{ir.FNS[f].cname}}(void)")
+        fn_body(f, false)
+    }
+
+    let mut m = nmods - 1
+    while m >= 0 {
+        let root = typecheck.MODS[m].root
+        if root != NONE {
+            let decls = ast.NODES[root].kids
+            for i in 0..decls.len {
+                let d = decls[i]
+                if !is_fn(d) || is_intrinsic(d) || is_generic(d) || !dce.keep(d) {
+                    continue
+                }
+                emit_fn(d, m == 0 && ast.INFO[d].name == "main")
+            }
+        }
+        m = m - 1
+    }
+
+    // Container element hooks: retain / release the owning leaves of one
+    // element, for the buffer-scoped vec calls above.
+    let mut h = 0
+    while h < ELEM_HOOK_TYPES.len {
+        let ht = ELEM_HOOK_TYPES[h]
+        let hcn = ctype(ht)
+        let id = h + 1
+        w("static void loam_elem_retain_{{id}}(void *p) {\n")
+        w("    {{hcn}} *_e = ({{hcn}} *)p;\n")
+        nested_keeps("(*_e)", ht, 1)
+        w("}\n")
+        w("static void loam_elem_release_{{id}}(void *p) {\n")
+        w("    {{hcn}} *_e = ({{hcn}} *)p;\n")
+        drop_place("(*_e)", ht, 1)
+        w("}\n")
+        flush_big()
+        h = h + 1
+    }
+    lit_template_defs()
+    flush()
+}

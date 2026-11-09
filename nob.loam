@@ -2664,6 +2664,12 @@ fn ig_selfhost_dce() {
     selfhost_checker_gate("dce", "--dce", "--dump-dce", "dce.c")
 }
 
+/** *Codegen: `tcdump --c` against `loamc --dump-c`, the whole C translation */
+/** *unit a default build emits, byte for byte. */
+fn ig_selfhost_codegen() {
+    selfhost_checker_gate("codegen", "--c", "--dump-c", "codegen_c.c")
+}
+
 fn ig_selfhost_lex() {
     selfhost_diff("lexer", "tokdump", "--dump-tokens", "lexer.c")
 }
@@ -2861,6 +2867,8 @@ fn stanza_dispatch(name: string) -> bool {
         ig_selfhost_ir()
     } else if name == "selfhost_dce" {
         ig_selfhost_dce()
+    } else if name == "selfhost_codegen" {
+        ig_selfhost_codegen()
     } else if name == "suite_zeus" {
         ig_suite("zeus")
     } else if name == "suite_plain" {
@@ -2914,6 +2922,7 @@ fn stanza_names() -> []string {
     push(v, "selfhost_check")
     push(v, "selfhost_ir")
     push(v, "selfhost_dce")
+    push(v, "selfhost_codegen")
     push(v, "wasm_float")
     return v
 }
@@ -2983,7 +2992,7 @@ fn integration() -> int {
 /** *app. The wasm module's entry points, the server/client split, and the */
 /** *language server all sit next to the compiler. */
 fn host_stanzas() -> []string {
-    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "api_freeze", "modules", "selfhost_lex", "selfhost_parse", "selfhost_typecheck", "selfhost_check", "selfhost_ir", "selfhost_dce", "wasm_float" }
+    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "api_freeze", "modules", "selfhost_lex", "selfhost_parse", "selfhost_typecheck", "selfhost_check", "selfhost_ir", "selfhost_dce", "selfhost_codegen", "wasm_float" }
 }
 
 /** *One after another, for an `--isolated` run; a batched run pools them. */

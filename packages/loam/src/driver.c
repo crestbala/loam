@@ -1570,6 +1570,26 @@ static int dump_tokens(const char *path) {
     return 0;
 }
 
+/** `--dump-c`: the C a default build emits (no test runner, no server split,
+ *  no shards or batch table, paths as they are), on stdout. The reference the
+ *  self-hosted codegen is diffed against. Exit status as `--dump-checked`. */
+static int dump_c(const char *path) {
+    LoamSession sess;
+    loam_session_init(&sess);
+    int rc = loam_session_typecheck(&sess, path, 2);
+    if (rc == 0) {
+        codegen_set_test_mode(0);
+        codegen_set_server_split(0);
+        codegen_set_shard(0);
+        codegen_set_batch(0);
+        codegen_set_path_strip(NULL);
+        codegen_emit_c(stdout, sess.mods, sess.nmods, LOAM_RT_PATH);
+    }
+    fflush(stdout);
+    loam_session_free(&sess);
+    return rc;
+}
+
 int main(int argc, char **argv) {
     if (argc == 3 && strcmp(argv[1], "--dump-tokens") == 0) return dump_tokens(argv[2]);
     if (argc == 3 && strcmp(argv[1], "--dump-ast") == 0) return ast_dump_file(argv[2]);
@@ -1578,6 +1598,7 @@ int main(int argc, char **argv) {
     if (argc == 3 && strcmp(argv[1], "--dump-checked") == 0) return ast_dump_checked(argv[2]);
     if (argc == 3 && strcmp(argv[1], "--dump-ir") == 0) return ast_dump_ir(argv[2]);
     if (argc == 3 && strcmp(argv[1], "--dump-dce") == 0) return ast_dump_dce(argv[2]);
+    if (argc == 3 && strcmp(argv[1], "--dump-c") == 0) return dump_c(argv[2]);
     const char *in_path = NULL;
     const char *out_path = NULL;
     int emit_c = 0;

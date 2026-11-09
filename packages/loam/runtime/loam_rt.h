@@ -1378,6 +1378,13 @@ static inline loam_str loam_conv_f64_to_str(double v) {
     return loam_str_copy(buf, (int64_t)strlen(buf));
 }
 
+/** `%.17g`: the spelling generated C uses for a float constant. */
+static inline loam_str loam_conv_f64_to_g17(double v) {
+    char buf[40];
+    snprintf(buf, sizeof buf, "%.17g", v);
+    return loam_str_copy(buf, (int64_t)strlen(buf));
+}
+
 /** `strtod` over text `std:conv` already validated as a decimal float. */
 static inline double loam_conv_strtod(loam_str s) {
     char buf[512];

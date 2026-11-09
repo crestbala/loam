@@ -6,7 +6,9 @@
 // names, the implicit `http` / `std:json` imports, resolved import paths).
 //
 // With `--checked`, the passes after typecheck run too (`loamc
-// --dump-checked`): threadcheck, borrowck, boundscheck.
+// --dump-checked`): threadcheck, borrowck, boundscheck. `--ir` and `--dce`
+// print the IR and the fns dead-code elimination keeps; `--c` the whole C
+// translation unit (`loamc --dump-c`).
 //
 // Exit status: 0 typed, 1 a parse error, 2 a type error (diagnostics on
 // stderr, as C), 3 an error from a later pass, 4 a bad module list.
@@ -23,6 +25,7 @@ import "typecheck.loam"
 import "threadcheck.loam"
 import "borrowck.loam"
 import "dce.loam"
+import "codegen.loam"
 import "ir.loam"
 import "irdump.loam"
 import "boundscheck.loam"
@@ -136,11 +139,13 @@ fn main() {
     // `--checked`: also the passes after typecheck, as `loamc --dump-checked`.
     // `--ir`: then lowered to IR and printed, as `loamc --dump-ir`.
     // `--dce`: then the fns dead-code elimination keeps, as `loamc --dump-dce`.
+    // `--c`: then the C a default build emits, as `loamc --dump-c`.
     let lower_ir = sys.argc() == 3 && sys.arg(1) == "--ir"
     let run_dce = sys.argc() == 3 && sys.arg(1) == "--dce"
-    let run_later_passes = sys.argc() == 3 && (sys.arg(1) == "--checked" || lower_ir || run_dce)
+    let emit_c = sys.argc() == 3 && sys.arg(1) == "--c"
+    let run_later_passes = sys.argc() == 3 && (sys.arg(1) == "--checked" || lower_ir || run_dce || emit_c)
     if sys.argc() != 2 && !run_later_passes {
-        fmt.eprintln("usage: tcdump [--checked | --ir | --dce] modules.txt   (from loamc --dump-modules main.loam)")
+        fmt.eprintln("usage: tcdump [--checked | --ir | --dce | --c] modules.txt   (from loamc --dump-modules main.loam)")
         sys.exit(2)
     }
     let module_list_path = sys.arg(sys.argc() - 1)
@@ -243,6 +248,10 @@ fn main() {
             dump.print_diags()
             sys.exit(3)
         }
+    }
+    if emit_c {
+        codegen.emit_c()
+        sys.exit(0)
     }
     dump.TYPED = true
     let mut b = []u8 {}
