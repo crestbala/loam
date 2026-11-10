@@ -105,8 +105,9 @@ and the C emitter) are done: from a module list, the Loam compiler now writes
 the same C translation unit as `loamc`, byte for byte. Phase 10a (the module
 loader) and 10b (the driver: `compiler/loamc.loam`, check, emit C, `cc`) are
 done: the Loam compiler builds itself, and the C it emits for itself matches
-the seed's byte for byte. Next: 10c (speed and memory of the whole pipeline,
-the build cache), then the fixed point in CI (§3).
+the seed's byte for byte. The fixed point runs green in CI on Linux and
+Windows (§3). Next: finish 10c (speed and memory of the whole pipeline),
+a faster `./nob.sh test`, and the rest of "Next changes (pending)" at the end.
 
 ---
 
@@ -457,9 +458,9 @@ Needed (can land after the fixed-point, but design the hooks early):
       works on tokens, not the AST (the parser drops comments), so it is no
       check of the parser: phase 5 used the AST dump instead and left
       `fmt.c` for after the fixed point.
-- [ ] **Windows CI**: at minimum a GitHub Actions or equivalent job that
+- [x] **Windows CI**: at minimum a GitHub Actions or equivalent job that
       builds the C seed, runs the self-host stages, and executes the
-      language tests. *Wired, not yet run:* `selfhost.yml` runs the suite
+      language tests. *Green since run 42804061060 (`260ab67`):* `selfhost.yml` runs the suite
       on Linux (x86_64, aarch64; it includes `selfhost_driver`, the fixed
       point) and the fixtures natively on Windows from C emitted on Linux.
       `tools/win-selfhost.sh` then builds the Loam compiler on Windows from
@@ -987,13 +988,18 @@ built the seed and tools, and every self-hosting stanza passed
       (`map_keys` / `keys` have no callers under `compiler/`), and Loam has
       no addresses to order by. Emitting each file twice gives the same bytes.
 - [ ] Fresh checkout builds on macOS, Linux, and Windows from the C seed.
-      macOS: done (above). Linux: the last green `selfhost` run, at `61213a9`,
-      came before the driver. Windows: `tools/cross-check.sh` and `zig cc`
-      cross-link the seed fixtures and the Loam compiler's C for x86_64 and
-      aarch64 Linux and Windows, but the Windows build has not been run on
-      Windows.
-- [ ] CI runs the fixed-point check on at least one Linux and one Windows
-      runner. `selfhost.yml` has the job (`tools/win-selfhost.sh`). Its first
+      macOS: done (above). Linux: done; CI checks out fresh and builds with
+      `./nob.sh` (run 42804061060). Windows: not yet from the checkout alone.
+      The Windows job builds the Loam compiler from C that the Linux job
+      emitted (`win-bundle`), because the C seed's driver is POSIX. To close
+      this, commit the Loam compiler's generated C (§3 Stage 0 seed), or make
+      the seed build on Windows.
+- [x] CI runs the fixed-point check on at least one Linux and one Windows
+      runner. Green in run 42804061060 (`260ab67`): the suite, including
+      `selfhost_driver`, on Linux x86_64 and aarch64. On Windows x86_64,
+      `win-run` passes 90/90, and `win-selfhost` gets stage 1 = stage 2 =
+      Linux (3,933,147 bytes of C) and builds and runs 90/90 fixtures with
+      the Loam compiler. The first run of the job
       run (on `0a646c3`) got stage 1 = stage 2 = Linux on Windows, but 9
       fixtures failed to build there: the drivers link `runtime/net.c` for
       any program that loads the http package, and `net.c` had no Windows
@@ -1009,5 +1015,69 @@ A clone has `packages/tooling/tree-sitter-loam` as an empty directory: the
 gitlink has no `.gitmodules` entry, and the grammar repo has no remote. The
 build and the suite never read it, but `git submodule status` fails, and so
 do `nob grammar` and the Zed extension, in any checkout other than this one.
+
+### `./nob.sh test` is slow (open)
+
+The suite took 1142 s on the `ubuntu-24.04` runner in run 42798804290, and
+1091 s of that was the `setup` pool. The self-hosting stanzas are almost all
+of it. Typecheck, check, ir, dce and codegen each ran 6–8 minutes,
+concurrently, and `selfhost_driver` ran about 5 minutes after them. The
+fixture batches, serve and cases phases together took under a minute. Each
+gate runs its first ~240 of 544 entries in about 11 s, then slows to about
+1.5 s per entry. Local runs are slow for the same reason. Not yet measured
+locally (the per-entry timing probe was stopped). What the code shows:
+
+- Each gate entry (`tools/selfhost-tc-one.sh`) runs three full front ends:
+  `loamc --dump-modules`, `tcdump <flags>` (load, parse and every pass up to
+  its stage), and `loamc <dump flag>`. The five gates repeat all of it over
+  the same 544 entries: about 8,000 compiler runs, mostly the same
+  load + parse + typecheck work.
+- The result cache (`tests/tmp/selfhost_tc_ref`) is always cold in CI. Its
+  key includes the checksums of `bin/loamc` and `tcdump`, so locally any
+  compiler edit misses every entry too, which happens on almost every run
+  during the port.
+- Oversubscription: `nob test -j 4` runs up to four stanzas at once, and
+  each gate starts `xargs -P 8`, so CI's 4-core runner has up to ~32 compiler
+  processes. `selfhost_driver` uses one per core on top.
+- The slow tail is likely the entries with big module sets (zeus,
+  `draw_golden`, examples). This is not measured.
+- Minor: the 60 s watchdog's `kill` hits the subshell and leaves its
+  `sleep 60` running, one per entry. This is harmless but should be checked.
+
+Candidate fixes, in order of expected payoff (measure first: time one small
+and one zeus entry for each of the three runs):
+1. One process per side per entry. Have `tcdump` write all five dumps from
+   one pipeline run, and the seed write all five C dumps from one run. Then
+   the five gates become one stanza: about 5× fewer front-end runs. Reuse
+   the `--dump-modules` list too.
+2. Cap total parallelism at the core count, across stanzas and inside the
+   gates (one shared pool, not `-j 4` × `-P 8`).
+3. Cache the C side by its inputs only (the `bin/loamc` sum plus the module
+   sources, as now). Persist `tests/tmp/selfhost_tc_ref` in CI with
+   `actions/cache`.
+4. Run the self-hosting gates only when `packages/loam/src/`,
+   `packages/loam/compiler/`, std or the runtime changed, or give them their
+   own `nob selfhost` target that CI runs. Keep `selfhost_driver` in the
+   default suite.
+
+### Next changes (pending)
+
+1. Speed up `./nob.sh test` (above).
+2. Windows from a fresh checkout: commit the Loam compiler's generated C as
+   the stage-0 seed (§3), or make the seed build on Windows. Then tick the
+   fresh-checkout box.
+3. Finish phase 10c (the Driver box under Compiler port): speed and memory
+   parity of the whole pipeline against the C driver, then tick it.
+4. Audit that the compiler uses only safe Loam (arenas + integer indices;
+   §2.7) and tick that box.
+5. Make the Loam `loamc` the default and keep the C one only as the seed
+   (§4 step 7). Decide what stays C for now: `lsp.c`, `fmt.c` (§3).
+6. `packages/tooling/tree-sitter-loam`: replace the remote-less gitlink.
+   Either vendor the grammar as plain files (recommended; the pre-commit hook
+   and the commit-nested-repos rule assume gitlinks, so update them) or push
+   it to a remote and add `.gitmodules`.
+7. `std:net` has no Windows port (`runtime/net.c` defines nothing on
+   `_WIN32`). This is not needed to self-host. The 12 networking fixtures
+   are skipped on Windows.
 
 When every box above is checked, Loam is 100% self-hosted.
