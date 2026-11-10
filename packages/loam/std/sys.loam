@@ -64,6 +64,13 @@ fn write_bytes(path: string, b: &[]u8) -> int {}
 /** *when it does not exist. Sub-second where the file system records it. */
 fn mtime(path: string) -> i64 {}
 
+/** *`"<sec> <nsec> <size>"` of the regular file at `path`: its modification time */
+/** *(seconds and nanoseconds since the epoch; nanoseconds are `0` where the file */
+/** *system has none) and its size in bytes. `""` when `path` is missing or is not */
+/** *a regular file. Compare two stamps whole to tell whether a file changed. */
+/** *Native only; wasm returns `""`. */
+fn stamp(path: string) -> string {}
+
 /** *Start `argv[0]` (looked up on `PATH`) with `argv` as its arguments, without */
 /** *a shell, so nothing in an argument is ever interpreted. Returns a handle for */
 /** *`wait`, or `-1` if it could not start. Up to 256 children at a time. Native */

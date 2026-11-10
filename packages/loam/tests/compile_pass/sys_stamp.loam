@@ -1,0 +1,20 @@
+// std:sys stamp: "<sec> <nsec> <size>" of a regular file, "" for a missing
+// path or a directory; a rewrite of a different size changes the stamp.
+import "std:fmt"
+import "std:str"
+import "std:sys"
+
+fn main() {
+    let path = "loam_sys_stamp_test.txt"
+    sys.write_file(path, "hello")
+    let a = sys.stamp(path)
+    let parts = str.split(a, " ")
+    fmt.println(parts.len, parts[2])
+    fmt.println(a == sys.stamp(path))
+    sys.write_file(path, "hello, world")
+    let b = sys.stamp(path)
+    fmt.println(a != b, str.split(b, " ")[2])
+    fmt.println(sys.stamp(".").len, sys.stamp("loam_sys_stamp_missing").len)
+    sys.remove_path(path)
+    fmt.println(sys.stamp(path).len)
+}

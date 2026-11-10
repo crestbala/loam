@@ -1552,6 +1552,10 @@ static inline int64_t loam_sys_mtime(loam_str path) {
     (void)path;
     return -1;
 }
+static inline loam_str loam_sys_stamp(loam_str path) {
+    (void)path;
+    return (loam_str){"", 0};
+}
 static inline int64_t loam_sys_spawn(const loam_vec *argv) {
     (void)argv;
     return -1;
@@ -1823,6 +1827,32 @@ static inline int64_t loam_sys_mtime(loam_str path) {
 #else
     return (int64_t)st.st_mtime * 1000;
 #endif
+}
+
+/* "<sec> <nsec> <size>" of a regular file (modification time and byte size),
+   or "" when `path` is missing or not a regular file. Build caches compare
+   these: a change within the same millisecond still shows in the nanoseconds
+   or the size. Where the platform has no sub-second time, nsec is 0. */
+static inline loam_str loam_sys_stamp(loam_str path) {
+    char pbuf[4096], out[96];
+    struct stat st;
+    long long sec, nsec;
+    int n;
+    if (loam_sys_cpath(path, pbuf, sizeof pbuf) != 0) return (loam_str){"", 0};
+    if (stat(pbuf, &st) != 0 || !S_ISREG(st.st_mode)) return (loam_str){"", 0};
+#if defined(__APPLE__)
+    sec = (long long)st.st_mtimespec.tv_sec;
+    nsec = (long long)st.st_mtimespec.tv_nsec;
+#elif defined(__linux__)
+    sec = (long long)st.st_mtim.tv_sec;
+    nsec = (long long)st.st_mtim.tv_nsec;
+#else
+    sec = (long long)st.st_mtime;
+    nsec = 0;
+#endif
+    n = snprintf(out, sizeof out, "%lld %lld %lld", sec, nsec, (long long)st.st_size);
+    if (n <= 0 || (size_t)n >= sizeof out) return (loam_str){"", 0};
+    return loam_str_copy(out, (int64_t)n);
 }
 
 #include <dirent.h>

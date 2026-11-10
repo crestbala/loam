@@ -15,7 +15,11 @@
 // Not here yet (the seed has them; each is refused by name, never ignored):
 // wasm, iOS and Android targets, `test`, `--emit-ir`, `--cost`, `--dump-*`,
 // and the `LOAM_BATCH` / `LOAM_SHARD` / `LOAM_SERVER_SPLIT` / `LOAM_HOST` /
-// `LOAM_NO_DCE` builds. Nor is the `.fresh` build cache: every build compiles.
+// `LOAM_NO_DCE` builds.
+//
+// A native build with `-o` records what it read in `<output>.fresh`, and the
+// same command run again reuses the output while nothing in it changed (see
+// "build cache" below; `LOAM_NO_FRESH=1` turns it off).
 
 import "std:async"
 import "std:buf"
@@ -252,11 +256,14 @@ fn push_list(to: &mut []string, from: []string) {
 /** *another output does not share. */
 let mut BUILD_TAG: string = ""
 
-/** *`src` is missing or newer than `dst`, to the second. */
+/** *`src` or `dst` is missing, or `src` is not older than `dst` (to the */
+/** *millisecond, or the second where the file system has no finer time). An */
+/** *edit in the same tick as the object's build counts as newer, so it is never */
+/** *missed; the cost is at most one extra compile. */
 fn src_newer(src: string, dst: string) -> bool {
     let d = sys.mtime(dst)
     let s = sys.mtime(src)
-    return d < i64(0) || s < i64(0) || s / i64(1000) > d / i64(1000)
+    return d < i64(0) || s < i64(0) || s >= d
 }
 
 /** *Compile `src` to `obj` (with `extra` flags) when the object is missing or */
@@ -293,6 +300,167 @@ fn ensure_obj(src: string, obj: string, extra: &[]string, deps: &[]string) -> bo
         return false
     }
     return true
+}
+
+// --- build cache (`<output>.fresh`) ------------------------------------------------
+//
+// The stamp file holds a key line, the output's stamp, and one line per file the
+// build read: every module, and every C source, header beside it, and
+// `LOAM_LINK_EXTRA` file that went into the link.
+//
+//   K <key>
+//   O <sec> <nsec> <size> <output>
+//   F <sec> <nsec> <size> <path>
+//
+// The key hashes the command line, the environment that changes a build, the
+// compiler binary, and the runtime and host directories. A run with the same
+// key whose output and files all still have their stamps is fresh.
+
+/** *Files besides the modules that this build read: C sources and headers */
+/** *(`c_source_obj`) and `LOAM_LINK_EXTRA` inputs. */
+let mut FRESH_DEPS: []string = []string {}
+
+/** *`LOAM_NO_FRESH=1`: build every time. */
+fn fresh_off() -> bool {
+    return env_on("LOAM_NO_FRESH")
+}
+
+/** *This compiler's own file: `argv[0]` when it names a path, else the first */
+/** *match on `PATH` (a compiler run as `loamc` is still keyed by its binary). */
+fn self_path() -> string {
+    let a0 = sys.arg(0)
+    if str.index_of_byte(a0, '/') >= 0 ||
+        (sys.os() == "windows" && str.index_of_byte(a0, '\\') >= 0) {
+        return a0
+    }
+    let sep = if sys.os() == "windows" { ";" } else { ":" }
+    let dirs = str.split(sys.env("PATH"), sep)
+    for i in 0..dirs.len {
+        if dirs[i].len == 0 {
+            continue
+        }
+        let cand = "{{dirs[i]}}/{{a0}}"
+        if sys.stamp(cand).len > 0 {
+            return cand
+        }
+        if sys.os() == "windows" && sys.stamp("{{cand}}.exe").len > 0 {
+            return "{{cand}}.exe"
+        }
+    }
+    return a0
+}
+
+/** *Fold the regular files directly in `dir` (name and stamp) into `h`, */
+/** *independent of listing order. */
+fn dir_fingerprint(dir: string, h: u64) -> u64 {
+    let x = fnv(dir, h)
+    if sys.is_dir(dir) != 1 {
+        return fnv("0", x)
+    }
+    let names = sys.list_dir(dir)
+    let mut sum: u64 = 0
+    for i in 0..names.len {
+        let st = sys.stamp("{{dir}}/{{names[i]}}")
+        if st.len > 0 {
+            sum = wrapping_add(sum, fnv(st, fnv(names[i], FNV_BASIS)))
+        }
+    }
+    return fnv(hex16(sum), x)
+}
+
+/** *Everything outside the modules that decides what a build of `in_path` */
+/** *produces, as 16 hex digits. */
+fn fresh_key(in_path: string) -> string {
+    let mut h = fnv("loam-fresh-1", FNV_BASIS)
+    for i in 1..sys.argc() {
+        h = fnv(sys.arg(i), fnv("\n", h))
+    }
+    let envs = []string {
+        "ZEUS_HEADLESS", "LOAM_HEADLESS", "MAYA_HEADLESS", "LOAM_DEV", "LOAM_DEBUG",
+        "ZEUS_MEM_STATS", "LOAM_LINK_EXTRA", "CC", "RAYLIB_PREFIX",
+    }
+    for i in 0..envs.len {
+        h = fnv(sys.env(envs[i]), fnv("\n", fnv(envs[i], fnv("\n", h))))
+    }
+    h = fnv(sys.stamp(self_path()), fnv("\n", h))
+    let rt = loader.runtime_dir()
+    h = dir_fingerprint(rt, h)
+    h = dir_fingerprint("{{rt}}/wasm_inc", h)
+    h = dir_fingerprint("{{zeus_dir()}}/hosts/web", h)
+    h = dir_fingerprint("{{zeus_dir()}}/hosts/desktop", h)
+    h = dir_fingerprint("{{zeus_dir()}}/hosts/apple", h)
+    h = dir_fingerprint("{{loader.parent_dir(in_path)}}/runtime", h)
+    return hex16(h)
+}
+
+/** *`out` was built from these exact inputs: its stamp file has `key`, and */
+/** *the output and every file it lists still have the stamps recorded. */
+fn fresh_match(out: string, key: string) -> bool {
+    let body = sys.read_file("{{out}}.fresh")
+    let rows = str.lines(body)
+    if rows.len < 3 || rows[0] != "K {{key}}" {
+        return false
+    }
+    let mut saw_out = false
+    let mut saw_file = false
+    for r in 1..rows.len {
+        let row = rows[r]
+        if row.len == 0 {
+            continue
+        }
+        if row.len < 3 || (row[0] != 'O' && row[0] != 'F') || row[1] != ' ' {
+            return false
+        }
+        // The stamp is three numbers; the path is the rest (it may hold spaces).
+        let s1 = str.index_from(row, " ", 2)
+        let s2 = if s1 >= 0 { str.index_from(row, " ", s1 + 1) } else { -1 }
+        let s3 = if s2 >= 0 { str.index_from(row, " ", s2 + 1) } else { -1 }
+        if s3 < 0 {
+            return false
+        }
+        let recorded = str.slice(row, 2, s3)
+        let path = if row[0] == 'O' { out } else { str.slice_from(row, s3 + 1) }
+        if path.len == 0 || sys.stamp(path) != recorded {
+            return false
+        }
+        if row[0] == 'O' {
+            saw_out = true
+        } else {
+            saw_file = true
+        }
+    }
+    return saw_out && saw_file
+}
+
+/** *Record what built `out`. Written beside its name and renamed into place; */
+/** *any file that cannot be stamped leaves no stamp (the next run rebuilds). */
+fn fresh_save(out: string, key: string) {
+    let stamp = "{{out}}.fresh"
+    let own = sys.stamp(out)
+    if own.len == 0 {
+        return
+    }
+    let mut b = []u8 {}
+    buf.push_str(&mut b, "K {{key}}\nO {{own}} {{out}}\n")
+    for i in 0..typecheck.MODS.len {
+        let p = typecheck.MODS[i].path
+        let st = if p.len > 0 { sys.stamp(p) } else { "" }
+        if st.len == 0 {
+            return
+        }
+        buf.push_str(&mut b, "F {{st}} {{p}}\n")
+    }
+    for i in 0..FRESH_DEPS.len {
+        let st = sys.stamp(FRESH_DEPS[i])
+        if st.len == 0 {
+            return
+        }
+        buf.push_str(&mut b, "F {{st}} {{FRESH_DEPS[i]}}\n")
+    }
+    let tmp = "{{stamp}}.{{BUILD_TAG}}.tmp"
+    if sys.write_bytes(tmp, &b) != 0 || sys.rename(tmp, stamp) != 0 {
+        sys.remove_path(tmp)
+    }
 }
 
 // --- C sources (`#![c_source]`, `#![c_link]`) ---------------------------------------
@@ -387,6 +555,7 @@ fn c_source_obj(loam_path: string, d: int, link: &mut []string) -> bool {
     if !ensure_obj(src, obj, &extra, &deps) {
         return cdir_error(loam_path, line, "failed to compile C source '{{src}}'")
     }
+    push_all(&mut FRESH_DEPS, &deps)
     push(link, obj)
     return true
 }
@@ -766,6 +935,26 @@ fn main() {
     }
     let show_time = env_on("LOAM_TIME")
 
+    // A build with `-o` whose inputs have not changed since the last one
+    // reuses its output. `--emit-c` and `check` never use the cache.
+    let mut key = ""
+    if out_path.len > 0 && !check_only && !emit_c && !fresh_off() {
+        key = fresh_key(in_path)
+        if fresh_match(out_path, key) {
+            if show_time {
+                fmt.eprintln("loam: fresh")
+            }
+            fmt.println("loam: {{in_path}} -> {{out_path}}")
+            if run {
+                let argv = []string { runnable(out_path) }
+                if sys.run(&argv) != 0 {
+                    sys.exit(1)
+                }
+            }
+            return
+        }
+    }
+
     let mut t0 = async.now_ms()
     progress("check")
     if !check(in_path) {
@@ -840,6 +1029,11 @@ fn main() {
     if le.len > 0 {
         push(extra_link, "-I{{rt}}")
         push_all(&mut extra_link, &le)
+        for i in 0..le.len {
+            if sys.stamp(le[i]).len > 0 {
+                push(FRESH_DEPS, le[i])
+            }
+        }
     }
 
     let copt = copt_flags()
@@ -881,6 +1075,9 @@ fn main() {
         sys.exit(1)
     }
     sys.remove_path(cpath)
+    if key.len > 0 {
+        fresh_save(binpath, key)
+    }
     fmt.println("loam: {{in_path}} -> {{binpath}}")
     if run {
         let argv = []string { runnable(binpath) }
