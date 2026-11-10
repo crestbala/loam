@@ -890,6 +890,21 @@ static AstNode *find_global_in(LoamModule *m, const char *name) {
     return NULL;
 }
 
+/** `&` takes the address of a place: a variable or global, through fields,
+ *  indexes and derefs. A temporary has no place the caller could see (ir.c
+ *  will not make one), so borrowing it is an error, not a crash in lowering. */
+static int is_place_path(const AstNode *t) {
+    while (t) {
+        if (t->kind == AST_FIELD && t->as.access.resolved &&
+            t->as.access.resolved->kind == AST_VAR_DECL)
+            return 1;
+        if (t->kind != AST_FIELD && t->kind != AST_INDEX && t->kind != AST_DEREF)
+            return t->kind == AST_IDENT;
+        t = t->as.access.target;
+    }
+    return 0;
+}
+
 /** Bodyless fns in these modules are the link boundary (`loam_<mod>_<fn>`).
  *  Not a keyword: ordinary empty `fn` in a std seam module. See docs/boundary.md. */
 static int is_ffi_mod(const char *name) {
@@ -3611,6 +3626,8 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
         }
         case AST_ADDR: {
             Type *t = check_expr(n->as.access.target);
+            if (t->kind != TY_VOID && !is_place_path(n->as.access.target))
+                err(n->loc, "cannot borrow a temporary; bind it to a name with `let` first");
             if (n->as.access.is_mut && !n->as.access.target->place_mut)
                 err(n->loc, "cannot take &mut of immutable place");
             /* `&mut x` hands `x` to code that writes it: as stale as an

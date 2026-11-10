@@ -1,0 +1,18 @@
+// `&` needs a place: a temporary (a literal, a call's result) has no address
+// the caller could see. Bind it with `let`, then borrow the name.
+import "std:fmt"
+
+fn names() -> []string {
+    return []string { "a" }
+}
+
+fn count(v: &[]string) -> int {
+    return v.len
+}
+
+fn main() {
+    fmt.println(count(&[]string { "a", "b" }))
+    fmt.println(count(&names()))
+    let ok = names()
+    fmt.println(count(&ok))
+}

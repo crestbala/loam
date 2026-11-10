@@ -1081,6 +1081,25 @@ fn find_global_in(m: int, name: string) -> int {
     return find_decl(m, Kind.Var, name)
 }
 
+/** *`&` takes the address of a place: a variable or global, through fields, */
+/** *indexes and derefs. A temporary has no place the caller could see (the IR */
+/** *will not make one), so borrowing it is an error. */
+fn is_place_path(n: int) -> bool {
+    let mut t = n
+    while t != NONE {
+        let k = ast.NODES[t].kind
+        let r = ast.NODES[t].res
+        if k == Kind.Field && r != NONE && ast.NODES[r].kind == Kind.Var {
+            return true
+        }
+        if k != Kind.Field && k != Kind.Index && k != Kind.Deref {
+            return k == Kind.Ident
+        }
+        t = ast.NODES[t].a
+    }
+    return false
+}
+
 /** *Bodyless fns in these modules are the link boundary. */
 fn is_ffi_mod(name: string) -> bool {
     return name == "zeus" || name == "zeusbase" || name == "http" || name == "fmt" || name == "maya" ||
@@ -4240,6 +4259,9 @@ fn check_expr_ty(n: int, expect: int) -> int {
             return set_ty(n, val_ty)
         case Kind.Addr:
             let t = check_expr(x.a)
+            if tk(t) != TK.Void && !is_place_path(x.a) {
+                err(x.loc, "cannot borrow a temporary; bind it to a name with `let` first")
+            }
             if x.op != 0 && ast.INFO[x.a].place_mut == 0 {
                 err(x.loc, "cannot take &mut of immutable place")
             }

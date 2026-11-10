@@ -40,9 +40,10 @@ outside the self-hosting work.
 | Windows  | clang or gcc targeting `*-windows-gnu` (MinGW-w64), e.g. `zig cc`, llvm-mingw, MSYS2 | MSVC `cl.exe` is not supported: the generated C uses GNU extensions (statement expressions, `__attribute__`) |
 
 **How the compiler is found.** The seed `loamc` runs `cc` from `PATH` for
-every build. The Loam `loamc` (self-hosting phase "driver") will honour `CC`
-and otherwise use `cc`, then `clang`, then `gcc`, invoking it through
-`sys.spawn` with an argument list, never through a shell.
+every build. The Loam `loamc` (`packages/loam/compiler/loamc.loam`) honours
+`CC` (split on spaces, so `CC="zig cc"` works) and otherwise uses the first of
+`cc`, `clang`, `gcc` on `PATH`, invoking it through `sys.spawn` with an
+argument list, never through a shell.
 
 ## Windows notes
 
