@@ -993,8 +993,17 @@ built the seed and tools, and every self-hosting stanza passed
       aarch64 Linux and Windows, but the Windows build has not been run on
       Windows.
 - [ ] CI runs the fixed-point check on at least one Linux and one Windows
-      runner. `selfhost.yml` has the job (`tools/win-selfhost.sh`), but it has
-      not run since it was added in `5a5cfb4`.
+      runner. `selfhost.yml` has the job (`tools/win-selfhost.sh`). Its first
+      run (on `0a646c3`) got stage 1 = stage 2 = Linux on Windows, but 9
+      fixtures failed to build there: the drivers link `runtime/net.c` for
+      any program that loads the http package, and `net.c` had no Windows
+      branch (`poll.h`). On Windows it now defines nothing, so a program that
+      never calls `loam_net_*` links. `tools/cross-check.sh` links `net.c`
+      into every fixture, as the drivers can, so it catches this on macOS.
+      The same run found three fixtures (`http_stream`, `zeus_stream`,
+      `zeus_async_rpc`) that re-ran `tests/tmp/<name>` as their server child.
+      That file does not exist when the fixture runs inside a batch binary.
+      They re-run `sys.arg(0)` now.
 
 A clone has `packages/tooling/tree-sitter-loam` as an empty directory: the
 gitlink has no `.gitmodules` entry, and the grammar repo has no remote. The
