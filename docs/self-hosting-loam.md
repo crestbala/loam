@@ -439,7 +439,7 @@ Needed (can land after the fixed-point, but design the hooks early):
       the generated C of the Loam compiler (`loamc.c`) so a fresh checkout
       builds with only `cc` — the same move `make` already makes for `nob`.
       Must produce working binaries on Linux and Windows.
-- [ ] **Fixed-point check** in `nob`: C-`loamc` builds Loam-`loamc` (stage 1);
+- [x] **Fixed-point check** in `nob`: C-`loamc` builds Loam-`loamc` (stage 1);
       stage 1 builds itself (stage 2); stage 1 and stage 2 must emit
       byte-identical C for the compiler and for every test in `compile_pass`
       / `golden`. Run the check on at least one Linux and one Windows CI
@@ -447,9 +447,9 @@ Needed (can land after the fixed-point, but design the hooks early):
       same C for every `.loam` file in the repo, and stage 1 and stage 2 the
       same C for the compiler, so stage 2 is the same program as stage 1.
       CI: see Windows CI below.
-- [ ] **Deterministic output**: no pointer-address ordering, no hash-order
+- [x] **Deterministic output**: no pointer-address ordering, no hash-order
       iteration in emitted C (iterate maps by insertion order or sorted keys).
-- [ ] **Differential testing**: for each `tests/compile_pass`, `golden`, and
+- [x] **Differential testing**: for each `tests/compile_pass`, `golden`, and
       `compile_fail` file, both compilers must produce the same C / the same
       diagnostics. This is the main safety net during the port.
 - [ ] Decide what moves and what stays C: `lsp.c` and `fmt.c` can follow
@@ -967,11 +967,38 @@ beyond what the checklist requires.
 - [ ] Compiler itself uses only safe Loam (arenas + integer indices; §2.7)
 
 ### Fixed-point and tooling
-- [ ] Stage 0 (C) builds stage 1 (Loam)
-- [ ] Stage 1 builds stage 2, byte-identical C output
-- [ ] Differential tests pass for `compile_pass`, `golden`, `compile_fail`
-- [ ] Deterministic emission (no pointer or hash-order dependence)
-- [ ] Fresh checkout builds on macOS, Linux, and Windows from the C seed
-- [ ] CI runs the fixed-point check on at least one Linux and one Windows runner
+Checked on a fresh `git clone` of `e5c0657` (macOS, 2026-11-10): `./nob.sh`
+built the seed and tools, and every self-hosting stanza passed
+(`selfhost_lex`, `_load`, `_parse` on 966 files; `_typecheck`, `_check`,
+`_ir`, `_dce`, `_codegen` on 521 entries plus 23 that C cannot load;
+`selfhost_driver`; `fresh_cache`).
+
+- [x] Stage 0 (C) builds stage 1 (Loam) (`selfhost_driver`)
+- [x] Stage 1 builds stage 2, byte-identical C output. `selfhost_driver`
+      checks this for the compiler's own C (seed = stage 1 = stage 2), so
+      stage 2 is the same program as stage 1. A one-off run also compared
+      stage 1 with stage 2 over the whole corpus: same `check` output on all
+      966 files, and the same C on the 782 that emit any.
+- [x] Differential tests pass for `compile_pass`, `golden`, `compile_fail`:
+      `selfhost_driver` compares `check` (diagnostics and exit status) and
+      `--emit-c` with the seed on every `.loam` file in the repo, and the
+      per-pass gates compare each stage's dump.
+- [x] Deterministic emission: the Loam compiler never iterates a map
+      (`map_keys` / `keys` have no callers under `compiler/`), and Loam has
+      no addresses to order by. Emitting each file twice gives the same bytes.
+- [ ] Fresh checkout builds on macOS, Linux, and Windows from the C seed.
+      macOS: done (above). Linux: the last green `selfhost` run, at `61213a9`,
+      came before the driver. Windows: `tools/cross-check.sh` and `zig cc`
+      cross-link the seed fixtures and the Loam compiler's C for x86_64 and
+      aarch64 Linux and Windows, but the Windows build has not been run on
+      Windows.
+- [ ] CI runs the fixed-point check on at least one Linux and one Windows
+      runner. `selfhost.yml` has the job (`tools/win-selfhost.sh`), but it has
+      not run since it was added in `5a5cfb4`.
+
+A clone has `packages/tooling/tree-sitter-loam` as an empty directory: the
+gitlink has no `.gitmodules` entry, and the grammar repo has no remote. The
+build and the suite never read it, but `git submodule status` fails, and so
+do `nob grammar` and the Zed extension, in any checkout other than this one.
 
 When every box above is checked, Loam is 100% self-hosted.
