@@ -1022,7 +1022,7 @@ gitlink has no `.gitmodules` entry, and the grammar repo has no remote. The
 build and the suite never read it, but `git submodule status` fails, and so
 do `nob grammar` and the Zed extension, in any checkout other than this one.
 
-### `./nob.sh test` is slow (open)
+### `./nob.sh test` is slow (fixed: the self-hosting stanzas moved out)
 
 The suite took 1142 s on the `ubuntu-24.04` runner in run 42798804290, and
 1091 s of that was the `setup` pool. The self-hosting stanzas are almost all
@@ -1059,39 +1059,41 @@ and one zeus entry for each of the three runs):
    reports a verdict per stage. The cache holds C's five stage checksums per
    input key, and a match of all five per `tcdump` sum; a new seed empties
    it. Full local suite, uncapped, on a quiet 8-core Mac (2026-11-10):
-   445 s from a cold cache and 403 s warm (615 checks). The warm cache saves
-   only ~40 s, so the remaining cost is elsewhere, most likely
-   `selfhost_driver`, which has no cache (not yet timed alone). Load stays
-   near 25 on 8 cores while the self-hosting stanzas overlap.
-2. Cap total parallelism at the core count, across stanzas and inside the
-   gates (one shared pool, not `-j 8` × one worker per core). Not decided:
-   one capped run took 473 s, but under different cache and machine
-   conditions than the numbers above.
+   445 s from a cold cache and 403 s warm (615 checks).
+2. Not done: capping parallelism made it slower. Timed alone (warm), the
+   stanzas take lex 6 s, parse 8 s, load 25 s (one serial loop), passes 44 s
+   and driver 100 s (one worker per core each), but together they ended at
+   18, 22, 208, 316 and 398 s; every other setup check was done by 3 s.
+   Capping each stanza's pool at 3 workers gave 572 s, and at 4 gave 907 s.
 3. Cache the C side by its inputs only (the `bin/loamc` sum plus the module
    sources, as now). Persist `tests/tmp/selfhost_tc_ref` in CI with
    `actions/cache`.
-4. Run the self-hosting gates only when `packages/loam/src/`,
-   `packages/loam/compiler/`, std or the runtime changed, or give them their
-   own `nob selfhost` target that CI runs. Keep `selfhost_driver` in the
-   default suite.
+4. Done. `./nob.sh test` no longer runs them: `nob selfhost [stanza]` runs
+   `selfhost_lex`, `_parse`, `_load`, `_passes` and `_driver` (all five, or
+   one), and CI's `selfhost` job runs each on its own runner beside the test
+   job (`selfhost_driver` on x86_64 and aarch64), so the workflow takes about
+   as long as the slowest stanza. Local `./nob.sh test`: 403 s → 15 s (606
+   checks). Once the C compiler is gone (Next changes, 1 and 4), the per-pass
+   stanzas go with it and only the fixed point stays.
 
 ### Next changes (pending)
 
-1. Speed up `./nob.sh test` (above).
-2. Windows from a fresh checkout: commit the Loam compiler's generated C as
+1. Windows from a fresh checkout: commit the Loam compiler's generated C as
    the stage-0 seed (§3), or make the seed build on Windows. Then tick the
    fresh-checkout box.
-3. Finish phase 10c (the Driver box under Compiler port): speed and memory
+2. Finish phase 10c (the Driver box under Compiler port): speed and memory
    parity of the whole pipeline against the C driver, then tick it.
-4. Audit that the compiler uses only safe Loam (arenas + integer indices;
+3. Audit that the compiler uses only safe Loam (arenas + integer indices;
    §2.7) and tick that box.
-5. Make the Loam `loamc` the default and keep the C one only as the seed
-   (§4 step 7). Decide what stays C for now: `lsp.c`, `fmt.c` (§3).
-6. `packages/tooling/tree-sitter-loam`: replace the remote-less gitlink.
+4. Make the Loam `loamc` the default and delete the C compiler: the seed
+   is the Loam compiler's committed C (item 1), not the C sources (§4 step
+   7). The per-pass `selfhost_*` stanzas go with it; the fixed point stays.
+   `lsp.c` and `fmt.c` stay C until they are ported (§3).
+5. `packages/tooling/tree-sitter-loam`: replace the remote-less gitlink.
    Either vendor the grammar as plain files (recommended; the pre-commit hook
    and the commit-nested-repos rule assume gitlinks, so update them) or push
    it to a remote and add `.gitmodules`.
-7. `std:net` has no Windows port (`runtime/net.c` defines nothing on
+6. `std:net` has no Windows port (`runtime/net.c` defines nothing on
    `_WIN32`). This is not needed to self-host. The 12 networking fixtures
    are skipped on Windows.
 

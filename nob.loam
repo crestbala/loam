@@ -10,6 +10,8 @@
 //     nob test <filter>    only fixtures whose path contains <filter>, isolated
 //     nob test <f.loam>    build and run exactly this file
 //     nob integration      the zeli/serve/pkg/fmt suite (slow; on demand)
+//     nob selfhost [s]     the Loam compiler against the C one, stage by stage,
+//                          and the fixed point (not in `test`; CI runs it)
 //     nob lsp              build the language server (and its objects) only
 //     nob bench            build, then run packages/loam/tests/bench/run.sh
 //     nob grammar          regenerate, check and publish the tree-sitter grammar
@@ -3060,18 +3062,18 @@ fn pool_stanzas(names: []string) -> int {
     return failed
 }
 
-/** *Every integration check, run as a bounded pool of stanza children. This is */
-/** *the `zeli`/serve/pkg/fmt suite; `nob test` does not run it (see */
-/** *`host_checks`), because it is slow and the most environment-sensitive part. */
-fn integration() -> int {
-    return pool_stanzas(stanza_names())
-}
-
 /** *The host checks `test` does run: they need neither `bin/zeli` nor a scratch */
 /** *app. The wasm module's entry points, the server/client split, and the */
 /** *language server all sit next to the compiler. */
 fn host_stanzas() -> []string {
-    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "api_freeze", "modules", "selfhost_lex", "selfhost_parse", "selfhost_load", "selfhost_passes", "selfhost_driver", "fresh_cache", "wasm_float" }
+    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "api_freeze", "modules", "fresh_cache", "wasm_float" }
+}
+
+/** *The Loam compiler against the C one, stage by stage, and the fixed point. */
+/** *Nearly all of a full run's time, so `test` leaves them out: `nob selfhost` */
+/** *runs them, and CI runs each on its own runner (selfhost.yml). */
+fn selfhost_stanzas() -> []string {
+    return []string { "selfhost_lex", "selfhost_parse", "selfhost_load", "selfhost_passes", "selfhost_driver" }
 }
 
 /** *One after another, for an `--isolated` run; a batched run pools them. */
@@ -3084,9 +3086,9 @@ fn host_checks() -> int {
     return N_FAIL - before
 }
 
-/** *`nob integration`: the process/port/git checks alone (development). Same */
-/** *reporting as `test`, without the fixture pools. */
-fn run_integration_only() -> int {
+/** *`nob integration` and `nob selfhost`: these stanzas alone, after a build. */
+/** *Same reporting as `test`, without the fixture pools. */
+fn run_stanzas_only(names: []string) -> int {
     sys.mkdir(TMP)
     sys.mkdir(NOB)
     if build("all") != 0 {
@@ -3101,7 +3103,7 @@ fn run_integration_only() -> int {
     FAILURES = []string {}
     let t0 = now_s()
     TSTART = t0
-    let failed = integration()
+    let failed = pool_stanzas(names)
     let secs = now_s() - t0
     fmt.println("")
     if failed != 0 {
@@ -3405,6 +3407,8 @@ fn usage() {
     fmt.println("  test <f.loam>  build and run exactly this file")
     fmt.println("  lsp     bin/loam-lsp and its objects only")
     fmt.println("  integration  the zeli/serve/pkg/fmt suite (slow; on demand)")
+    fmt.println("  selfhost [s]  the Loam compiler against the C one, and the fixed point")
+    fmt.println("          (not in test; s = one of selfhost_lex/_parse/_load/_passes/_driver)")
     fmt.println("  bench   build, then run packages/loam/tests/bench/run.sh")
     fmt.println("  grammar  regenerate, check and publish the tree-sitter grammar")
     fmt.println("  grammar-check  check the grammar against the compiler's parser")
@@ -3497,7 +3501,7 @@ fn main() {
     if pos.len > 1 {
         only = pos[1]
     }
-    if pos.len > 2 || (pos.len > 1 && cmd != "integration" && cmd != "test" &&
+    if pos.len > 2 || (pos.len > 1 && cmd != "integration" && cmd != "selfhost" && cmd != "test" &&
                        cmd != "fuzz-borrow") {
         fmt.println("nob: unexpected argument", only)
         sys.exit(2)
@@ -3534,7 +3538,17 @@ fn main() {
             }
             sys.exit(0)
         }
-        sys.exit(run_integration_only())
+        sys.exit(run_stanzas_only(stanza_names()))
+    } else if cmd == "selfhost" {
+        let mut names = selfhost_stanzas()
+        if only != "" {
+            if !has_str(names, only) {
+                fmt.println("nob: not a selfhost stanza:", only)
+                sys.exit(2)
+            }
+            names = []string { only }
+        }
+        sys.exit(run_stanzas_only(names))
     } else if cmd == "bench" {
         sys.exit(bench())
     } else if cmd == "grammar" {
