@@ -1,0 +1,872 @@
+// loamc — the self-hosted compiler: load, check, emit C, and run the C
+// compiler, in one process. The twin of src/driver.c for native host builds.
+//
+//   loamc [build] [options] file.loam    build <dir>/build/<stem> (or -o PATH)
+//   loamc check file.loam                the frontend only
+//   loamc --emit-c [-o out.c] file.loam  the C translation unit only
+//
+// stdout, stderr, exit status and the C written match the seed compiler's
+// (`nob integration selfhost_driver`). The C compiler is `CC` (split on
+// spaces, so `zig cc` works), else the first of `cc`, `clang`, `gcc` on
+// `PATH`. It runs through `sys.spawn` with an argument list, never a shell.
+// Runtime objects (the Zeus platform layer, its hosts, `#![c_source]` files)
+// compile once into `<runtime>/.obj/` and are rebuilt when a source is newer.
+//
+// Not here yet (the seed has them; each is refused by name, never ignored):
+// wasm, iOS and Android targets, `test`, `--emit-ir`, `--cost`, `--dump-*`,
+// and the `LOAM_BATCH` / `LOAM_SHARD` / `LOAM_SERVER_SPLIT` / `LOAM_HOST` /
+// `LOAM_NO_DCE` builds. Nor is the `.fresh` build cache: every build compiles.
+
+import "std:async"
+import "std:buf"
+import "std:conv"
+import "std:fmt"
+import "std:result"
+import "std:str"
+import "std:sys"
+import "ast.loam"
+import "types.loam"
+import "typecheck.loam"
+import "threadcheck.loam"
+import "borrowck.loam"
+import "boundscheck.loam"
+import "dce.loam"
+import "codegen.loam"
+import "loader.loam"
+import "dump.loam"
+
+// --- environment -------------------------------------------------------------------
+
+/** *Set, non-empty, and not `"0"`. */
+fn env_on(name: string) -> bool {
+    let v = sys.env(name)
+    return v.len > 0 && v != "0"
+}
+
+fn want_headless() -> bool {
+    return env_on("ZEUS_HEADLESS") || env_on("LOAM_HEADLESS")
+}
+
+/** *A development GUI build (`zeli serve`): no optimizer, no dead-strip. */
+fn want_dev() -> bool {
+    return env_on("LOAM_DEV")
+}
+
+fn on_mac() -> bool {
+    return sys.os() == "macos"
+}
+
+fn zeus_dir() -> string {
+    return "{{loader.home()}}/packages/zeus"
+}
+
+fn raygui_dir() -> string {
+    return "{{loader.home()}}/packages/raygui"
+}
+
+/** *Refuse a mode only the seed compiler has. */
+fn not_here(what: string) {
+    fmt.eprintln("loam: {{what}} is not in the self-hosted compiler yet; build with the seed loamc")
+    sys.exit(1)
+}
+
+/** *Seconds as `%.3f`, from milliseconds. */
+fn secs(ms: i64) -> string {
+    let frac = ms % i64(1000)
+    let pad = if frac < i64(10) { "00" } else if frac < i64(100) { "0" } else { "" }
+    return "{{ms / i64(1000)}}.{{pad}}{{frac}}"
+}
+
+/** *`LOAM_PROGRESS=<file>`: one line per build step appended to that file, */
+/** *for a tool drawing progress while this runs. */
+fn progress(line: string) {
+    let path = sys.env("LOAM_PROGRESS")
+    if path.len == 0 {
+        return
+    }
+    let r = sys.read(path)
+    let old = if r.tag == ResultTag.Ok { r.val } else { "" }
+    sys.write_file(path, "{{old}}{{line}}\n")
+}
+
+// --- paths -------------------------------------------------------------------------
+
+/** *64-bit FNV-1a of `s`, continuing from `h`. */
+fn fnv(s: string, h: u64) -> u64 {
+    let prime: u64 = 1099511628211
+    let mut x = h
+    for i in 0..s.len {
+        x = wrapping_mul(x ^ u64(s[i]), prime)
+    }
+    return x
+}
+
+const FNV_BASIS: u64 = 14695981039346656037
+
+/** *`h` as 16 hex digits. */
+fn hex16(h: u64) -> string {
+    let s = conv.u64_to_radix(h, 16)
+    let mut pad = ""
+    for i in s.len..16 {
+        pad = "{{pad}}0"
+    }
+    return "{{pad}}{{s}}"
+}
+
+fn tmp_dir() -> string {
+    let mut d = sys.env("TMPDIR")
+    if d.len == 0 && sys.os() == "windows" {
+        d = sys.env("TEMP")
+    }
+    if d.len == 0 {
+        d = "/tmp"
+    }
+    while d.len > 1 && d[d.len - 1] == '/' {
+        d = str.slice(d, 0, d.len - 1)
+    }
+    return d
+}
+
+fn absolute(p: string) -> string {
+    return if sys.is_abs(p) { p } else { "{{sys.cwd()}}/{{p}}" }
+}
+
+/** *`mkdir -p` of the directory holding `file`. `true` on success. */
+fn ensure_parent_dir(file: string) -> bool {
+    let d = loader.parent_dir(file)
+    return d == "." || sys.is_dir(d) == 1 || sys.mkdir(d) == 0
+}
+
+/** *A command as `./name` when it has no directory, as a shell would need. */
+fn runnable(path: string) -> string {
+    if sys.is_abs(path) || str.starts_with(path, "./") {
+        return path
+    }
+    return "./{{path}}"
+}
+
+// --- the C compiler ----------------------------------------------------------------
+
+let mut CC: []string = []string {}
+
+/** *An executable named `name` on `PATH`. */
+fn on_path(name: string) -> bool {
+    let sep = if sys.os() == "windows" { ";" } else { ":" }
+    let dirs = str.split(sys.env("PATH"), sep)
+    for i in 0..dirs.len {
+        if dirs[i].len == 0 {
+            continue
+        }
+        if sys.exists("{{dirs[i]}}/{{name}}") == 1 || sys.exists("{{dirs[i]}}/{{name}}.exe") == 1 {
+            return true
+        }
+    }
+    return false
+}
+
+/** *The words of `s`, split on spaces and tabs. */
+fn words(s: string) -> []string {
+    let mut out = []string {}
+    let mut start = 0
+    for i in 0..s.len + 1 {
+        if i == s.len || s[i] == ' ' || s[i] == '\t' {
+            if i > start {
+                push(out, str.slice(s, start, i))
+            }
+            start = i + 1
+        }
+    }
+    return out
+}
+
+/** *The C compiler's command words: `CC`, else `cc`, `clang`, `gcc`. */
+fn cc() -> []string {
+    if CC.len == 0 {
+        CC = words(sys.env("CC"))
+        if CC.len == 0 {
+            let names = []string { "cc", "clang", "gcc" }
+            for i in 0..names.len {
+                if on_path(names[i]) {
+                    push(CC, names[i])
+                    break
+                }
+            }
+            if CC.len == 0 {
+                push(CC, "cc")
+            }
+        }
+    }
+    return CC
+}
+
+/** *`cc()` then `args`, without the empty ones. */
+fn cc_argv(args: &[]string) -> []string {
+    let mut argv = cc()
+    for i in 0..args.len {
+        if args[i].len > 0 {
+            push(argv, args[i])
+        }
+    }
+    return argv
+}
+
+/** *Run the C compiler on `args`. `true` when it exits 0. */
+fn run_cc(args: &[]string) -> bool {
+    let argv = cc_argv(args)
+    return sys.run(&argv) == 0
+}
+
+fn push_all(to: &mut []string, from: &[]string) {
+    for i in 0..from.len {
+        push(to, from[i])
+    }
+}
+
+/** *`push_all` of a list written in place. */
+fn push_list(to: &mut []string, from: []string) {
+    push_all(to, &from)
+}
+
+// --- runtime objects ---------------------------------------------------------------
+
+/** *A name for this build's temporary files that a concurrent build of */
+/** *another output does not share. */
+let mut BUILD_TAG: string = ""
+
+/** *`src` is missing or newer than `dst`, to the second. */
+fn src_newer(src: string, dst: string) -> bool {
+    let d = sys.mtime(dst)
+    let s = sys.mtime(src)
+    return d < i64(0) || s < i64(0) || s / i64(1000) > d / i64(1000)
+}
+
+/** *Compile `src` to `obj` (with `extra` flags) when the object is missing or */
+/** *a dependency is newer. The object is written beside its name and renamed */
+/** *into place, so a concurrent build sees the old one or the new one. */
+fn ensure_obj(src: string, obj: string, extra: &[]string, deps: &[]string) -> bool {
+    if sys.exists(obj) == 1 {
+        let mut stale = false
+        for i in 0..deps.len {
+            if src_newer(deps[i], obj) {
+                stale = true
+                break
+            }
+        }
+        if !stale {
+            return true
+        }
+    }
+    if !ensure_parent_dir(obj) {
+        return false
+    }
+    let tmp = "{{obj}}.{{BUILD_TAG}}.tmp"
+    let mut args = []string { "-std=gnu99", "-O1", "-I{{loader.runtime_dir()}}" }
+    push_all(&mut args, extra)
+    push(args, src)
+    push(args, "-c")
+    push(args, "-o")
+    push(args, tmp)
+    if env_on("LOAM_TIME") {
+        fmt.eprintln("loam: cc {{src}}")
+    }
+    if !run_cc(&args) || sys.rename(tmp, obj) != 0 {
+        sys.remove_path(tmp)
+        return false
+    }
+    return true
+}
+
+// --- C sources (`#![c_source]`, `#![c_link]`) ---------------------------------------
+
+/** *Module `m` still has a `#[c]` fn after dead code removal. */
+fn module_uses_c(m: int) -> bool {
+    let root = typecheck.MODS[m].root
+    if root == ast.NONE {
+        return false
+    }
+    let decls = ast.NODES[root].kids
+    for i in 0..decls.len {
+        let d = decls[i]
+        if ast.NODES[d].kind == Kind.Fn && codegen.c_sym_of(d).len > 0 && dce.keep(d) {
+            return true
+        }
+    }
+    return false
+}
+
+/** *`arg` quoted for the shell, as the seed keys objects by it. */
+fn shell_quoted(arg: string) -> string {
+    let mut b = []u8 {}
+    buf.push_str(&mut b, " '")
+    for i in 0..arg.len {
+        if arg[i] == '\'' {
+            buf.push_str(&mut b, "'\\''")
+        } else {
+            push(b, u8(arg[i]))
+        }
+    }
+    push(b, u8('\''))
+    return buf.to_string(&b)
+}
+
+/** *Relative, inside its directory, and nothing a shell would read. */
+fn c_source_path_ok(p: string) -> bool {
+    if p.len == 0 || p[0] == '/' || str.contains(p, "..") {
+        return false
+    }
+    for i in 0..p.len {
+        let c = p[i]
+        let ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+            c == '.' || c == '_' || c == '/' || c == '+' || c == '-'
+        if !ok {
+            return false
+        }
+    }
+    return true
+}
+
+fn cdir_error(path: string, loc_line: int, msg: string) -> bool {
+    fmt.eprintln("{{path}}:{{loc_line}}: error: {{msg}}")
+    return false
+}
+
+/** *Compile one `#![c_source]` if stale and add its object to `link`. The */
+/** *headers beside it are dependencies; the object's name hashes the path */
+/** *and flags, so two flag sets never share an object. */
+fn c_source_obj(loam_path: string, d: int, link: &mut []string) -> bool {
+    let args = ast.EXTRA[ast.ex(d)].strs
+    let line = ast.INFO[d].loc.line
+    let slash = str.last_index_of_byte(loam_path, '/')
+    let srcdir = if slash >= 0 { str.slice(loam_path, 0, slash) } else { "." }
+    let src = "{{srcdir}}/{{args[0]}}"
+    if !c_source_path_ok(args[0]) {
+        return cdir_error(loam_path, line, "#![c_source] path '{{args[0]}}' must be relative and stay inside this directory")
+    }
+    if sys.exists(src) != 1 || sys.is_dir(src) == 1 {
+        return cdir_error(loam_path, line, "cannot read C source '{{src}}'")
+    }
+    let cut = str.last_index_of_byte(src, '/')
+    let include = str.slice(src, 0, cut)
+    let base = str.slice_from(src, cut + 1)
+    let mut flags = ""
+    let mut extra = []string { "-I{{include}}" }
+    for k in 1..args.len {
+        flags = "{{flags}}{{shell_quoted(args[k])}}"
+        push(extra, args[k])
+    }
+    let key = fnv(src, fnv(flags, FNV_BASIS))
+    let dot = str.index_of_byte(base, '.')
+    let stem = if dot >= 0 { str.slice(base, 0, dot) } else { base }
+    let obj = "{{loader.runtime_dir()}}/.obj/c_{{stem}}_{{hex16(key)}}.o"
+    let mut deps = []string { src }
+    let names = sys.list_dir(include)
+    for i in 0..names.len {
+        if names[i].len >= 3 && str.ends_with(names[i], ".h") && deps.len < 64 {
+            push(deps, "{{include}}/{{names[i]}}")
+        }
+    }
+    if !ensure_obj(src, obj, &extra, &deps) {
+        return cdir_error(loam_path, line, "failed to compile C source '{{src}}'")
+    }
+    push(link, obj)
+    return true
+}
+
+/** *The objects and flags the modules that use C add to the native link: */
+/** *every module's sources first, then every module's link flags. */
+fn c_inputs(link: &mut []string) -> bool {
+    let mut any = false
+    for pass in 0..2 {
+        for m in 0..typecheck.MODS.len {
+            let root = typecheck.MODS[m].root
+            if root == ast.NONE || !module_uses_c(m) {
+                continue
+            }
+            let kids = ast.NODES[root].kids
+            for i in 0..kids.len {
+                let d = kids[i]
+                if ast.NODES[d].kind != Kind.CDir || ast.NODES[d].op != pass {
+                    continue
+                }
+                if !any {
+                    // The link line may still be reading its inputs as `-x c`.
+                    push(link, "-x")
+                    push(link, "none")
+                    any = true
+                }
+                if pass == 0 {
+                    if !c_source_obj(typecheck.MODS[m].path, d, link) {
+                        return false
+                    }
+                    continue
+                }
+                let args = ast.EXTRA[ast.ex(d)].strs
+                push_all(link, &args)
+            }
+        }
+    }
+    return true
+}
+
+// --- hosts -------------------------------------------------------------------------
+
+fn mods_use(name: string) -> bool {
+    for i in 0..typecheck.MODS.len {
+        if typecheck.MODS[i].name == name {
+            return true
+        }
+    }
+    return false
+}
+
+/** *raylib's compile and link flags: `RAYLIB_PREFIX`, then pkg-config, then */
+/** *the Homebrew prefixes. Empty when raylib is missing (the link then fails */
+/** *with the C compiler's own message). */
+fn raylib_flags() -> []string {
+    let p = sys.env("RAYLIB_PREFIX")
+    if p.len > 0 {
+        return []string { "-I{{p}}/include", "-L{{p}}/lib", "-lraylib" }
+    }
+    let out = sys.exec("pkg-config --cflags --libs raylib 2>/dev/null")
+    if sys.exec_status() == 0 && out.len > 0 {
+        return words(str.trim(out))
+    }
+    let prefixes = []string { "/opt/homebrew/opt/raylib", "/usr/local/opt/raylib" }
+    for i in 0..prefixes.len {
+        if sys.exists("{{prefixes[i]}}/include/raylib.h") == 1 {
+            return []string { "-I{{prefixes[i]}}/include", "-L{{prefixes[i]}}/lib", "-lraylib" }
+        }
+    }
+    return []string {}
+}
+
+/** *The Zeus platform layer and key state, and on a GUI build the desktop */
+/** *host, compiled if stale; their objects, or an empty list on failure */
+/** *(`ok` false). */
+fn zeus_objects(headless: bool, ok: &mut bool) -> []string {
+    let rt = loader.runtime_dir()
+    let zd = zeus_dir()
+    let mem = env_on("ZEUS_MEM_STATS")
+    let tag = if mem { ".mem" } else { "" }
+    let mut host_flags = []string { "-DLOAM_ALLOC_TRACE" }
+    if mem {
+        push(host_flags, "-DZEUS_MEM_STATS")
+    }
+    let rt_h = "{{rt}}/zeus_rt.h"
+    let key_h = "{{rt}}/zeus_key.h"
+    let plat_c = "{{rt}}/zeus_plat.c"
+    let key_c = "{{rt}}/zeus_key.c"
+    let plat_o = "{{rt}}/.obj/zeus_plat{{tag}}.o"
+    let key_o = "{{rt}}/.obj/zeus_key{{tag}}.o"
+    let plat_deps = []string { plat_c, rt_h, key_h }
+    let key_deps = []string { key_c, key_h }
+    if !ensure_obj(plat_c, plat_o, &host_flags, &plat_deps) || !ensure_obj(key_c, key_o, &host_flags, &key_deps) {
+        fmt.eprintln("loam: failed to compile zeus runtime")
+        *ok = false
+        return []string {}
+    }
+    let mut objs = []string { plat_o, key_o }
+    if headless {
+        return objs
+    }
+    if on_mac() {
+        // The Cocoa host is mac.m and the two files it shares with iOS.
+        let apple_h = "{{zd}}/hosts/apple/zeus_apple.h"
+        let mac_m = "{{zd}}/hosts/desktop/mac.m"
+        let draw_m = "{{zd}}/hosts/apple/apple_draw.m"
+        let media_m = "{{zd}}/hosts/apple/apple_media.m"
+        let mac_o = "{{rt}}/.obj/zeus_mac{{tag}}.o"
+        let draw_o = "{{rt}}/.obj/zeus_apple_draw{{tag}}.o"
+        let media_o = "{{rt}}/.obj/zeus_apple_media{{tag}}.o"
+        let mac_flags = []string { "-x", "objective-c", "-I{{zd}}/hosts/apple" }
+        let mac_deps = []string { mac_m, rt_h, key_h, apple_h }
+        let draw_deps = []string { draw_m, rt_h, apple_h }
+        let media_deps = []string { media_m, rt_h, apple_h }
+        if !ensure_obj(mac_m, mac_o, &mac_flags, &mac_deps) ||
+            !ensure_obj(draw_m, draw_o, &mac_flags, &draw_deps) ||
+            !ensure_obj(media_m, media_o, &mac_flags, &media_deps) {
+            fmt.eprintln("loam: failed to compile the Cocoa host")
+            *ok = false
+            return []string {}
+        }
+        push(objs, mac_o)
+        push(objs, draw_o)
+        push(objs, media_o)
+        return objs
+    }
+    let linux_c = "{{zd}}/hosts/desktop/linux.c"
+    let linux_o = "{{rt}}/.obj/zeus_linux{{tag}}.o"
+    let linux_deps = []string { linux_c, rt_h, key_h }
+    if !ensure_obj(linux_c, linux_o, &host_flags, &linux_deps) {
+        fmt.eprintln("loam: failed to compile {{linux_c}} (need libx11)")
+        *ok = false
+        return []string {}
+    }
+    push(objs, linux_o)
+    return objs
+}
+
+/** *The Cocoa frameworks a Zeus GUI build links. */
+fn cocoa_frameworks() -> []string {
+    let mut out = []string {}
+    let fws = []string {
+        "Cocoa", "QuartzCore", "IOSurface", "Security", "CoreText", "ImageIO",
+        "AVFoundation", "CoreMedia", "CoreVideo", "VideoToolbox", "AudioToolbox",
+    }
+    for i in 0..fws.len {
+        push(out, "-framework")
+        push(out, fws[i])
+    }
+    push(out, "-weak_framework")
+    push(out, "SoundAnalysis")
+    push(out, "-framework")
+    push(out, "CoreFoundation")
+    push(out, "-lm")
+    return out
+}
+
+/** *What the C compiler gets for a host build: the optimizer and string */
+/** *flags, then output and inputs. `false` when a host object failed. */
+fn link_args(cpath: string, binpath: string, copt: &[]string, ld: string, extra_link: &[]string, args: &mut []string) -> bool {
+    let rt = loader.runtime_dir()
+    let owns = []string { if types.string_owns { "-DLOAM_STRING_OWNS" } else { "" } }
+    let net_c = "{{rt}}/net.c"
+    push_all(args, copt)
+    if mods_use("zeus") {
+        let headless = want_headless()
+        let mut ok = true
+        let objs = zeus_objects(headless, &mut ok)
+        if !ok {
+            return false
+        }
+        if on_mac() && !headless {
+            push(args, ld)
+        }
+        push_list(args, []string { "-o", binpath, "-I{{rt}}", "-x", "c", cpath, "-x", "none" })
+        push_all(args, &objs)
+        if mods_use("http") || mods_use("net") {
+            push(args, net_c)
+        }
+        push_all(args, extra_link)
+        if on_mac() && !headless {
+            let fws = cocoa_frameworks()
+            push_all(args, &fws)
+        } else if on_mac() {
+            push_list(args, []string { "-framework", "Security", "-framework", "CoreFoundation", "-lm" })
+        } else if !headless {
+            push_list(args, []string { "-lX11", "-lm" })
+        } else {
+            push(args, "-lm")
+        }
+        return true
+    }
+    if mods_use("maya") {
+        let src_c = "{{rt}}/maya_plat.c"
+        let src_h = "{{rt}}/maya_rt.h"
+        let otag = if types.string_owns { ".owns" } else { "" }
+        let obj_c = "{{rt}}/.obj/maya_plat{{otag}}.o"
+        let deps = []string { src_c, src_h }
+        let mut ok = ensure_obj(src_c, obj_c, &owns, &deps)
+        let mut objs = []string { obj_c }
+        if on_mac() && ok {
+            let src_m = "{{rt}}/maya_mac.m"
+            let obj_m = "{{rt}}/.obj/maya_mac{{otag}}.o"
+            let mac_flags = []string { "-x", "objective-c", "-fobjc-arc", owns[0] }
+            let mac_deps = []string { src_m, src_h }
+            ok = ensure_obj(src_m, obj_m, &mac_flags, &mac_deps)
+            push(objs, obj_m)
+        }
+        if !ok {
+            fmt.eprintln("loam: failed to compile the maya host")
+            return false
+        }
+        push_list(args, []string { ld, "-o", binpath, "-I{{rt}}", "-x", "c", cpath, "-x", "none" })
+        push_all(args, &objs)
+        if on_mac() {
+            push_list(args, []string { "-framework", "Cocoa" })
+        }
+        push(args, "-lm")
+        push_all(args, extra_link)
+        return true
+    }
+    if mods_use("http") || mods_use("net") {
+        push_list(args, []string { ld, "-o", binpath, "-I{{rt}}", "-x", "c", cpath, net_c })
+        if on_mac() {
+            push_list(args, []string { "-framework", "Security", "-framework", "CoreFoundation" })
+        }
+        push_all(args, extra_link)
+        return true
+    }
+    if mods_use("raygui") {
+        let rlib = raylib_flags()
+        let src_c = "{{rt}}/raygui_plat.c"
+        let src_h = "{{rt}}/raygui_rt.h"
+        let otag = if types.string_owns { ".owns" } else { "" }
+        let obj_c = "{{rt}}/.obj/raygui_plat{{otag}}.o"
+        let mut flags = []string { "-I{{raygui_dir()}}/vendor" }
+        push_all(&mut flags, &rlib)
+        push(flags, owns[0])
+        let deps = []string { src_c, src_h }
+        if !ensure_obj(src_c, obj_c, &flags, &deps) {
+            fmt.eprintln("loam: failed to compile the raygui host")
+            return false
+        }
+        push_list(args, []string { ld, "-o", binpath, "-I{{rt}}", "-I{{raygui_dir()}}/vendor" })
+        push_all(args, &rlib)
+        push_list(args, []string { "-x", "c", cpath, "-x", "none", obj_c, "-lm" })
+        push_all(args, extra_link)
+        return true
+    }
+    push_list(args, []string { ld, "-x", "c", cpath, "-o", binpath })
+    push_all(args, extra_link)
+    return true
+}
+
+/** *The optimizer and define flags every build of the program shares. */
+fn copt_flags() -> []string {
+    let mut f = []string { "-std=gnu99" }
+    if want_headless() || want_dev() {
+        push_list(&mut f, []string { "-O0", "-fno-asynchronous-unwind-tables", "-ffp-contract=off" })
+        // clang's arm64 -O0 picks instructions with GlobalISel, a third slower
+        // than FastISel for nothing an unoptimized build wants.
+        if on_mac() && sys.arch() == "aarch64" {
+            push_list(&mut f, []string { "-mllvm", "-global-isel=false" })
+        }
+    } else {
+        push_list(&mut f, []string { "-O1", "-fno-asynchronous-unwind-tables", "-fomit-frame-pointer", "-ffp-contract=off" })
+    }
+    if env_on("LOAM_DEBUG") {
+        push(f, "-g")
+    }
+    if mods_use("zeus") {
+        push(f, "-DLOAM_ALLOC_TRACE")
+    }
+    if env_on("ZEUS_MEM_STATS") {
+        push(f, "-DZEUS_MEM_STATS")
+    }
+    if types.string_owns {
+        push(f, "-DLOAM_STRING_OWNS")
+    }
+    return f
+}
+
+// --- the frontend ------------------------------------------------------------------
+
+/** *Load, typecheck, and run the later passes. Every diagnostic is printed */
+/** *in order; `false` on any. */
+fn check(path: string) -> bool {
+    if !loader.load(path) {
+        dump.print_diags()
+        return false
+    }
+    types.types_init()
+    if typecheck.typecheck_modules() > 0 {
+        dump.print_diags()
+        return false
+    }
+    let mut module_names = []string {}
+    let mut module_roots = []int {}
+    for m in 0..typecheck.MODS.len {
+        push(module_names, typecheck.MODS[m].name)
+        push(module_roots, typecheck.MODS[m].root)
+    }
+    threadcheck.threadcheck_modules(module_names, module_roots)
+    borrowck.borrowck_modules()
+    boundscheck.boundscheck_modules(module_roots)
+    dump.print_diags()
+    return ast.DIAGS.len == 0
+}
+
+fn usage() {
+    fmt.ewrite("usage: loam [build] [options] <file.loam>\n  build       compile (optional; same as omitting it)\n  test        compile a runner for every `#[test]` fn and run it\n  check       typecheck only: no codegen, no cc, no output file\n  -o PATH     output binary (or .c/.ir with --emit-c/--emit-ir)\n  --emit-c    emit C99 (gnu99) instead of a binary\n  --emit-ir   emit backend-neutral IR instead of a binary\n  --target native  desktop GUI: Cocoa on macOS, X11 on Linux (default)\n  --target wasm32  Canvas2D GUI .wasm (alias: wasm; needs clang wasm32).\n  --wasm-release  with wasm32: drop the file and line from panics\n  --wasm-split-input  with wasm32: keep symbol names, skip wasm-opt, and\n              write the C beside the output, for `zeli build` to split.\n                   This is the browser *canvas host*, not a CLI target:\n                   a future CLI/WASI build is a separate target.\n  --target ios     iOS Simulator .app (same Zeus paint as Cocoa; needs Xcode)\n  --target android Gradle + JNI Canvas host (needs Android SDK/NDK to build APK)\n  --run       compile and run (Simulator for --target=ios; gradle+adb for android)\n  --int64-compat  `int` = i64 and `float` = f64 (pre-Phase-10 behavior)\n  --string-owns   `string` is owned and refcounted (default)\n  --no-string-owns  restore never-freed strings (bisecting a bug)\n  --cost      print a cost report (fns, allocs, copies, traps, C bytes,\n              bytes per imported package) and stop\nDefault output: <source-dir>/build/<name> (.app on ios; Gradle tree on android)\n")
+}
+
+// --- main --------------------------------------------------------------------------
+
+fn main() {
+    let mut in_path = ""
+    let mut out_path = ""
+    let mut emit_c = false
+    let mut run = false
+    let mut check_only = false
+    let n = sys.argc()
+    let mut i = 1
+    while i < n {
+        let a = sys.arg(i)
+        if a == "-h" || a == "--help" {
+            usage()
+            return
+        } else if a == "-o" && i + 1 < n {
+            i += 1
+            out_path = sys.arg(i)
+        } else if a == "--emit-c" || a == "-S" {
+            emit_c = true
+        } else if str.starts_with(a, "--target=") || (a == "--target" && i + 1 < n) {
+            let mut t = ""
+            if str.starts_with(a, "--target=") {
+                t = str.slice_from(a, 9)
+            } else {
+                i += 1
+                t = sys.arg(i)
+            }
+            if t == "wasm" || t == "wasm32" || t == "ios" || t == "android" {
+                not_here("--target {{t}}")
+            } else if t != "native" {
+                fmt.eprintln("unknown target {{t}} (want native, wasm32, ios, or android)")
+                sys.exit(1)
+            }
+        } else if a == "--run" {
+            run = true
+        } else if a == "test" || a == "--emit-ir" || a == "--cost" || a == "--wasm-release" || a == "--wasm-split-input" || str.starts_with(a, "--dump-") {
+            not_here(a)
+        } else if a == "check" {
+            check_only = true
+        } else if a == "--int64-compat" {
+            types.int64_compat = true
+        } else if a == "--string-owns" {
+            types.string_owns = true
+        } else if a == "--no-string-owns" {
+            types.string_owns = false
+        } else if a == "build" {
+            // `loam build app.loam`: the same as omitting `build`.
+        } else if a.len > 0 && a[0] == '-' {
+            fmt.eprintln("unknown option {{a}}")
+            usage()
+            sys.exit(1)
+        } else {
+            in_path = a
+        }
+        i += 1
+    }
+    if in_path.len == 0 {
+        usage()
+        sys.exit(1)
+    }
+    if sys.env("LOAM_BATCH").len > 0 || sys.env("LOAM_SERVER_SPLIT").len > 0 || sys.env("LOAM_NO_DCE").len > 0 {
+        not_here("LOAM_BATCH / LOAM_SERVER_SPLIT / LOAM_NO_DCE")
+    }
+    let show_time = env_on("LOAM_TIME")
+
+    let mut t0 = async.now_ms()
+    progress("check")
+    if !check(in_path) {
+        sys.exit(1)
+    }
+    if show_time {
+        fmt.eprintln("loam: check {{secs(async.now_ms() - t0)}}s")
+    }
+    progress("modules {{typecheck.MODS.len}}")
+    if check_only {
+        fmt.println("loam: {{in_path}} ok")
+        return
+    }
+
+    let stem = loader.stem_of(in_path)
+    let srcdir = loader.parent_dir(in_path)
+    let mut cpath = ""
+    let mut binpath = ""
+    if emit_c {
+        cpath = if out_path.len > 0 { out_path } else { "{{srcdir}}/build/{{stem}}.c" }
+    } else {
+        binpath = if out_path.len > 0 { out_path } else { "{{srcdir}}/build/{{stem}}" }
+        BUILD_TAG = hex16(fnv(absolute(binpath), FNV_BASIS))
+        cpath = "{{tmp_dir()}}/loam_{{stem}}_{{BUILD_TAG}}.c"
+        let dylib = str.ends_with(binpath, ".dylib")
+        if mods_use("zeus") && !dylib {
+            if sys.env("LOAM_SHARD").len > 0 || env_on("LOAM_HOST") {
+                not_here("LOAM_SHARD / LOAM_HOST")
+            }
+        }
+    }
+    // App-owned C seam: `runtime/<stem>_runtime.c` beside the entry file.
+    let mut app_rt = ""
+    if !emit_c {
+        let cand = "{{srcdir}}/runtime/{{stem}}_runtime.c"
+        if sys.exists(cand) == 1 {
+            app_rt = cand
+        }
+    }
+    if !ensure_parent_dir(if emit_c { cpath } else { binpath }) {
+        fmt.eprintln("error: cannot create directory for output")
+        sys.exit(1)
+    }
+    if sys.write_file(cpath, "") != 0 {
+        fmt.eprintln("error: cannot write '{{cpath}}'")
+        sys.exit(1)
+    }
+
+    t0 = async.now_ms()
+    progress("codegen")
+    codegen.SINK = cpath
+    codegen.emit_c()
+    if show_time {
+        fmt.eprintln("loam: codegen {{secs(async.now_ms() - t0)}}s")
+    }
+    if emit_c {
+        fmt.println("loam: {{in_path}} -> {{cpath}}")
+        return
+    }
+
+    let rt = loader.runtime_dir()
+    let mut extra_link = []string {}
+    if app_rt.len > 0 {
+        push_list(&mut extra_link, []string { "-I{{rt}}", "-x", "c", app_rt })
+    }
+    if !c_inputs(&mut extra_link) {
+        sys.remove_path(cpath)
+        sys.exit(1)
+    }
+    // LOAM_LINK_EXTRA: more .c/.o inputs or flags for the link, space-separated.
+    let le = words(sys.env("LOAM_LINK_EXTRA"))
+    if le.len > 0 {
+        push(extra_link, "-I{{rt}}")
+        push_all(&mut extra_link, &le)
+    }
+
+    let copt = copt_flags()
+    let headless = want_headless() || want_dev()
+    let ld = if headless { "" } else if on_mac() { "-Wl,-dead_strip" } else { "-Wl,--gc-sections" }
+    let mut args = []string {}
+    if str.ends_with(binpath, ".dylib") {
+        // A loadable image for `zeli serve`: no host objects, symbols left for
+        // the loader to supply.
+        push_all(&mut args, &copt)
+        if on_mac() {
+            push_list(&mut args, []string { "-dynamiclib", "-undefined", "dynamic_lookup" })
+        } else {
+            push(args, "-shared")
+        }
+        push_list(&mut args, []string { "-o", binpath, "-I{{rt}}", "-x", "c", cpath })
+        push_all(&mut args, &extra_link)
+        if !run_cc(&args) {
+            fmt.eprintln("loam: shared object compile failed (temp source: {{cpath}})")
+            sys.exit(1)
+        }
+        fmt.println("loam: {{in_path}} -> {{binpath}} (loadable)")
+        sys.remove_path(cpath)
+        return
+    }
+
+    t0 = async.now_ms()
+    if !link_args(cpath, binpath, &copt, ld, &extra_link, &mut args) {
+        sys.remove_path(cpath)
+        sys.exit(1)
+    }
+    progress("cc")
+    let ok = run_cc(&args)
+    if show_time {
+        fmt.eprintln("loam: cc {{secs(async.now_ms() - t0)}}s")
+    }
+    if !ok {
+        fmt.eprintln("loam: C compile failed (temp source: {{cpath}})")
+        sys.exit(1)
+    }
+    sys.remove_path(cpath)
+    fmt.println("loam: {{in_path}} -> {{binpath}}")
+    if run {
+        let argv = []string { runnable(binpath) }
+        if sys.run(&argv) != 0 {
+            sys.exit(1)
+        }
+    }
+}

@@ -2672,6 +2672,65 @@ fn ig_selfhost_codegen() {
     selfhost_checker_gate("codegen", "--c", "--dump-c", "codegen_c.c")
 }
 
+/** *The driver: `compiler/loamc.loam` built by the seed (stage 1) against */
+/** *the seed itself. Over every .loam file, `check` must print the same and */
+/** *exit the same, and where it passes `--emit-c -o` must write the same C. */
+/** *Every compile_pass fixture with a `.expected` is built by stage 1 and run. */
+/** *Then stage 1 builds itself (stage 2), and the C all three emit for the */
+/** *compiler must be the same bytes. */
+fn ig_selfhost_driver() {
+    mark("selfhost driver")
+    let tmpl = tmpf("selfhost_driver.XXXXXX")
+    let d = trim(sys.exec("mkdir -p {{shq(TMP)}} && mktemp -d {{shq(tmpl)}}"))
+    if sys.exec_status() != 0 || d.len == 0 {
+        bad("selfhost driver (mktemp)", d)
+        return
+    }
+    let stage1 = "{{d}}/loamc1"
+    let compiler = "{{ROOT}}/packages/loam/compiler/loamc.loam"
+    let o = sys.exec("{{shq(LOAMC)}} {{shq(compiler)}} -o {{shq(stage1)}} 2>&1")
+    if sys.exec_status() != 0 {
+        sys.exec("rm -rf {{shq(d)}}")
+        bad("selfhost driver (build stage 1)", o)
+        return
+    }
+    // One case per call: `one <n> <file>` (check, then emit-c) or `run <n>
+    // <file>` (build and run against .expected). Prints the case on a mismatch.
+    let script = "{{d}}/case.sh"
+    sys.write_file(script, cat(
+        "set -u\nC={{shq(LOAMC)}}\nS={{shq(stage1)}}\nw={{shq(d)}}/w$2\nmkdir -p \"$w\"\nf=$3\n",
+        cat("if [ \"$1\" = one ]; then\n",
+            cat("  \"$C\" check \"$f\" >\"$w/a\" 2>&1; echo \"exit $?\" >>\"$w/a\"\n  \"$S\" check \"$f\" >\"$w/b\" 2>&1; echo \"exit $?\" >>\"$w/b\"\n",
+                cat("  if ! cmp -s \"$w/a\" \"$w/b\"; then echo \"check $f\"; rm -rf \"$w\"; exit 0; fi\n",
+                    cat("  if [ \"$(tail -n 1 \"$w/a\")\" = 'exit 0' ]; then\n",
+                        cat("    \"$C\" --emit-c \"$f\" -o \"$w/out.c\" >\"$w/a\" 2>&1; echo \"exit $?\" >>\"$w/a\"; mv \"$w/out.c\" \"$w/c0\" 2>/dev/null\n",
+                            cat("    \"$S\" --emit-c \"$f\" -o \"$w/out.c\" >\"$w/b\" 2>&1; echo \"exit $?\" >>\"$w/b\"\n",
+                                cat("    cmp -s \"$w/a\" \"$w/b\" && cmp -s \"$w/c0\" \"$w/out.c\" || echo \"emit-c $f\"\n  fi\nelse\n",
+                                    cat("  if ! ZEUS_HEADLESS=1 \"$S\" \"$f\" -o \"$w/bin\" >\"$w/a\" 2>&1; then echo \"build $f\"; cat \"$w/a\";\n",
+                                        "  elif ! \"$w/bin\" </dev/null 2>/dev/null | cmp -s - \"${f%.loam}.expected\"; then echo \"run $f\"; fi\nfi\nrm -rf \"$w\"\n"))))))))))
+    let find_all = "find packages examples nob.loam -name '*.loam' -not -path '*/tmp/*' -not -path '*/build/*' -not -path '*/node_modules/*'"
+    let cores = int_of(sys.exec("sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null"))
+    let par = if cores > 0 { cores } else { 4 }
+    let checks = sys.exec("cd {{shq(ROOT)}} && export LOAM_HOME={{shq(ROOT)}} && {{find_all}} | sort | awk '{print \"one\", NR, $0}' | xargs -P {{par}} -n 3 sh {{shq(script)}} 2>&1")
+    let n_files = trim(sys.exec("cd {{shq(ROOT)}} && {{find_all}} | wc -l"))
+    let runs = sys.exec("cd {{shq(ROOT)}} && export LOAM_HOME={{shq(ROOT)}} && ls packages/loam/tests/compile_pass/*.expected | sed 's/[.]expected$/.loam/' | awk '{print \"run\", NR, $0}' | xargs -P {{par}} -n 3 sh {{shq(script)}} 2>&1")
+    let n_runs = trim(sys.exec("cd {{shq(ROOT)}} && ls packages/loam/tests/compile_pass/*.expected | wc -l"))
+    // Stage 1 builds itself; the C for the compiler from seed, stage 1 and
+    // stage 2 must be the same bytes.
+    let stage2 = "{{d}}/loamc2"
+    let fixed = sys.exec(cat("cd {{shq(ROOT)}} && export LOAM_HOME={{shq(ROOT)}} && {{shq(stage1)}} {{shq(compiler)}} -o {{shq(stage2)}} >/dev/null 2>&1 || echo 'stage 2 build failed'; ",
+        cat("{{shq(LOAMC)}} --emit-c {{shq(compiler)}} -o {{shq(d)}}/s0.c >/dev/null && {{shq(stage1)}} --emit-c {{shq(compiler)}} -o {{shq(d)}}/s1.c >/dev/null && ",
+            "{{shq(stage2)}} --emit-c {{shq(compiler)}} -o {{shq(d)}}/s2.c >/dev/null && cmp -s {{shq(d)}}/s0.c {{shq(d)}}/s1.c && cmp -s {{shq(d)}}/s1.c {{shq(d)}}/s2.c || echo 'stage 0/1/2 C differs'")))
+    sys.exec("rm -rf {{shq(d)}}")
+    let diffs = trim(cat(checks, cat(runs, fixed)))
+    if diffs.len > 0 {
+        bad("selfhost driver (differs from driver.c)", "")
+        fmt.println(diffs)
+        return
+    }
+    ok("selfhost driver matches driver.c on {{n_files}} files, runs {{n_runs}} fixtures, stage 1 = stage 2")
+}
+
 fn ig_selfhost_lex() {
     selfhost_diff("lexer", "tokdump", "--dump-tokens", "lexer.c")
 }
@@ -2870,6 +2929,8 @@ fn stanza_dispatch(name: string) -> bool {
         ig_selfhost_parse()
     } else if name == "selfhost_load" {
         ig_selfhost_load()
+    } else if name == "selfhost_driver" {
+        ig_selfhost_driver()
     } else if name == "selfhost_typecheck" {
         ig_selfhost_typecheck()
     } else if name == "selfhost_check" {
@@ -2930,6 +2991,7 @@ fn stanza_names() -> []string {
     push(v, "selfhost_lex")
     push(v, "selfhost_parse")
     push(v, "selfhost_load")
+    push(v, "selfhost_driver")
     push(v, "selfhost_typecheck")
     push(v, "selfhost_check")
     push(v, "selfhost_ir")
@@ -3004,7 +3066,7 @@ fn integration() -> int {
 /** *app. The wasm module's entry points, the server/client split, and the */
 /** *language server all sit next to the compiler. */
 fn host_stanzas() -> []string {
-    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "api_freeze", "modules", "selfhost_lex", "selfhost_parse", "selfhost_load", "selfhost_typecheck", "selfhost_check", "selfhost_ir", "selfhost_dce", "selfhost_codegen", "wasm_float" }
+    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "api_freeze", "modules", "selfhost_lex", "selfhost_parse", "selfhost_load", "selfhost_typecheck", "selfhost_check", "selfhost_ir", "selfhost_dce", "selfhost_codegen", "selfhost_driver", "wasm_float" }
 }
 
 /** *One after another, for an `--isolated` run; a batched run pools them. */

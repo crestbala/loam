@@ -78,7 +78,10 @@ the last owner drops (vectors) or interned for the process (handlers).
 
 Loam has no lifetime parameters. References are **second-class** instead:
 they live in parameters, locals, and return values, never in storage that
-could outlive their source. Four rules, all checked at compile time:
+could outlive their source. `&` and `&mut` take the address of a place: a
+variable or a global, through fields, indexes and `*` (`&x`, `&s.f`,
+`&v[i]`, `&*p`). A temporary (`&f()`, `&[]int { 1 }`) is an error; bind it
+with `let` and borrow the name. Four rules, all checked at compile time:
 
 1. A function cannot return a reference into its own frame: a local, a
    by-value parameter, a local `Box`, or a temporary, by any path (`&x`,

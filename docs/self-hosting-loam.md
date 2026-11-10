@@ -102,8 +102,11 @@ Phase 6 (typecheck in Loam) is done and diffed against `typecheck.c`;
 phase 7 (borrowck, threadcheck, boundscheck) is done and diffed through
 `--dump-checked`. Phase 8 (IR lowering) and phase 9 (dead-code elimination
 and the C emitter) are done: from a module list, the Loam compiler now writes
-the same C translation unit as `loamc`, byte for byte. Next: the driver
-(module loading, package resolution, `cc`), then the fixed point.
+the same C translation unit as `loamc`, byte for byte. Phase 10a (the module
+loader) and 10b (the driver: `compiler/loamc.loam`, check, emit C, `cc`) are
+done: the Loam compiler builds itself, and the C it emits for itself matches
+the seed's byte for byte. Next: 10c (speed and memory of the whole pipeline,
+the build cache), then the fixed point in CI (§3).
 
 ---
 
@@ -814,6 +817,42 @@ beyond what the checklist requires.
           generated C: the load goes from 55 to 51 ms, the whole `tcdump --c`
           run from 505 to 497 ms (C's `--dump-c`: 540 ms), output unchanged.
           Worth it only if 10c finds the same cost in the IR and type arenas.
+      - 10b done. `compiler/loamc.loam` is the whole compiler in one process:
+        load, check, emit C, and build with the C compiler. It takes
+        `driver.c`'s command line (`build`, `check`, `-o`, `--emit-c` / `-S`,
+        `--run`, `--int64-compat`, `--[no-]string-owns`, `-h`) and gives the
+        same stdout, stderr, exit status and C. Native builds as the seed does
+        them: the `-O1` (or headless / dev `-O0` with FastISel on arm64 macOS)
+        flags, runtime objects cached in `<runtime>/.obj/` by mtime, the plain,
+        http / net, maya, raygui and Zeus (Cocoa, X11, headless) link lines,
+        `.dylib` images, the app's `runtime/<stem>_runtime.c`, `#![c_source]` /
+        `#![c_link]`, `LOAM_LINK_EXTRA`, `LOAM_PROGRESS`, `LOAM_TIME`.
+      - The C compiler is `CC` (split on spaces), else the first of `cc`,
+        `clang`, `gcc` on `PATH`, run through `sys.spawn` with an argument
+        list: no shell, so nothing in a path is interpreted, and the same code
+        runs on Windows. Codegen keeps the unit whole and writes it once
+        (`codegen.SINK`); no file-append API was needed. One std addition,
+        `sys.arch()`, for the arm64-only flag.
+      - Refused by name until after the fixed point (the seed keeps them):
+        wasm / iOS / Android, `test`, `--emit-ir`, `--cost`, `--dump-*`, and
+        the `LOAM_BATCH` / `LOAM_SHARD` / `LOAM_SERVER_SPLIT` / `LOAM_HOST` /
+        `LOAM_NO_DCE` builds. The `.fresh` build cache moves to 10c.
+      - The strict `selfhost_driver` stanza: over all 972 `.loam` files,
+        `check` prints and exits the same as the seed, and where it passes
+        `--emit-c -o` writes the same C; the 34 `compile_pass` fixtures with a
+        `.expected` are built by the Loam driver and run. Then the Loam
+        compiler built by the seed (stage 1) builds itself (stage 2), and the
+        C that seed, stage 1 and stage 2 emit for the compiler (3.9 MB) is the
+        same bytes.
+      - Building the compiler itself (`LOAM_TIME`): check 0.10 s vs the
+        seed's 0.08 s, codegen 0.08 s vs 0.12 s, `cc` 14.5 s either way. The
+        check gap (loading plus the passes in one process) is 10c's to close.
+      - The port surfaced a compiler crash: `&` of a temporary
+        (`count(&[]string { "a" })`, `&f()`) passed typecheck and then
+        stopped IR lowering with an internal error, since `ir.c` will not hand
+        out the address of a temporary. Both checkers now reject it: "cannot
+        borrow a temporary; bind it to a name with `let` first"
+        (`compile_fail/borrow_temporary.loam`). No program in the repo used it.
 - [ ] Compiler itself uses only safe Loam (arenas + integer indices; §2.7)
 
 ### Fixed-point and tooling

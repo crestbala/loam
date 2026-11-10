@@ -1423,6 +1423,20 @@ static inline loam_str loam_sys_os(void) {
 #endif
 }
 
+/** The CPU: "x86_64" | "aarch64" | "wasm32" | "other". The driver passes
+ *  arm64-only flags to the C compiler by it. */
+static inline loam_str loam_sys_arch(void) {
+#if defined(__wasm32__)
+    return (loam_str){"wasm32", 6};
+#elif defined(__x86_64__) || defined(_M_X64)
+    return (loam_str){"x86_64", 6};
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    return (loam_str){"aarch64", 7};
+#else
+    return (loam_str){"other", 5};
+#endif
+}
+
 /** Compile target: "wasm" | "ios" | "android" | "native". Used by
  *  `http.client()` to pick a default RPC address. */
 static inline loam_str loam_sys_target(void) {

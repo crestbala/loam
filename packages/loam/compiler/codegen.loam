@@ -13,7 +13,8 @@
 //
 // Every fn body comes from the IR: ir.loam lowers everything typecheck
 // accepts, so a fn it did not lower is an internal error. The output is built
-// in `OUT` and written to stdout in 64 KB pieces.
+// in `OUT` and written to stdout in 64 KB pieces, or, when `SINK` names a file,
+// kept whole and written there once at the end.
 
 import "std:buf"
 import "std:conv"
@@ -34,6 +35,10 @@ const NO_TYPE: int = -1
 // --- output ------------------------------------------------------------------------
 
 let mut OUT: []u8 = []u8 {}
+
+/** *Where `emit_c` writes: `""` is stdout, in pieces; a path gets the whole */
+/** *unit in one write when it is done. */
+let mut SINK: string = ""
 
 fn w(s: string) {
     buf.push_str(&mut OUT, s)
@@ -59,7 +64,7 @@ fn flush_big() {
 }
 
 fn flush() {
-    if OUT.len > 0 {
+    if SINK.len == 0 && OUT.len > 0 {
         fmt.write(buf.to_string(&OUT))
         OUT = []u8 {}
     }
@@ -73,6 +78,7 @@ fn indent(n: int) {
 
 fn fatal(msg: string) {
     flush()
+    OUT = []u8 {}
     fmt.eprintln("loam: {{msg}}")
     sys.exit(1)
 }
@@ -3022,8 +3028,8 @@ fn copy_runtime() {
     w("#include <stdio.h>\n#include <stdint.h>\n#include <stdlib.h>\n#include <stdbool.h>\n\n")
 }
 
-/** *Write the whole C translation unit to stdout. Dead-code elimination and */
-/** *IR lowering run first. */
+/** *Write the whole C translation unit to stdout, or to `SINK`. Dead-code */
+/** *elimination and IR lowering run first. */
 fn emit_c() {
     dce.run()
     ir.lower_modules()
@@ -3290,4 +3296,10 @@ fn emit_c() {
     }
     lit_template_defs()
     flush()
+    if SINK.len > 0 {
+        if sys.write_bytes(SINK, &OUT) != 0 {
+            fatal("cannot write '{{SINK}}'")
+        }
+        OUT = []u8 {}
+    }
 }

@@ -8,6 +8,9 @@ import "std:result"
 /** *`"android"`, `"wasm"`, or `"other"`. */
 fn os() -> string {}
 
+/** *The CPU: `"x86_64"`, `"aarch64"`, `"wasm32"`, or `"other"`. */
+fn arch() -> string {}
+
 /** *Compile `--target`: `"wasm"`, `"ios"`, `"android"`, or `"native"`. */
 fn target() -> string {}
 
