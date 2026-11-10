@@ -12,8 +12,13 @@
 # (tools/win-run.sh), then builds the Loam compiler from its C and checks the
 # fixed point there: it emits the same C as Linux for itself and every
 # fixture, builds itself, and builds and runs the fixtures through its own
-# driver (tools/win-selfhost.sh). Linux checks the same fixed point in the
-# suite (`selfhost_driver`). See docs/platforms.md.
+# driver (tools/win-selfhost.sh). Linux checks the same fixed point
+# (`selfhost_driver`) in the selfhost job. See docs/platforms.md.
+#
+# `./nob.sh test` leaves out the self-hosting stanzas (the Loam compiler against
+# the C one, and the fixed point): they are nearly all of a full run's time. The
+# selfhost job runs each on its own runner, beside the test job, so the
+# workflow takes about as long as the slowest stanza, not their sum.
 
 name: selfhost
 
@@ -63,6 +68,31 @@ jobs:
           name: win-bundle
           path: out/win-bundle
           retention-days: 3
+
+  selfhost:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'feat/self-hosting'
+    strategy:
+      fail-fast: false
+      matrix:
+        stanza: [selfhost_lex, selfhost_parse, selfhost_load, selfhost_passes, selfhost_driver]
+        os: [ubuntu-24.04]
+        include:
+          # The fixed point on aarch64 too.
+          - stanza: selfhost_driver
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libx11-dev pkg-config
+
+      - name: Build the seed compiler and tools
+        run: ./nob.sh
+
+      - name: ${{ matrix.stanza }}
+        run: ./nob.sh selfhost ${{ matrix.stanza }}
 
   windows:
     needs: linux
