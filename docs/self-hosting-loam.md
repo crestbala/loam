@@ -1011,7 +1011,11 @@ five verdicts.
       The same run found three fixtures (`http_stream`, `zeus_stream`,
       `zeus_async_rpc`) that re-ran `tests/tmp/<name>` as their server child.
       That file does not exist when the fixture runs inside a batch binary.
-      They re-run `sys.arg(0)` now.
+      They re-run `sys.arg(0)` now. Locally they still failed batched: the
+      zeus batch is a shard build, and `loam_rt.h` kept `argv` (and the exec
+      status, spawn, future and channel tables) as `static`, one copy per
+      unit, so `sys.arg(0)` read "" outside the unit holding `main`. That
+      state now has one definition, in the unit that owns the trap state.
 
 A clone has `packages/tooling/tree-sitter-loam` as an empty directory: the
 gitlink has no `.gitmodules` entry, and the grammar repo has no remote. The

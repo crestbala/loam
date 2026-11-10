@@ -93,6 +93,22 @@ extern char loam_jmp_msg[512];
 void loam_jmp_set_msg(const char *msg, int64_t len);
 #endif
 
+/* The rest of the runtime's process-wide state (the command line, the last
+   `sys.exec` status, the spawn, future and channel tables) has one definition
+   too, in the same unit as the trap state. A shard build compiles the program
+   as many translation units, and each would otherwise get its own copy of a
+   `static`: `sys.arg(0)` read "" outside the unit holding `main`, and a spawn
+   handle or a future made in one unit did not exist in the next.
+   `LOAM_RT_STATE` declares, and `LOAM_RT_INIT(v)` gives the initial value only
+   where the storage is defined. */
+#ifdef LOAM_RT_DEFINE_JMP
+#define LOAM_RT_STATE
+#define LOAM_RT_INIT(...) = __VA_ARGS__
+#else
+#define LOAM_RT_STATE extern
+#define LOAM_RT_INIT(...)
+#endif
+
 typedef struct {
     const char *ptr;
     int64_t len;
@@ -1601,13 +1617,13 @@ static inline int64_t loam_sys_watch_close(int64_t fd) {
 #include <sys/wait.h>
 #endif
 
-static int loam_sys_last_status = 1;
+LOAM_RT_STATE int loam_sys_last_status LOAM_RT_INIT(1);
 
 /* The process's command line, handed over by the generated entry before any
    other statement runs (`emit_main_args` in codegen_c.c). Zero on iOS and
    Android, where the host owns `main` and passes nothing. */
-static int loam_argc;
-static char **loam_argv;
+LOAM_RT_STATE int loam_argc;
+LOAM_RT_STATE char **loam_argv;
 
 static inline void loam_argv_set(int argc, char **argv) {
     loam_argc = argc;
@@ -1735,7 +1751,7 @@ void loam_host_run(loam_str path);
 /* Why the last `sys.read_file` came back empty, or "" when it succeeded: an
    empty file and a missing one read the same, and `sys.read` tells them apart
    through `sys.io_error()`. A static message, never freed. */
-static const char *loam_sys_io_err = "";
+LOAM_RT_STATE const char *loam_sys_io_err LOAM_RT_INIT("");
 
 static inline loam_str loam_sys_read_file(loam_str path) {
     char pbuf[4096];
@@ -2056,13 +2072,13 @@ static inline loam_str loam_sys_cwd(void) {
    -1 = could not start. */
 #define LOAM_SPAWN_MAX 256
 #ifdef _WIN32
-static intptr_t loam_spawn_tab[LOAM_SPAWN_MAX];
+LOAM_RT_STATE intptr_t loam_spawn_tab[LOAM_SPAWN_MAX];
 #else
 #include <spawn.h>
 extern char **environ;
-static pid_t loam_spawn_tab[LOAM_SPAWN_MAX];
+LOAM_RT_STATE pid_t loam_spawn_tab[LOAM_SPAWN_MAX];
 #endif
-static unsigned char loam_spawn_live[LOAM_SPAWN_MAX];
+LOAM_RT_STATE unsigned char loam_spawn_live[LOAM_SPAWN_MAX];
 
 static char *loam_cstr_dup(loam_str s) {
     char *p = (char *)malloc((size_t)(s.len > 0 ? s.len : 0) + 1);
@@ -2328,9 +2344,9 @@ typedef struct {
     int64_t ready;
 } loam_fut_slot;
 
-static loam_fut_slot *loam_fut_slots;
-static size_t loam_fut_n;
-static size_t loam_fut_cap;
+LOAM_RT_STATE loam_fut_slot *loam_fut_slots;
+LOAM_RT_STATE size_t loam_fut_n;
+LOAM_RT_STATE size_t loam_fut_cap;
 
 static inline int64_t loam_fut_push(const void *val, size_t sz) {
     loam_fut_slot s;
@@ -2421,8 +2437,8 @@ static inline void loam_async_sleep(int64_t ms) {
 #ifndef __wasm32__
 #include <pthread.h>
 
-static int64_t loam_thread_live;            /* detached workers still running */
-static pthread_mutex_t loam_thread_mtx = PTHREAD_MUTEX_INITIALIZER;
+LOAM_RT_STATE int64_t loam_thread_live;          /* detached workers still running */
+LOAM_RT_STATE pthread_mutex_t loam_thread_mtx LOAM_RT_INIT(PTHREAD_MUTEX_INITIALIZER);
 
 typedef struct {
     unsigned char *buf;     /* cap * esz ring */
@@ -2434,9 +2450,9 @@ typedef struct {
     pthread_cond_t has_data, has_space;
 } loam_ch;
 
-static loam_ch **loam_chs;
-static size_t loam_ch_n, loam_ch_cap;
-static pthread_mutex_t loam_ch_tab_mtx = PTHREAD_MUTEX_INITIALIZER;
+LOAM_RT_STATE loam_ch **loam_chs;
+LOAM_RT_STATE size_t loam_ch_n, loam_ch_cap;
+LOAM_RT_STATE pthread_mutex_t loam_ch_tab_mtx LOAM_RT_INIT(PTHREAD_MUTEX_INITIALIZER);
 
 static int64_t loam_ch_alloc(int64_t cap, size_t esz) {
     loam_ch *c;
