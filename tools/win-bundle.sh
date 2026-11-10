@@ -3,7 +3,8 @@
 # fixtures on Windows, where `loamc` itself does not run (see
 # docs/platforms.md): for each fixture, its generated C (`<name>.c`), the
 # extra C it links (`<name>.deps`, lines `dir|path|flags` or `link||flags`),
-# and its `.expected` output when it has one.
+# and its `.expected` output when it has one; and the Loam compiler's own C
+# (`loamc.c.txt`, not `.c`, so win-run.sh does not take it for a fixture).
 #
 #   tools/win-bundle.sh OUTDIR
 #
@@ -26,6 +27,8 @@ for f in packages/loam/tests/compile_pass/*.loam; do
     [ -f "packages/loam/tests/compile_pass/$b.expected" ] && cp "packages/loam/tests/compile_pass/$b.expected" "$OUT/"
     n=$((n+1))
 done
-echo "win-bundle: $n fixtures in $OUT"
+# The Loam compiler's own C: tools/win-selfhost.sh builds stage 1 from it.
+bin/loamc packages/loam/compiler/loamc.loam --emit-c -o "$OUT/loamc.c.txt" >/dev/null
+echo "win-bundle: $n fixtures and the compiler's C in $OUT"
 [ -n "$gap" ] && echo "  left out (std:net has no Windows port):$gap"
 exit 0

@@ -42,20 +42,36 @@ fn parent_dir(p: string) -> string {
     return str.slice(p, 0, slash)
 }
 
-/** *The running binary, by `argv[0]`, through `PATH` when it has no `/`. */
+/** *What separates the entries of `PATH` and `LOAM_PATH`: `;` on Windows, */
+/** *where a drive path holds a `:`. */
+fn list_sep() -> string {
+    return if sys.os() == "windows" { ";" } else { ":" }
+}
+
+/** *The running binary, by `argv[0]`, through `PATH` when it names no */
+/** *directory. On Windows the file may be `argv[0]` plus `.exe`. */
 fn exe_path() -> string {
     let a0 = sys.arg(0)
-    if str.index_of_byte(a0, '/') >= 0 {
-        return sys.realpath(a0)
+    let exts = if sys.os() == "windows" { []string { "", ".exe" } } else { []string { "" } }
+    if str.index_of_byte(a0, '/') >= 0 || str.index_of_byte(a0, '\\') >= 0 {
+        for e in 0..exts.len {
+            let cand = "{{a0}}{{exts[e]}}"
+            if is_file(cand) {
+                return sys.realpath(cand)
+            }
+        }
+        return ""
     }
-    let dirs = str.split(sys.env("PATH"), ":")
+    let dirs = str.split(sys.env("PATH"), list_sep())
     for i in 0..dirs.len {
         if dirs[i].len == 0 {
             continue
         }
-        let cand = "{{dirs[i]}}/{{a0}}"
-        if is_file(cand) {
-            return sys.realpath(cand)
+        for e in 0..exts.len {
+            let cand = "{{dirs[i]}}/{{a0}}{{exts[e]}}"
+            if is_file(cand) {
+                return sys.realpath(cand)
+            }
         }
     }
     return ""
@@ -90,7 +106,7 @@ fn default_roots() -> string {
     let ps = []string { "zeus", "zeus-components", "http", "maya", "raygui", "sqlite", "crypto" }
     let mut s = ""
     for i in 0..ps.len {
-        let sep = if i > 0 { ":" } else { "" }
+        let sep = if i > 0 { list_sep() } else { "" }
         s = "{{s}}{{sep}}{{h}}/packages/{{ps[i]}}"
     }
     return s
@@ -101,7 +117,7 @@ fn search_path() -> string {
     let env = sys.env("LOAM_PATH")
     let dflt = default_roots()
     if env.len > 0 && dflt.len > 0 {
-        return "{{env}}:{{dflt}}"
+        return "{{env}}{{list_sep()}}{{dflt}}"
     }
     if env.len > 0 {
         return env
@@ -109,9 +125,9 @@ fn search_path() -> string {
     return dflt
 }
 
-/** *The non-empty entries of a `:`-separated list. */
+/** *The non-empty entries of a `list_sep`-separated list. */
 fn roots_of(list: string) -> []string {
-    let parts = str.split(list, ":")
+    let parts = str.split(list, list_sep())
     let mut out = []string {}
     for i in 0..parts.len {
         if parts[i].len > 0 {
@@ -147,7 +163,7 @@ fn path_under_flex(path: string, dir: string) -> bool {
     if path_under(path, dir) {
         return true
     }
-    if path.len == 0 || dir.len == 0 || path[0] == '/' || dir[0] != '/' {
+    if path.len == 0 || dir.len == 0 || sys.is_abs(path) || !sys.is_abs(dir) {
         return false
     }
     let mut at = 0
@@ -293,7 +309,7 @@ fn join2(a: string, b: string) -> string {
     if b.len == 0 {
         return ""
     }
-    if b[0] == '/' || a.len == 0 || a == "." {
+    if sys.is_abs(b) || a.len == 0 || a == "." {
         return b
     }
     return "{{a}}/{{b}}"
@@ -994,7 +1010,7 @@ fn resolve_import(importer: string, im: int) -> string {
         }
         return normalize_path(p)
     }
-    let path = if spec[0] == '/' { spec } else { "{{dir_of(importer)}}/{{spec}}" }
+    let path = if sys.is_abs(spec) { spec } else { "{{dir_of(importer)}}/{{spec}}" }
     if !is_file(path) {
         error_at(loc, "cannot open imported file '{{path}}'")
         return ""

@@ -120,14 +120,15 @@ fn c_len(s: string) -> int {
     return s.len
 }
 
-/** *Path safe to embed: an absolute path contributes its final component. */
+/** *Path safe to embed: an absolute path (`/x`, or `C:/x` on Windows) */
+/** *contributes its final component. */
 fn public_file(file: string) -> string {
     if file.len == 0 {
         return "loam"
     }
-    if file[0] == '/' {
+    if sys.is_abs(file) {
         let mut slash = file.len - 1
-        while slash >= 0 && file[slash] != '/' {
+        while slash >= 0 && file[slash] != '/' && file[slash] != '\\' {
             slash = slash - 1
         }
         if slash + 1 < file.len {

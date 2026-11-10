@@ -1,0 +1,4 @@
+# Generated C must be the same bytes on every OS, and the runtime header and
+# .loam sources are pasted into it or read for positions: check text files out
+# with LF everywhere, Windows included (git would otherwise write CRLF there).
+* text=auto eol=lf
