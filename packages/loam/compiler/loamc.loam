@@ -113,13 +113,27 @@ fn hex16(h: u64) -> string {
     return "{{pad}}{{s}}"
 }
 
+/** *Where the temporary C goes: `TMPDIR` or `/tmp`; on Windows `TEMP` or */
+/** *`TMP` (an MSYS-style `/tmp` means nothing to a native program), else */
+/** *the current directory. */
 fn tmp_dir() -> string {
-    let mut d = sys.env("TMPDIR")
-    if d.len == 0 && sys.os() == "windows" {
-        d = sys.env("TEMP")
-    }
-    if d.len == 0 {
-        d = "/tmp"
+    let mut d = ""
+    if sys.os() == "windows" {
+        let names = []string { "TEMP", "TMP" }
+        for i in 0..names.len {
+            let v = sys.env(names[i])
+            if d.len == 0 && sys.is_abs(v) && v[0] != '/' {
+                d = v
+            }
+        }
+        if d.len == 0 {
+            d = "."
+        }
+    } else {
+        d = sys.env("TMPDIR")
+        if d.len == 0 {
+            d = "/tmp"
+        }
     }
     while d.len > 1 && d[d.len - 1] == '/' {
         d = str.slice(d, 0, d.len - 1)
@@ -137,12 +151,17 @@ fn ensure_parent_dir(file: string) -> bool {
     return d == "." || sys.is_dir(d) == 1 || sys.mkdir(d) == 0
 }
 
-/** *A command as `./name` when it has no directory, as a shell would need. */
+/** *The built program to start: `./name` when it has no directory, and on */
+/** *Windows with the `.exe` the C compiler added. */
 fn runnable(path: string) -> string {
-    if sys.is_abs(path) || str.starts_with(path, "./") {
-        return path
+    let mut p = path
+    if sys.os() == "windows" && !str.ends_with(p, ".exe") && sys.exists("{{p}}.exe") == 1 {
+        p = "{{p}}.exe"
     }
-    return "./{{path}}"
+    if sys.is_abs(p) || str.starts_with(p, "./") {
+        return p
+    }
+    return "./{{p}}"
 }
 
 // --- the C compiler ----------------------------------------------------------------

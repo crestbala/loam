@@ -6,10 +6,14 @@
 # without starting a runner) and by hand. Standard GitHub-hosted runners are free
 # for public repositories.
 #
-# `loamc` does not run on Windows yet (the C seed's driver is POSIX; Windows will
-# bootstrap from the Loam compiler's committed C), so the Linux job emits each
-# fixture's C with tools/win-bundle.sh and the Windows job builds and runs it
-# with MinGW-w64 gcc (tools/win-run.sh). See docs/platforms.md.
+# The C seed's driver is POSIX, so Windows bootstraps from the Loam compiler's
+# C: the Linux job emits it and each fixture's C (tools/win-bundle.sh); the
+# Windows job builds and runs the fixtures with MinGW-w64 gcc
+# (tools/win-run.sh), then builds the Loam compiler from its C and checks the
+# fixed point there: it emits the same C as Linux for itself and every
+# fixture, builds itself, and builds and runs the fixtures through its own
+# driver (tools/win-selfhost.sh). Linux checks the same fixed point in the
+# suite (`selfhost_driver`). See docs/platforms.md.
 
 name: selfhost
 
@@ -83,3 +87,6 @@ jobs:
 
       - name: Build and run the fixtures natively
         run: bash tools/win-run.sh win-bundle
+
+      - name: Bootstrap the Loam compiler from its C; fixed point
+        run: bash tools/win-selfhost.sh win-bundle

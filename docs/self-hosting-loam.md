@@ -441,7 +441,10 @@ Needed (can land after the fixed-point, but design the hooks early):
       stage 1 builds itself (stage 2); stage 1 and stage 2 must emit
       byte-identical C for the compiler and for every test in `compile_pass`
       / `golden`. Run the check on at least one Linux and one Windows CI
-      runner.
+      runner. *Done in `nob` (`selfhost_driver`):* seed and stage 1 emit the
+      same C for every `.loam` file in the repo, and stage 1 and stage 2 the
+      same C for the compiler, so stage 2 is the same program as stage 1.
+      CI: see Windows CI below.
 - [ ] **Deterministic output**: no pointer-address ordering, no hash-order
       iteration in emitted C (iterate maps by insertion order or sorted keys).
 - [ ] **Differential testing**: for each `tests/compile_pass`, `golden`, and
@@ -454,10 +457,20 @@ Needed (can land after the fixed-point, but design the hooks early):
       `fmt.c` for after the fixed point.
 - [ ] **Windows CI**: at minimum a GitHub Actions or equivalent job that
       builds the C seed, runs the self-host stages, and executes the
-      language tests. *Partly done:* `selfhost.yml` runs the suite on Linux
-      and the fixtures natively on Windows (from C emitted on Linux, since
-      the seed is POSIX-only by design); the self-host stages join it once
-      they exist.
+      language tests. *Wired, not yet run:* `selfhost.yml` runs the suite
+      on Linux (x86_64, aarch64; it includes `selfhost_driver`, the fixed
+      point) and the fixtures natively on Windows from C emitted on Linux.
+      `tools/win-selfhost.sh` then builds the Loam compiler on Windows from
+      its Linux C with MinGW gcc, checks that it emits the same C as Linux
+      for itself and every bundled fixture, builds itself through its own
+      driver (stage 2, same C again), and builds and runs every fixture. It
+      cross-compiles and links for x86_64 and aarch64 Windows (`zig cc`); the
+      box is ticked once the job has run green. For this the loader splits
+      `PATH` / `LOAM_PATH` on `;` on Windows, absolute-path tests use
+      `sys.is_abs` (so `C:/…` std paths are cut to their file name in
+      `#line`, as `/…` ones are), and `.gitattributes` checks text out with
+      LF everywhere: the runtime header is pasted into the C, and a CRLF
+      checkout would change its bytes.
 
 ---
 
