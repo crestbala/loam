@@ -810,7 +810,10 @@ beyond what the checklist requires.
         - Left out: the arenas double from empty, and `realloc` copies them
           (~4 ms of the 38). Reserving from the source size would remove it,
           but needs a `reserve` builtin, new language surface the loader does
-          not need to beat C.
+          not need to beat C. Checked by reserving `NODES` and `INFO` in the
+          generated C: the load goes from 55 to 51 ms, the whole `tcdump --c`
+          run from 505 to 497 ms (C's `--dump-c`: 540 ms), output unchanged.
+          Worth it only if 10c finds the same cost in the IR and type arenas.
 - [ ] Compiler itself uses only safe Loam (arenas + integer indices; §2.7)
 
 ### Fixed-point and tooling
