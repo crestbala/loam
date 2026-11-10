@@ -1085,7 +1085,7 @@ fn find_global_in(m: int, name: string) -> int {
 fn is_ffi_mod(name: string) -> bool {
     return name == "zeus" || name == "zeusbase" || name == "http" || name == "fmt" || name == "maya" ||
         name == "platform" || name == "sys" || name == "net" || name == "async" || name == "thread" ||
-        name == "buf" || name == "conv"
+        name == "buf" || name == "conv" || name == "str"
 }
 
 /** *Outside `LOAM_STD_DIR`, a bodyless fn is a C seam too. */

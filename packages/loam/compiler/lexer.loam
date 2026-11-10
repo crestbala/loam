@@ -119,14 +119,67 @@ fn at(l: &Lexer, i: int) -> int {
 
 /** *Step `n` bytes, tracking line and byte column. */
 fn advance(l: &mut Lexer, n: int) {
+    let len = l.src.len
     for k in 0..n {
-        if at(l, l.pos) == '\n' {
-            l.line = l.line + 1
+        if l.pos < len && l.src[l.pos] == '\n' {
+            l.line += 1
             l.col = 1
         } else {
-            l.col = l.col + 1
+            l.col += 1
         }
-        l.pos = l.pos + 1
+        l.pos += 1
+    }
+}
+
+/** *Byte classes for `skip_run`. None of them holds `\n`, so a run moves */
+/** *only the column. */
+enum Run {
+    Ident = 0,
+    Digit = 1,
+    XDigit = 2,
+    ToEol = 3,
+}
+
+fn in_run(c: int, run: int) -> bool {
+    switch run {
+        case Run.Ident:
+            return is_alpha(c) || is_digit(c) || c == '_'
+        case Run.Digit:
+            return is_digit(c)
+        case Run.XDigit:
+            return is_xdigit(c)
+        default:
+            return c != 0 && c != '\n'
+    }
+    return false
+}
+
+/** *Step over the bytes of class `run`: what `while ... { advance(l, 1) }` */
+/** *does, with one column update for the whole run. */
+fn skip_run(l: &mut Lexer, run: int) {
+    let n = l.src.len
+    let mut p = l.pos
+    while p < n && in_run(l.src[p], run) {
+        p += 1
+    }
+    l.col += p - l.pos
+    l.pos = p
+}
+
+/** *Step over whitespace (C `isspace`), counting lines. */
+fn skip_space(l: &mut Lexer) {
+    let n = l.src.len
+    while l.pos < n {
+        let c = l.src[l.pos]
+        if c == '\n' {
+            l.line += 1
+            l.col = 1
+        } else if c == ' ' || (c >= 9 && c <= 13) {
+            l.col += 1
+        } else {
+            return
+        }
+        l.pos += 1
     }
 }
 
@@ -180,28 +233,64 @@ fn word_is(l: &Lexer, start: int, len: int, kw: string) -> bool {
     return true
 }
 
+/** *The keyword the word `[start, start + len)` spells, or `Tok.Ident`. */
+/** *Dispatched on the first byte, so most identifiers fail on one or two */
+/** *compares instead of walking the whole keyword list. */
 fn keyword(l: &Lexer, start: int, len: int) -> int {
-    if word_is(l, start, len, "fn") { return Tok.Fn }
-    if word_is(l, start, len, "let") { return Tok.Let }
-    if word_is(l, start, len, "const") { return Tok.Const }
-    if word_is(l, start, len, "mut") { return Tok.Mut }
-    if word_is(l, start, len, "struct") { return Tok.Struct }
-    if word_is(l, start, len, "enum") { return Tok.Enum }
-    if word_is(l, start, len, "import") { return Tok.Import }
-    if word_is(l, start, len, "if") { return Tok.If }
-    if word_is(l, start, len, "else") { return Tok.Else }
-    if word_is(l, start, len, "for") { return Tok.For }
-    if word_is(l, start, len, "while") { return Tok.While }
-    if word_is(l, start, len, "in") { return Tok.In }
-    if word_is(l, start, len, "return") { return Tok.Return }
-    if word_is(l, start, len, "break") { return Tok.Break }
-    if word_is(l, start, len, "continue") { return Tok.Continue }
-    if word_is(l, start, len, "switch") { return Tok.Switch }
-    if word_is(l, start, len, "case") { return Tok.Case }
-    if word_is(l, start, len, "default") { return Tok.Default }
-    if word_is(l, start, len, "as") { return Tok.As }
-    if word_is(l, start, len, "true") { return Tok.True }
-    if word_is(l, start, len, "false") { return Tok.False }
+    if len < 2 || len > 8 {
+        return Tok.Ident
+    }
+    switch l.src[start] {
+        case 'a':
+            if word_is(l, start, len, "as") { return Tok.As }
+            return Tok.Ident
+        case 'b':
+            if word_is(l, start, len, "break") { return Tok.Break }
+            return Tok.Ident
+        case 'c':
+            if word_is(l, start, len, "const") { return Tok.Const }
+            if word_is(l, start, len, "continue") { return Tok.Continue }
+            if word_is(l, start, len, "case") { return Tok.Case }
+            return Tok.Ident
+        case 'd':
+            if word_is(l, start, len, "default") { return Tok.Default }
+            return Tok.Ident
+        case 'e':
+            if word_is(l, start, len, "enum") { return Tok.Enum }
+            if word_is(l, start, len, "else") { return Tok.Else }
+            return Tok.Ident
+        case 'f':
+            if word_is(l, start, len, "fn") { return Tok.Fn }
+            if word_is(l, start, len, "for") { return Tok.For }
+            if word_is(l, start, len, "false") { return Tok.False }
+            return Tok.Ident
+        case 'i':
+            if word_is(l, start, len, "if") { return Tok.If }
+            if word_is(l, start, len, "in") { return Tok.In }
+            if word_is(l, start, len, "import") { return Tok.Import }
+            return Tok.Ident
+        case 'l':
+            if word_is(l, start, len, "let") { return Tok.Let }
+            return Tok.Ident
+        case 'm':
+            if word_is(l, start, len, "mut") { return Tok.Mut }
+            return Tok.Ident
+        case 'r':
+            if word_is(l, start, len, "return") { return Tok.Return }
+            return Tok.Ident
+        case 's':
+            if word_is(l, start, len, "struct") { return Tok.Struct }
+            if word_is(l, start, len, "switch") { return Tok.Switch }
+            return Tok.Ident
+        case 't':
+            if word_is(l, start, len, "true") { return Tok.True }
+            return Tok.Ident
+        case 'w':
+            if word_is(l, start, len, "while") { return Tok.While }
+            return Tok.Ident
+        default:
+            return Tok.Ident
+    }
     return Tok.Ident
 }
 
@@ -272,9 +361,7 @@ fn op1(c: int) -> int {
 /** *Skip whitespace and comments; the next token, or `Tok.Eof` at the end. */
 fn next(l: &mut Lexer) -> Token {
     while true {
-        while is_space(at(l, l.pos)) {
-            advance(l, 1)
-        }
+        skip_space(l)
         let p = l.pos
         if at(l, p) == '/' && at(l, p + 1) == '*' {
             // A doc is slash-star-star, then a star and the text. Three stars,
@@ -283,8 +370,19 @@ fn next(l: &mut Lexer) -> Token {
             let sl = l.line
             let sc = l.col
             advance(l, 2)
-            while at(l, l.pos) != 0 && !(at(l, l.pos) == '*' && at(l, l.pos + 1) == '/') {
-                advance(l, 1)
+            let n = l.src.len
+            while l.pos < n {
+                let b = l.src[l.pos]
+                if b == 0 || (b == '*' && at(l, l.pos + 1) == '/') {
+                    break
+                }
+                if b == '\n' {
+                    l.line += 1
+                    l.col = 1
+                } else {
+                    l.col += 1
+                }
+                l.pos += 1
             }
             let mut closed = false
             if at(l, l.pos) != 0 {
@@ -297,9 +395,7 @@ fn next(l: &mut Lexer) -> Token {
             continue
         }
         if at(l, p) == '/' && at(l, p + 1) == '/' {
-            while at(l, l.pos) != 0 && at(l, l.pos) != '\n' {
-                advance(l, 1)
-            }
+            skip_run(l, Run.ToEol)
             continue
         }
         break
@@ -314,9 +410,7 @@ fn next(l: &mut Lexer) -> Token {
     }
 
     if is_alpha(c) || c == '_' {
-        while is_alpha(at(l, l.pos)) || is_digit(at(l, l.pos)) || at(l, l.pos) == '_' {
-            advance(l, 1)
-        }
+        skip_run(l, Run.Ident)
         return make(l, keyword(l, start, l.pos - start), start, sl, sc)
     }
 
@@ -324,21 +418,15 @@ fn next(l: &mut Lexer) -> Token {
         let x = at(l, start + 1)
         if c == '0' && (x == 'x' || x == 'X') && is_xdigit(at(l, start + 2)) {
             advance(l, 2)
-            while is_xdigit(at(l, l.pos)) {
-                advance(l, 1)
-            }
+            skip_run(l, Run.XDigit)
             return make(l, Tok.Number, start, sl, sc)
         }
-        while is_digit(at(l, l.pos)) {
-            advance(l, 1)
-        }
+        skip_run(l, Run.Digit)
         let mut is_float = false
         if at(l, l.pos) == '.' && at(l, l.pos + 1) != '.' && is_digit(at(l, l.pos + 1)) {
             is_float = true
             advance(l, 1)
-            while is_digit(at(l, l.pos)) {
-                advance(l, 1)
-            }
+            skip_run(l, Run.Digit)
         }
         let e = at(l, l.pos)
         if e == 'e' || e == 'E' {
@@ -352,9 +440,7 @@ fn next(l: &mut Lexer) -> Token {
                 if at(l, l.pos) == '+' || at(l, l.pos) == '-' {
                     advance(l, 1)
                 }
-                while is_digit(at(l, l.pos)) {
-                    advance(l, 1)
-                }
+                skip_run(l, Run.Digit)
             }
         }
         if is_float {
@@ -382,11 +468,21 @@ fn next(l: &mut Lexer) -> Token {
 
     if c == '"' {
         advance(l, 1)
-        while at(l, l.pos) != 0 && at(l, l.pos) != '"' {
-            if at(l, l.pos) == '\\' && at(l, l.pos + 1) != 0 {
+        let n = l.src.len
+        while l.pos < n {
+            let b = l.src[l.pos]
+            if b == 0 || b == '"' {
+                break
+            }
+            if b == '\\' && at(l, l.pos + 1) != 0 {
                 advance(l, 2)
+            } else if b == '\n' {
+                l.line += 1
+                l.col = 1
+                l.pos += 1
             } else {
-                advance(l, 1)
+                l.col += 1
+                l.pos += 1
             }
         }
         if at(l, l.pos) == '"' {

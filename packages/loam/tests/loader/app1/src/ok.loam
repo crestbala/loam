@@ -1,0 +1,5 @@
+import "good"
+import "pkg:good"
+fn main() {
+    let x = good.hello()
+}

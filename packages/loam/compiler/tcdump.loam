@@ -26,6 +26,7 @@ import "threadcheck.loam"
 import "borrowck.loam"
 import "dce.loam"
 import "codegen.loam"
+import "loader.loam"
 import "ir.loam"
 import "irdump.loam"
 import "boundscheck.loam"
@@ -143,12 +144,33 @@ fn main() {
     let lower_ir = sys.argc() == 3 && sys.arg(1) == "--ir"
     let run_dce = sys.argc() == 3 && sys.arg(1) == "--dce"
     let emit_c = sys.argc() == 3 && sys.arg(1) == "--c"
+    let list_modules = sys.argc() == 3 && sys.arg(1) == "--modules"
     let run_later_passes = sys.argc() == 3 && (sys.arg(1) == "--checked" || lower_ir || run_dce || emit_c)
-    if sys.argc() != 2 && !run_later_passes {
-        fmt.eprintln("usage: tcdump [--checked | --ir | --dce | --c] modules.txt   (from loamc --dump-modules main.loam)")
+    if sys.argc() != 2 && !run_later_passes && !list_modules {
+        fmt.eprintln("usage: tcdump [--modules | --checked | --ir | --dce | --c] (main.loam | modules.txt)")
+        fmt.eprintln("  modules.txt: from loamc --dump-modules main.loam")
         sys.exit(2)
     }
-    let module_list_path = sys.arg(sys.argc() - 1)
+    let input = sys.arg(sys.argc() - 1)
+    // A source file is loaded by the Loam loader; a module list replays C's.
+    if str.ends_with(input, ".loam") || str.ends_with(input, ".loa") {
+        if !loader.load(input) {
+            dump.print_diags()
+            sys.exit(1)
+        }
+        if list_modules {
+            let mut lb = []u8 {}
+            loader.dump_modules(&mut lb)
+            fmt.write(buf.to_string(&lb))
+            sys.exit(0)
+        }
+        check_and_dump(run_later_passes, run_dce, lower_ir, emit_c)
+        return
+    }
+    if list_modules {
+        fail("--modules takes a .loam file")
+    }
+    let module_list_path = input
     let lr = sys.read(module_list_path)
     if lr.tag == ResultTag.Err {
         fail("cannot read {{module_list_path}}")
@@ -228,6 +250,12 @@ fn main() {
         }
     }
 
+    check_and_dump(run_later_passes, run_dce, lower_ir, emit_c)
+}
+
+/** *Typecheck the loaded modules, run the later passes if asked, and print */
+/** *what the mode asks for. */
+fn check_and_dump(run_later_passes: bool, run_dce: bool, lower_ir: bool, emit_c: bool) {
     types.types_init()
     let errors = typecheck.typecheck_modules()
     dump.print_diags()

@@ -250,8 +250,9 @@ static int read_workspace(const char *path, char **members, int max, int *nmem) 
                 char mem[512];
                 s = skip_ws(s);
                 if (*s == '"') {
-                    if (copy_quoted(&s, mem, sizeof mem) && *nmem < max)
-                        members[(*nmem)++] = strdup(mem);
+                    /* An unterminated quote ends the list: `s` would not move. */
+                    if (!copy_quoted(&s, mem, sizeof mem)) break;
+                    if (*nmem < max) members[(*nmem)++] = strdup(mem);
                     s = skip_ws(s);
                     if (*s == ',') s++;
                     continue;
@@ -600,26 +601,33 @@ static int parent_of(char *dir, size_t sz) {
     return 1;
 }
 
+/* In name order, not `readdir` order: when two vendored packages claim one
+   name the first wins, and which is first must not depend on the file system. */
 static void add_vendor(const char *appdir) {
     char vendor[1100];
     DIR *d;
     struct dirent *ent;
+    StrList names;
     snprintf(vendor, sizeof vendor, "%s/vendor", appdir);
     if (!is_dir(vendor)) return;
     d = opendir(vendor);
     if (!d) return;
-    while ((ent = readdir(d))) {
+    memset(&names, 0, sizeof names);
+    while ((ent = readdir(d)))
+        if (ent->d_name[0] != '.') sl_add(&names, ent->d_name);
+    closedir(d);
+    if (names.n > 1) qsort(names.items, (size_t)names.n, sizeof(char *), cmpstr);
+    for (int i = 0; i < names.n; i++) {
         char pkgdir[1200];
         char sum[32];
         int listed = 0;
-        if (ent->d_name[0] == '.') continue;
-        snprintf(pkgdir, sizeof pkgdir, "%s/%s", vendor, ent->d_name);
-        if (!is_dir(pkgdir)) continue;
+        snprintf(pkgdir, sizeof pkgdir, "%s/%s", vendor, names.items[i]);
         sum[0] = '\0';
-        if (!lock_sum(appdir, ent->d_name, sum, sizeof sum, &listed) || !listed) continue;
-        add_dir(pkgdir, 1, 1, sum);
+        if (is_dir(pkgdir) && lock_sum(appdir, names.items[i], sum, sizeof sum, &listed) && listed)
+            add_dir(pkgdir, 1, 1, sum);
+        free(names.items[i]);
     }
-    closedir(d);
+    free(names.items);
 }
 
 static void add_workspace_file(const char *toml, const char *dir) {

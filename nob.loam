@@ -2570,8 +2570,10 @@ fn selfhost_diff(what: string, tool: string, flag: string, ok_msg: string) {
     }
     let a = "{{d}}/out.c"
     let b = "{{d}}/out.loam"
+    // `LOAM_HOME`: the Loam loader finds std and the runtime from it (the
+    // tool is built into a scratch dir, not `bin/`).
     let script = cat(
-        "cd {{shq(ROOT)}} && n=0; bad=''; for f in $(find packages examples nob.loam -name '*.loam' ",
+        "cd {{shq(ROOT)}} && export LOAM_HOME={{shq(ROOT)}} && n=0; bad=''; for f in $(find packages examples nob.loam -name '*.loam' ",
         cat("-not -path '*/tmp/*' -not -path '*/build/*' -not -path '*/node_modules/*'); do n=$((n+1)); ",
             cat("{{shq(LOAMC)}} {{flag}} \"$f\" > {{shq(a)}} 2>&1; echo \"exit $?\" >> {{shq(a)}}; ",
                 cat("{{shq(exe)}} \"$f\" > {{shq(b)}} 2>&1; echo \"exit $?\" >> {{shq(b)}}; ",
@@ -2672,6 +2674,13 @@ fn ig_selfhost_codegen() {
 
 fn ig_selfhost_lex() {
     selfhost_diff("lexer", "tokdump", "--dump-tokens", "lexer.c")
+}
+
+/** *The module loader: `moddump` against `loamc --dump-modules` (module */
+/** *names, load ranks, std flags, paths, every import's resolution, and the */
+/** *load and parse diagnostics), with every .loam file as the entry. */
+fn ig_selfhost_load() {
+    selfhost_diff("loader", "moddump", "--dump-modules", "compile.c, pkgresolve.c")
 }
 
 /** *The parser: `astdump` against `loamc --dump-ast` (trees, diagnostics, and */
@@ -2859,6 +2868,8 @@ fn stanza_dispatch(name: string) -> bool {
         ig_selfhost_lex()
     } else if name == "selfhost_parse" {
         ig_selfhost_parse()
+    } else if name == "selfhost_load" {
+        ig_selfhost_load()
     } else if name == "selfhost_typecheck" {
         ig_selfhost_typecheck()
     } else if name == "selfhost_check" {
@@ -2918,6 +2929,7 @@ fn stanza_names() -> []string {
     push(v, "modules")
     push(v, "selfhost_lex")
     push(v, "selfhost_parse")
+    push(v, "selfhost_load")
     push(v, "selfhost_typecheck")
     push(v, "selfhost_check")
     push(v, "selfhost_ir")
@@ -2992,7 +3004,7 @@ fn integration() -> int {
 /** *app. The wasm module's entry points, the server/client split, and the */
 /** *language server all sit next to the compiler. */
 fn host_stanzas() -> []string {
-    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "api_freeze", "modules", "selfhost_lex", "selfhost_parse", "selfhost_typecheck", "selfhost_check", "selfhost_ir", "selfhost_dce", "selfhost_codegen", "wasm_float" }
+    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "api_freeze", "modules", "selfhost_lex", "selfhost_parse", "selfhost_load", "selfhost_typecheck", "selfhost_check", "selfhost_ir", "selfhost_dce", "selfhost_codegen", "wasm_float" }
 }
 
 /** *One after another, for an `--isolated` run; a batched run pools them. */

@@ -1,0 +1,5 @@
+import "fmt.loam"
+import "std:fmt"
+fn main() {
+    fmt.println(1)
+}

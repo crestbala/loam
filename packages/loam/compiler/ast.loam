@@ -411,6 +411,46 @@ fn add(n: NodeBuild) -> int {
     return NODES.len - 1
 }
 
+/** *Store a node that sets none of `NodeExtra`'s fields straight into the */
+/** *arena. Going through `NodeBuild` costs a retain and a release of its ten */
+/** *owning fields per copy (the build, the pass, the drop); this touches only */
+/** *what it stores. The other fields are `node`'s defaults. */
+fn add_plain(kind: int, loc: Loc, flags: int, op: int, a: int, b: int, kids: []int, name: string, has_name: bool, num: i64) -> int {
+    push(NODES, Node { kind: kind, flags: flags, a: a, b: b, c: NONE, ty: -1, res: NONE, op: op, kids: kids })
+    push(INFO, NodeInfo {
+        loc: loc,
+        aux: 0,
+        has_name: has_name,
+        name: name,
+        num: num,
+        place_mut: 0,
+        def_line: 0,
+        def_col: 0,
+        marks: 0,
+        extra: 0,
+    })
+    return NODES.len - 1
+}
+
+/** *`add_plain` for a node with no children, name or number: an operator, */
+/** *up to three child nodes, and `aux`. */
+fn add_ops(kind: int, loc: Loc, op: int, a: int, b: int, c: int, aux: int) -> int {
+    push(NODES, Node { kind: kind, flags: 0, a: a, b: b, c: c, ty: -1, res: NONE, op: op, kids: []int {} })
+    push(INFO, NodeInfo {
+        loc: loc,
+        aux: aux,
+        has_name: false,
+        name: "",
+        num: i64(0),
+        place_mut: 0,
+        def_line: 0,
+        def_col: 0,
+        marks: 0,
+        extra: 0,
+    })
+    return NODES.len - 1
+}
+
 /** *Where node `i`'s rare fields are, for reading (the empty one if none). */
 fn ex(i: int) -> int {
     return INFO[i].extra
