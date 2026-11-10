@@ -1,0 +1,3 @@
+[package]
+name = "shakelib"
+entry = "src/top.loam"

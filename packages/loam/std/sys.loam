@@ -129,6 +129,11 @@ fn exists(path: string) -> int {}
 /** *`1` if `path` is a directory. Native only; wasm returns `0`. */
 fn is_dir(path: string) -> int {}
 
+/** *The canonical absolute spelling of an existing path (symlinks, `.` and */
+/** *`..` resolved), or `""` when it does not exist. Native only; wasm */
+/** *returns `""`. */
+fn realpath(path: string) -> string {}
+
 /** *Number of entries in the directory `path`, `.` and `..` excluded. `0` when */
 /** *`path` is not a readable directory. Native only; wasm returns `0`. */
 fn dir_count(path: string) -> int {}

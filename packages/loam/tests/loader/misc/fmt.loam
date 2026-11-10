@@ -1,0 +1,3 @@
+fn mine() -> int {
+    return 1
+}

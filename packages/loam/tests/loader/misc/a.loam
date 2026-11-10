@@ -1,0 +1,5 @@
+import "b.loam"
+fn a() {
+}
+fn main() {
+}

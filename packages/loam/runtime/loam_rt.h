@@ -675,6 +675,14 @@ static inline loam_str loam_str_copy(const char *src, int64_t n) {
     return loam_str_owned(p, n);
 }
 
+/** std:str `slice`: `s[a..b]`, bounds clamped to the string, in one copy. */
+static inline loam_str loam_str_slice(loam_str s, int32_t a, int32_t b) {
+    int64_t lo = a < 0 ? 0 : a;
+    int64_t hi = b > s.len ? s.len : b;
+    if (lo >= hi) return (loam_str){"", 0, 0};
+    return loam_str_copy(s.ptr + lo, hi - lo);
+}
+
 /** Take another reference to `s` (no-op for a literal). */
 static inline void loam_str_retain(loam_str s) {
     if (s.own && s.ptr)
@@ -1464,6 +1472,10 @@ static inline int64_t loam_sys_is_dir(loam_str path) {
     (void)path;
     return 0;
 }
+static inline loam_str loam_sys_realpath(loam_str path) {
+    (void)path;
+    return (loam_str){"", 0};
+}
 static inline int64_t loam_sys_dir_count(loam_str path) {
     (void)path;
     return 0;
@@ -1846,6 +1858,34 @@ static inline int64_t loam_sys_is_dir(loam_str path) {
     struct stat st;
     if (loam_sys_cpath(path, buf, sizeof buf)) return 0;
     return (stat(buf, &st) == 0 && S_ISDIR(st.st_mode)) ? 1 : 0;
+}
+
+/** The canonical absolute spelling of an existing path (symlinks, `.` and `..`
+    resolved), or "" when it does not exist. */
+static inline loam_str loam_sys_realpath(loam_str path) {
+    char buf[4096];
+    char *rp;
+    loam_str out = {"", 0};
+    if (loam_sys_cpath(path, buf, sizeof buf)) return out;
+#if defined(_WIN32)
+    rp = _fullpath(NULL, buf, 0);
+    if (rp) {
+        struct stat st;
+        char *c;
+        for (c = rp; *c; c++)
+            if (*c == '\\') *c = '/';
+        if (stat(rp, &st) != 0) {
+            free(rp);
+            return out;
+        }
+    }
+#else
+    rp = realpath(buf, NULL);
+#endif
+    if (!rp) return out;
+    out = loam_str_copy(rp, (int64_t)strlen(rp));
+    free(rp);
+    return out;
 }
 
 /* Re-reads the directory per call rather than caching a listing: an entry comes

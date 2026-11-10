@@ -1,0 +1,3 @@
+fn o() -> int {
+    return 3
+}

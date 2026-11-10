@@ -1,0 +1,1207 @@
+// loader — find, read and parse every module a program imports. The
+// self-hosted twin of src/compile.c (loading) and src/pkgresolve.c (package
+// roots), diffed against `loamc --dump-modules`.
+//
+// `std:name` is the language library (`<home>/packages/loam/std`). A bare
+// `import "name"` or `import "name:module"` is a package: a vendored one next to
+// a `loam.lock` that lists it, a workspace member or `[package]` manifest met
+// walking up from the entry file, or a `LOAM_PATH` root. Relative paths are from
+// the importing file. Modules load depth first, in import order; a cycle or a
+// missing file is an error.
+//
+// Where the compiler's own files are (`home`): `LOAM_HOME`, or two levels up
+// from the running binary (`<home>/bin/loamc`). The seed compiler bakes the
+// same paths in at build time; deriving them keeps them out of the generated C.
+
+import "std:buf"
+import "std:fmt"
+import "std:map"
+import "std:result"
+import "std:str"
+import "std:sys"
+import "ast.loam"
+import "parser.loam"
+import "dump.loam"
+import "typecheck.loam"
+
+const NONE: int = -1
+
+// --- where things are ---------------------------------------------------------------
+
+let mut HOME: string = ""
+
+/** *`dir` of a path: everything before its last `/` ("." when none). */
+fn parent_dir(p: string) -> string {
+    let slash = str.last_index_of_byte(p, '/')
+    if slash < 0 {
+        return "."
+    }
+    if slash == 0 {
+        return "/"
+    }
+    return str.slice(p, 0, slash)
+}
+
+/** *The running binary, by `argv[0]`, through `PATH` when it has no `/`. */
+fn exe_path() -> string {
+    let a0 = sys.arg(0)
+    if str.index_of_byte(a0, '/') >= 0 {
+        return sys.realpath(a0)
+    }
+    let dirs = str.split(sys.env("PATH"), ":")
+    for i in 0..dirs.len {
+        if dirs[i].len == 0 {
+            continue
+        }
+        let cand = "{{dirs[i]}}/{{a0}}"
+        if is_file(cand) {
+            return sys.realpath(cand)
+        }
+    }
+    return ""
+}
+
+fn home() -> string {
+    if HOME.len == 0 {
+        HOME = sys.env("LOAM_HOME")
+        if HOME.len == 0 {
+            let exe = exe_path()
+            HOME = if exe.len > 0 { parent_dir(parent_dir(exe)) } else { "." }
+        }
+    }
+    return HOME
+}
+
+fn std_dir() -> string {
+    return "{{home()}}/packages/loam/std"
+}
+
+fn rt_path() -> string {
+    return "{{home()}}/packages/loam/runtime/loam_rt.h"
+}
+
+fn runtime_dir() -> string {
+    return "{{home()}}/packages/loam/runtime"
+}
+
+/** *The framework roots a build always searches, after `LOAM_PATH`. */
+fn default_roots() -> string {
+    let h = home()
+    let ps = []string { "zeus", "zeus-components", "http", "maya", "raygui", "sqlite", "crypto" }
+    let mut s = ""
+    for i in 0..ps.len {
+        let sep = if i > 0 { ":" } else { "" }
+        s = "{{s}}{{sep}}{{h}}/packages/{{ps[i]}}"
+    }
+    return s
+}
+
+/** *`LOAM_PATH` (when set) followed by the default roots. */
+fn search_path() -> string {
+    let env = sys.env("LOAM_PATH")
+    let dflt = default_roots()
+    if env.len > 0 && dflt.len > 0 {
+        return "{{env}}:{{dflt}}"
+    }
+    if env.len > 0 {
+        return env
+    }
+    return dflt
+}
+
+/** *The non-empty entries of a `:`-separated list. */
+fn roots_of(list: string) -> []string {
+    let parts = str.split(list, ":")
+    let mut out = []string {}
+    for i in 0..parts.len {
+        if parts[i].len > 0 {
+            push(out, parts[i])
+        }
+    }
+    return out
+}
+
+// --- files and paths ---------------------------------------------------------------
+
+let EXTS: []string = []string { ".loam", ".loa" }
+
+fn is_file(p: string) -> bool {
+    return p.len > 0 && sys.exists(p) != 0 && sys.is_dir(p) == 0
+}
+
+fn is_dir(p: string) -> bool {
+    return p.len > 0 && sys.is_dir(p) != 0
+}
+
+fn path_under(path: string, dir: string) -> bool {
+    let d = dir.len
+    if d == 0 || path.len < d || !str.starts_with(path, dir) {
+        return false
+    }
+    return path.len == d || path[d] == '/'
+}
+
+/** *`path_under`, plus a relative path against an absolute directory: */
+/** *`packages/zeus/src/foo.loam` is under `/…/packages/zeus/src`. */
+fn path_under_flex(path: string, dir: string) -> bool {
+    if path_under(path, dir) {
+        return true
+    }
+    if path.len == 0 || dir.len == 0 || path[0] == '/' || dir[0] != '/' {
+        return false
+    }
+    let mut at = 0
+    while true {
+        let slash = str.index_from(dir, "/", at)
+        if slash < 0 {
+            break
+        }
+        let rest = str.slice_from(dir, slash + 1)
+        if str.index_of_byte(rest, '/') < 0 {
+            break
+        }
+        if path_under(path, rest) {
+            return true
+        }
+        at = slash + 1
+    }
+    return false
+}
+
+/** *`sys.realpath`, once per directory. */
+let mut REALPATHS: Map<string> = map_new("")
+let mut REALPATH_ASKED: Map<int> = map_new(0)
+
+fn realpath_cached(p: string) -> string {
+    if map_has(&mut REALPATH_ASKED, p) {
+        return map_get(&mut REALPATHS, p)
+    }
+    let r = sys.realpath(p)
+    map_put(&mut REALPATH_ASKED, p, 1)
+    map_put(&mut REALPATHS, p, r)
+    return r
+}
+
+/** *Under the language std, or a framework root's `src/` (or `std/`): a */
+/** *module whose bodyless fns the runtime headers declare. */
+fn is_std_path(path: string) -> bool {
+    if path_under(path, std_dir()) {
+        return true
+    }
+    let roots = roots_of(search_path())
+    let leaves = []string { "src", "std" }
+    for i in 0..roots.len {
+        for leaf in 0..2 {
+            let dir = "{{roots[i]}}/{{leaves[leaf]}}"
+            if path_under_flex(path, dir) {
+                return true
+            }
+            let rp = realpath_cached(dir)
+            if rp.len > 0 && path_under_flex(path, rp) {
+                return true
+            }
+        }
+    }
+    return false
+}
+
+/** *Collapse `.` and `..`, so one file is one module however it is spelled. */
+fn normalize_path(p: string) -> string {
+    let abs = p.len > 0 && p[0] == '/'
+    let segs = str.split(p, "/")
+    let mut parts = []string {}
+    for i in 0..segs.len {
+        let s = segs[i]
+        if s.len == 0 || s == "." {
+            continue
+        }
+        if s == ".." {
+            if parts.len > 0 && parts[parts.len - 1] != ".." {
+                pop(parts)
+            } else if !abs {
+                push(parts, "..")
+            }
+            continue
+        }
+        push(parts, s)
+    }
+    let mut b = []u8 {}
+    if abs {
+        push(b, u8('/'))
+    }
+    for i in 0..parts.len {
+        if b.len > 0 && b[b.len - 1] != u8('/') {
+            push(b, u8('/'))
+        }
+        buf.push_str(&mut b, parts[i])
+    }
+    if b.len == 0 {
+        push(b, u8(if abs { '/' } else { '.' }))
+    }
+    return buf.to_string(&b)
+}
+
+/** *A file name without its source extension (or its last `.suffix`). */
+fn stem_of(path: string) -> string {
+    let slash = str.last_index_of_byte(path, '/')
+    let base = if slash >= 0 { str.slice_from(path, slash + 1) } else { path }
+    for e in 0..EXTS.len {
+        if base.len > EXTS[e].len && str.ends_with(base, EXTS[e]) {
+            return str.slice(base, 0, base.len - EXTS[e].len)
+        }
+    }
+    let dot = str.last_index_of_byte(base, '.')
+    if dot >= 0 {
+        return str.slice(base, 0, dot)
+    }
+    return base
+}
+
+fn base_of(path: string) -> string {
+    let slash = str.last_index_of_byte(path, '/')
+    return if slash >= 0 { str.slice_from(path, slash + 1) } else { path }
+}
+
+/** *The directory holding a file, for relative imports: "." when the path */
+/** *has no `/`. */
+fn dir_of(path: string) -> string {
+    return parent_dir(path)
+}
+
+/** *One step up, as pkgresolve.c's `parent_of`; "" when there is none. */
+fn parent_of(dir: string) -> string {
+    if dir.len == 0 || dir == "/" {
+        return ""
+    }
+    if dir == "." {
+        return ".."
+    }
+    if str.ends_with(dir, "..") {
+        return "{{dir}}/.."
+    }
+    let slash = str.last_index_of_byte(dir, '/')
+    if slash < 0 {
+        return "."
+    }
+    if slash == 0 {
+        return "/"
+    }
+    return str.slice(dir, 0, slash)
+}
+
+fn join2(a: string, b: string) -> string {
+    if b.len == 0 {
+        return ""
+    }
+    if b[0] == '/' || a.len == 0 || a == "." {
+        return b
+    }
+    return "{{a}}/{{b}}"
+}
+
+fn read_text(path: string) -> string {
+    let r = sys.read(path)
+    if r.tag == ResultTag.Ok {
+        return r.val
+    }
+    return ""
+}
+
+// --- manifests: loam.toml and loam.lock ------------------------------------------------
+
+fn skip_ws(s: string, at: int) -> int {
+    let mut i = at
+    while i < s.len && (s[i] == ' ' || s[i] == '\t' || s[i] == '\r') {
+        i = i + 1
+    }
+    return i
+}
+
+/** *A `[section]` header's name, or "" when the line is not one. */
+fn section_name(s: string, at: int) -> string {
+    let i = skip_ws(s, at)
+    if i >= s.len || s[i] != '[' {
+        return ""
+    }
+    let end = str.index_from(s, "]", i + 1)
+    if end <= i + 1 {
+        return ""
+    }
+    return str.slice(s, i + 1, end)
+}
+
+fn is_header(s: string, at: int) -> bool {
+    return section_name(s, at).len > 0
+}
+
+/** *The text between the quotes at `at`, and where it ends; `end` -1 when */
+/** *the quote is not closed on the line. */
+struct Quoted {
+    text: string,
+    end: int,
+}
+
+fn quoted_at(s: string, at: int) -> Quoted {
+    if at >= s.len || s[at] != '"' {
+        return Quoted { text: "", end: -1 }
+    }
+    let mut i = at + 1
+    while i < s.len && s[i] != '"' && s[i] != '\n' {
+        i = i + 1
+    }
+    if i >= s.len || s[i] != '"' {
+        return Quoted { text: "", end: -1 }
+    }
+    return Quoted { text: str.slice(s, at + 1, i), end: i + 1 }
+}
+
+fn key_at(s: string, at: int, key: string) -> bool {
+    if !str.has_at(s, key, at) || at + key.len >= s.len {
+        return false
+    }
+    let c = s[at + key.len]
+    return c == ' ' || c == '=' || c == '\t'
+}
+
+struct PackageFields {
+    name: string,
+    entry: string,
+}
+
+fn read_package_fields(toml_path: string) -> PackageFields {
+    let mut f = PackageFields { name: "", entry: "" }
+    let text = read_text(toml_path)
+    let lines = str.split(text, "\n")
+    let mut in_pkg = false
+    for li in 0..lines.len {
+        let line = lines[li]
+        let s = skip_ws(line, 0)
+        if is_header(line, s) {
+            in_pkg = section_name(line, s) == "package"
+        } else if in_pkg && (key_at(line, s, "name") || key_at(line, s, "entry")) {
+            let q = str.index_from(line, "\"", s)
+            if q >= 0 {
+                let v = quoted_at(line, q)
+                if v.end >= 0 {
+                    if key_at(line, s, "name") {
+                        f.name = v.text
+                    } else {
+                        f.entry = v.text
+                    }
+                }
+            }
+        }
+    }
+    return f
+}
+
+struct Workspace {
+    saw: bool,
+    members: []string,
+}
+
+/** *Whether `path` has a `[workspace]` section, and its `members` (up to */
+/** *`max`). The line rules are pkgresolve.c's, quirks included. */
+fn read_workspace(path: string, max: int) -> Workspace {
+    let mut ws = Workspace { saw: false, members: []string {} }
+    let text = read_text(path)
+    let lines = str.split(text, "\n")
+    let mut in_ws = false
+    let mut in_list = false
+    for li in 0..lines.len {
+        let line = lines[li]
+        let mut s = skip_ws(line, 0)
+        if is_header(line, s) {
+            in_ws = section_name(line, s) == "workspace"
+            if in_ws {
+                ws.saw = true
+            }
+            in_list = false
+        } else if in_ws && !in_list && str.has_at(line, "members", s) {
+            let br = str.index_from(line, "[", s)
+            if br >= 0 {
+                in_list = str.index_from(line, "]", br) < 0
+                s = br + 1
+            }
+        }
+        if in_ws && (in_list || str.index_from(line, "\"", s) >= 0) {
+            while s < line.len && line[s] != ']' {
+                s = skip_ws(line, s)
+                if s < line.len && line[s] == '"' {
+                    // An unterminated quote ends the list.
+                    let q = quoted_at(line, s)
+                    if q.end < 0 {
+                        break
+                    }
+                    if ws.members.len < max {
+                        push(ws.members, q.text)
+                    }
+                    s = skip_ws(line, q.end)
+                    if s < line.len && line[s] == ',' {
+                        s = s + 1
+                    }
+                    continue
+                }
+                break
+            }
+            if str.index_from(line, "]", s) >= 0 {
+                in_list = false
+            } else if str.index_of(line, "]") >= 0 {
+                in_list = false
+            } else if !in_list && str.index_from(line, "\"", skip_ws(line, 0)) < 0 {
+                // Not a list line.
+            } else {
+                in_list = str.index_of(line, "]") < 0 && in_ws
+            }
+        }
+    }
+    return ws
+}
+
+// The lock checksum: a 31-bit FNV-style hash of the sorted relative paths and
+// file bytes, with a 0 byte after each. `zeli pkg sync` writes the same decimal.
+
+fn hash_step(h: i64, b: int) -> i64 {
+    let x = h ^ i64(b)
+    return (x * i64(16777619)) & i64(2147483647)
+}
+
+fn hash_text(h0: i64, s: string) -> i64 {
+    let mut h = h0
+    for i in 0..s.len {
+        h = hash_step(h, s[i])
+    }
+    return hash_step(h, 0)
+}
+
+fn collect_files(root: string, rel: string, out: &mut []string) {
+    let dir = if rel.len > 0 { "{{root}}/{{rel}}" } else { root }
+    let names = sys.list_dir(dir)
+    for i in 0..names.len {
+        let n = names[i]
+        if n == ".git" {
+            continue
+        }
+        let child = if rel.len > 0 { "{{rel}}/{{n}}" } else { n }
+        let full = "{{root}}/{{child}}"
+        if sys.is_dir(full) != 0 {
+            collect_files(root, child, out)
+        } else if sys.exists(full) != 0 {
+            push(out, child)
+        }
+    }
+}
+
+/** *Byte order, as `strcmp`. */
+fn less(a: string, b: string) -> bool {
+    let n = if a.len < b.len { a.len } else { b.len }
+    for i in 0..n {
+        if a[i] != b[i] {
+            return a[i] < b[i]
+        }
+    }
+    return a.len < b.len
+}
+
+fn sort_strings(xs: &mut []string) {
+    for i in 1..xs.len {
+        let key = xs[i]
+        let mut j = i - 1
+        while j >= 0 && less(key, xs[j]) {
+            xs[j + 1] = xs[j]
+            j = j - 1
+        }
+        xs[j + 1] = key
+    }
+}
+
+fn tree_hash(root: string) -> i64 {
+    let mut files = []string {}
+    collect_files(root, "", &mut files)
+    sort_strings(&mut files)
+    let mut h = i64(18651461)
+    for i in 0..files.len {
+        h = hash_text(h, files[i])
+        h = hash_text(h, read_text("{{root}}/{{files[i]}}"))
+    }
+    return h
+}
+
+struct LockLine {
+    /** *The lock file exists. */
+    found: bool,
+    listed: bool,
+    sum: string,
+}
+
+fn lock_sum(appdir: string, name: string) -> LockLine {
+    let mut r = LockLine { found: false, listed: false, sum: "" }
+    let path = "{{appdir}}/loam.lock"
+    if sys.exists(path) == 0 {
+        return r
+    }
+    r.found = true
+    let lines = str.split(read_text(path), "\n")
+    for li in 0..lines.len {
+        let line = lines[li]
+        if line.len == 0 || line[0] == '#' {
+            continue
+        }
+        let fields = str.split(line, "\t")
+        if fields[0] == name {
+            r.listed = true
+            if fields.len >= 4 {
+                r.sum = fields[3]
+            }
+            break
+        }
+    }
+    return r
+}
+
+// --- packages -----------------------------------------------------------------------
+
+struct Pkg {
+    name: string,
+    dir: string,
+    entry: string,
+    from_vendor: bool,
+    /** *The lock's checksum, "" when it has none. */
+    sum: string,
+}
+
+const PKG_MAX: int = 64
+
+let mut PKGS: []Pkg = []Pkg {}
+let mut ANCHOR: string = ""
+/** *Why the last package lookup failed, "" when it did not say. */
+let mut PKG_ERR: string = ""
+
+fn find_pkg(name: string) -> int {
+    if name.len == 0 {
+        return NONE
+    }
+    for i in 0..PKGS.len {
+        if PKGS[i].name == name {
+            return i
+        }
+    }
+    return NONE
+}
+
+fn add_pkg(name: string, dir: string, entry: string, from_vendor: bool, sum: string) {
+    if name.len == 0 || dir.len == 0 || find_pkg(name) != NONE || PKGS.len >= PKG_MAX {
+        return
+    }
+    push(PKGS, Pkg { name: name, dir: dir, entry: entry, from_vendor: from_vendor, sum: sum })
+}
+
+fn add_dir(dir0: string, from_vendor: bool, allow_unnamed: bool, sum: string) {
+    if dir0.len == 0 {
+        return
+    }
+    let mut dir = normalize_path(dir0)
+    let rp = sys.realpath(dir)
+    if rp.len > 0 {
+        dir = rp
+    }
+    if !is_dir(dir) {
+        return
+    }
+    let toml = "{{dir}}/loam.toml"
+    let f = if is_file(toml) { read_package_fields(toml) } else { PackageFields { name: "", entry: "" } }
+    let base = base_of(dir)
+    if f.name.len > 0 {
+        add_pkg(f.name, dir, f.entry, from_vendor, sum)
+        if base.len > 0 && base != f.name {
+            add_pkg(base, dir, f.entry, from_vendor, sum)
+        }
+    } else if allow_unnamed && base.len > 0 {
+        add_pkg(base, dir, f.entry, from_vendor, sum)
+    }
+}
+
+/** *Every `vendor/<name>/` the lock lists, in name order. */
+fn add_vendor(appdir: string) {
+    let vendor = "{{appdir}}/vendor"
+    if !is_dir(vendor) {
+        return
+    }
+    let names = sys.list_dir(vendor)
+    for i in 0..names.len {
+        if names[i].len == 0 || names[i][0] == '.' {
+            continue
+        }
+        let pkgdir = "{{vendor}}/{{names[i]}}"
+        if !is_dir(pkgdir) {
+            continue
+        }
+        let l = lock_sum(appdir, names[i])
+        if l.found && l.listed {
+            add_dir(pkgdir, true, true, l.sum)
+        }
+    }
+}
+
+fn add_workspace_file(toml: string, dir: string) {
+    let ws = read_workspace(toml, 64)
+    if !ws.saw {
+        return
+    }
+    for i in 0..ws.members.len {
+        let mem = join2(dir, ws.members[i])
+        if mem.len > 0 {
+            add_dir(mem, false, false, "")
+        }
+    }
+}
+
+/** *Find the packages an entry file can import (see the file comment). */
+fn discover(anchor: string) {
+    PKGS = []Pkg {}
+    PKG_ERR = ""
+    ANCHOR = anchor
+    let mut dir = if anchor.len > 0 { parent_dir(anchor) } else { "." }
+    let mut vendor_done = false
+    for depth in 0..64 {
+        if !vendor_done && is_dir("{{dir}}/vendor") {
+            add_vendor(dir)
+            vendor_done = true
+        }
+        let toml = "{{dir}}/loam.toml"
+        if is_file(toml) {
+            if read_package_fields(toml).name.len > 0 {
+                add_dir(dir, false, false, "")
+            }
+            if read_workspace(toml, 4).saw {
+                add_workspace_file(toml, dir)
+                break
+            }
+        }
+        if dir == "/" {
+            break
+        }
+        dir = parent_of(dir)
+        if dir.len == 0 {
+            break
+        }
+    }
+    let roots = roots_of(search_path())
+    for i in 0..roots.len {
+        add_dir(roots[i], false, true, "")
+    }
+}
+
+fn checksum_matches(p: int) -> bool {
+    let pk = PKGS[p]
+    if pk.sum.len == 0 {
+        return true
+    }
+    if "{{tree_hash(pk.dir)}}" == pk.sum {
+        return true
+    }
+    PKG_ERR = "package '{{pk.name}}' does not match loam.lock (run `zeli pkg sync`)"
+    return false
+}
+
+/** *A file under `vendor/<name>/` is listed in the lock beside `vendor`, and */
+/** *matches its checksum when the lock has one. */
+fn vendor_check(pkgdir: string) -> bool {
+    PKG_ERR = ""
+    if pkgdir.len == 0 {
+        return true
+    }
+    let slash = str.last_index_of_byte(pkgdir, '/')
+    if slash <= 0 {
+        return true
+    }
+    let vendor = str.slice(pkgdir, 0, slash)
+    if base_of(vendor) != "vendor" {
+        return true
+    }
+    let name = base_of(pkgdir)
+    let s2 = str.last_index_of_byte(vendor, '/')
+    let app = if s2 < 0 { "." } else if s2 == 0 { "/" } else { str.slice(vendor, 0, s2) }
+    let l = lock_sum(app, name)
+    if !l.found {
+        PKG_ERR = "cannot find package '{{name}}' (vendor/{{name}} has no loam.lock; run `zeli pkg sync`)"
+        return false
+    }
+    if !l.listed {
+        PKG_ERR = "cannot find package '{{name}}' (vendor/{{name}} is not in loam.lock; run `zeli pkg sync`)"
+        return false
+    }
+    if l.sum.len == 0 || "{{tree_hash(pkgdir)}}" == l.sum {
+        return true
+    }
+    PKG_ERR = "package '{{name}}' does not match loam.lock (run `zeli pkg sync`)"
+    return false
+}
+
+/** *`dir/rel`, or (when `rel` has no `.`) `dir/rel` plus a source extension. */
+fn try_rel(dir: string, rel: string) -> string {
+    if rel.len == 0 {
+        return ""
+    }
+    let p = "{{dir}}/{{rel}}"
+    if is_file(p) {
+        return p
+    }
+    if str.index_of_byte(rel, '.') >= 0 {
+        return ""
+    }
+    for e in 0..EXTS.len {
+        let q = "{{dir}}/{{rel}}{{EXTS[e]}}"
+        if is_file(q) {
+            return q
+        }
+    }
+    return ""
+}
+
+fn entry_file(p: int) -> string {
+    let pk = PKGS[p]
+    let mut f = if pk.entry.len > 0 { try_rel(pk.dir, pk.entry) } else { "" }
+    let rels = []string { "src/{{pk.name}}", "std/{{pk.name}}", pk.name, "src/lib", "main" }
+    let mut i = 0
+    while f.len == 0 && i < rels.len {
+        f = try_rel(pk.dir, rels[i])
+        i = i + 1
+    }
+    return f
+}
+
+fn module_file(p: int, mod: string) -> string {
+    if mod.len == 0 {
+        return ""
+    }
+    let dir = PKGS[p].dir
+    let mut f = try_rel(dir, "src/{{mod}}")
+    if f.len == 0 {
+        f = try_rel(dir, "std/{{mod}}")
+    }
+    if f.len == 0 {
+        f = try_rel(dir, mod)
+    }
+    return f
+}
+
+fn package_entry(name: string) -> string {
+    PKG_ERR = ""
+    let p = find_pkg(name)
+    if p == NONE {
+        return ""
+    }
+    let f = entry_file(p)
+    if f.len == 0 {
+        PKG_ERR = "package '{{name}}' has no entry file"
+        return ""
+    }
+    if PKGS[p].from_vendor && !checksum_matches(p) {
+        return ""
+    }
+    return f
+}
+
+fn package_module(pkg: string, mod: string) -> string {
+    PKG_ERR = ""
+    let p = find_pkg(pkg)
+    if p == NONE {
+        return ""
+    }
+    let f = module_file(p, mod)
+    if f.len == 0 {
+        return ""
+    }
+    if PKGS[p].from_vendor && !checksum_matches(p) {
+        return ""
+    }
+    return f
+}
+
+fn std_name_exists(name: string) -> bool {
+    if name.len == 0 || str.index_of_byte(name, '/') >= 0 || str.index_of_byte(name, ':') >= 0 {
+        return false
+    }
+    for e in 0..EXTS.len {
+        if is_file("{{std_dir()}}/{{name}}{{EXTS[e]}}") {
+            return true
+        }
+    }
+    return false
+}
+
+fn vendor_dir_unlisted(name: string) -> bool {
+    if ANCHOR.len == 0 {
+        return false
+    }
+    let mut dir = parent_dir(ANCHOR)
+    for depth in 0..64 {
+        if is_dir("{{dir}}/vendor/{{name}}") {
+            return true
+        }
+        if dir == "/" {
+            break
+        }
+        dir = parent_of(dir)
+        if dir.len == 0 {
+            break
+        }
+    }
+    return false
+}
+
+fn package_missing(name: string) -> string {
+    if std_name_exists(name) {
+        return "cannot find package '{{name}}' (language modules use std:, as in import \"std:{{name}}\")"
+    }
+    if vendor_dir_unlisted(name) {
+        return "cannot find package '{{name}}' (vendor/{{name}} is not in loam.lock; run `zeli pkg sync`)"
+    }
+    return "cannot find package '{{name}}' (add it to loam.toml and run `zeli pkg sync`)"
+}
+
+// --- modules ------------------------------------------------------------------------
+
+/** *Per module (same index as `typecheck.MODS`): still loading its imports. */
+let mut LOADING: []bool = []bool {}
+let mut MOD_BY_PATH: Map<int> = map_new(-1)
+const MAX_MODULES: int = 1024
+
+fn error_at(loc: Loc, msg: string) {
+    push(ast.DIAGS, Diag { loc: loc, msg: msg })
+}
+
+fn file_loc(m: int) -> Loc {
+    return Loc { file: m, line: 1, col: 1, end_line: 0, end_col: 0 }
+}
+
+fn std_lookup(name: string) -> string {
+    for e in 0..EXTS.len {
+        let p = "{{std_dir()}}/{{name}}{{EXTS[e]}}"
+        if is_file(p) {
+            return p
+        }
+    }
+    return ""
+}
+
+/** *`import "pkg:name"`: `vendor/<name>/<name or main>.loam`, walking up from */
+/** *the entry file. */
+fn pkg_lookup(name: string) -> string {
+    PKG_ERR = ""
+    if name.len == 0 || str.index_of_byte(name, '/') >= 0 || str.index_of_byte(name, '\\') >= 0 ||
+        str.index_of_byte(name, ':') >= 0 || typecheck.MODS.len == 0 {
+        return ""
+    }
+    let mut dir = typecheck.MODS[0].path
+    for depth in 0..64 {
+        let slash = str.last_index_of_byte(dir, '/')
+        dir = if slash >= 0 { str.slice(dir, 0, slash) } else { "" }
+        for which in 0..2 {
+            let file = if which == 1 { "main" } else { name }
+            for e in 0..EXTS.len {
+                let cand = if dir.len > 0 { "{{dir}}/vendor/{{name}}/{{file}}{{EXTS[e]}}" } else { "vendor/{{name}}/{{file}}{{EXTS[e]}}" }
+                if !is_file(cand) {
+                    continue
+                }
+                let fs = str.last_index_of_byte(cand, '/')
+                if fs <= 0 || !vendor_check(str.slice(cand, 0, fs)) {
+                    return ""
+                }
+                return cand
+            }
+        }
+        if dir.len == 0 {
+            break
+        }
+    }
+    return ""
+}
+
+/** *A package name: no slash, colon, or source extension. */
+fn is_bare_package_spec(spec: string) -> bool {
+    if spec.len == 0 || str.index_of_byte(spec, '/') >= 0 || str.index_of_byte(spec, '\\') >= 0 ||
+        str.index_of_byte(spec, ':') >= 0 {
+        return false
+    }
+    return !str.ends_with(spec, ".loam") && !str.ends_with(spec, ".loa")
+}
+
+fn package_failure(loc: Loc, name: string) {
+    if PKG_ERR.len > 0 {
+        error_at(loc, PKG_ERR)
+    } else {
+        error_at(loc, package_missing(name))
+    }
+}
+
+/** *The file an import names, or "" after reporting why there is none. */
+fn resolve_import(importer: string, im: int) -> string {
+    let loc = ast.INFO[im].loc
+    let x = ast.ex(im)
+    if !ast.EXTRA[x].has_text {
+        error_at(loc, "import requires a quoted path, e.g. import \"std:fmt\"")
+        return ""
+    }
+    let spec = ast.EXTRA[x].text
+    if str.starts_with(spec, "std:") {
+        let name = str.slice_from(spec, 4)
+        let p = std_lookup(name)
+        if p.len == 0 {
+            if find_pkg(name) != NONE {
+                error_at(loc, "cannot find std module '{{name}}' (std: is the language standard library; import \"{{name}}\")")
+            } else {
+                error_at(loc, "cannot find std module '{{name}}'")
+            }
+            return ""
+        }
+        return normalize_path(p)
+    }
+    if str.starts_with(spec, "pkg:") {
+        let name = str.slice_from(spec, 4)
+        let p = pkg_lookup(name)
+        if p.len == 0 {
+            package_failure(loc, name)
+            return ""
+        }
+        return normalize_path(p)
+    }
+    let colon = str.index_of_byte(spec, ':')
+    if colon >= 0 {
+        if colon == 0 || colon == spec.len - 1 {
+            error_at(loc, "import spec '{{spec}}' needs a package and a module")
+            return ""
+        }
+        let pkg = str.slice(spec, 0, colon)
+        let mod = str.slice_from(spec, colon + 1)
+        let p = package_module(pkg, mod)
+        if p.len == 0 {
+            if PKG_ERR.len > 0 {
+                error_at(loc, PKG_ERR)
+            } else {
+                error_at(loc, "cannot find module '{{mod}}' in package '{{pkg}}'")
+            }
+            return ""
+        }
+        return normalize_path(p)
+    }
+    if is_bare_package_spec(spec) {
+        let p = package_entry(spec)
+        if p.len == 0 {
+            package_failure(loc, spec)
+            return ""
+        }
+        return normalize_path(p)
+    }
+    let path = if spec[0] == '/' { spec } else { "{{dir_of(importer)}}/{{spec}}" }
+    if !is_file(path) {
+        error_at(loc, "cannot open imported file '{{path}}'")
+        return ""
+    }
+    return normalize_path(path)
+}
+
+fn name_taken(name: string) -> bool {
+    for i in 0..typecheck.MODS.len {
+        if typecheck.MODS[i].name == name {
+            return true
+        }
+    }
+    return false
+}
+
+fn numbered_module_name(name: string) -> string {
+    let mut n = 1
+    while true {
+        let cand = "{{name}}__{{n}}"
+        if !name_taken(cand) {
+            return cand
+        }
+        n = n + 1
+    }
+    return name
+}
+
+/** *A module name unique in the session (it prefixes C symbols). A std */
+/** *module keeps the plain name; a user module that shares it steps aside. */
+fn unique_module_name(name: string, path: string) -> string {
+    for i in 0..typecheck.MODS.len {
+        if typecheck.MODS[i].name != name {
+            continue
+        }
+        if !is_std_path(path) || is_std_path(typecheck.MODS[i].path) {
+            return numbered_module_name(name)
+        }
+        let moved = numbered_module_name(name)
+        typecheck.MODS[i].name = moved
+        let root = typecheck.MODS[i].root
+        if root != NONE {
+            ast.EXTRA[ast.ex_mut(root)].sname = moved
+            ast.EXTRA[ast.ex_mut(root)].has_sname = true
+        }
+        break
+    }
+    return name
+}
+
+fn import_node(alias: string, spec: string, loc: Loc) -> int {
+    let mut n = ast.node(Kind.Import, loc)
+    n.name = alias
+    n.has_name = true
+    n.text = spec
+    n.has_text = true
+    return ast.add(n)
+}
+
+/** *Outside `http`, an implicit import for `#[proto]` (http) and `#[json]` */
+/** *(std:json) structs. */
+fn implicit_imports(root: int, alias: string) {
+    if alias == "http" {
+        return
+    }
+    let kids = ast.NODES[root].kids
+    let mut has_proto = false
+    let mut has_json = false
+    let mut has_http = false
+    let mut has_std_json = false
+    for k in 0..kids.len {
+        let d = kids[k]
+        let kind = ast.NODES[d].kind
+        if kind == Kind.Struct && (ast.NODES[d].op & parser.ST_PROTO) != 0 {
+            has_proto = true
+        }
+        if kind == Kind.Struct && (ast.NODES[d].op & parser.ST_JSON) != 0 {
+            has_json = true
+        }
+        if kind == Kind.Import && ast.EXTRA[ast.ex(d)].has_text {
+            let spec = ast.EXTRA[ast.ex(d)].text
+            if spec == "http" || spec == "std:http" || spec == "pkg:http" {
+                has_http = true
+            }
+            if spec == "std:json" {
+                has_std_json = true
+            }
+        }
+    }
+    let loc = ast.INFO[root].loc
+    if has_proto && !has_http {
+        let im = import_node("http", "http", loc)
+        push(ast.NODES[root].kids, im)
+    }
+    if has_json && !has_std_json {
+        let im = import_node("json", "std:json", loc)
+        push(ast.NODES[root].kids, im)
+    }
+}
+
+let mut PARSER: Parser = parser.parser_new("")
+
+/** *Load `path` as module `alias`, then everything it imports. False on an */
+/** *error (reported in `ast.DIAGS`). */
+fn load_module(path: string, alias: string) -> bool {
+    let seen = map_get(&mut MOD_BY_PATH, path)
+    if seen >= 0 {
+        if LOADING[seen] {
+            error_at(file_loc(seen), "import cycle involving '{{path}}'")
+            return false
+        }
+        return true
+    }
+    if typecheck.MODS.len >= MAX_MODULES {
+        error_at(file_loc(typecheck.MODS.len - 1), "too many modules")
+        return false
+    }
+    let unique = unique_module_name(alias, path)
+    let idx = typecheck.MODS.len
+    push(typecheck.MODS, Module { name: unique, path: path, rank: 0, root: NONE, is_std: is_std_path(path) })
+    push(LOADING, true)
+    push(dump.PATHS, path)
+    map_put(&mut MOD_BY_PATH, path, idx)
+    let r = sys.read(path)
+    if r.tag == ResultTag.Err {
+        error_at(file_loc(idx), "could not read '{{path}}'")
+        return false
+    }
+    parser.parser_load(&mut PARSER, r.val, idx)
+    let root = parser.parse_program(&mut PARSER)
+    typecheck.MODS[idx].root = root
+    if PARSER.had_error {
+        return false
+    }
+    ast.EXTRA[ast.ex_mut(root)].sname = unique
+    ast.EXTRA[ast.ex_mut(root)].has_sname = true
+    implicit_imports(root, alias)
+    let kids = ast.NODES[root].kids
+    for k in 0..kids.len {
+        let im = kids[k]
+        if ast.NODES[im].kind != Kind.Import {
+            continue
+        }
+        let ip = resolve_import(path, im)
+        if ip.len == 0 {
+            return false
+        }
+        ast.EXTRA[ast.ex_mut(im)].sname = ip
+        ast.EXTRA[ast.ex_mut(im)].has_sname = true
+        if !load_module(ip, ast.INFO[im].name) {
+            return false
+        }
+    }
+    // Finish order is a topological order of the import graph: module-level
+    // `let`s initialize in it.
+    let mut rank = 0
+    for i in 0..typecheck.MODS.len {
+        if i != idx && typecheck.MODS[i].root != NONE && !LOADING[i] {
+            rank = rank + 1
+        }
+    }
+    typecheck.MODS[idx].rank = rank
+    LOADING[idx] = false
+    return true
+}
+
+/** *Load the program whose entry file is `path`. False after a load or parse */
+/** *error (the diagnostics are in `ast.DIAGS`). */
+fn load(path: string) -> bool {
+    typecheck.RT_PATH = rt_path()
+    typecheck.STD_DIR = std_dir()
+    discover(path)
+    return load_module(path, stem_of(path))
+}
+
+/** *The module list as `loamc --dump-modules` prints it. */
+fn dump_modules(b: &mut []u8) {
+    buf.push_str(b, "rt ")
+    dump.put_str(b, rt_path())
+    buf.push_str(b, "\nstd ")
+    dump.put_str(b, std_dir())
+    push(b, u8('\n'))
+    for m in 0..typecheck.MODS.len {
+        let md = typecheck.MODS[m]
+        buf.push_str(b, "module ")
+        buf.push_int(b, m)
+        dump.attr_str(b, "name", true, md.name)
+        buf.push_str(b, " rank=")
+        buf.push_int(b, md.rank)
+        buf.push_str(b, if md.is_std { " std=1" } else { " std=0" })
+        dump.attr_str(b, "path", true, md.path)
+        push(b, u8('\n'))
+        if md.root == NONE {
+            continue
+        }
+        let kids = ast.NODES[md.root].kids
+        for k in 0..kids.len {
+            let im = kids[k]
+            if ast.NODES[im].kind != Kind.Import {
+                continue
+            }
+            let x = ast.ex(im)
+            buf.push_str(b, "  import")
+            dump.attr_str(b, "alias", ast.INFO[im].has_name, ast.INFO[im].name)
+            dump.attr_str(b, "spec", ast.EXTRA[x].has_text, ast.EXTRA[x].text)
+            dump.attr_str(b, "resolved", ast.EXTRA[x].has_sname, ast.EXTRA[x].sname)
+            push(b, u8('\n'))
+        }
+    }
+}

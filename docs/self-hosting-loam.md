@@ -758,6 +758,59 @@ beyond what the checklist requires.
         new type per call); each local's spelling is made once per fn; the
         text streams out in 64 KB pieces.
 - [ ] Driver (module loading, package resolution, `cc` invocation) in Loam
+      (phase 10). Plan: 10a the loader (`compile.c`, `pkgresolve.c`); 10b
+      `compiler/loamc.loam`, the whole pipeline in one process with `-o`,
+      `--emit-c`, `--check` and the `cc` calls (host targets only: wasm, iOS,
+      Android, shards, `--cost` and the LSP stay C until after the fixed
+      point); 10c speed and memory parity.
+      - 10a, in progress. `compiler/loader.loam` ports `compile.c`'s loading
+        and all of `pkgresolve.c`: std lookup, vendored packages with
+        `loam.lock` checksums, `pkg:` imports, workspaces, `[package]`
+        manifests, `name:module`, `LOAM_PATH`, module names, cycles, the
+        implicit `http` / `std:json` imports, load ranks. `moddump.loam`
+        prints the list as `loamc --dump-modules` does; `tcdump` now also
+        takes a `.loam` entry and loads it itself. The strict
+        `selfhost_load` stanza diffs the two with every `.loam` file in the
+        repo as the entry (946 match), and `tests/loader/` holds the package
+        cases (good and bad checksums, unlisted vendor dirs, workspaces,
+        cycles, std-name clashes).
+      - The Loam compiler finds its files from `LOAM_HOME`, or two levels up
+        from its binary (`<home>/bin/loamc`), instead of paths baked in at
+        build time, so the generated C carries no absolute path.
+      - Two std additions: `sys.realpath` (the loader canonicalizes package
+        dirs as C does) and `str.slice` as a one-copy runtime hook (it pushed
+        byte by byte). `str` joins the modules whose bodyless fns are hooks
+        (`is_ffi_mod`, in both checkers); without it the hook compiled as an
+        empty Loam fn and the C did not build.
+      - Two fixes in `pkgresolve.c`: vendored packages are read in name order,
+        not `readdir` order (which package wins a name must not depend on the
+        file system), and an unterminated quote in a workspace `members` list
+        no longer loops forever.
+      - Speed: loading dracula's 90 modules (1.9 MB) now takes 55 ms in Loam
+        vs 59 ms in C, whole process, min of 21. It took ~120 ms, almost all
+        of it parsing (phase 5's parity was measured as parse plus dump). Lex
+        and parse alone, best of 20 rounds in one process: 38–39 ms vs C's
+        38.6 ms; the lexer alone 13 ms vs 22 ms. Each change was profiled and
+        kept only if it moved the number:
+        - Common nodes skip `NodeBuild` (`ast.add_plain` / `ast.add_ops`),
+          which cost a retain and a release of ten owning fields per copy.
+        - The lexer steps over identifier, digit and line-comment runs with
+          one column update per run (none of those bytes is a newline), and
+          over whitespace, strings and block comments without a bounds-checked
+          `at` per byte. Keywords are found by first byte, not a chain of 21
+          compares per identifier. 28 ms → 13 ms.
+        - The parser compares words in place (`cur_is_word` copied the token
+          to test for `await` on every unary expression), reads number
+          literals in place, and unquotes a string literal with no backslash
+          as one slice (it pushed byte by byte, then copied).
+        - `parse_postfix` keeps its call-argument and member branches in
+          helpers. A fn's exit drops every owning local some path may have
+          set, and most expressions leave the postfix loop at once: it ran 19
+          releases per primary expression.
+        - Left out: the arenas double from empty, and `realloc` copies them
+          (~4 ms of the 38). Reserving from the source size would remove it,
+          but needs a `reserve` builtin, new language surface the loader does
+          not need to beat C.
 - [ ] Compiler itself uses only safe Loam (arenas + integer indices; §2.7)
 
 ### Fixed-point and tooling

@@ -27,24 +27,8 @@ fn is_digit(c: int) -> bool {
 // --- slicing ------------------------------------------------------------------
 
 /** *`s[a..b]` as a new string. Out-of-range bounds are clamped; an empty or */
-/** *inverted range gives `""`. */
-fn slice(s: string, a: int, b: int) -> string {
-    let mut lo = a
-    let mut hi = b
-    if lo < 0 {
-        lo = 0
-    }
-    if hi > s.len {
-        hi = s.len
-    }
-    let mut x = []int {}
-    if lo < hi {
-        for i in lo..hi {
-            push(x, s[i])
-        }
-    }
-    return string_from_bytes(x)
-}
+/** *inverted range gives `""`. One copy of the bytes (a runtime hook). */
+fn slice(s: string, a: int, b: int) -> string {}
 
 /** *Everything from byte `a` on. */
 fn slice_from(s: string, a: int) -> string {

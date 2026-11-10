@@ -1,0 +1,3 @@
+fn top() -> int {
+    return 1
+}

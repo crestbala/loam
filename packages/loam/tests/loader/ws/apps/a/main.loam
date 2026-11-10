@@ -1,0 +1,7 @@
+import "shakelib"
+import "shake"
+import "shakelib:part"
+import "other"
+import "../../libs/shake/src/part.loam"
+fn main() {
+}

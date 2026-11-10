@@ -900,7 +900,7 @@ static int is_ffi_mod(const char *name) {
            strcmp(name, "platform") == 0 || strcmp(name, "sys") == 0 ||
            strcmp(name, "net") == 0 || strcmp(name, "async") == 0 ||
            strcmp(name, "thread") == 0 || strcmp(name, "buf") == 0 ||
-           strcmp(name, "conv") == 0;
+           strcmp(name, "conv") == 0 || strcmp(name, "str") == 0;
 }
 
 /* User (non-std) modules may declare bodyless C-seam hooks the same way std

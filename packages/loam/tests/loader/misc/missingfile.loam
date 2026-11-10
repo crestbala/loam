@@ -1,0 +1,3 @@
+import "gone.loam"
+fn main() {
+}
