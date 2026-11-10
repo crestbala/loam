@@ -2588,88 +2588,75 @@ fn selfhost_diff(what: string, tool: string, flag: string, ok_msg: string) {
     ok("selfhost {{what}} matches {{ok_msg}} on {{trim(r)}} files")
 }
 
-/** *A checker stage: `tcdump <tcdump_flags>` (fed the module list C's loader */
-/** *resolved) against `loamc <dump_flag>` over every compile_pass / */
-/** *compile_fail / draw_golden / examples/language entry: trees, tables, */
-/** *diagnostics and exit status. Any difference fails. Files C cannot load */
-/** *(parse errors: selfhost_parse) are counted apart. */
-fn selfhost_checker_gate(stage: string, tcdump_flags: string, dump_flag: string, c_twin: string) {
-    mark("selfhost {{stage}}")
-    let scratch_template = tmpf("selfhost_{{stage}}.XXXXXX")
+/** *How many processes a stanza's own pool runs: one per core (4 if unknown). */
+fn core_count() -> int {
+    let cores = int_of(sys.exec("sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null"))
+    return if cores > 0 { cores } else { 4 }
+}
+
+/** *Every checker stage of the Loam compiler against its C twin, over every */
+/** *compile_pass / compile_fail / draw_golden / examples/language entry: */
+/** *`tcdump --all` (fed the module list C's loader resolved) against `loamc */
+/** *--dump-all`, which write per stage what `--dump-typed`, `--dump-checked`, */
+/** *`--dump-ir`, `--dump-dce` and `--dump-c` print (trees, tables, IR, kept fns, */
+/** *the C unit, diagnostics, exit status). Any difference in any stage fails. */
+/** *Files C cannot load (parse errors: selfhost_parse) are counted apart. */
+fn ig_selfhost_passes() {
+    mark("selfhost passes")
+    let scratch_template = tmpf("selfhost_passes.XXXXXX")
     let scratch_dir = trim(sys.exec("mkdir -p {{shq(TMP)}} && mktemp -d {{shq(scratch_template)}}"))
     if sys.exec_status() != 0 || scratch_dir.len == 0 {
-        bad("selfhost {{stage}} (mktemp)", scratch_dir)
+        bad("selfhost passes (mktemp)", scratch_dir)
         return
     }
     let tcdump_exe = "{{scratch_dir}}/tcdump"
     let build_log = sys.exec("{{shq(LOAMC)}} {{shq(ROOT)}}/packages/loam/compiler/tcdump.loam -o {{shq(tcdump_exe)}} 2>&1")
     if sys.exec_status() != 0 {
         sys.exec("rm -rf {{shq(scratch_dir)}}")
-        bad("selfhost {{stage}} (build tcdump)", build_log)
+        bad("selfhost passes (build tcdump)", build_log)
         return
     }
-    // Eight entries at a time through tools/selfhost-tc-one.sh (the verdicts,
+    // One entry per tools/selfhost-passes-one.sh, one per core (the verdicts,
     // the watchdog and the result cache in TMP are described there). The
     // workers run in the background so the run reports progress as it goes.
-    // The cache key includes the dump flag, so both gates share one cache.
+    // The cache holds results for the current seed and tcdump only: a new seed
+    // empties it, a new tcdump drops its past matches.
     let entry_list = "{{scratch_dir}}/entries"
     let verdicts = "{{scratch_dir}}/verdicts"
     let done_marker = "{{scratch_dir}}/done"
     let cache_dir = "{{TMP}}/selfhost_tc_ref"
+    let sums = "LOAMC_SUM=\"$(cksum < {{shq(LOAMC)}})\" EXE_SUM=\"$(cksum < {{shq(tcdump_exe)}})\""
+    sys.exec(cat("{{sums}}; c={{shq(cache_dir)}}; mkdir -p \"$c\"; ",
+        cat("if [ \"$(cat \"$c/.seed\" 2>/dev/null)\" != \"$LOAMC_SUM\" ]; then rm -rf \"$c\" && mkdir -p \"$c\" && echo \"$LOAMC_SUM\" > \"$c/.seed\"; fi; ",
+            "if [ \"$(cat \"$c/.tcdump\" 2>/dev/null)\" != \"$EXE_SUM\" ]; then find \"$c\" -name '*.ok' -exec rm -f {} +; echo \"$EXE_SUM\" > \"$c/.tcdump\"; fi")))
     let entry_count = int_of(trim(sys.exec(cat(
-        "cd {{shq(ROOT)}} && mkdir -p {{shq(cache_dir)}} && ls packages/loam/tests/compile_pass/*.loam packages/loam/tests/compile_fail/*.loam packages/loam/tests/draw_golden/*.loam examples/language/*.loam ",
+        "cd {{shq(ROOT)}} && ls packages/loam/tests/compile_pass/*.loam packages/loam/tests/compile_fail/*.loam packages/loam/tests/draw_golden/*.loam examples/language/*.loam ",
         "> {{shq(entry_list)}}; : > {{shq(verdicts)}}; wc -l < {{shq(entry_list)}}"))))
-    let worker_env = cat("LOAMC={{shq(LOAMC)}} EXE={{shq(tcdump_exe)}} EXE_FLAGS={{shq(tcdump_flags)}} DUMP_FLAG={{shq(dump_flag)}} SCRATCH={{shq(scratch_dir)}} REF={{shq(cache_dir)}} ",
-        "LOAMC_SUM=\"$(cksum < {{shq(LOAMC)}})\" EXE_SUM=\"$(cksum < {{shq(tcdump_exe)}})\"")
-    sys.exec(cat("cd {{shq(ROOT)}} && ( export {{worker_env}}; xargs -P 8 -n 1 sh tools/selfhost-tc-one.sh < {{shq(entry_list)}} > {{shq(verdicts)}} 2>/dev/null; ",
+    let worker_env = "LOAMC={{shq(LOAMC)}} EXE={{shq(tcdump_exe)}} SCRATCH={{shq(scratch_dir)}} REF={{shq(cache_dir)}} {{sums}}"
+    sys.exec(cat("cd {{shq(ROOT)}} && ( export {{worker_env}}; xargs -P {{core_count()}} -n 1 sh tools/selfhost-passes-one.sh < {{shq(entry_list)}} > {{shq(verdicts)}} 2>/dev/null; ",
         ": > {{shq(done_marker)}} ) > /dev/null 2>&1 &"))
     let mut reported = 0
     while sys.exists(done_marker) == 0 {
-        let finished = int_of(trim(sys.exec("sleep 1; wc -l < {{shq(verdicts)}}")))
+        // Five verdict lines per entry.
+        let finished = int_of(trim(sys.exec("sleep 1; wc -l < {{shq(verdicts)}}"))) / 5
         if finished >= reported + 64 {
-            mark("selfhost {{stage}} {{finished}}/{{entry_count}}")
+            mark("selfhost passes {{finished}}/{{entry_count}}")
             reported = finished
         }
     }
-    let summary = sys.exec(cat("v={{shq(verdicts)}}; echo \"$(grep -c '^match' $v) match, $(grep -c '^load' $v) not loadable\"; ",
-        "! grep -E '^(diff|hang)' $v"))
-    let failed = sys.exec_status() != 0
-    sys.exec("rm -rf {{shq(scratch_dir)}}")
-    if failed {
-        bad("selfhost {{stage}} (dumps differ)", summary)
-        return
+    let stages = []string { "typecheck", "check", "ir", "dce", "codegen" }
+    let c_twins = []string { "typecheck.c", "threadcheck.c, borrowck.c, boundscheck.c", "ir.c", "dce.c", "codegen_c.c" }
+    for i in 0..stages.len {
+        let stage = stages[i]
+        let summary = sys.exec(cat("v={{shq(verdicts)}}; echo \"$(grep -c '^match {{stage}} ' $v) match, $(grep -c '^load {{stage}} ' $v) not loadable\"; ",
+            "! grep -E '^(diff|hang) {{stage}} ' $v"))
+        if sys.exec_status() != 0 {
+            bad("selfhost {{stage}} (dumps differ)", summary)
+        } else {
+            ok("selfhost {{stage}} vs {{c_twins[i]}}: {{trim(summary)}}")
+        }
     }
-    ok("selfhost {{stage}} vs {{c_twin}}: {{trim(summary)}}")
-}
-
-/** *The type checker: `tcdump` against `loamc --dump-typed`. */
-fn ig_selfhost_typecheck() {
-    selfhost_checker_gate("typecheck", "", "--dump-typed", "typecheck.c")
-}
-
-/** *The passes after typecheck: `tcdump --checked` against `loamc */
-/** *--dump-checked` (threadcheck, borrowck and boundscheck: their diagnostics, */
-/** *exit 3, and the moved / needs-drop / index-safe node flags). */
-fn ig_selfhost_check() {
-    selfhost_checker_gate("check", "--checked", "--dump-checked", "threadcheck.c, borrowck.c, boundscheck.c")
-}
-
-/** *IR lowering: `tcdump --ir` against `loamc --dump-ir` (every fn, local, */
-/** *instruction and terminator codegen reads, and the verifier's verdict). */
-fn ig_selfhost_ir() {
-    selfhost_checker_gate("ir", "--ir", "--dump-ir", "ir.c")
-}
-
-/** *Dead-code elimination: `tcdump --dce` against `loamc --dump-dce` (the */
-/** *fn declarations codegen keeps). */
-fn ig_selfhost_dce() {
-    selfhost_checker_gate("dce", "--dce", "--dump-dce", "dce.c")
-}
-
-/** *Codegen: `tcdump --c` against `loamc --dump-c`, the whole C translation */
-/** *unit a default build emits, byte for byte. */
-fn ig_selfhost_codegen() {
-    selfhost_checker_gate("codegen", "--c", "--dump-c", "codegen_c.c")
+    sys.exec("rm -rf {{shq(scratch_dir)}}")
 }
 
 /** *The driver: `compiler/loamc.loam` built by the seed (stage 1) against */
@@ -2709,8 +2696,7 @@ fn ig_selfhost_driver() {
                                     cat("  if ! ZEUS_HEADLESS=1 \"$S\" \"$f\" -o \"$w/bin\" >\"$w/a\" 2>&1; then echo \"build $f\"; cat \"$w/a\";\n",
                                         "  elif ! \"$w/bin\" </dev/null 2>/dev/null | cmp -s - \"${f%.loam}.expected\"; then echo \"run $f\"; fi\nfi\nrm -rf \"$w\"\n"))))))))))
     let find_all = "find packages examples nob.loam -name '*.loam' -not -path '*/tmp/*' -not -path '*/build/*' -not -path '*/node_modules/*'"
-    let cores = int_of(sys.exec("sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null"))
-    let par = if cores > 0 { cores } else { 4 }
+    let par = core_count()
     let checks = sys.exec("cd {{shq(ROOT)}} && export LOAM_HOME={{shq(ROOT)}} && {{find_all}} | sort | awk '{print \"one\", NR, $0}' | xargs -P {{par}} -n 3 sh {{shq(script)}} 2>&1")
     let n_files = trim(sys.exec("cd {{shq(ROOT)}} && {{find_all}} | wc -l"))
     let runs = sys.exec("cd {{shq(ROOT)}} && export LOAM_HOME={{shq(ROOT)}} && ls packages/loam/tests/compile_pass/*.expected | sed 's/[.]expected$/.loam/' | awk '{print \"run\", NR, $0}' | xargs -P {{par}} -n 3 sh {{shq(script)}} 2>&1")
@@ -2961,16 +2947,8 @@ fn stanza_dispatch(name: string) -> bool {
         ig_selfhost_driver()
     } else if name == "fresh_cache" {
         ig_fresh_cache()
-    } else if name == "selfhost_typecheck" {
-        ig_selfhost_typecheck()
-    } else if name == "selfhost_check" {
-        ig_selfhost_check()
-    } else if name == "selfhost_ir" {
-        ig_selfhost_ir()
-    } else if name == "selfhost_dce" {
-        ig_selfhost_dce()
-    } else if name == "selfhost_codegen" {
-        ig_selfhost_codegen()
+    } else if name == "selfhost_passes" {
+        ig_selfhost_passes()
     } else if name == "suite_zeus" {
         ig_suite("zeus")
     } else if name == "suite_plain" {
@@ -3023,11 +3001,7 @@ fn stanza_names() -> []string {
     push(v, "selfhost_load")
     push(v, "selfhost_driver")
     push(v, "fresh_cache")
-    push(v, "selfhost_typecheck")
-    push(v, "selfhost_check")
-    push(v, "selfhost_ir")
-    push(v, "selfhost_dce")
-    push(v, "selfhost_codegen")
+    push(v, "selfhost_passes")
     push(v, "wasm_float")
     return v
 }
@@ -3097,7 +3071,7 @@ fn integration() -> int {
 /** *app. The wasm module's entry points, the server/client split, and the */
 /** *language server all sit next to the compiler. */
 fn host_stanzas() -> []string {
-    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "api_freeze", "modules", "selfhost_lex", "selfhost_parse", "selfhost_load", "selfhost_typecheck", "selfhost_check", "selfhost_ir", "selfhost_dce", "selfhost_codegen", "selfhost_driver", "fresh_cache", "wasm_float" }
+    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "api_freeze", "modules", "selfhost_lex", "selfhost_parse", "selfhost_load", "selfhost_passes", "selfhost_driver", "fresh_cache", "wasm_float" }
 }
 
 /** *One after another, for an `--isolated` run; a batched run pools them. */

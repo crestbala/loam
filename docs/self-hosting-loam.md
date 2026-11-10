@@ -972,7 +972,9 @@ Checked on a fresh `git clone` of `e5c0657` (macOS, 2026-11-10): `./nob.sh`
 built the seed and tools, and every self-hosting stanza passed
 (`selfhost_lex`, `_load`, `_parse` on 966 files; `_typecheck`, `_check`,
 `_ir`, `_dce`, `_codegen` on 521 entries plus 23 that C cannot load;
-`selfhost_driver`; `fresh_cache`).
+`selfhost_driver`; `fresh_cache`). The five checker stanzas are now one,
+`selfhost_passes` (see the slow-suite section below); it reports the same
+five verdicts.
 
 - [x] Stage 0 (C) builds stage 1 (Loam) (`selfhost_driver`)
 - [x] Stage 1 builds stage 2, byte-identical C output. `selfhost_driver`
@@ -1046,12 +1048,21 @@ locally (the per-entry timing probe was stopped). What the code shows:
 
 Candidate fixes, in order of expected payoff (measure first: time one small
 and one zeus entry for each of the three runs):
-1. One process per side per entry. Have `tcdump` write all five dumps from
-   one pipeline run, and the seed write all five C dumps from one run. Then
-   the five gates become one stanza: about 5× fewer front-end runs. Reuse
-   the `--dump-modules` list too.
+1. Done. One process per side per entry: `tcdump --all <dir>` writes all
+   five dumps from one pipeline run, and `loamc --dump-all <dir>` all five C
+   dumps from one. The five gates are one stanza, `selfhost_passes`
+   (`tools/selfhost-passes-one.sh`, one worker per core), which still
+   reports a verdict per stage. The cache holds C's five stage checksums per
+   input key, and a match of all five per `tcdump` sum; a new seed empties
+   it. Full local suite, uncapped, on a quiet 8-core Mac (2026-11-10):
+   445 s from a cold cache and 403 s warm (615 checks). The warm cache saves
+   only ~40 s, so the remaining cost is elsewhere, most likely
+   `selfhost_driver`, which has no cache (not yet timed alone). Load stays
+   near 25 on 8 cores while the self-hosting stanzas overlap.
 2. Cap total parallelism at the core count, across stanzas and inside the
-   gates (one shared pool, not `-j 4` × `-P 8`).
+   gates (one shared pool, not `-j 8` × one worker per core). Not decided:
+   one capped run took 473 s, but under different cache and machine
+   conditions than the numbers above.
 3. Cache the C side by its inputs only (the `bin/loamc` sum plus the module
    sources, as now). Persist `tests/tmp/selfhost_tc_ref` in CI with
    `actions/cache`.

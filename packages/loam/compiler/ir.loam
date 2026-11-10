@@ -176,6 +176,8 @@ struct IrFn {
     init_mod: int,
 }
 
+/** *`lower_modules` ran: the IR below is the whole program's. */
+let mut LOWERED: bool = false
 let mut FNS: []IrFn = []IrFn {}
 let mut LOCALS: []Local = []Local {}
 let mut BLOCKS: []Block = []Block {}
@@ -2911,6 +2913,7 @@ fn lower_modules() {
     for f in 0..FNS.len {
         mark_needs_zero(f)
     }
+    LOWERED = true
 }
 
 // --- borrowed loads -------------------------------------------------------------------

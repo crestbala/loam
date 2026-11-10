@@ -3031,10 +3031,14 @@ fn copy_runtime() {
 }
 
 /** *Write the whole C translation unit to stdout, or to `SINK`. Dead-code */
-/** *elimination and IR lowering run first. */
+/** *elimination and IR lowering (unless `ir.LOWERED`) run first. */
 fn emit_c() {
     dce.run()
-    ir.lower_modules()
+    // Lowering appends to the IR tables, so a caller that lowered already
+    // (tcdump --all prints the IR first) must not lower twice.
+    if !ir.LOWERED {
+        ir.lower_modules()
+    }
     collect_elem_hooks()
     let nmods = typecheck.MODS.len
 
