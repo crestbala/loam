@@ -26,8 +26,9 @@ targets=${*:-"x86_64-linux-gnu aarch64-linux-gnu x86_64-windows-gnu aarch64-wind
 . "$ROOT/tools/fixture-deps.sh"
 
 cc_one() { # target c-file out fixture
-    objs=""; links=""; i=0
-    grep -q 'loam_net_' "$2" && objs="packages/loam/runtime/net.c"
+    # net.c is linked into every fixture: the drivers add it for any program
+    # that loads std:net or the http package, whether or not it calls it.
+    objs="$OUT/net-$1.o"; links=""; i=0
     deps=$(deps_of "$4" | sort -u)
     IFS='
 '
@@ -44,8 +45,11 @@ cc_one() { # target c-file out fixture
     zig cc -target "$1" -std=gnu99 -O1 -w -I packages/loam/runtime "$2" $objs -o "$3" $links 2>&1 | grep -E "error" | head -3
 }
 
+fail=0
 for t in $targets; do
     n=0; bad=0; nogap=""
+    e=$(zig cc -target "$t" -O1 -fno-sanitize=undefined -w -I packages/loam/runtime -c packages/loam/runtime/net.c -o "$OUT/net-$t.o" 2>&1 | grep -E "error" | head -3)
+    [ -n "$e" ] && { echo "cross-check $t: runtime/net.c: $e"; fail=1; continue; }
     bin/loamc nob.loam --emit-c -o "$OUT/nob.c" >/dev/null
     e=$(cc_one "$t" "$OUT/nob.c" "$OUT/nob-$t" nob.loam)
     [ -n "$e" ] && { echo "$t nob: $e"; bad=$((bad+1)); }

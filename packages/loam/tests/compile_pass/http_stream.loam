@@ -66,7 +66,7 @@ fn cli_main() {
     net.tcp_close(l)
     // The suite runs headless, and a headless `listen` only self-tests; the
     // child has to really serve.
-    let pid = sys.exec("env -u ZEUS_HEADLESS -u LOAM_HEADLESS -u LOAM_HTTP_SELFTEST LOAM_HS_SRV=1 LOAM_HS_PORT={{port}} packages/loam/tests/tmp/http_stream >/dev/null 2>&1 & echo $!")
+    let pid = sys.exec("env -u ZEUS_HEADLESS -u LOAM_HEADLESS -u LOAM_HTTP_SELFTEST LOAM_HS_SRV=1 LOAM_HS_PORT={{port}} '{{sys.arg(0)}}' >/dev/null 2>&1 & echo $!")
     let mut up = false
     for i in 0..200 {
         if !up {

@@ -434,6 +434,14 @@ loam_str loam_net_fetch_rpc(loam_str path, loam_str body) {
     return out;
 }
 
+#elif defined(_WIN32)
+
+/* No Windows port yet: the file defines nothing there. The drivers link it
+   for any program that loads `std:net` or the http package, and many of
+   those only parse or encode and never call `loam_net_*`; they link as
+   usual. A program that does open a socket fails to link, naming the
+   missing `loam_net_*` symbol. */
+
 #else
 
 #include <unistd.h>
