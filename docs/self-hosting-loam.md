@@ -223,6 +223,8 @@ must also be portable to Linux and Windows (CreateProcess / WaitForSingleObject,
 Needed:
 
 - [x] `sys.mtime(path) -> i64` (milliseconds; `-1` when missing).
+- [x] `sys.stamp(path) -> string`: `"<sec> <nsec> <size>"` of a regular file,
+      `""` otherwise; the `.fresh` build cache compares these (10c).
 - [x] `fmt.ewrite` / `fmt.eprintln` (stderr; `eprintln` is `println`'s
       compile-time expansion with the stderr writers).
 - [x] `sys.read_stdin(n) -> string` (exactly `n` bytes, fewer at EOF) and
@@ -849,7 +851,7 @@ beyond what the checklist requires.
       - Refused by name until after the fixed point (the seed keeps them):
         wasm / iOS / Android, `test`, `--emit-ir`, `--cost`, `--dump-*`, and
         the `LOAM_BATCH` / `LOAM_SHARD` / `LOAM_SERVER_SPLIT` / `LOAM_HOST` /
-        `LOAM_NO_DCE` builds. The `.fresh` build cache moves to 10c.
+        `LOAM_NO_DCE` builds. The `.fresh` build cache moved to 10c (done there).
       - The strict `selfhost_driver` stanza: over all 972 `.loam` files,
         `check` prints and exits the same as the seed, and where it passes
         `--emit-c -o` writes the same C; the 34 `compile_pass` fixtures with a
@@ -937,6 +939,31 @@ beyond what the checklist requires.
           order (`compile_fail/duplicate_decls.loam`, matched against C by
           `selfhost_typecheck`). With this, every pass in one process
           matches or beats its C twin on all three entries.
+      - The `.fresh` build cache is in the Loam driver. A native build with
+        `-o` writes `<output>.fresh`, which holds a key line, the output's
+        stamp, and one stamp per file the build read. The same command run
+        again reuses the output while every stamp still matches, and prints
+        `loam: fresh` under `LOAM_TIME`. `LOAM_NO_FRESH=1` turns it off, and
+        `check` / `--emit-c` never use it. The key hashes the arguments, the
+        environment that changes a build, the compiler binary, and the runtime,
+        host and app `runtime/` directories. One std addition, `sys.stamp`
+        (seconds, nanoseconds and size, as the seed's `stat` gives them), since
+        `sys.mtime` is in milliseconds and has no size.
+        - Three bugs fixed in both drivers. The stamp listed only the `.loam`
+          modules, so an edit to a `#![c_source]` file, a header beside it, or
+          a `LOAM_LINK_EXTRA` input still counted as fresh; those files are
+          stamped now. A compiler run from `PATH` (`loamc`, not `bin/loamc`)
+          failed to `stat` its `argv[0]`, so a rebuilt compiler kept its old
+          outputs; the key now finds the binary on `PATH`. And the `.obj`
+          cache compared mtimes to the second, so a C source edited in the
+          same second its object was built kept the stale object; a source is
+          now stale unless it is strictly older, at the finest time the file
+          system records.
+        - `tests/fresh/check.sh` holds 17 cases: reuse; a same-size module
+          edit; a C source edit; an env var change; a flag change; a new file
+          in `runtime/`; `LOAM_NO_FRESH`; a deleted output. `check` and
+          `--emit-c` must leave no stamp. The `fresh_cache` stanza runs the
+          cases on the seed, and `selfhost_driver` on stage 1.
 - [ ] Compiler itself uses only safe Loam (arenas + integer indices; §2.7)
 
 ### Fixed-point and tooling

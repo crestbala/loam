@@ -154,12 +154,21 @@ static double now_sec(void) {
     return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
 }
 
-/** 1 if `src` is missing or newer than `dst` (or `dst` is missing). */
+static void stamp_times(const struct stat *st, long long *sec, long *nsec);
+
+/** 1 if `src` or `dst` is missing, or `src` is not older than `dst`. Compared to
+    the finest time the file system records: an edit in the same second (or
+    tick) as the object's build counts as newer, so it is never missed; the
+    cost is at most one extra compile. */
 static int src_newer(const char *src, const char *dst) {
     struct stat ss, ds;
+    long long ssec = 0, dsec = 0;
+    long snsec = 0, dnsec = 0;
     if (stat(dst, &ds) != 0) return 1;
     if (stat(src, &ss) != 0) return 1;
-    return ss.st_mtime > ds.st_mtime;
+    stamp_times(&ss, &ssec, &snsec);
+    stamp_times(&ds, &dsec, &dnsec);
+    return ssec > dsec || (ssec == dsec && snsec >= dnsec);
 }
 
 static int any_src_newer(const char *dst, const char **srcs, int n) {
@@ -267,6 +276,21 @@ static int append_quoted(char *out, size_t n, const char *arg) {
     return 1;
 }
 
+/* Files besides the modules that this build read (`#![c_source]` sources, the
+   headers beside them, `LOAM_LINK_EXTRA` inputs). `fresh_save` stamps them, so
+   an edit to one rebuilds. */
+static char *fresh_deps[256];
+static int fresh_ndeps;
+static int fresh_deps_full;
+
+static void fresh_dep(const char *path) {
+    if (fresh_ndeps >= (int)(sizeof fresh_deps / sizeof fresh_deps[0])) {
+        fresh_deps_full = 1;
+        return;
+    }
+    fresh_deps[fresh_ndeps++] = strdup(path);
+}
+
 /** A source is named relative to its `.loam` file, with no way out of it and
     nothing the shell or the compiler's quoting could read. */
 static int c_source_path_ok(const char *p) {
@@ -327,6 +351,7 @@ static int c_source_obj(const char *loam_path, const CDirective *dir, char *link
                 dir->loc.line, src);
         return 1;
     }
+    for (int k = 0; k < nd; k++) fresh_dep(deps[k]);
     size_t used = strlen(link);
     if (used + strlen(obj) + 4 >= linkn) {
         fprintf(stderr, "loam: too many C sources for one link\n");
@@ -767,6 +792,25 @@ static uint64_t dir_fp(const char *dir, uint64_t h) {
     return fnv(&sum, sizeof sum, h);
 }
 
+/* This compiler's own file: `argv0` when it names a path, else the first match
+   on `PATH`, so a compiler run as `loamc` is still keyed by its binary. */
+static const char *self_path(const char *argv0) {
+    static char found[4096];
+    struct stat st;
+    if (!argv0 || strchr(argv0, '/')) return argv0;
+    const char *path = getenv("PATH");
+    while (path && *path) {
+        size_t dn = strcspn(path, ":");
+        if (dn) {
+            snprintf(found, sizeof found, "%.*s/%s", (int)dn, path, argv0);
+            if (stat(found, &st) == 0 && S_ISREG(st.st_mode)) return found;
+        }
+        path += dn;
+        if (*path == ':') path++;
+    }
+    return argv0;
+}
+
 static uint64_t fresh_key_hash(char **argv, int argc, const char *in_path) {
     uint64_t h = fnv_str("loam-fresh-1", 14695981039346656037ULL);
     for (int i = 1; i < argc; i++) h = fnv_str(argv[i], h);
@@ -784,7 +828,8 @@ static uint64_t fresh_key_hash(char **argv, int argc, const char *in_path) {
         h = fnv_str(v ? v : "", h);
     }
     struct stat st;
-    if (argv[0] && stat(argv[0], &st) == 0) {
+    const char *self = self_path(argv[0]);
+    if (self && stat(self, &st) == 0) {
         long long sec = 0;
         long nsec = 0;
         stamp_times(&st, &sec, &nsec);
@@ -894,7 +939,7 @@ static void fresh_save(const char *out, const char *key, const LoamSession *sess
     struct stat st;
     fresh_stamp_path(out, stamp, sizeof stamp);
     snprintf(tmp, sizeof tmp, "%s.%ld", stamp, (long)getpid());
-    if (stat(out, &st) != 0) return;
+    if (stat(out, &st) != 0 || fresh_deps_full) return;
     for (int i = 0; i < sess->nmods; i++)
         if (!sess->mods[i].path) return;
     FILE *f = fopen(tmp, "w");
@@ -913,6 +958,15 @@ static void fresh_save(const char *out, const char *key, const LoamSession *sess
         stamp_times(&st, &sec, &nsec);
         fprintf(f, "F %lld %ld %lld %s\n", sec, nsec, (long long)st.st_size,
                 sess->mods[i].path);
+    }
+    for (int i = 0; i < fresh_ndeps; i++) {
+        if (stat(fresh_deps[i], &st) != 0) {
+            fclose(f);
+            unlink(tmp);
+            return;
+        }
+        stamp_times(&st, &sec, &nsec);
+        fprintf(f, "F %lld %ld %lld %s\n", sec, nsec, (long long)st.st_size, fresh_deps[i]);
     }
     if (fclose(f) != 0 || rename(tmp, stamp) != 0) unlink(tmp);
 }
@@ -1981,6 +2035,18 @@ int main(int argc, char **argv) {
         size_t left = sizeof extra_link - used - 1;
         if (strlen(le) + 64 <= left) {
             snprintf(extra_link + used, left + 1, " -I\"%s\" %s", LOAM_RUNTIME_DIR, le);
+            char word[1024];
+            for (const char *at = le; *at;) {
+                size_t wn = strcspn(at, " \t");
+                struct stat wst;
+                if (wn && wn < sizeof word) {
+                    memcpy(word, at, wn);
+                    word[wn] = 0;
+                    if (stat(word, &wst) == 0 && S_ISREG(wst.st_mode)) fresh_dep(word);
+                }
+                at += wn;
+                at += strspn(at, " \t");
+            }
         } else {
             fprintf(stderr, "loam: warning: LOAM_LINK_EXTRA too long, ignored\n");
         }
