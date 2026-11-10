@@ -250,6 +250,9 @@ const M_AS_VALUE: int = 512
 const M_ZERO_REST: int = 1024
 /** *With `M_PRINTLN`: `fmt.eprintln` (C's `is_println == 2`). */
 const M_EPRINTLN: int = 2048
+/** *On a module `let`: it is in typecheck's `GVARS` (static storage, never */
+/** *captured). A mark, so the test is one load, not a scan of every global. */
+const M_GLOBAL_VAR: int = 4096
 
 /** *A diagnostic: where, and what. */
 struct Diag {

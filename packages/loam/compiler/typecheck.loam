@@ -5,7 +5,7 @@
 //
 // The C checker's pointers become indices: a node is an index into
 // `ast.NODES`, a type into `types.TYPES`, a module into `MODS`, and a scope
-// into `SCOPES` (the C scope chain is a stack, so a scope is its depth).
+// is its depth in the scope stack (`SCOPE_START`; the C scope chain is a stack).
 
 import "std:buf"
 import "std:map"
@@ -119,75 +119,93 @@ fn err(loc: Loc, msg: string) {
 
 // --- scopes ------------------------------------------------------------------------
 
-struct Scope {
-    names: []string,
-    types: []int,
-    muts: []int,
-    capfns: []int,
-    locs: []Loc,
-    nodes: []int,
+// Every binding of every open scope, in one set of parallel arrays, innermost
+// last; `SCOPE_START[s]` is where scope `s` begins. A lookup is one scan from
+// the end of `SC_NAMES` (a scope per vec cost two bounds checks and a load
+// through the scope per name compared).
+let mut SC_NAMES: []string = []string {}
+let mut SC_TYPES: []int = []int {}
+let mut SC_MUTS: []int = []int {}
+let mut SC_CAPFNS: []int = []int {}
+let mut SC_LOCS: []Loc = []Loc {}
+let mut SC_NODES: []int = []int {}
+let mut SCOPE_START: []int = []int {}
+/** *How many bindings are open: the `SC_` slots from here up are free and */
+/** *reused in place, so closing a scope is one store, not six `pop`s per */
+/** *binding. */
+let mut SC_TOP: int = 0
+
+fn scopes_clear() {
+    SC_NAMES = []string {}
+    SC_TYPES = []int {}
+    SC_MUTS = []int {}
+    SC_CAPFNS = []int {}
+    SC_LOCS = []Loc {}
+    SC_NODES = []int {}
+    SCOPE_START = []int {}
+    SC_TOP = 0
 }
 
-let mut SCOPES: []Scope = []Scope {}
-
 fn scope_push() {
-    push(SCOPES, Scope {
-        names: []string {},
-        types: []int {},
-        muts: []int {},
-        capfns: []int {},
-        locs: []Loc {},
-        nodes: []int {},
-    })
+    push(SCOPE_START, SC_TOP)
 }
 
 fn scope_pop() {
-    if SCOPES.len > 0 {
-        let s = pop(SCOPES)
+    if SCOPE_START.len == 0 {
+        return
     }
+    SC_TOP = pop(SCOPE_START)
 }
 
 fn scope_add(name: string, ty: int, is_mut: int, capfn: int, loc: Loc, node: int) {
-    if SCOPES.len == 0 {
+    if SCOPE_START.len == 0 {
         return
     }
-    let top = SCOPES.len - 1
     if name != "_" {
-        let names = SCOPES[top].names
-        for i in 0..names.len {
-            if names[i] == name {
-                err(loc, "'{{name}}' is already defined in this scope (first at line {{SCOPES[top].locs[i].line}})")
+        for i in SCOPE_START[SCOPE_START.len - 1]..SC_TOP {
+            if SC_NAMES[i] == name {
+                err(loc, "'{{name}}' is already defined in this scope (first at line {{SC_LOCS[i].line}})")
                 break
             }
         }
     }
-    push(SCOPES[top].names, name)
-    push(SCOPES[top].types, ty)
-    push(SCOPES[top].muts, is_mut)
-    push(SCOPES[top].capfns, capfn)
-    push(SCOPES[top].locs, loc)
-    push(SCOPES[top].nodes, node)
+    if SC_TOP < SC_NAMES.len {
+        SC_NAMES[SC_TOP] = name
+        SC_TYPES[SC_TOP] = ty
+        SC_MUTS[SC_TOP] = is_mut
+        SC_CAPFNS[SC_TOP] = capfn
+        SC_LOCS[SC_TOP] = loc
+        SC_NODES[SC_TOP] = node
+    } else {
+        push(SC_NAMES, name)
+        push(SC_TYPES, ty)
+        push(SC_MUTS, is_mut)
+        push(SC_CAPFNS, capfn)
+        push(SC_LOCS, loc)
+        push(SC_NODES, node)
+    }
+    SC_TOP += 1
 }
 
-/** *Where `name` is bound: the scope (an index into `SCOPES`) and the slot in */
-/** *it, innermost first; `s` is -1 when unbound. */
+/** *Where `name` is bound, innermost first: the scope (its depth, an index */
+/** *into `SCOPE_START`) and the binding (an index into the `SC_` arrays); */
+/** *`s` is -1 when unbound. */
 struct Found {
     s: int,
     i: int,
 }
 
 fn scope_find_s(name: string) -> Found {
-    let mut s = SCOPES.len - 1
-    while s >= 0 {
-        let names = SCOPES[s].names
-        let mut i = names.len - 1
-        while i >= 0 {
-            if names[i] == name {
-                return Found { s: s, i: i }
+    let mut i = SC_TOP - 1
+    while i >= 0 {
+        if SC_NAMES[i] == name {
+            let mut sc = SCOPE_START.len - 1
+            while sc > 0 && SCOPE_START[sc] > i {
+                sc -= 1
             }
-            i = i - 1
+            return Found { s: sc, i: i }
         }
-        s = s - 1
+        i -= 1
     }
     return Found { s: -1, i: -1 }
 }
@@ -324,7 +342,7 @@ fn expr_is_cap_fn(n: int) -> bool {
     if kind(n) == Kind.Ident {
         let f = scope_find_s(ast.INFO[n].name)
         if f.s >= 0 {
-            return SCOPES[f.s].capfns[f.i] != 0
+            return SC_CAPFNS[f.i] != 0
         }
     }
     return false
@@ -1123,12 +1141,25 @@ fn find_struct(name: string) -> int {
             return d
         }
     }
+    // The first module, in load order, that declares it: through each
+    // module's name table (a scan of every declaration, as C does, copied
+    // the declaration list per module on each call).
     for mi in 0..MODS.len {
-        let ds = decls_of(MODS[mi].root)
-        for i in 0..ds.len {
-            if kind(ds[i]) == Kind.Struct && ast.INFO[ds[i]].name == name {
-                return ds[i]
+        if MODS[mi].root == NONE {
+            continue
+        }
+        if (mi + 1) * DECL_KIND_SLOTS > DECL_TABLES.len {
+            let kids = ast.NODES[MODS[mi].root].kids
+            for i in 0..kids.len {
+                if kind(kids[i]) == Kind.Struct && ast.INFO[kids[i]].name == name {
+                    return kids[i]
+                }
             }
+            continue
+        }
+        let d = find_decl(mi, Kind.Struct, name)
+        if d != NONE {
+            return d
         }
     }
     return NONE
@@ -1462,10 +1493,8 @@ fn cap_type_for(dnode: int, ty: int) -> int {
     if tk(ty) != TK.Int {
         return ty
     }
-    for i in 0..GVARS.len {
-        if GVARS[i].var == dnode {
-            return ty
-        }
+    if is_gvar(dnode) {
+        return ty
     }
     let sig = signal_type()
     if sig == NO_TYPE {
@@ -1587,7 +1616,11 @@ fn resolve_type(tn: int) -> int {
     if tn == NONE || kind(tn) != Kind.Type {
         return types.ty_void()
     }
-    let n = ast.full(tn)
+    let n = view(tn)
+    let name = ast.INFO[tn].name
+    let has_name = ast.INFO[tn].has_name
+    let kids = ast.NODES[tn].kids
+    let kids2 = ast.EXTRA[ast.ex(tn)].kids2
     let tag = n.op
     if tag == 0 || tag == 1 {
         return types.type_ptr(resolve_type(n.a), tag)
@@ -1612,15 +1645,15 @@ fn resolve_type(tn: int) -> int {
     }
     if tag == 5 {
         let mut ps = []int {}
-        for i in 0..n.kids.len {
-            push(ps, resolve_type(n.kids[i]))
+        for i in 0..kids.len {
+            push(ps, resolve_type(kids[i]))
         }
         return types.type_proc(ps, resolve_type(n.a))
     }
-    if !n.has_name {
+    if !has_name {
         return types.ty_void()
     }
-    let nm = n.name
+    let nm = name
     let prim = primitive_type(nm)
     if prim != NO_TYPE {
         return prim
@@ -1641,7 +1674,7 @@ fn resolve_type(tn: int) -> int {
     }
     let en = find_enum(nm)
     if en != NONE {
-        if n.kids2.len > 0 {
+        if kids2.len > 0 {
             err(n.loc, "enum '{{nm}}' does not take type arguments")
         }
         return types.ty_int()
@@ -1649,7 +1682,7 @@ fn resolve_type(tn: int) -> int {
     let st = find_struct(nm)
     if st != NONE {
         let want = ast.EXTRA[ast.ex(st)].strs.len
-        let got = n.kids2.len
+        let got = kids2.len
         if want == 0 {
             if got > 0 {
                 err(n.loc, "type '{{nm}}' does not take type arguments")
@@ -1662,7 +1695,7 @@ fn resolve_type(tn: int) -> int {
         }
         let mut args = []int {}
         for i in 0..got {
-            push(args, resolve_type(n.kids2[i]))
+            push(args, resolve_type(kids2[i]))
         }
         return make_struct_inst(st, args, n.loc, true)
     }
@@ -2001,7 +2034,7 @@ fn peek_type(a: int) -> int {
     if x.kind == Kind.Ident {
         let f = scope_find_s(x.name)
         if f.s >= 0 {
-            return SCOPES[f.s].types[f.i]
+            return SC_TYPES[f.i]
         }
         let fd = lookup_unqualified(x.name, Kind.Fn)
         return if fd != NONE { fn_type_of(fd) } else { NO_TYPE }
@@ -3392,7 +3425,7 @@ fn check_call(n: int, expect: int) -> int {
         let nm = ast.INFO[cal].name
         let found = scope_find_s(nm)
         if found.s >= 0 {
-            let lt = SCOPES[found.s].types[found.i]
+            let lt = SC_TYPES[found.i]
             if tk(lt) == TK.Proc {
                 let ct = check_expr(cal)
                 ast.INFO[n].marks = ast.INFO[n].marks | ast.M_FN_VAL
@@ -3599,11 +3632,11 @@ fn check_closure(n: int, expect0: int) -> int {
     cur_clos = n
     cur_async = false
     scope_push()
-    clos_scope = SCOPES.len - 1
+    clos_scope = SCOPE_START.len - 1
     let pushed = clos_stack.len < 64
     if pushed {
         push(clos_stack, n)
-        push(clos_scope_stack, SCOPES.len - 1)
+        push(clos_scope_stack, SCOPE_START.len - 1)
     }
     for i in 0..npc {
         let prm = ast.full(params[i])
@@ -3703,12 +3736,7 @@ fn set_ty(n: int, t: int) -> int {
 }
 
 fn is_gvar(d: int) -> bool {
-    for g in 0..GVARS.len {
-        if GVARS[g].var == d {
-            return true
-        }
-    }
-    return false
+    return d >= 0 && (ast.INFO[d].marks & ast.M_GLOBAL_VAR) != 0
 }
 
 /** *`n` now names fn `f` as a value. */
@@ -3723,17 +3751,48 @@ fn resolve_fn_value(n: int, f: int) -> int {
     return ast.NODES[n].ty
 }
 
+/** *The plain fields of node `i` the checker reads first, none owning. */
+/** *`ast.full` copies all of them, ten owning ones included (a retain and a */
+/** *release each), and the hottest checkers ran it once per expression. */
+struct NodeView {
+    kind: int,
+    loc: Loc,
+    flags: int,
+    op: int,
+    a: int,
+    b: int,
+    c: int,
+    num: i64,
+    res: int,
+}
+
+fn view(i: int) -> NodeView {
+    return NodeView {
+        kind: ast.NODES[i].kind,
+        loc: ast.INFO[i].loc,
+        flags: ast.NODES[i].flags,
+        op: ast.NODES[i].op,
+        a: ast.NODES[i].a,
+        b: ast.NODES[i].b,
+        c: ast.NODES[i].c,
+        num: ast.INFO[i].num,
+        res: ast.NODES[i].res,
+    }
+}
+
 fn check_ident(n: int) -> int {
-    let x = ast.full(n)
+    let x = view(n)
+    let name = ast.INFO[n].name
+    let has_name = ast.INFO[n].has_name
     if (x.flags & ASTF_FN_VAL) != 0 && x.res != NONE {
         return set_ty(n, fn_type_of(x.res))
     }
-    let found = scope_find_s(x.name)
+    let found = scope_find_s(name)
     if found.s >= 0 {
-        let ty = SCOPES[found.s].types[found.i]
-        let mt = SCOPES[found.s].muts[found.i]
-        let dloc = SCOPES[found.s].locs[found.i]
-        let dnode = SCOPES[found.s].nodes[found.i]
+        let ty = SC_TYPES[found.i]
+        let mt = SC_MUTS[found.i]
+        let dloc = SC_LOCS[found.i]
+        let dnode = SC_NODES[found.i]
         if !is_gvar(dnode) {
             let mut c = clos_depth() - 1
             while c >= 0 {
@@ -3741,14 +3800,14 @@ fn check_ident(n: int) -> int {
                     break
                 }
                 if tk(ty) == TK.Ptr {
-                    err(x.loc, "cannot capture reference '{{x.name}}'")
+                    err(x.loc, "cannot capture reference '{{name}}'")
                     break
                 }
                 if !types.is_copy(ty) && !types.needs_drop(ty) {
-                    err(x.loc, "cannot capture non-Copy '{{x.name}}'")
+                    err(x.loc, "cannot capture non-Copy '{{name}}'")
                     break
                 }
-                add_cap(clos_stack[c], x.name, cap_type_for(dnode, ty))
+                add_cap(clos_stack[c], name, cap_type_for(dnode, ty))
                 stale_note_capture(dnode, x.loc)
                 c = c - 1
             }
@@ -3760,15 +3819,15 @@ fn check_ident(n: int) -> int {
         ast.INFO[n].def_col = dloc.col
         return ty
     }
-    let f = find_fn_in(Gcur, x.name)
+    let f = find_fn_in(Gcur, name)
     if f != NONE {
         if ast.EXTRA[ast.ex(f)].strs.len > 0 {
-            err(x.loc, "cannot use generic function '{{x.name}}' as a value")
+            err(x.loc, "cannot use generic function '{{name}}' as a value")
             return set_ty(n, types.ty_void())
         }
         return resolve_fn_value(n, f)
     }
-    let gv = lookup_unqualified(x.name, Kind.Var)
+    let gv = lookup_unqualified(name, Kind.Var)
     if gv != NONE && ast.NODES[gv].ty != NO_TYPE {
         ast.NODES[n].ty = ast.NODES[gv].ty
         ast.INFO[n].place_mut = ast.NODES[gv].op
@@ -3777,15 +3836,15 @@ fn check_ident(n: int) -> int {
         ast.INFO[n].def_col = ast.INFO[gv].loc.col
         return ast.NODES[n].ty
     }
-    let ifn = lookup_unqualified(x.name, Kind.Fn)
+    let ifn = lookup_unqualified(name, Kind.Fn)
     if ifn != NONE {
         if ast.EXTRA[ast.ex(ifn)].strs.len > 0 {
-            err(x.loc, "cannot use generic function '{{x.name}}' as a value")
+            err(x.loc, "cannot use generic function '{{name}}' as a value")
             return set_ty(n, types.ty_void())
         }
         return resolve_fn_value(n, ifn)
     }
-    err(x.loc, "unknown identifier '{{x.name}}'")
+    err(x.loc, "unknown identifier '{{name}}'")
     return set_ty(n, types.ty_void())
 }
 
@@ -3886,7 +3945,7 @@ fn check_binary(n: int, expect: int) -> int {
 }
 
 fn check_unary(n: int, expect: int) -> int {
-    let x = ast.full(n)
+    let x = view(n)
     if x.op == Tok.Minus && is_num_lit(x.a) && expect != NO_TYPE && types.is_numeric(expect) {
         let o = ast.full(x.a)
         if o.kind == Kind.Number {
@@ -3941,27 +4000,29 @@ fn check_unary(n: int, expect: int) -> int {
 /** *An enum constant (`Align.Center`, `zeus.Align.Center`) becomes its int; */
 /** *`mod.global` is a place; `mod.fn` a fn value; then struct fields. */
 fn check_field(n: int) -> int {
-    let x = ast.full(n)
+    let x = view(n)
+    let name = ast.INFO[n].name
+    let has_name = ast.INFO[n].has_name
     let tgt = x.a
-    if tgt != NONE && kind(tgt) == Kind.Ident && x.has_name {
+    if tgt != NONE && kind(tgt) == Kind.Ident && has_name {
         let en = find_enum(ast.INFO[tgt].name)
         if en != NONE {
-            let ev = enum_value(en, x.name)
+            let ev = enum_value(en, name)
             if !ev.found {
-                err(x.loc, "enum '{{ast.INFO[en].name}}' has no variant '{{x.name}}'")
+                err(x.loc, "enum '{{ast.INFO[en].name}}' has no variant '{{name}}'")
                 return set_ty(n, types.ty_int())
             }
             return lower_to_int(n, ev.v)
         }
     }
-    if tgt != NONE && kind(tgt) == Kind.Field && ast.NODES[tgt].op == 0 && x.has_name && ast.NODES[tgt].a != NONE &&
+    if tgt != NONE && kind(tgt) == Kind.Field && ast.NODES[tgt].op == 0 && has_name && ast.NODES[tgt].a != NONE &&
         kind(ast.NODES[tgt].a) == Kind.Ident && module_imported(MODS[Gcur].root, ast.INFO[ast.NODES[tgt].a].name) {
         let em = find_mod(ast.INFO[ast.NODES[tgt].a].name)
         let en = if em >= 0 { lookup_through(em, ast.INFO[tgt].name, Kind.Enum) } else { NONE }
         if en != NONE {
-            let ev = enum_value(en, x.name)
+            let ev = enum_value(en, name)
             if !ev.found {
-                err(x.loc, "enum '{{ast.INFO[en].name}}' has no variant '{{x.name}}'")
+                err(x.loc, "enum '{{ast.INFO[en].name}}' has no variant '{{name}}'")
                 return set_ty(n, types.ty_int())
             }
             return lower_to_int(n, ev.v)
@@ -3972,22 +4033,22 @@ fn check_field(n: int) -> int {
         if module_imported(MODS[Gcur].root, base) || base == "Box" {
             mark_module_ident(tgt, base)
             let md = find_mod(base)
-            let gv = if md >= 0 { lookup_through(md, x.name, Kind.Var) } else { NONE }
+            let gv = if md >= 0 { lookup_through(md, name, Kind.Var) } else { NONE }
             if gv != NONE && ast.NODES[gv].ty != NO_TYPE {
                 ast.NODES[n].res = gv
                 ast.NODES[n].ty = ast.NODES[gv].ty
                 ast.INFO[n].place_mut = ast.NODES[gv].op
                 return ast.NODES[n].ty
             }
-            let mfn = if md >= 0 { lookup_through(md, x.name, Kind.Fn) } else { NONE }
+            let mfn = if md >= 0 { lookup_through(md, name, Kind.Fn) } else { NONE }
             if mfn != NONE {
                 if ast.EXTRA[ast.ex(mfn)].strs.len > 0 {
-                    err(x.loc, "cannot use generic function '{{x.name}}' as a value")
+                    err(x.loc, "cannot use generic function '{{name}}' as a value")
                     return set_ty(n, types.ty_void())
                 }
                 let mf = ast.INFO[mfn].loc.file
                 if (ast.INFO[mfn].marks & ast.M_INTRINSIC) != 0 && mf >= 0 && mf < MODS.len && MODS[mf].is_std {
-                    err(x.loc, "cannot use built-in '{{base}}.{{x.name}}' as a value; wrap it in a closure")
+                    err(x.loc, "cannot use built-in '{{base}}.{{name}}' as a value; wrap it in a closure")
                     return set_ty(n, types.ty_void())
                 }
                 ast.NODES[n].kind = Kind.Ident
@@ -3996,15 +4057,15 @@ fn check_field(n: int) -> int {
                 ast.NODES[n].res = NONE
                 return resolve_fn_value(n, mfn)
             }
-            err(x.loc, "no '{{x.name}}' in module '{{base}}'")
+            err(x.loc, "no '{{name}}' in module '{{base}}'")
             return set_ty(n, types.ty_void())
         }
     }
     let t = check_expr(tgt)
     let base = peel_ref(t)
     let bk = tk(base)
-    if (bk == TK.Vec || bk == TK.Array || bk == TK.String) && x.has_name {
-        if x.name == "len" || (bk == TK.Vec && x.name == "cap") {
+    if (bk == TK.Vec || bk == TK.Array || bk == TK.String) && has_name {
+        if name == "len" || (bk == TK.Vec && name == "cap") {
             ast.INFO[n].place_mut = 0
             return set_ty(n, types.ty_int())
         }
@@ -4015,7 +4076,7 @@ fn check_field(n: int) -> int {
     }
     let fns = types.TYPES[base].field_names
     for i in 0..fns.len {
-        if fns[i] == x.name {
+        if fns[i] == name {
             ast.NODES[n].ty = types.TYPES[base].field_types[i]
             if tk(t) == TK.Ptr {
                 ast.INFO[n].place_mut = types.TYPES[t].is_mut
@@ -4025,15 +4086,18 @@ fn check_field(n: int) -> int {
             return ast.NODES[n].ty
         }
     }
-    err(x.loc, "no field '{{x.name}}' on {{types.type_name(base)}}")
+    err(x.loc, "no field '{{name}}' on {{types.type_name(base)}}")
     return set_ty(n, types.ty_void())
 }
 
 fn check_struct_lit(n: int, expect: int) -> int {
-    let x = ast.full(n)
+    let x = view(n)
+    let name = ast.INFO[n].name
+    let has_name = ast.INFO[n].has_name
+    let kids2 = ast.EXTRA[ast.ex(n)].kids2
     let nloc = x.loc
-    let mut st = if x.has_name { find_struct(x.name) } else { NONE }
-    if st != NONE && tk(expect) == TK.Struct && types.TYPES[expect].has_name && types.TYPES[expect].name == x.name &&
+    let mut st = if has_name { find_struct(name) } else { NONE }
+    if st != NONE && tk(expect) == TK.Struct && types.TYPES[expect].has_name && types.TYPES[expect].name == name &&
         !type_same_decl(struct_type_of(st), expect) {
         for m in 0..MODS.len {
             let cand = find_struct_in(m, types.TYPES[expect].name)
@@ -4044,7 +4108,7 @@ fn check_struct_lit(n: int, expect: int) -> int {
         }
     }
     if st == NONE {
-        let shown = if x.has_name { x.name } else { "(null)" }
+        let shown = if has_name { name } else { "(null)" }
         err(nloc, "unknown struct '{{shown}}'")
         return set_ty(n, types.ty_void())
     }
@@ -4055,9 +4119,9 @@ fn check_struct_lit(n: int, expect: int) -> int {
     for i in 0..nt {
         push(bound, NO_TYPE)
     }
-    if nt > 0 && x.kids2.len == nt {
+    if nt > 0 && kids2.len == nt {
         for i in 0..nt {
-            let at = resolve_type(x.kids2[i])
+            let at = resolve_type(kids2[i])
             if at != NO_TYPE && tk(at) != TK.Param {
                 bound[i] = at
             }
@@ -4178,7 +4242,7 @@ fn check_expr_ty(n: int, expect: int) -> int {
     if n == NONE {
         return types.ty_void()
     }
-    let x = ast.full(n)
+    let x = view(n)
     switch x.kind {
         case Kind.Number, Kind.Float:
             return lit_with_expect(n, expect)
@@ -4329,15 +4393,16 @@ fn check_expr_ty(n: int, expect: int) -> int {
         case Kind.StructLit:
             return check_struct_lit(n, expect)
         case Kind.ArrayLit:
+            let kids = ast.NODES[n].kids
             let et = resolve_type(x.a)
-            let cnt = x.kids.len
+            let cnt = kids.len
             if x.num >= i64(0) && i64(cnt) != x.num {
                 err(x.loc, "array literal has {{cnt}} elements, expected {{x.num}}")
             }
             for i in 0..cnt {
-                let e = check_expr_ty(x.kids[i], et)
+                let e = check_expr_ty(kids[i], et)
                 if !types.type_eq(e, et) {
-                    err(ast.INFO[x.kids[i]].loc, "array element type mismatch")
+                    err(ast.INFO[kids[i]].loc, "array element type mismatch")
                 }
             }
             let t = if x.num < i64(0) { types.type_vec(et) } else { types.type_array(et, x.num) }
@@ -4413,7 +4478,7 @@ fn check_stmt(n: int) {
     if n == NONE {
         return
     }
-    let x = ast.full(n)
+    let x = view(n)
     switch x.kind {
         case Kind.Var:
             let ann = if x.a != NONE { resolve_type(x.a) } else { NO_TYPE }
@@ -4423,7 +4488,7 @@ fn check_stmt(n: int) {
             }
             let ty = if ann != NO_TYPE { ann } else { it }
             ast.NODES[n].ty = ty
-            scope_add(x.name, ty, x.op, if expr_is_cap_fn(ast.NODES[n].b) { 1 } else { 0 }, x.loc, n)
+            scope_add(ast.INFO[n].name, ty, x.op, if expr_is_cap_fn(ast.NODES[n].b) { 1 } else { 0 }, x.loc, n)
             break
         case Kind.Assign:
             let l = check_expr(x.a)
@@ -4494,7 +4559,7 @@ fn check_stmt(n: int) {
                 check_expr(it)
             }
             scope_push()
-            scope_add(x.name, types.ty_int(), 0, 0, x.loc, n)
+            scope_add(ast.INFO[n].name, types.ty_int(), 0, 0, x.loc, n)
             loop_depth = loop_depth + 1
             check_block(x.b)
             loop_depth = loop_depth - 1
@@ -4526,7 +4591,7 @@ fn check_stmt(n: int) {
             let mut saw_default = false
             let mut seen = []i64 {}
             switch_depth = switch_depth + 1
-            let cases = x.kids
+            let cases = ast.NODES[n].kids
             for i in 0..cases.len {
                 let cs = cases[i]
                 if cs == NONE || kind(cs) != Kind.Case {
@@ -5439,7 +5504,7 @@ fn typecheck_modules() -> int {
     lookup_reset()
     Gerr = 0
     Gcur = 0
-    SCOPES = []Scope {}
+    scopes_clear()
     MONOS = []Mono {}
     STRUCT_INSTS = []int {}
     GVARS = []GVar {}
@@ -5552,6 +5617,7 @@ fn typecheck_modules() -> int {
                         cname_add(cn)
                     }
                     push(GVARS, GVar { var: d, cname: cn, mod: m })
+                    ast.INFO[d].marks = ast.INFO[d].marks | ast.M_GLOBAL_VAR
                 }
             }
             scope_pop()
@@ -5585,6 +5651,6 @@ fn typecheck_modules() -> int {
 
     check_boxed_tparams()
     instantiate_nested()
-    SCOPES = []Scope {}
+    scopes_clear()
     return Gerr
 }

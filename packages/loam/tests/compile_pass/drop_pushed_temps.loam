@@ -3,6 +3,9 @@
 // used to leak one reference per iteration: 1 MB each, 60 times over against a
 // 24 MB allowance, so one leak per iteration fails even at half that size.
 // `sys.read_file` and `sys.exec` hand back owned strings, freed on drop.
+// An element holding a `Box` is moved into the vec whole, and so is any
+// temporary: the slot takes the strings it holds as they are. The push
+// used to retain them on top, leaking a struct's string beside a `Box`.
 
 import "std:fmt"
 import "std:str"
@@ -19,6 +22,24 @@ fn big(n: int) -> []int {
         push(v, i)
     }
     return v
+}
+
+struct Boxed {
+    b: Box<int>,
+    text: string,
+}
+
+fn push_boxed_local(i: int) -> int {
+    let mut rows = []Boxed {}
+    let row = Boxed { b: Box::new(i), text: str.repeat("x", 1000000) }
+    push(rows, row)
+    return rows.len + *rows[0].b
+}
+
+fn push_boxed_temp(i: int) -> int {
+    let mut rows = []Boxed {}
+    push(rows, Boxed { b: Box::new(i), text: str.repeat("x", 1000000) })
+    return rows[0].text.len + *rows[0].b
 }
 
 fn rss_mb() -> int {
@@ -71,7 +92,7 @@ fn main() {
     sys.write_file(path, str.repeat("x", 1000000))
     // Warm up so allocator caching does not count as growth.
     for i in 0..5 {
-        let n = push_temp() + push_local() + array_lit() + struct_lit(i)
+        let n = push_temp() + push_local() + array_lit() + struct_lit(i) + push_boxed_local(i) + push_boxed_temp(i)
     }
     let mut r = rss_mb()
     for i in 0..60 {
@@ -93,6 +114,16 @@ fn main() {
         let n = struct_lit(i)
     }
     grew("Named { name, xs: f() }", r)
+    r = rss_mb()
+    for i in 0..60 {
+        let n = push_boxed_local(i)
+    }
+    grew("push(rows, boxed)", r)
+    r = rss_mb()
+    for i in 0..60 {
+        let n = push_boxed_temp(i)
+    }
+    grew("push(rows, Boxed { … })", r)
     r = rss_mb()
     for i in 0..60 {
         let s = sys.read_file(path)

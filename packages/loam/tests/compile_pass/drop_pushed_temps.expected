@@ -2,4 +2,6 @@ push(rows, f()) ok
 push(rows, row) ok
 [][]int { f() } ok
 Named { name, xs: f() } ok
+push(rows, boxed) ok
+push(rows, Boxed { … }) ok
 sys.read_file ok

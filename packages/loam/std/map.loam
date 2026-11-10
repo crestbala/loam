@@ -15,8 +15,8 @@
 // * `map_new<T>(absent: T)` **takes** the value meaning "not here", because no
 //   default `T` is nameable — the same reason `std:thread`'s `chan<T>(cap, init)`
 //   takes one.
-// * Keys are `string` and the table does **not** own them: retention outside a
-//   signal cell is not expressible, so a key must outlive its entry.
+// * Keys are `string`, and an entry holds its own reference to its key (as any
+//   `string` field does), so a key built for one call may be freed after it.
 // * Readers take `&mut Map<T>`: this language does not coerce a `&mut` argument
 //   to a shared one at a call, so a helper reached from `map_put` must accept
 //   the borrow its caller already holds.
@@ -286,8 +286,8 @@ fn map_grow<T>(m: &mut Map<T>, absent: T) {
     }
 }
 
-/** *Drop every entry. The table does not own its keys, so there is nothing to */
-/** *release — see the header. */
+/** *Drop every entry, keeping the capacity. Overwriting a key with "" releases */
+/** *the entry's reference to it. */
 fn map_clear<T>(m: &mut Map<T>) {
     let mut i = 0
     while i < m.entries.len {

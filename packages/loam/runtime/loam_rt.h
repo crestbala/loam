@@ -762,6 +762,24 @@ static inline void loam_vec_unique(loam_vec *v, size_t esz, const char *f, int l
     v->ptr = (char *)raw + sizeof(int64_t);
 }
 
+/* The capacity a vec of `cap` slots grows to so it holds `n`. A push that
+   overflows a full buffer of 256 KB or more grows it 4x, not 2x: a big
+   table (a compiler's AST, a log) is copied about half as many times on its
+   way up, and its spare room stays under 3/4 of what it holds. Any other
+   request (a first buffer, an exact size, a small vec) doubles up to `n`. */
+#define LOAM_VEC_GROW4_BYTES ((int64_t)256 * 1024)
+static inline int64_t loam_vec_grown_cap(int64_t cap, int64_t n, size_t esz, const char *f, int l) {
+    if (cap > 0 && n == cap + 1 && esz && cap >= LOAM_VEC_GROW4_BYTES / (int64_t)esz &&
+        cap <= INT64_MAX / 4)
+        return cap * 4;
+    if (cap <= 0) cap = 8;
+    while (cap < n) {
+        if (cap > INT64_MAX / 2) loam_panic(f, l, "out of memory");
+        cap *= 2;
+    }
+    return cap;
+}
+
 static inline void loam_vec_reserve(loam_vec *v, int64_t n, size_t esz, const char *f, int l) {
     int64_t cap;
     void *raw;
@@ -771,11 +789,7 @@ static inline void loam_vec_reserve(loam_vec *v, int64_t n, size_t esz, const ch
        would otherwise see (and overwrite) the same slots. */
     loam_vec_unique(v, esz, f, l);
     if (n <= v->cap) return;
-    cap = v->cap ? v->cap : 8;
-    while (cap < n) {
-        if (cap > INT64_MAX / 2) loam_panic(f, l, "out of memory");
-        cap *= 2;
-    }
+    cap = loam_vec_grown_cap(v->cap, n, esz, f, l);
     if (!v->ptr) {
         raw = malloc(sizeof(int64_t) + (esz ? (size_t)cap * esz : 1));
         if (!raw) loam_panic(f, l, "out of memory");
@@ -873,11 +887,7 @@ static inline void loam_vec_reserve_owned(loam_vec *v, int64_t n, size_t esz,
     /* As loam_vec_reserve: a writer past `len` must own the buffer. */
     loam_vec_unique_owned(v, esz, retain, f, l);
     if (n <= v->cap) return;
-    cap = v->cap ? v->cap : 8;
-    while (cap < n) {
-        if (cap > INT64_MAX / 2) loam_panic(f, l, "out of memory");
-        cap *= 2;
-    }
+    cap = loam_vec_grown_cap(v->cap, n, esz, f, l);
     if (!v->ptr) {
         raw = malloc(sizeof(int64_t) + (esz ? (size_t)cap * esz : 1));
         if (!raw) loam_panic(f, l, "out of memory");
@@ -907,6 +917,20 @@ static inline void loam_vec_push_owned(loam_vec *v, const void *elem, size_t esz
     if (!v) loam_panic(f, l, "push on null array");
     if (retain) retain((void *)elem);
     /* An owned buffer with room: one element copy (see loam_vec_push). */
+    if (LOAM_LIKELY(v->ptr && v->len < v->cap && *loam_vec_rc(v->ptr) == 1)) {
+        if (esz && elem) memcpy((char *)v->ptr + (size_t)v->len * esz, elem, esz);
+        v->len++;
+        return;
+    }
+    loam_vec_push_owned_slow(v, elem, esz, retain, f, l);
+}
+
+/* As loam_vec_push_owned, for an element handed over whole (a temporary or
+   a moved value): the slot takes the references it holds, so nothing is
+   retained. `retain` still copies the elements if the buffer is shared. */
+static inline void loam_vec_push_take(loam_vec *v, const void *elem, size_t esz,
+                                      loam_elem_fn retain, const char *f, int l) {
+    if (!v) loam_panic(f, l, "push on null array");
     if (LOAM_LIKELY(v->ptr && v->len < v->cap && *loam_vec_rc(v->ptr) == 1)) {
         if (esz && elem) memcpy((char *)v->ptr + (size_t)v->len * esz, elem, esz);
         v->len++;
