@@ -90,40 +90,66 @@ fn struct_lit(i: int) -> int {
 fn main() {
     let path = "/tmp/loam_drop_pushed_temps.bin"
     sys.write_file(path, str.repeat("x", 1000000))
-    // Warm up so allocator caching does not count as growth.
+    // Warm up so allocator caching does not count as growth. Each case also
+    // runs a first round before it is measured: on a loaded machine the
+    // allocator keeps up to ~50 MB of freed 1 MB blocks resident, a bounded
+    // amount the first round fills, while a leak grows by its size every round.
     for i in 0..5 {
         let n = push_temp() + push_local() + array_lit() + struct_lit(i) + push_boxed_local(i) + push_boxed_temp(i)
     }
-    let mut r = rss_mb()
+    let mut r = 0
+    for i in 0..60 {
+        let n = push_temp()
+    }
+    r = rss_mb()
     for i in 0..60 {
         let n = push_temp()
     }
     grew("push(rows, f())", r)
+    for i in 0..60 {
+        let n = push_local()
+    }
     r = rss_mb()
     for i in 0..60 {
         let n = push_local()
     }
     grew("push(rows, row)", r)
+    for i in 0..60 {
+        let n = array_lit()
+    }
     r = rss_mb()
     for i in 0..60 {
         let n = array_lit()
     }
     grew("[][]int { f() }", r)
+    for i in 0..60 {
+        let n = struct_lit(i)
+    }
     r = rss_mb()
     for i in 0..60 {
         let n = struct_lit(i)
     }
     grew("Named { name, xs: f() }", r)
+    for i in 0..60 {
+        let n = push_boxed_local(i)
+    }
     r = rss_mb()
     for i in 0..60 {
         let n = push_boxed_local(i)
     }
     grew("push(rows, boxed)", r)
+    for i in 0..60 {
+        let n = push_boxed_temp(i)
+    }
     r = rss_mb()
     for i in 0..60 {
         let n = push_boxed_temp(i)
     }
     grew("push(rows, Boxed { … })", r)
+    for i in 0..60 {
+        let s = sys.read_file(path)
+        let n = s.len
+    }
     r = rss_mb()
     for i in 0..60 {
         let s = sys.read_file(path)

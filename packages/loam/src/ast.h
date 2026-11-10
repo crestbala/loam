@@ -367,5 +367,10 @@ int ast_dump_checked(const char *path);
 int ast_dump_dce(const char *path);
 /** `--dump-ir`: the checked program lowered to IR, all of it codegen reads. */
 int ast_dump_ir(const char *path);
+/** `--dump-c`: the C a default build emits, on stdout. Exit status as
+    `--dump-checked`. */
+int ast_dump_c(const char *path);
+/** `--dump-all <dir>`: the five dumps above, from one session, into `dir`. */
+int ast_dump_all(const char *dir, const char *path);
 
 #endif

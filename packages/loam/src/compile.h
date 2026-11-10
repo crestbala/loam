@@ -78,6 +78,10 @@ void loam_session_init(LoamSession *s);
 /** Load, and with `check` typecheck, only; diagnostics printed as they
     occur. 0 ok, 1 load error, 2 type error. */
 int loam_session_typecheck(LoamSession *s, const char *path, int check);
+/** The passes after typecheck (threadcheck, borrowck, boundscheck) on a
+    session `loam_session_typecheck` checked clean: 0, or 3 on an error.
+    `check` 2 above is check 1 followed by this. */
+int loam_session_later_passes(LoamSession *s);
 void loam_session_free(LoamSession *s);
 
 /**

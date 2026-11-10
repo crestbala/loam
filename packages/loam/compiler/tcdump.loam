@@ -8,7 +8,10 @@
 // With `--checked`, the passes after typecheck run too (`loamc
 // --dump-checked`): threadcheck, borrowck, boundscheck. `--ir` and `--dce`
 // print the IR and the fns dead-code elimination keeps; `--c` the whole C
-// translation unit (`loamc --dump-c`).
+// translation unit (`loamc --dump-c`). `--all <dir>` writes all five from one
+// run, as `loamc --dump-all <dir>` does: in `dir`, `typecheck`, `check`, `ir`,
+// `dce` and `codegen` hold what each mode prints (stdout and stderr), and
+// `<name>.exit` its exit status ("exit N").
 //
 // Exit status: 0 typed, 1 a parse error, 2 a type error (diagnostics on
 // stderr, as C), 3 an error from a later pass, 4 a bad module list.
@@ -145,9 +148,10 @@ fn main() {
     let run_dce = sys.argc() == 3 && sys.arg(1) == "--dce"
     let emit_c = sys.argc() == 3 && sys.arg(1) == "--c"
     let list_modules = sys.argc() == 3 && sys.arg(1) == "--modules"
+    let all_dir = if sys.argc() == 4 && sys.arg(1) == "--all" { sys.arg(2) } else { "" }
     let run_later_passes = sys.argc() == 3 && (sys.arg(1) == "--checked" || lower_ir || run_dce || emit_c)
-    if sys.argc() != 2 && !run_later_passes && !list_modules {
-        fmt.eprintln("usage: tcdump [--modules | --checked | --ir | --dce | --c] (main.loam | modules.txt)")
+    if sys.argc() != 2 && !run_later_passes && !list_modules && all_dir.len == 0 {
+        fmt.eprintln("usage: tcdump [--modules | --checked | --ir | --dce | --c | --all <dir>] (main.loam | modules.txt)")
         fmt.eprintln("  modules.txt: from loamc --dump-modules main.loam")
         sys.exit(2)
     }
@@ -164,7 +168,7 @@ fn main() {
             fmt.write(buf.to_string(&lb))
             sys.exit(0)
         }
-        check_and_dump(run_later_passes, run_dce, lower_ir, emit_c)
+        check_and_dump(all_dir, run_later_passes, run_dce, lower_ir, emit_c)
         return
     }
     if list_modules {
@@ -250,29 +254,39 @@ fn main() {
         }
     }
 
-    check_and_dump(run_later_passes, run_dce, lower_ir, emit_c)
+    check_and_dump(all_dir, run_later_passes, run_dce, lower_ir, emit_c)
+}
+
+/** *The passes after typecheck: threadcheck, borrowck, boundscheck. The */
+/** *number of errors threadcheck and borrowck found. */
+fn run_later_passes_count() -> int {
+    let mut module_names = []string {}
+    let mut module_roots = []int {}
+    for m in 0..typecheck.MODS.len {
+        push(module_names, typecheck.MODS[m].name)
+        push(module_roots, typecheck.MODS[m].root)
+    }
+    let mut later_errors = threadcheck.threadcheck_modules(module_names, module_roots)
+    later_errors = later_errors + borrowck.borrowck_modules()
+    boundscheck.boundscheck_modules(module_roots)
+    return later_errors
 }
 
 /** *Typecheck the loaded modules, run the later passes if asked, and print */
-/** *what the mode asks for. */
-fn check_and_dump(run_later_passes: bool, run_dce: bool, lower_ir: bool, emit_c: bool) {
+/** *what the mode asks for (or, with `all_dir`, write every mode's output). */
+fn check_and_dump(all_dir: string, run_later_passes: bool, run_dce: bool, lower_ir: bool, emit_c: bool) {
     types.types_init()
     let errors = typecheck.typecheck_modules()
+    if all_dir.len > 0 {
+        dump_all(all_dir, errors)
+        sys.exit(0)
+    }
     dump.print_diags()
     if errors > 0 {
         sys.exit(2)
     }
     if run_later_passes {
-        let mut module_names = []string {}
-        let mut module_roots = []int {}
-        for m in 0..typecheck.MODS.len {
-            push(module_names, typecheck.MODS[m].name)
-            push(module_roots, typecheck.MODS[m].root)
-        }
-        let mut later_errors = threadcheck.threadcheck_modules(module_names, module_roots)
-        later_errors = later_errors + borrowck.borrowck_modules()
-        boundscheck.boundscheck_modules(module_roots)
-        if later_errors > 0 {
+        if run_later_passes_count() > 0 {
             dump.print_diags()
             sys.exit(3)
         }
@@ -284,76 +298,163 @@ fn check_and_dump(run_later_passes: bool, run_dce: bool, lower_ir: bool, emit_c:
     dump.TYPED = true
     let mut b = []u8 {}
     if run_dce {
-        dce.run()
-        for m in 0..typecheck.MODS.len {
-            buf.push_str(&mut b, "module ")
-            buf.push_int(&mut b, m)
-            dump.attr_str(&mut b, "name", true, typecheck.MODS[m].name)
-            push(b, u8('\n'))
-            let root = typecheck.MODS[m].root
-            if root == ast.NONE {
-                continue
-            }
-            let decls = ast.NODES[root].kids
-            for i in 0..decls.len {
-                if ast.NODES[decls[i]].kind == Kind.Fn && dce.keep(decls[i]) {
-                    buf.push_str(&mut b, "  keep")
-                    dump.put_ref(&mut b, "fn", decls[i])
-                    push(b, u8('\n'))
-                }
-            }
-        }
+        put_dce(&mut b)
         fmt.write(buf.to_string(&b))
         sys.exit(0)
     }
     if lower_ir {
-        ir.lower_modules()
-        irdump.dump_ir(&mut b)
-        let bad = ir.verify()
-        buf.push_str(&mut b, if bad { "verify bad\n" } else { "verify ok\n" })
+        let bad = put_ir(&mut b)
         fmt.write(buf.to_string(&b))
         sys.exit(if bad { 1 } else { 0 })
     }
-    for m in 0..typecheck.MODS.len {
-        buf.push_str(&mut b, "module ")
-        buf.push_int(&mut b, m)
-        dump.attr_str(&mut b, "name", true, typecheck.MODS[m].name)
-        push(b, u8('\n'))
-        dump.dump(&mut b, typecheck.MODS[m].root, 1, "root")
-    }
-    for i in 0..typecheck.MONOS.len {
-        let mo = typecheck.MONOS[i]
-        buf.push_str(&mut b, "mono")
-        dump.attr_str(&mut b, "cname", true, mo.cname)
-        dump.put_ref(&mut b, "fn", mo.fn_)
-        buf.push_str(&mut b, " args=")
-        for k in 0..mo.args.len {
-            if k > 0 {
-                push(b, u8(','))
-            }
-            dump.put_type(&mut b, mo.args[k])
-        }
-        push(b, u8('\n'))
-        dump.flush_big(&mut b)
-    }
-    for i in 0..typecheck.STRUCT_INSTS.len {
-        buf.push_str(&mut b, "struct_inst ")
-        dump.put_type(&mut b, typecheck.STRUCT_INSTS[i])
-        push(b, u8('\n'))
-        dump.flush_big(&mut b)
-    }
-    for i in 0..typecheck.GVARS.len {
-        let g = typecheck.GVARS[i]
-        buf.push_str(&mut b, "global")
-        dump.attr_str(&mut b, "cname", true, g.cname)
-        buf.push_str(&mut b, " mod=")
-        buf.push_int(&mut b, g.mod)
-        dump.put_ref(&mut b, "var", g.var)
-        push(b, u8('\n'))
-        dump.flush_big(&mut b)
-    }
+    put_typed(&mut b)
     fmt.write(buf.to_string(&b))
     // Exit now: tearing down the ~300k-node arena one release at a time costs
     // more than the dump (the OS frees the pages at once).
     sys.exit(0)
+}
+
+/** *Run dead-code elimination and put the fns it keeps, per module. */
+fn put_dce(b: &mut []u8) {
+    dce.run()
+    for m in 0..typecheck.MODS.len {
+        buf.push_str(b, "module ")
+        buf.push_int(b, m)
+        dump.attr_str(b, "name", true, typecheck.MODS[m].name)
+        push(*b, u8('\n'))
+        let root = typecheck.MODS[m].root
+        if root == ast.NONE {
+            continue
+        }
+        let decls = ast.NODES[root].kids
+        for i in 0..decls.len {
+            if ast.NODES[decls[i]].kind == Kind.Fn && dce.keep(decls[i]) {
+                buf.push_str(b, "  keep")
+                dump.put_ref(b, "fn", decls[i])
+                push(*b, u8('\n'))
+            }
+        }
+    }
+}
+
+/** *Lower to IR and put it with the verifier's verdict; true when bad. */
+fn put_ir(b: &mut []u8) -> bool {
+    ir.lower_modules()
+    irdump.dump_ir(b)
+    let bad = ir.verify()
+    buf.push_str(b, if bad { "verify bad\n" } else { "verify ok\n" })
+    return bad
+}
+
+/** *Put the typed trees and typecheck's tables (monos, struct instances, */
+/** *globals). */
+fn put_typed(b: &mut []u8) {
+    for m in 0..typecheck.MODS.len {
+        buf.push_str(b, "module ")
+        buf.push_int(b, m)
+        dump.attr_str(b, "name", true, typecheck.MODS[m].name)
+        push(*b, u8('\n'))
+        dump.dump(b, typecheck.MODS[m].root, 1, "root")
+    }
+    for i in 0..typecheck.MONOS.len {
+        let mo = typecheck.MONOS[i]
+        buf.push_str(b, "mono")
+        dump.attr_str(b, "cname", true, mo.cname)
+        dump.put_ref(b, "fn", mo.fn_)
+        buf.push_str(b, " args=")
+        for k in 0..mo.args.len {
+            if k > 0 {
+                push(*b, u8(','))
+            }
+            dump.put_type(b, mo.args[k])
+        }
+        push(*b, u8('\n'))
+        dump.flush_big(b)
+    }
+    for i in 0..typecheck.STRUCT_INSTS.len {
+        buf.push_str(b, "struct_inst ")
+        dump.put_type(b, typecheck.STRUCT_INSTS[i])
+        push(*b, u8('\n'))
+        dump.flush_big(b)
+    }
+    for i in 0..typecheck.GVARS.len {
+        let g = typecheck.GVARS[i]
+        buf.push_str(b, "global")
+        dump.attr_str(b, "cname", true, g.cname)
+        buf.push_str(b, " mod=")
+        buf.push_int(b, g.mod)
+        dump.put_ref(b, "var", g.var)
+        push(*b, u8('\n'))
+        dump.flush_big(b)
+    }
+}
+
+/** *`text` as the start of a fresh output buffer. */
+fn bytes_of(text: string) -> []u8 {
+    let mut b = []u8 {}
+    buf.push_str(&mut b, text)
+    return b
+}
+
+/** *`<dir>/<name>` and `<dir>/<name>.exit` for one mode of `--all`. */
+fn write_stage(dir: string, name: string, b: &[]u8, status: int) {
+    if sys.write_bytes("{{dir}}/{{name}}", b) != 0 {
+        fail("cannot write {{dir}}/{{name}}")
+    }
+    write_stage_exit(dir, name, status)
+}
+
+fn write_stage_exit(dir: string, name: string, status: int) {
+    if sys.write_file("{{dir}}/{{name}}.exit", "exit {{status}}\n") != 0 {
+        fail("cannot write {{dir}}/{{name}}.exit")
+    }
+}
+
+/** *`--all <dir>`: what each of the five modes prints, from this one run. */
+/** *Each mode prints the diagnostics so far and then its dump, so every file */
+/** *starts with the same diagnostic text. The IR is lowered before DCE runs, */
+/** *as `--ir` lowers it, and codegen reuses that IR (`ir.LOWERED`). */
+fn dump_all(dir: string, typecheck_errors: int) {
+    let typecheck_diags = dump.diags_text()
+    let after_typecheck = []string { "check", "ir", "dce", "codegen" }
+    if typecheck_errors > 0 {
+        let b = bytes_of(typecheck_diags)
+        write_stage(dir, "typecheck", &b, 2)
+        for i in 0..after_typecheck.len {
+            write_stage(dir, after_typecheck[i], &b, 2)
+        }
+        return
+    }
+    dump.HOLD = true
+    dump.TYPED = true
+    let mut typed = bytes_of(typecheck_diags)
+    put_typed(&mut typed)
+    write_stage(dir, "typecheck", &typed, 0)
+    typed = []u8 {}
+    let later_errors = run_later_passes_count()
+    // A later error prints every diagnostic again, as `print_diags` does.
+    let diags = "{{typecheck_diags}}{{dump.diags_text()}}"
+    if later_errors > 0 {
+        let b = bytes_of(diags)
+        for i in 0..after_typecheck.len {
+            write_stage(dir, after_typecheck[i], &b, 3)
+        }
+        return
+    }
+    let mut checked = bytes_of(diags)
+    put_typed(&mut checked)
+    write_stage(dir, "check", &checked, 0)
+    checked = []u8 {}
+    let mut lowered = bytes_of(diags)
+    let bad = put_ir(&mut lowered)
+    write_stage(dir, "ir", &lowered, if bad { 1 } else { 0 })
+    lowered = []u8 {}
+    let mut kept = bytes_of(diags)
+    put_dce(&mut kept)
+    write_stage(dir, "dce", &kept, 0)
+    kept = []u8 {}
+    codegen.OUT = bytes_of(diags)
+    codegen.SINK = "{{dir}}/codegen"
+    codegen.emit_c()
+    write_stage_exit(dir, "codegen", 0)
 }

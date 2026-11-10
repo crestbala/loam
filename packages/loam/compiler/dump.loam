@@ -9,6 +9,9 @@ import "types.loam"
 
 /** *Print what typecheck set too (`--dump-typed`). */
 let mut TYPED: bool = false
+/** *Keep a dump whole in its buffer (`flush_big` writes nothing), for a */
+/** *caller that writes it to a file itself. */
+let mut HOLD: bool = false
 /** *Module paths, by `Loc.file`: where a resolved target lives. */
 let mut PATHS: []string = []string {}
 
@@ -204,7 +207,7 @@ fn dump_list(b: &mut []u8, xs: []int, depth: int, role: string) {
 /** *Write out what `b` holds once it passes 64 KB and start it again, so a */
 /** *dump streams (as C's printf does) instead of holding all of its text. */
 fn flush_big(b: &mut []u8) {
-    if b.len >= 65536 {
+    if b.len >= 65536 && !HOLD {
         fmt.write(buf.to_string(b))
         *b = []u8 {}
     }
@@ -701,9 +704,9 @@ fn typed_attrs(b: &mut []u8, n: &Node, ni: &NodeInfo, nx: &NodeExtra) {
     }
 }
 
-/** *Every diagnostic, in order, on stderr: `file:line:col: error: msg`, the */
-/** *message cut at 1023 bytes as C's 1024-byte buffer does. */
-fn print_diags() {
+/** *Every diagnostic, in order: `file:line:col: error: msg`, the message cut */
+/** *at 1023 bytes as C's 1024-byte buffer does. */
+fn diags_text() -> string {
     let mut e = []u8 {}
     for k in 0..ast.DIAGS.len {
         let g = ast.DIAGS[k]
@@ -723,7 +726,13 @@ fn print_diags() {
         }
         push(e, u8('\n'))
     }
+    return buf.to_string(&e)
+}
+
+/** *Every diagnostic, in order, on stderr (`diags_text`). */
+fn print_diags() {
+    let e = diags_text()
     if e.len > 0 {
-        fmt.ewrite(buf.to_string(&e))
+        fmt.ewrite(e)
     }
 }

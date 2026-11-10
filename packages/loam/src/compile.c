@@ -554,14 +554,19 @@ int loam_session_typecheck(LoamSession *s, const char *path, int check) {
     free(stem);
     int rc = load_err ? 1 : 0;
     if (check && !load_err && s->nmods > 0 && typecheck_modules(s->mods, s->nmods) != 0) rc = 2;
-    if (check == 2 && rc == 0 && s->nmods > 0) {
-        int later_errors = threadcheck_modules(s->mods, s->nmods);
-        later_errors |= borrowck_modules(s->mods, s->nmods);
-        later_errors |= boundscheck_modules(s->mods, s->nmods);
-        if (later_errors) rc = 3;
-    }
     CUR = NULL;
+    if (check == 2 && rc == 0) rc = loam_session_later_passes(s);
     return rc;
+}
+
+int loam_session_later_passes(LoamSession *s) {
+    if (s->nmods == 0) return 0;
+    CUR = s;
+    int later_errors = threadcheck_modules(s->mods, s->nmods);
+    later_errors |= borrowck_modules(s->mods, s->nmods);
+    later_errors |= boundscheck_modules(s->mods, s->nmods);
+    CUR = NULL;
+    return later_errors ? 3 : 0;
 }
 
 /** Parse, typecheck, borrowck, boundscheck. Returns 0 on success. */

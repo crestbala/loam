@@ -46,6 +46,9 @@
 #include "dce.h"
 #include "ir.h"
 #include "sema/typecheck.h"
+#include "codegen_c.h"
+#include <fcntl.h>
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -582,12 +585,9 @@ int ast_dump_modules(const char *path) {
     return 0;
 }
 
-/** `--dump-typed` (`passes` 1) or `--dump-checked` (2: the passes after
- *  typecheck ran too, so the tree carries their flags: moved, needs-drop,
- *  index-safe). On an error from any pass only the diagnostics are printed. */
-static int dump_checked_session(const char *path, int passes) {
-    int rc = loam_session_typecheck(&g_sess, path, passes);
-    if (rc) return rc;
+/** The typechecked trees with typecheck's tables, as `--dump-typed` and
+ *  `--dump-checked` print them. */
+static void print_typed_session(void) {
     g_typed = 1;
     for (int m = 0; m < g_sess.nmods; m++) {
         printf("module %d", m);
@@ -619,6 +619,15 @@ static int dump_checked_session(const char *path, int passes) {
         put_ref("var", typecheck_global_var(i));
         putchar('\n');
     }
+}
+
+/** `--dump-typed` (`passes` 1) or `--dump-checked` (2: the passes after
+ *  typecheck ran too, so the tree carries their flags: moved, needs-drop,
+ *  index-safe). On an error from any pass only the diagnostics are printed. */
+static int dump_checked_session(const char *path, int passes) {
+    int rc = loam_session_typecheck(&g_sess, path, passes);
+    if (rc) return rc;
+    print_typed_session();
     return 0;
 }
 
@@ -630,9 +639,8 @@ void ast_dump_put_str(const char *s) { put_str(s); }
 void ast_dump_put_type(const Type *t) { put_type(t); }
 void ast_dump_put_f64(double v) { put_f64(v); }
 
-int ast_dump_dce(const char *path) {
-    int rc = loam_session_typecheck(&g_sess, path, 2);
-    if (rc) return rc;
+/** Run dead-code elimination and print the fn declarations it keeps. */
+static void print_dce_session(void) {
     loam_dce_run(g_sess.mods, g_sess.nmods);
     for (int m = 0; m < g_sess.nmods; m++) {
         printf("module %d", m);
@@ -647,12 +655,17 @@ int ast_dump_dce(const char *path) {
             putchar('\n');
         }
     }
+}
+
+int ast_dump_dce(const char *path) {
+    int rc = loam_session_typecheck(&g_sess, path, 2);
+    if (rc) return rc;
+    print_dce_session();
     return 0;
 }
 
-int ast_dump_ir(const char *path) {
-    int rc = loam_session_typecheck(&g_sess, path, 2);
-    if (rc) return rc;
+/** Lower to IR, print it and the verifier's verdict: 0 ok, 1 bad. */
+static int print_ir_session(void) {
     IrModule *ir = ir_lower(g_sess.mods, g_sess.nmods);
     ir_dump(ir);
     int bad = ir_verify(ir);
@@ -660,4 +673,170 @@ int ast_dump_ir(const char *path) {
     return bad ? 1 : 0;
 }
 
+int ast_dump_ir(const char *path) {
+    int rc = loam_session_typecheck(&g_sess, path, 2);
+    if (rc) return rc;
+    return print_ir_session();
+}
+
 int ast_dump_checked(const char *path) { return dump_checked_session(path, 2); }
+
+/** The C a default build emits: no test runner, no server split, no shards
+ *  or batch table, paths as they are. */
+static void print_c_session(void) {
+    codegen_set_test_mode(0);
+    codegen_set_server_split(0);
+    codegen_set_shard(0);
+    codegen_set_batch(0);
+    codegen_set_path_strip(NULL);
+    codegen_emit_c(stdout, g_sess.mods, g_sess.nmods, LOAM_RT_PATH);
+}
+
+int ast_dump_c(const char *path) {
+    int rc = loam_session_typecheck(&g_sess, path, 2);
+    if (rc == 0) print_c_session();
+    fflush(stdout);
+    loam_session_free(&g_sess);
+    return rc;
+}
+
+/* --- `--dump-all`: every checker dump from one session ------------------- */
+
+/* Each stage file gets exactly what `loamc <flag> file > f 2>&1` writes:
+   both fds on one file, stdout's buffering untouched, and the diagnostics the
+   shared passes printed (captured once) written first, as raw bytes. */
+
+static char *dump_all_dir;
+
+static char *stage_path(const char *name) {
+    size_t n = strlen(dump_all_dir) + strlen(name) + 2;
+    char *p = malloc(n);
+    snprintf(p, n, "%s/%s", dump_all_dir, name);
+    return p;
+}
+
+/** Point fds 1 and 2 at a fresh `<dir>/<name>` holding `prefix`. */
+static int stage_begin(const char *name, const char *prefix, size_t prefix_len) {
+    char *p = stage_path(name);
+    int fd = open(p, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    free(p);
+    if (fd < 0) return -1;
+    if (prefix_len > 0 && write(fd, prefix, prefix_len) != (ssize_t)prefix_len) {
+        close(fd);
+        return -1;
+    }
+    fflush(stdout);
+    fflush(stderr);
+    dup2(fd, 1);
+    dup2(fd, 2);
+    close(fd);
+    return 0;
+}
+
+/** Flush the stage and record its exit status in `<dir>/<name>.exit`. */
+static void stage_end(const char *name, int rc) {
+    fflush(stdout);
+    fflush(stderr);
+    size_t n = strlen(name) + 6;
+    char *exit_name = malloc(n);
+    snprintf(exit_name, n, "%s.exit", name);
+    char *p = stage_path(exit_name);
+    free(exit_name);
+    FILE *f = fopen(p, "w");
+    free(p);
+    if (f) {
+        fprintf(f, "exit %d\n", rc);
+        fclose(f);
+    }
+}
+
+/** What a stage (written by stage_begin, ended) printed, or NULL. */
+static char *stage_read(const char *name, size_t *len) {
+    char *p = stage_path(name);
+    FILE *f = fopen(p, "rb");
+    free(p);
+    *len = 0;
+    if (!f) return NULL;
+    size_t cap = 4096;
+    char *b = malloc(cap);
+    size_t got;
+    while ((got = fread(b + *len, 1, cap - *len, f)) > 0) {
+        *len += got;
+        if (*len == cap) {
+            cap *= 2;
+            b = realloc(b, cap);
+        }
+    }
+    fclose(f);
+    return b;
+}
+
+/** Every stage's output with only `text` (the diagnostics) and status `rc`. */
+static void stages_only(const char *const *names, int n, const char *text, size_t len, int rc) {
+    for (int i = 0; i < n; i++) {
+        if (stage_begin(names[i], text, len) == 0) stage_end(names[i], rc);
+    }
+}
+
+/** `loamc --dump-all <dir> file.loam`: one load, one typecheck and one run of
+ *  the later passes, and in `dir` the output and exit status of each of
+ *  `--dump-typed` (`typecheck`), `--dump-checked` (`check`), `--dump-ir`
+ *  (`ir`), `--dump-dce` (`dce`) and `--dump-c` (`codegen`), byte for byte, as
+ *  `<name>` and `<name>.exit` ("exit N"). The IR is lowered before DCE runs,
+ *  as `--dump-ir` lowers it; codegen then runs DCE and lowers again itself. */
+int ast_dump_all(const char *dir, const char *path) {
+    static const char *const after_typecheck[] = {"check", "ir", "dce", "codegen"};
+    static const char *const every_stage[] = {"typecheck", "check", "ir", "dce", "codegen"};
+    dump_all_dir = (char *)dir;
+    int saved_out = dup(1);
+    int saved_err = dup(2);
+    if (saved_out < 0 || saved_err < 0) return 4;
+
+    size_t typecheck_len = 0, later_len = 0;
+    if (stage_begin(".typecheck_diags", NULL, 0) != 0) return 4;
+    int rc = loam_session_typecheck(&g_sess, path, 1);
+    stage_end(".typecheck_diags", rc);
+    char *typecheck_diags = stage_read(".typecheck_diags", &typecheck_len);
+    if (rc != 0) {
+        stages_only(every_stage, 5, typecheck_diags, typecheck_len, rc);
+    } else {
+        if (stage_begin("typecheck", typecheck_diags, typecheck_len) == 0) {
+            print_typed_session();
+            stage_end("typecheck", 0);
+        }
+        stage_begin(".later_diags", typecheck_diags, typecheck_len);
+        rc = loam_session_later_passes(&g_sess);
+        stage_end(".later_diags", rc);
+        char *diags = stage_read(".later_diags", &later_len);
+        if (rc != 0) {
+            stages_only(after_typecheck, 4, diags, later_len, rc);
+        } else {
+            if (stage_begin("check", diags, later_len) == 0) {
+                print_typed_session();
+                stage_end("check", 0);
+            }
+            if (stage_begin("ir", diags, later_len) == 0) {
+                int ir_rc = print_ir_session();
+                stage_end("ir", ir_rc);
+            }
+            if (stage_begin("dce", diags, later_len) == 0) {
+                print_dce_session();
+                stage_end("dce", 0);
+            }
+            if (stage_begin("codegen", diags, later_len) == 0) {
+                print_c_session();
+                stage_end("codegen", 0);
+            }
+        }
+        free(diags);
+    }
+    free(typecheck_diags);
+    fflush(stdout);
+    fflush(stderr);
+    dup2(saved_out, 1);
+    dup2(saved_err, 2);
+    close(saved_out);
+    close(saved_err);
+    loam_session_free(&g_sess);
+    return 0;
+}
