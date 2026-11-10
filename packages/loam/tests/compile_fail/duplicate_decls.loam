@@ -1,0 +1,26 @@
+// A name defined twice in one module is an error at each later definition,
+// and every one of them names the first site. A fn, a struct and a global
+// share one namespace.
+import "std:fmt"
+
+fn area(w: int) -> int {
+    return w * w
+}
+
+struct Point {
+    x: int,
+}
+
+fn area(w: int) -> int {
+    return w
+}
+
+let Point: int = 3
+
+fn area(h: int) -> int {
+    return h + 1
+}
+
+fn main() {
+    fmt.println(area(2))
+}
