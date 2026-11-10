@@ -926,9 +926,17 @@ beyond what the checklist requires.
         - Timed on a quiet machine with `LOAM_HOME` set (Loam vs C, median
           of 21), load / typecheck / borrowck: dracula 26 vs 26, 88 vs 105,
           25 vs 39; `zeus_show` 17–18 vs 17, 68–69 vs 78, 17 vs 30; the
-          compiler 13 vs 13, 16 vs 15, 11 vs 15. Left: typecheck on the
-          compiler itself, 1 ms behind. A `stat` cache was tried and
-          dropped: 852 → 321 calls, no time change.
+          compiler 13 vs 13, 16 vs 15, 11 vs 15. A `stat` cache was tried
+          and dropped: 852 → 321 calls, no time change.
+        - The duplicate-declaration check keeps each name's first
+          declaration in a map. It compared each top-level name with every
+          earlier one in the module (C still does), which is quadratic, and
+          each compare copied a refcounted name; the compiler's own modules
+          hold thousands of declarations. Typecheck on the compiler, mean of
+          61 runs: 25.5 → 23.8 ms (C: 24.9 ms). Same errors in the same
+          order (`compile_fail/duplicate_decls.loam`, matched against C by
+          `selfhost_typecheck`). With this, every pass in one process
+          matches or beats its C twin on all three entries.
 - [ ] Compiler itself uses only safe Loam (arenas + integer indices; §2.7)
 
 ### Fixed-point and tooling

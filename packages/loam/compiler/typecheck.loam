@@ -5170,17 +5170,20 @@ fn decl_name(d: int) -> string {
 
 fn check_duplicate_decls(m: int) {
     let ds = decls_of(MODS[m].root)
+    // Each name's first declaration, so a module costs one lookup per
+    // declaration: comparing each name with every earlier one (as C does)
+    // is quadratic in the module, and the compiler's own modules are big.
+    let mut first = map.map_with_cap(ds.len * 2, -1)
     for i in 0..ds.len {
         let a = decl_name(ds[i])
         if a.len == 0 {
             continue
         }
-        for j in 0..i {
-            let b = decl_name(ds[j])
-            if b.len > 0 && a == b {
-                err(ast.INFO[ds[i]].loc, "'{{a}}' is already defined in this module (first at line {{ast.INFO[ds[j]].loc.line}})")
-                break
-            }
+        let j = map.map_get(&mut first, a)
+        if j >= 0 {
+            err(ast.INFO[ds[i]].loc, "'{{a}}' is already defined in this module (first at line {{ast.INFO[ds[j]].loc.line}})")
+        } else {
+            map.map_put(&mut first, a, i)
         }
     }
 }
