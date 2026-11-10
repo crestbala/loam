@@ -1,0 +1,46 @@
+// Temporary: per-pass wall time of the Loam pipeline on argv[1].
+import "std:async"
+import "std:fmt"
+import "std:sys"
+import "ast.loam"
+import "types.loam"
+import "typecheck.loam"
+import "threadcheck.loam"
+import "borrowck.loam"
+import "boundscheck.loam"
+import "codegen.loam"
+import "loader.loam"
+
+fn main() {
+    if sys.argc() > 2 {
+        async.sleep(400)
+    }
+    let t0 = async.now_ms()
+    loader.load(sys.arg(1))
+    let t1 = async.now_ms()
+    if sys.argc() > 4 {
+        return
+    }
+    types.types_init()
+    typecheck.typecheck_modules()
+    let t2 = async.now_ms()
+    let mut names = []string {}
+    let mut roots = []int {}
+    for m in 0..typecheck.MODS.len {
+        push(names, typecheck.MODS[m].name)
+        push(roots, typecheck.MODS[m].root)
+    }
+    threadcheck.threadcheck_modules(names, roots)
+    let t3 = async.now_ms()
+    borrowck.borrowck_modules()
+    let t4 = async.now_ms()
+    boundscheck.boundscheck_modules(roots)
+    let t5 = async.now_ms()
+    if sys.argc() > 3 {
+        return
+    }
+    codegen.SINK = "/tmp/sh10/pb_out.c"
+    codegen.emit_c()
+    let t6 = async.now_ms()
+    fmt.eprintln("load", t1 - t0, "typecheck", t2 - t1, "thread", t3 - t2, "borrow", t4 - t3, "bounds", t5 - t4, "dce+ir+codegen", t6 - t5, "total", t6 - t0)
+}
