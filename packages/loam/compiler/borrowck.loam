@@ -12,6 +12,7 @@
 //     addresses, so the same marks match the same segments.
 
 import "std:intmap"
+import "std:map"
 import "ast.loam"
 import "types.loam"
 import "lexer.loam"
@@ -54,7 +55,9 @@ struct Binding {
     /* into (0 = caller or global data), and that binding's name. */
     ref_depth: int,
     ref_root_kind: int,
-    ref_root: string,
+    /* Index into `ROOT_NAMES` (0 is ""): an int, so a snapshot of the */
+    /* binding states copies no string. */
+    ref_root: int,
     dangling: bool,
     must_check: bool,
     checked: bool,
@@ -81,6 +84,18 @@ struct Borrow {
 
 let mut BINDINGS: []Binding = []Binding {}
 let mut ACTIVE: []int = []int {}
+/** *How many bindings at the bottom of `ACTIVE` are the fn's module aliases */
+/** *and globals. They are pushed first, live for the whole fn, and keep the */
+/** *state they were pushed with: nothing moves out of a global */
+/** *(`global_move_error`), no closure captures one, and none holds a */
+/** *reference. So the scans that only matter for locals stop here, and a */
+/** *snapshot leaves them out (most bindings of a fn are globals). */
+let mut N_GLOBALS: int = 0
+/** *The globals' names -> binding index, for `find_b`: built for a module */
+/** *at its first fn (each fn pushes the same globals in the same order, so */
+/** *the same indices). A later name wins, as the innermost does in a scan. */
+let mut GLOBAL_NAMES: Map<int> = map.map_new(-1)
+let mut GLOBAL_NAMES_MOD: int = -1
 let mut BORROWS: []Borrow = []Borrow {}
 let mut NEXT_BORROW_ID: int = 1
 let mut DEPTH: int = 0
@@ -168,13 +183,25 @@ fn path_of(n: int) -> string {
 /** *The innermost live binding named `name`, or -1. */
 fn find_b(name: string) -> int {
     let mut i = ACTIVE.len
-    while i > 0 {
+    let first_local = if N_GLOBALS < ACTIVE.len { N_GLOBALS } else { ACTIVE.len }
+    while i > first_local {
         i = i - 1
         if BINDINGS[ACTIVE[i]].name == name {
             return ACTIVE[i]
         }
     }
-    return -1
+    if first_local == 0 {
+        return -1
+    }
+    let global = map.map_get(&mut GLOBAL_NAMES, name)
+    return if global < first_local { global } else { -1 }
+}
+
+/** *A global lives for the whole program and every fn reads it, so nothing */
+/** *may move out of it (or out of a field of it): the next reader would find */
+/** *the slot empty, or two owners would free the same box. */
+fn global_move_error(loc: Loc, path: string) {
+    report(loc, "cannot move out of global '{{path}}'; other fns still read it — borrow it with `&` instead")
 }
 
 /** *Push a binding; returns its arena index. */
@@ -190,7 +217,7 @@ fn push_b(name: string, ty: int) -> int {
         kind: BindKind.Local,
         ref_depth: 0,
         ref_root_kind: RootName.Nothing,
-        ref_root: "",
+        ref_root: 0,
         dangling: false,
         must_check: false,
         checked: false,
@@ -218,7 +245,9 @@ fn pop_to_depth(target_depth: int) {
     }
     // A reference that outlives the binding it points at is dangling until
     // it is assigned again.
-    for i in 0..ACTIVE.len {
+    // Globals never hold a reference (`ref_depth` stays 0).
+    let first_local = if N_GLOBALS < ACTIVE.len { N_GLOBALS } else { ACTIVE.len }
+    for i in first_local..ACTIVE.len {
         if BINDINGS[ACTIVE[i]].ref_depth > target_depth {
             BINDINGS[ACTIVE[i]].dangling = true
         }
@@ -665,7 +694,8 @@ fn outer_live(binding: int) -> bool {
 /** *statement `at` on, along any path, before being overwritten. */
 fn end_dead_borrows(stmts: []int, at: int, block_depth: int) {
     let mut i = ACTIVE.len
-    while i > 0 {
+    // Only locals and params qualify: stop at the globals.
+    while i > N_GLOBALS {
         i = i - 1
         if i >= ACTIVE.len {
             continue
@@ -1130,7 +1160,7 @@ fn ref_root(e: int) -> Root {
         if binding < 0 || BINDINGS[binding].kind == BindKind.Global || BINDINGS[binding].ref_depth == 0 {
             return no_root()
         }
-        return Root { depth: BINDINGS[binding].ref_depth, name_kind: BINDINGS[binding].ref_root_kind, name: BINDINGS[binding].ref_root }
+        return Root { depth: BINDINGS[binding].ref_depth, name_kind: BINDINGS[binding].ref_root_kind, name: ROOT_NAMES[BINDINGS[binding].ref_root] }
     }
     if node_kind == Kind.Call {
         let mut r = no_root()
@@ -1196,10 +1226,22 @@ fn refers_into_global(e: int) -> bool {
     return false
 }
 
+/** *The names references point into, for diagnostics: `Binding.ref_root` */
+/** *indexes it. Emptied with the bindings, per fn. */
+let mut ROOT_NAMES: []string = []string { "" }
+
+fn root_name_id(name: string) -> int {
+    if name.len == 0 {
+        return 0
+    }
+    push(ROOT_NAMES, name)
+    return ROOT_NAMES.len - 1
+}
+
 fn set_ref(binding: int, r: Root) {
     BINDINGS[binding].ref_depth = r.depth
     BINDINGS[binding].ref_root_kind = r.name_kind
-    BINDINGS[binding].ref_root = r.name
+    BINDINGS[binding].ref_root = root_name_id(r.name)
     BINDINGS[binding].dangling = false
 }
 
@@ -1211,7 +1253,7 @@ fn check_dangling(binding: int, loc: Loc) -> bool {
     if BINDINGS[binding].ref_root_kind == RootName.Temporary {
         report(loc, "'{{BINDINGS[binding].name}}' is used after the temporary it borrows was dropped")
     } else {
-        let root = if BINDINGS[binding].ref_root_kind == RootName.Nothing { "?" } else { BINDINGS[binding].ref_root }
+        let root = if BINDINGS[binding].ref_root_kind == RootName.Nothing { "?" } else { ROOT_NAMES[BINDINGS[binding].ref_root] }
         report(loc, "'{{BINDINGS[binding].name}}' is used after '{{root}}', which it borrows, went out of scope")
     }
     return true
@@ -1363,17 +1405,33 @@ struct BindingSnap {
     mutb: int,
     ref_depth: int,
     ref_root_kind: int,
-    ref_root: string,
+    ref_root: int,
     dangling: bool,
 }
 
-fn snapshot() -> []BindingSnap {
-    let mut snaps = []BindingSnap {}
+/** *A snapshot: `len` binding states from `start` in `SNAP_POOL`. Snapshots */
+/** *nest as the statements that take them do, so they share one stack: a */
+/** *statement frees back to its first snapshot when it is done (`snap_free`), */
+/** *which can only drop snapshots taken after it. A vec per snapshot grew */
+/** *from empty at every branch. The pool is emptied per fn. */
+struct Snap {
+    start: int,
+    len: int,
+}
+
+let mut SNAP_POOL: []BindingSnap = []BindingSnap {}
+/** *The pool's top: slots at and above it are free for reuse (overwritten */
+/** *in place, so freeing is one store, not a `pop` per entry). */
+let mut SNAP_TOP: int = 0
+
+fn snapshot() -> Snap {
+    let start = SNAP_TOP
     let mut i = ACTIVE.len
-    while i > 0 {
+    // Locals only, innermost first: the globals never change (`N_GLOBALS`).
+    while i > N_GLOBALS {
         i = i - 1
         let binding = ACTIVE[i]
-        push(snaps, BindingSnap {
+        let state = BindingSnap {
             binding: binding,
             own: BINDINGS[binding].own,
             shared: BINDINGS[binding].shared,
@@ -1382,14 +1440,25 @@ fn snapshot() -> []BindingSnap {
             ref_root_kind: BINDINGS[binding].ref_root_kind,
             ref_root: BINDINGS[binding].ref_root,
             dangling: BINDINGS[binding].dangling,
-        })
+        }
+        if SNAP_TOP < SNAP_POOL.len {
+            SNAP_POOL[SNAP_TOP] = state
+        } else {
+            push(SNAP_POOL, state)
+        }
+        SNAP_TOP += 1
     }
-    return snaps
+    return Snap { start: start, len: SNAP_TOP - start }
 }
 
-fn restore(snaps: []BindingSnap) {
-    for i in 0..snaps.len {
-        let snap = snaps[i]
+/** *Drop `first` and every snapshot taken after it. */
+fn snap_free(first: Snap) {
+    SNAP_TOP = first.start
+}
+
+fn restore(snaps: Snap) {
+    for i in snaps.start..snaps.start + snaps.len {
+        let snap = SNAP_POOL[i]
         BINDINGS[snap.binding].own = snap.own
         BINDINGS[snap.binding].shared = snap.shared
         BINDINGS[snap.binding].mutb = snap.mutb
@@ -1401,9 +1470,9 @@ fn restore(snaps: []BindingSnap) {
 }
 
 /** *A reference may point at what it pointed at on either path. */
-fn join_refs(snaps: []BindingSnap) {
-    for i in 0..snaps.len {
-        let snap = snaps[i]
+fn join_refs(snaps: Snap) {
+    for i in snaps.start..snaps.start + snaps.len {
+        let snap = SNAP_POOL[i]
         if snap.ref_depth > BINDINGS[snap.binding].ref_depth {
             BINDINGS[snap.binding].ref_depth = snap.ref_depth
             BINDINGS[snap.binding].ref_root_kind = snap.ref_root_kind
@@ -1416,10 +1485,10 @@ fn join_refs(snaps: []BindingSnap) {
 }
 
 /** *Moved on either path is moved after the join. */
-fn join_moved(snaps: []BindingSnap) {
-    for i in 0..snaps.len {
-        if snaps[i].own == Own.Moved {
-            BINDINGS[snaps[i].binding].own = Own.Moved
+fn join_moved(snaps: Snap) {
+    for i in snaps.start..snaps.start + snaps.len {
+        if SNAP_POOL[i].own == Own.Moved {
+            BINDINGS[SNAP_POOL[i].binding].own = Own.Moved
         }
     }
 }
@@ -1543,6 +1612,10 @@ fn check_expr(n: int, as_move: bool) -> bool {
                 return true
             }
             if as_move && !BINDINGS[binding].is_copy {
+                if BINDINGS[binding].kind == BindKind.Global {
+                    global_move_error(ast.INFO[n].loc, name)
+                    return true
+                }
                 if borrow_covers(name) {
                     report(ast.INFO[n].loc, "cannot move '{{name}}' while borrowed")
                     return true
@@ -1591,6 +1664,10 @@ fn check_expr(n: int, as_move: bool) -> bool {
                 return true
             }
             let failed = check_use_path(path, ast.INFO[n].loc)
+            if !failed && as_move && not_copy(ast.NODES[n].ty) && global_of_place(n) != ast.NONE {
+                global_move_error(ast.INFO[n].loc, path)
+                return true
+            }
             if !failed && binding >= 0 && !BINDINGS[binding].is_module_alias && as_move && not_copy(ast.NODES[n].ty) {
                 mark_path_moved(binding, path)
             }
@@ -1622,6 +1699,7 @@ fn check_expr(n: int, as_move: bool) -> bool {
                     union_into_ex(&mut BORROWS, then_loans, true)
                 }
             }
+            snap_free(before_arms)
             set_if_root(n, acc)
             return failed
         case Kind.Binary:
@@ -1771,7 +1849,7 @@ fn check_call(n: int) -> bool {
         if holder < 0 || BINDINGS[holder].kind == BindKind.Global {
             continue
         }
-        let mut r = Root { depth: BINDINGS[holder].ref_depth, name_kind: BINDINGS[holder].ref_root_kind, name: BINDINGS[holder].ref_root }
+        let mut r = Root { depth: BINDINGS[holder].ref_depth, name_kind: BINDINGS[holder].ref_root_kind, name: ROOT_NAMES[BINDINGS[holder].ref_root] }
         let mut loans = []Loan {}
         for k in 0..args.len {
             let other = args[k]
@@ -1785,7 +1863,7 @@ fn check_call(n: int) -> bool {
         }
         BINDINGS[holder].ref_depth = r.depth
         BINDINGS[holder].ref_root_kind = r.name_kind
-        BINDINGS[holder].ref_root = r.name
+        BINDINGS[holder].ref_root = root_name_id(r.name)
         attach_loans(holder, loans, false)
     }
     // The call's own `&x` arguments end with it, unless a reference result
@@ -1898,6 +1976,7 @@ fn check_stmt(n: int) -> bool {
                     union_borrows(then_loans)
                 }
             }
+            snap_free(before_arms)
             return failed
         case Kind.For:
             if check_expr(ast.NODES[n].a, false) {
@@ -1917,6 +1996,7 @@ fn check_stmt(n: int) -> bool {
             if !failed {
                 join_refs(before_loop)
             }
+            snap_free(before_loop)
             pop_to_depth(DEPTH - 1)
             DEPTH = DEPTH - 1
             return failed
@@ -1934,6 +2014,7 @@ fn check_stmt(n: int) -> bool {
             if !failed {
                 join_refs(before_loop)
             }
+            snap_free(before_loop)
             return failed
         case Kind.Switch:
             return check_switch(n)
@@ -2045,7 +2126,7 @@ fn check_assign(n: int) -> bool {
             if r.depth > BINDINGS[q].ref_depth {
                 BINDINGS[q].ref_depth = r.depth
                 BINDINGS[q].ref_root_kind = r.name_kind
-                BINDINGS[q].ref_root = r.name
+                BINDINGS[q].ref_root = root_name_id(r.name)
             }
             attach_loans(q, loans, false)
         }
@@ -2065,7 +2146,7 @@ fn check_switch(n: int) -> bool {
     let loans_before = dup_borrows(BORROWS)
     let mut all_loans = dup_borrows(BORROWS)
     let cases = ast.NODES[n].kids
-    let mut case_snaps: [][]BindingSnap = [][]BindingSnap {}
+    let mut case_snaps: []Snap = []Snap {}
     let mut failed = false
     for i in 0..cases.len {
         // Entered from the dispatch, and by falling out of the case above.
@@ -2097,6 +2178,7 @@ fn check_switch(n: int) -> bool {
         join_refs(before_switch)
         set_borrows(all_loans)
     }
+    snap_free(before_switch)
     return failed
 }
 
@@ -2104,6 +2186,7 @@ fn check_switch(n: int) -> bool {
 fn borrowck_modules() -> int {
     ERRN = 0
     global_writes_build()
+    GLOBAL_NAMES_MOD = -1
     for m in 0..typecheck.MODS.len {
         let root = typecheck.MODS[m].root
         if root == ast.NONE {
@@ -2122,7 +2205,12 @@ fn borrowck_modules() -> int {
             while BINDINGS.len > 0 {
                 pop(BINDINGS)
             }
+            while ROOT_NAMES.len > 1 {
+                pop(ROOT_NAMES)
+            }
+            SNAP_TOP = 0
             ACTIVE = []int {}
+            N_GLOBALS = 0
             BORROWS = []Borrow {}
             FRAMES = []Frame {}
             DEPTH = 1
@@ -2145,6 +2233,14 @@ fn borrowck_modules() -> int {
                 if global_var != ast.NONE {
                     let global = push_b(ast.INFO[global_var].name, ast.NODES[global_var].ty)
                     BINDINGS[global].kind = BindKind.Global
+                }
+            }
+            N_GLOBALS = ACTIVE.len
+            if GLOBAL_NAMES_MOD != m {
+                GLOBAL_NAMES_MOD = m
+                map.map_clear(&mut GLOBAL_NAMES)
+                for k in 0..N_GLOBALS {
+                    map.map_put(&mut GLOBAL_NAMES, BINDINGS[ACTIVE[k]].name, ACTIVE[k])
                 }
             }
             let fn_type = ast.NODES[fn_decl].ty

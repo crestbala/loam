@@ -1482,6 +1482,15 @@ static int check_value_arm(AstNode *blk, int as_move, Root *acc) {
     return rc;
 }
 
+/** A global lives for the whole program and every fn reads it, so nothing
+    may move out of it (or out of a field of it): the next reader would find
+    the slot empty, or two owners would free the same box. */
+static void global_move_error(SourceLoc loc, const char *path) {
+    loam_error(loc, "cannot move out of global '%s'; other fns still read it — borrow it with `&` instead",
+               path);
+    errn = 1;
+}
+
 /** Walk an expression. `as_move` if this use consumes a non-Copy value. */
 static int check_expr(AstNode *n, int as_move) {
     if (!n) return 0;
@@ -1498,6 +1507,10 @@ static int check_expr(AstNode *n, int as_move) {
             }
             if (check_use_path(n->as.ident.name, n->loc)) return 1;
             if (as_move && !v->is_copy) {
+                if (v->kind == BK_GLOBAL) {
+                    global_move_error(n->loc, n->as.ident.name);
+                    return 1;
+                }
                 if (borrow_covers(n->as.ident.name)) {
                     loam_error(n->loc, "cannot move '%s' while borrowed", n->as.ident.name);
                     errn = 1;
@@ -1547,8 +1560,12 @@ static int check_expr(AstNode *n, int as_move) {
                 rc = 1;
             } else {
                 rc = check_use_path(p, n->loc);
-                if (!rc && v && !v->is_module_alias && as_move && n->ty && !type_is_copy(n->ty))
+                if (!rc && as_move && n->ty && !type_is_copy(n->ty) && global_of_place(n)) {
+                    global_move_error(n->loc, p);
+                    rc = 1;
+                } else if (!rc && v && !v->is_module_alias && as_move && n->ty && !type_is_copy(n->ty)) {
                     mark_path_moved(v, p);
+                }
             }
             free(p);
             return rc;

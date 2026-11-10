@@ -78,6 +78,9 @@ typedef struct {
     int checked;        /* IR_BIN: overflow/div trap required */
     int borrowed;       /* IR_LOAD: reads in place, takes no reference (the
                            temp is only compared before anything can free) */
+    int moved;          /* IR_CALL `loam_vec_push`: the element is handed over
+                           whole, so the slot takes its references as they are
+                           (no retain) and the element's local no longer drops */
     /* IR_STRUCT_LIT: non-NULL when the literal starts from the struct's
        static default template; `lit_dflt[k]` is field k's constant default
        (in the template) and `args[k]` is -1 for every field the template

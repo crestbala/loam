@@ -866,6 +866,69 @@ beyond what the checklist requires.
         out the address of a temporary. Both checkers now reject it: "cannot
         borrow a temporary; bind it to a name with `let` first"
         (`compile_fail/borrow_temporary.loam`). No program in the repo used it.
+      - 10c, in progress. Per pass, in one process, median of 11–21 runs
+        (`passbench.loam` vs the C passes timed the same way), Loam vs C:
+
+        | entry | load | typecheck | borrowck |
+        |---|---|---|---|
+        | `zeus_show` | 30 vs 28 | 116 vs 132 | 29 vs 49 |
+        | dracula | 46 vs 43 | 151 vs 178 | 42 vs 64 |
+        | the compiler itself | 23 vs 21 | 26 vs 25 | 19 vs 24 |
+
+        Every other pass was already ahead. Each change was profiled and kept
+        only if it moved the number:
+        - Typecheck: one scope stack of parallel arrays instead of a vec per
+          scope (`SC_*`, `SCOPE_START`), and a `NodeView` of the plain fields
+          where `ast.full` copied ten owning ones. Telling a global from a
+          local scanned every global on each identifier, in C as well. A
+          module `let` now carries `M_GLOBAL_VAR`, so the test is one load.
+          29 → 26 ms on the compiler.
+        - Borrowck: each fn pushes every module global as a binding, and on
+          the compiler 87% of the entries a branch snapshot copied were
+          globals. Globals sit at the bottom of `ACTIVE` (`N_GLOBALS`) and
+          never change state, so snapshots, the NLL scan and the dangling
+          scan stop there, and `find_b` looks them up by name in a per-module
+          map. Snapshots share one pool and store a root name as an int.
+          26 → 19 ms on the compiler, 64 → 42 ms on dracula.
+        - The port surfaced a memory-safety hole, in both checkers: a move out
+          of a module global (`let x = G`, `G.f`, `mod.G`) was accepted. A
+          `Box` global was left NULL for the next reader, and `mod.G.f`
+          copied the pointer without clearing it, so two owners freed one
+          box. It is now an error ("cannot move out of global 'G'; other fns
+          still read it — borrow it with `&` instead";
+          `compile_fail/move_out_of_global.loam`). No program in the repo did
+          it. This is also why globals never change state in borrowck.
+        - `push` of a temporary moves it in (both compilers, every program).
+          `push(NODES, Node { … })` retained each refcounted field for the
+          slot, then released the temporary at the end of the statement
+          (~20 ns a node in `ast.add_plain`). Now a struct literal or call
+          result, and any element holding a `Box` (moved by borrowck), is
+          handed over whole: the IR marks the push `moved` (`call … move` in
+          `--emit-ir`, `moved=1` in the IR dumps), the temp loses its drop,
+          and codegen calls `loam_vec_push_take`, which skips the retain
+          (its hook still copies the elements if the buffer is shared). A
+          named element keeps its own reference, as before. Load on dracula
+          29 → 28 ms, 1 ms or less elsewhere, in the timing below.
+        - This also fixed a leak: an element holding a `Box` was moved
+          into the slot, but its strings were still retained, so
+          `push(rows, Boxed { b, text })` leaked `text` on every push
+          (`compile_pass/drop_pushed_temps.loam` now covers it).
+        - Big vecs grow 4× (runtime, every program). Growing the arenas by
+          doubling copied ~150 MB on dracula (AST ~85 MB, IR ~30 MB, types
+          6 MB). Now a push that overflows a full buffer of 256 KB or more
+          grows it 4× (`loam_vec_grown_cap`), so a big table is copied about
+          half as often on its way up. A first buffer, an exact-size request
+          (`loam_vec_of`) and a small vec still double, so constant tables
+          and small lists keep their size. Peak RSS went down, not up, since
+          fewer old copies are live at once: dracula 103 → 101 MB,
+          `zeus_show` 80 → 68 MB, the compiler 39 → 33 MB (C on dracula:
+          156 MB). Load 28 → 26 ms on dracula.
+        - Timed on a quiet machine with `LOAM_HOME` set (Loam vs C, median
+          of 21), load / typecheck / borrowck: dracula 26 vs 26, 88 vs 105,
+          25 vs 39; `zeus_show` 17–18 vs 17, 68–69 vs 78, 17 vs 30; the
+          compiler 13 vs 13, 16 vs 15, 11 vs 15. Left: typecheck on the
+          compiler itself, 1 ms behind. A `stat` cache was tried and
+          dropped: 852 → 321 calls, no time change.
 - [ ] Compiler itself uses only safe Loam (arenas + integer indices; §2.7)
 
 ### Fixed-point and tooling

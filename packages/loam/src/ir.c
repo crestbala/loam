@@ -516,6 +516,14 @@ static int push_moves(const Type *t) {
     return 0;
 }
 
+/** 1 if a pushed element lowered to `elem` is a temporary only the push
+ *  reads: a struct literal or a call result, in a compiler temp that owns
+ *  what it holds (it would drop at the end of the statement). */
+static int push_elem_is_temporary(const AstNode *e, const IrLocal *elem) {
+    if (!e || (e->kind != AST_STRUCT_LIT && e->kind != AST_CALL)) return 0;
+    return !elem->name && !elem->is_param && !elem->is_global && elem->needs_drop;
+}
+
 /** A borrow argument whose place goes through an index (`&mut v[i].kids`,
  *  `push(NODES[n].kids, …)`): its address is into a vec's buffer, which a
  *  later argument can reallocate (`push(NODES[n].kids, new_node())`). Such an
@@ -636,13 +644,19 @@ static int lower_call(AstNode *n) {
                     ? ir_subst(n->as.call.args[1]->ty)
                     : ty_int();
         /* `loam_vec_push_owned` retains every refcounted leaf (`[]T`, an owned
-           string) for the slot, so an element made of those keeps its own
-           reference and still drops: `push(rows, row_of(i))` used to leak the
-           row. A `Box` leaf is not retained, only moved in, so an element
-           holding one is handed over whole. */
-        if (args[1] >= 0 && args[1] < F->nlocals && type_needs_drop(F->locals[args[1]].ty) &&
-            push_moves(F->locals[args[1]].ty))
+           string) for the slot, so a named element keeps its own reference
+           and still drops: `push(rows, row)` reads `row` again later. An
+           element that holds a `Box` is moved (borrowck), and a temporary
+           (`push(rows, Row { … })`, `push(rows, row_of(i))`) is read by
+           nothing else, so either is handed over whole: the slot takes the
+           references the element holds, with no retain now and no release
+           at the end of the statement. */
+        if (args[1] >= 0 && args[1] < F->nlocals && F->locals[args[1]].needs_drop &&
+            (push_moves(F->locals[args[1]].ty) ||
+             push_elem_is_temporary(n->as.call.args[1], &F->locals[args[1]]))) {
             F->locals[args[1]].needs_drop = 0;
+            i->moved = 1;
+        }
         return -1;
     }
     if (n->as.call.is_vec_pop) {
@@ -2636,6 +2650,7 @@ static void print_inst(FILE *o, const IrInst *i) {
             for (int k = 0; k < i->nargs; k++)
                 fprintf(o, "%s%%%d", k ? ", " : "", i->args[k]);
             fprintf(o, ")");
+            if (i->moved) fprintf(o, " move");
             break;
         case IR_ALLOC: fprintf(o, "alloc %%%d", i->a); break;
         case IR_DROP: fprintf(o, "drop %%%d", i->a); break;
@@ -2805,6 +2820,7 @@ static void dump_inst(const IrInst *i) {
     if (i->conv_mode) printf(" conv=%d", i->conv_mode);
     if (i->checked) fputs(" chk=1", stdout);
     if (i->borrowed) fputs(" borrowed=1", stdout);
+    if (i->moved) fputs(" moved=1", stdout);
     if (i->nlit_ints) {
         fputs(" ints=", stdout);
         for (int k = 0; k < i->nlit_ints; k++)

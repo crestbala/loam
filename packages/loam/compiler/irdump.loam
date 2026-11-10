@@ -124,6 +124,9 @@ fn put_inst(b: &mut []u8, i: int) {
     if (x.bits & ir.I_BORROWED) != 0 {
         buf.push_str(b, " borrowed=1")
     }
+    if (x.bits & ir.I_MOVED) != 0 {
+        buf.push_str(b, " moved=1")
+    }
     if x.nints > 0 {
         buf.push_str(b, " ints=")
         for k in 0..x.nints {

@@ -82,6 +82,8 @@ struct Place {
 const I_MUT: int = 1
 const I_CHECKED: int = 2
 const I_BORROWED: int = 4
+// Call `loam_vec_push`: the element is handed over whole (no retain, no drop).
+const I_MOVED: int = 8
 
 /** *One instruction. `dst`, `a`, `b` are locals (`NONE` when unused). */
 struct Inst {
@@ -1065,6 +1067,17 @@ fn lower_println(n: int) -> int {
 
 /** *A pushed element moves into the slot when it holds a `Box` (the push */
 /** *retains refcounted leaves but takes a Box as-is). */
+/** *Whether a pushed element `e`, lowered to local `l`, is a temporary only */
+/** *the push reads: a struct literal or a call result, in a compiler temp */
+/** *that owns what it holds. */
+fn push_elem_is_temporary(e: int, l: int) -> bool {
+    if e == NONE || (kind(e) != Kind.StructLit && kind(e) != Kind.Call) {
+        return false
+    }
+    let loc = &LOCALS[F_LOCALS + l]
+    return !loc.has_name && (loc.flags & (L_PARAM | L_GLOBAL)) == 0 && (loc.flags & L_DROP) != 0
+}
+
 fn push_moves(t: int) -> bool {
     if t == types.NO_TYPE {
         return false
@@ -1239,10 +1252,14 @@ fn lower_call(n: int) -> int {
         set_text(i, "loam_vec_push")
         set_args(i, []int { a0, a1 })
         SCRATCH[i].ty = if ac > 1 && kids[1] != NONE { ir_subst(kid_ty(n, 1)) } else { types.ty_int() }
-        // `loam_vec_push_owned` retains every refcounted leaf for the slot; a
-        // Box leaf is moved in, so an element holding one is handed over.
-        if a1 >= 0 && is_local(a1) && needs_drop(local_ty(a1)) && push_moves(local_ty(a1)) {
+        // `loam_vec_push_owned` retains every refcounted leaf for the slot, so
+        // a named element keeps its own reference and still drops. An element
+        // holding a Box is moved, and a temporary is read by nothing else, so
+        // either is handed over whole: no retain now, no release after.
+        if a1 >= 0 && is_local(a1) && has_flag(a1, L_DROP) &&
+            (push_moves(local_ty(a1)) || push_elem_is_temporary(kids[1], a1)) {
             clear_flag(a1, L_DROP)
+            SCRATCH[i].bits = SCRATCH[i].bits | I_MOVED
         }
         return NONE
     }

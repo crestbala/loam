@@ -1868,7 +1868,9 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                 char rr[64], rl[64];
                 elem_hook_cnames(in->ty, rr, sizeof rr, rl, sizeof rl);
                 (void)rl;
-                fprintf(o, "loam_vec_push%s(%s%s, &%s, sizeof(", rr[0] ? "_owned" : "",
+                /* A moved element's references go to the slot as they are. */
+                fprintf(o, "loam_vec_push%s(%s%s, &%s, sizeof(",
+                        !rr[0] ? "" : in->moved ? "_take" : "_owned",
                         amp, lv(in->args[0]), lv(in->args[1]));
                 emit_ctype(o, in->ty);
                 if (rr[0]) fprintf(o, "), %s, ", rr);

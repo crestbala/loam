@@ -1,0 +1,29 @@
+// A global lives for the whole program and every fn reads it: moving its
+// Box out (or a field holding one) would leave the next reader a null
+// pointer, or two owners of one box. Borrow it instead.
+import "std:fmt"
+
+struct Holder {
+    b: Box<int>,
+}
+
+let mut G: Box<int> = Box::new(41)
+let mut H: Holder = Holder { b: Box::new(1) }
+
+fn steal() {
+    let x = G
+}
+
+fn steal_field() {
+    let y = H.b
+}
+
+fn peek(b: &Box<int>) -> int {
+    return **b
+}
+
+fn main() {
+    steal()
+    steal_field()
+    fmt.println(peek(&G))
+}

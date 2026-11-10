@@ -1872,8 +1872,9 @@ fn builtin_call(x: &Inst) -> bool {
         let amp = if tkind(local_ty(a0)) == TK.Vec { "&" } else { "" }
         let h = elem_hook(x.ty)
         w("loam_vec_push")
+        // A moved element's references go to the slot as they are.
         if h > 0 {
-            w("_owned")
+            w(if (x.bits & ir.I_MOVED) != 0 { "_take" } else { "_owned" })
         }
         w("({{amp}}{{lv(a0)}}, &{{lv(arg_of(x, 1))}}, sizeof(")
         w_ctype(x.ty)
