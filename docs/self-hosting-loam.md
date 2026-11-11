@@ -1588,7 +1588,19 @@ the last list: §5.2 S0, typed handle cells (2026-11-11).
      (`loader.package_label`) or `(entry)`. The same report as the seed on
      arrays, `zeus_carousel`, dracula, myapp, `http_min`, `nob.loam` and the
      compiler; `selfhost_driver` compares three of them.
-   - [ ] P4: `--target ios` / `android`.
+   - [x] P4 (2026-11-11): `--target ios` and `--target android`. iOS: the
+     simulator SDK through `xcrun`, the `.app` with its `Info.plist`, the
+     runtime and UIKit host as cached objects per SDK and arch, shard builds,
+     ad-hoc `codesign`, and `--run` on a booted simulator. Android: the
+     Gradle project (the Java host, manifest and Gradle files, the program as
+     `app.c`, its CMake and app build files, `local.properties` when an SDK
+     is found) and `--run` through Gradle and adb. Simulator and Gradle steps
+     are shell pipelines through `sh -c`, as in the seed; compiles use
+     `sys.run` argument lists. Checked against the seed: the same Android
+     tree (11 files) and messages, and for iOS the same seven `xcrun`
+     commands (temp names aside) and `Info.plist`; `selfhost_driver` compares
+     the Android tree. The Loam driver now refuses only `--dump-*`, the
+     seed's per-pass dumps that `tcdump`, `tokdump` and `moddump` mirror.
    - [ ] P5: `loam-lsp` on the Loam front end (a port of `lsp.c`), so no C
      front end is left.
    - [ ] P6: `bin/loamc` is the Loam compiler everywhere, built from the seed;
