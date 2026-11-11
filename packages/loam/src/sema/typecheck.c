@@ -590,6 +590,29 @@ static void mark_module_ident(AstNode *id, const char *name) {
     id->as.ident.def_loc.end_col = n + 1;
 }
 
+/** The module that declares `d`, or -1. */
+static int decl_mod(const AstNode *d) {
+    for (int m = 0; m < Gn; m++) {
+        AstNode *p = Gmods[m].ast;
+        if (!p) continue;
+        for (size_t i = 0; i < p->as.program.decl_count; i++)
+            if (p->as.program.decls[i] == d) return m;
+    }
+    return -1;
+}
+
+/** A `#[c]` binding is private to the module that declares it. Its C can do
+ *  anything (a raw `free`, a `memcpy` from an address held in an `i64`), so
+ *  only that module's own fns may call it; importers get its safe wrappers.
+ *  This keeps every place that trusts C inside the module that names it. */
+static void check_c_private(const AstNode *fn, SourceLoc loc) {
+    if (!fn || fn->kind != AST_FN_DECL || !fn->as.fn.c_sym) return;
+    int owner = decl_mod(fn);
+    if (owner < 0 || owner == Gcur) return;
+    err(loc, "#[c] fn '%s' is private to module '%s'; call one of its safe wrappers instead",
+        fn->as.fn.name, Gmods[owner].name ? Gmods[owner].name : "?");
+}
+
 static AstNode *find_fn_in(LoamModule *m, const char *name) {
     return find_decl(m, AST_FN_DECL, name);
 }
@@ -3015,6 +3038,7 @@ static Type *check_call(AstNode *n, Type *expect) {
                 err(n->loc, "no method '%s'", fnn);
                 return ty_void();
             }
+            check_c_private(fn, n->loc);
             cal->as.access.resolved = fn;
             cal->ty = fn_type_of(fn);
             AstNode *recv = cal->as.access.target;
@@ -3048,6 +3072,7 @@ static Type *check_call(AstNode *n, Type *expect) {
             err(n->loc, "no function '%s' in module '%s'", fnn, mod);
             return ty_void();
         }
+        check_c_private(fn, n->loc);
         cal->as.access.resolved = fn;
         cal->ty = fn_type_of(fn);
         mark_module_ident(cal->as.access.target, mod);
@@ -3078,6 +3103,7 @@ static Type *check_call(AstNode *n, Type *expect) {
             err(n->loc, "unknown function '%s'", cal->as.ident.name);
             return ty_void();
         }
+        check_c_private(fn, n->loc);
         cal->as.ident.resolved = fn;
         cal->as.ident.def_loc = fn->loc;
         cal->ty = fn_type_of(fn);
@@ -3414,6 +3440,7 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
                     n->ty = ty_void();
                     return n->ty;
                 }
+                check_c_private(ifn, n->loc);
                 ifn->as.fn.used_as_value = 1;
                 n->flags |= ASTF_FN_VAL;
                 n->ty = fn_type_of(ifn);
@@ -3721,6 +3748,7 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
                         memset(&n->as, 0, sizeof n->as);
                         n->kind = AST_IDENT;
                         n->as.ident.name = fname;
+                        check_c_private(mfn, n->loc);
                         mfn->as.fn.used_as_value = 1;
                         n->flags |= ASTF_FN_VAL;
                         n->ty = fn_type_of(mfn);

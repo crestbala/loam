@@ -1,0 +1,17 @@
+// A `#[c]` fn is private to the module that declares it. Its C is trusted
+// code (a binding can take a raw address as an `i64`), so another module may
+// call only the safe wrappers around it: by name, by import, as a method, or
+// as a fn value, each is an error.
+import "std:fmt"
+import "../mod/c_binding.loam" as cb
+import { c_labs } "../mod/c_binding.loam"
+
+fn main() {
+    fmt.println(cb.abs_value(i64(-3)))
+    fmt.println(cb.c_labs(i64(-1)))
+    fmt.println(c_labs(i64(-2)))
+    let x = i64(-4)
+    fmt.println(x.c_labs())
+    let f = c_labs
+    fmt.println(f(i64(-5)))
+}
