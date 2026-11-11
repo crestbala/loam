@@ -42,6 +42,31 @@ let mut SINK: string = ""
 /** *`loam test`: the program's `main` is left out and a runner calls every */
 /** *kept `#[test]` fn instead. */
 let mut TEST_MODE: bool = false
+/** *`LOAM_SHARD`: the unit is cut into pieces the driver compiles apart, so */
+/** *each definition starts with a marker (`shard_mark`), what one unit defines */
+/** *and others use is `extern` rather than `static`, and the runtime's and */
+/** *the globals' storage sits under `LOAM_SHARD_DEFS` (one unit defines it). */
+let mut SHARD: bool = false
+/** *`LOAM_BATCH`: the program holds many fixtures (`import … as case<N>`) and */
+/** *runs the one `LOAM_CASE` names; only that case's modules initialize. */
+let mut BATCH: bool = false
+/** *Client build of a split program (`LOAM_SERVER_SPLIT`, and wasm): a */
+/** *`#[server]` fn keeps its signature but its body is a trap, so the body and */
+/** *its literals never reach the client. */
+let mut SERVER_SPLIT: bool = false
+
+/** *One definition starts here, for the driver to cut on. The newline keeps */
+/** *the marker at the start of a line, where a string literal cannot put one. */
+fn shard_mark(name: string) {
+    if SHARD {
+        w("\n/*@S {{name}}*/\n")
+    }
+}
+
+/** *`static ` in a whole-unit build; nothing when shards share the symbol. */
+fn unit_static() -> string {
+    return if SHARD { "" } else { "static " }
+}
 
 fn w(s: string) {
     buf.push_str(&mut OUT, s)
@@ -2523,8 +2548,141 @@ fn test_runner() {
     w("    return loam_test_summary();\n}\n")
 }
 
+/** *`case<N>`, as a batch program imports fixture N; -1 for any other alias. */
+fn batch_case_of(alias: string) -> int {
+    if alias.len <= 4 || !starts_with(alias, "case") {
+        return NONE
+    }
+    let mut n = 0
+    for i in 4..alias.len {
+        let c = int(alias[i])
+        if c < '0' || c > '9' {
+            return NONE
+        }
+        n = n * 10 + (c - '0')
+    }
+    return n
+}
+
+/** *The module an import resolved to, by path; -1 when none. */
+fn batch_import_mod(im: int) -> int {
+    let x = ast.ex(im)
+    if !ast.EXTRA[x].has_sname {
+        return NONE
+    }
+    let path = ast.EXTRA[x].sname
+    for k in 0..typecheck.MODS.len {
+        if typecheck.MODS[k].path == path {
+            return k
+        }
+    }
+    return NONE
+}
+
+/** *The import nodes of module `m` (none when it did not parse). */
+fn import_nodes(m: int) -> []int {
+    let mut out = []int {}
+    let root = typecheck.MODS[m].root
+    if root == NONE {
+        return out
+    }
+    let kids = ast.NODES[root].kids
+    for k in 0..kids.len {
+        if ast.NODES[kids[k]].kind == Kind.Import {
+            push(out, kids[k])
+        }
+    }
+    return out
+}
+
+/** *Mark `m` and everything it imports. The batch program's own imports of */
+/** *its cases are left out of `edges`: those are what the table tells apart. */
+fn batch_mark(edges: &[][]int, m: int, seen: &mut []bool) {
+    if m < 0 || m >= seen.len || seen[m] {
+        return
+    }
+    seen[m] = true
+    let next = edges[m]
+    for i in 0..next.len {
+        batch_mark(edges, next[i], seen)
+    }
+}
+
+/** *A batch program holds many fixtures but runs one per process, chosen by */
+/** *`LOAM_CASE`. That case must start up as it would alone, so only the */
+/** *modules it can reach run their initializers: another fixture's globals */
+/** *would otherwise take arena slots and signal ids this one's output depends */
+/** *on. Emits the table and returns the number of cases. */
+fn batch_table() -> int {
+    let nmods = typecheck.MODS.len
+    if nmods == 0 {
+        return 0
+    }
+    let entry_imports = import_nodes(0)
+    let mut cases = 0
+    for i in 0..entry_imports.len {
+        let c = batch_case_of(ast.INFO[entry_imports[i]].name)
+        if c >= cases {
+            cases = c + 1
+        }
+    }
+    if cases == 0 {
+        return 0
+    }
+    let mut edges = [][]int {}
+    for m in 0..nmods {
+        let ims = import_nodes(m)
+        let mut row = []int {}
+        for i in 0..ims.len {
+            if m == 0 && batch_case_of(ast.INFO[ims[i]].name) >= 0 {
+                continue
+            }
+            push(row, batch_import_mod(ims[i]))
+        }
+        push(edges, row)
+    }
+    let bytes = nmods / 8 + 1
+    w("    extern int loam_batch_serve(void);\n")
+    w("    const int loam_served = loam_batch_serve();\n")
+    w("    if (loam_served >= 0) return loam_served;\n")
+    w("    const char *loam_case_env = getenv(\"LOAM_CASE\");\n")
+    w("    const int loam_case = loam_case_env ? atoi(loam_case_env) : 0;\n")
+    w("    if (loam_case < 0 || loam_case >= {{cases}}) {\n")
+    w("        fprintf(stderr, \"loam: no case %d\\n\", loam_case);\n")
+    w("        return 2;\n    }\n")
+    w("    static const unsigned char loam_case_mods[{{cases}}][{{bytes}}] = {\n")
+    for c in 0..cases {
+        let mut seen = []bool {}
+        for m in 0..nmods {
+            push(seen, false)
+        }
+        batch_mark(&edges, 0, &mut seen)
+        for i in 0..entry_imports.len {
+            if batch_case_of(ast.INFO[entry_imports[i]].name) == c {
+                batch_mark(&edges, batch_import_mod(entry_imports[i]), &mut seen)
+            }
+        }
+        w("        {")
+        for b in 0..bytes {
+            let mut v = 0
+            let mut m = b * 8
+            while m < (b + 1) * 8 && m < nmods {
+                if seen[m] {
+                    v = v | (1 << (m % 8))
+                }
+                m = m + 1
+            }
+            w("{{v}},")
+        }
+        w("},\n")
+    }
+    w("    };\n")
+    return cases
+}
+
 /** *Every module's `__init`, each after the inits of everything it imports. */
 fn init_calls() {
+    let cases = if BATCH { batch_table() } else { 0 }
     let nmods = typecheck.MODS.len
     for r in 0..nmods {
         for f in 0..ir.FNS.len {
@@ -2535,7 +2693,11 @@ fn init_calls() {
             if m < 0 || m >= nmods || typecheck.MODS[m].rank != r {
                 continue
             }
-            w("    {{ir.FNS[f].cname}}();\n")
+            if cases > 0 {
+                w("    if (loam_case_mods[loam_case][{{m / 8}}] & {{1 << (m % 8)}}) {{ir.FNS[f].cname}}();\n")
+            } else {
+                w("    {{ir.FNS[f].cname}}();\n")
+            }
         }
     }
 }
@@ -2593,6 +2755,7 @@ fn fn_body(f: int, is_main: bool) {
 fn emit_fn(d: int, is_main: bool) {
     let cn = fn_cname(d)
     let f = find_ir_fn(cn)
+    shard_mark(cn)
     line_directive(ast.INFO[d].loc.file, ast.INFO[d].loc.line)
     fn_sig(d, is_main)
     if f == NONE || !ir.FNS[f].lowered {
@@ -2696,6 +2859,7 @@ fn clos_env(n: int) {
 fn closure_fn(n: int) {
     let cn = "loam_clos_{{ast.EXTRA[ast.ex(n)].clos_id}}"
     let f = find_ir_fn(cn)
+    shard_mark(cn)
     clos_sig(n, false)
     if f == NONE || !ir.FNS[f].lowered {
         fatal("internal: closure '{{cn}}' was not lowered to IR")
@@ -2870,7 +3034,8 @@ fn lit_template_decls() {
                     continue
                 }
                 lit_tmpl_add(t, cn)
-                w("__attribute__((unused)) static const {{cn}} loam_dflt_{{cn}};\n")
+                let storage = if SHARD { "extern" } else { "static" }
+                w("__attribute__((unused)) {{storage}} const {{cn}} loam_dflt_{{cn}};\n")
             }
         }
     }
@@ -2882,12 +3047,16 @@ fn lit_template_decls() {
 fn lit_template_defs() {
     for j in 0..LT_NAMES.len {
         let d = LT_DEFAULTS[j]
-        // A template no emitted site used keeps its tentative zero.
+        let cn = LT_NAMES[j]
+        // A template no emitted site used keeps its tentative zero (a shard
+        // build has no tentative definition, so it defines the zero).
         if d.len == 0 {
+            if SHARD {
+                w("const {{cn}} loam_dflt_{{cn}} = {};\n")
+            }
             continue
         }
-        let cn = LT_NAMES[j]
-        w("static const {{cn}} loam_dflt_{{cn}} = { ")
+        w("{{unit_static()}}const {{cn}} loam_dflt_{{cn}} = { ")
         let names = types.TYPES[LT_TYPES[j]].field_names
         let mut first = true
         for k in 0..names.len {
@@ -3081,17 +3250,24 @@ fn c_bindings() {
 }
 
 /** *Adapter so a named fn can be stored in a `loam_fn` (env unused). */
-fn as_fn_tramp(d: int) {
+fn as_fn_tramp(d: int, proto: bool) {
     let ft = ast.NODES[d].ty
     let ret = ret_type(ft)
     let x = ast.ex(d)
     let cn = if ast.EXTRA[x].has_sname { ast.EXTRA[x].sname } else { ast.INFO[d].name }
+    if !proto {
+        shard_mark(cn)
+    }
     w_ctype(ret)
     w(" {{cn}}__as_fn(void *_env")
     let np = ast.NODES[d].kids.len
     for i in 0..np {
         w(", ")
         var_decl(param_type(ft, i), cid(param_name(d, i)))
+    }
+    if proto {
+        w(");\n")
+        return
     }
     w(") {\n    (void)_env;\n    ")
     if tkind(ret) != TK.Void {
@@ -3135,8 +3311,15 @@ fn is_intrinsic(d: int) -> bool {
 }
 
 fn copy_runtime() {
+    // Exactly one unit owns the runtime's storage.
+    if SHARD {
+        w("#ifdef LOAM_SHARD_DEFS\n")
+    }
     w("#define LOAM_RT_DEFINE_JMP 1\n")
     w("#define LOAM_RT_DEFINE_ALLOC 1\n")
+    if SHARD {
+        w("#endif\n")
+    }
     let r = if typecheck.RT_PATH.len > 0 { sys.read(typecheck.RT_PATH) } else { res_err("no runtime", "") }
     if r.tag == ResultTag.Ok {
         w(r.val)
@@ -3189,6 +3372,10 @@ fn emit_c() {
             let d = decls[i]
             if is_fn(d) {
                 if is_generic(d) || !dce.keep(d) {
+                    continue
+                }
+                // A client build keeps nothing of a `#[server]` body.
+                if SERVER_SPLIT && (ast.NODES[d].op & dce.FN_SERVER) != 0 {
                     continue
                 }
                 collect_clos(ast.NODES[d].b)
@@ -3250,7 +3437,7 @@ fn emit_c() {
     // A prototype per possible hook id: monomorphized bodies can register an
     // element type after this point.
     for i in 1..ELEM_HOOK_MAX + 1 {
-        w("static void loam_elem_retain_{{i}}(void *p);\nstatic void loam_elem_release_{{i}}(void *p);\n")
+        w("{{unit_static()}}void loam_elem_retain_{{i}}(void *p);\n{{unit_static()}}void loam_elem_release_{{i}}(void *p);\n")
     }
     wc('\n')
     own_helpers()
@@ -3261,6 +3448,11 @@ fn emit_c() {
         if gv == NONE {
             continue
         }
+        if SHARD {
+            w("extern ")
+            var_decl(ast.NODES[gv].ty, typecheck.GVARS[i].cname)
+            w(";\n#ifdef LOAM_SHARD_DEFS\n")
+        }
         var_decl(ast.NODES[gv].ty, typecheck.GVARS[i].cname)
         let init = ast.NODES[gv].b
         if ir.static_data(init) {
@@ -3268,6 +3460,9 @@ fn emit_c() {
             const_init(init)
         }
         w(";\n")
+        if SHARD {
+            w("#endif\n")
+        }
     }
     if typecheck.GVARS.len > 0 {
         wc('\n')
@@ -3336,24 +3531,37 @@ fn emit_c() {
     c_bindings()
     flush_big()
 
-    for m in 0..nmods {
-        let root = typecheck.MODS[m].root
-        if root == NONE {
-            continue
-        }
-        let std_mod = typecheck.MODS[m].is_std
-        let decls = ast.NODES[root].kids
-        for i in 0..decls.len {
-            let d = decls[i]
-            // A user seam has a prototype above, so it can be a value too.
-            if is_fn(d) && (ast.INFO[d].marks & ast.M_AS_VALUE) != 0 &&
-                (!is_intrinsic(d) || c_sym_of(d).len > 0 || !std_mod) && !is_generic(d) && dce.keep(d) {
-                as_fn_tramp(d)
+    // The trampolines are the first definitions, so a shard build finishes
+    // the header before them: the literal templates, and the trampolines' own
+    // prototypes, since one unit's trampoline is what another unit stores.
+    if SHARD {
+        lit_template_decls()
+    }
+    let mut pass = if SHARD { 2 } else { 1 }
+    while pass > 0 {
+        pass = pass - 1
+        let proto = pass == 1
+        for m in 0..nmods {
+            let root = typecheck.MODS[m].root
+            if root == NONE {
+                continue
+            }
+            let std_mod = typecheck.MODS[m].is_std
+            let decls = ast.NODES[root].kids
+            for i in 0..decls.len {
+                let d = decls[i]
+                // A user seam has a prototype above, so it can be a value too.
+                if is_fn(d) && (ast.INFO[d].marks & ast.M_AS_VALUE) != 0 &&
+                    (!is_intrinsic(d) || c_sym_of(d).len > 0 || !std_mod) && !is_generic(d) && dce.keep(d) {
+                    as_fn_tramp(d, proto)
+                }
             }
         }
     }
 
-    lit_template_decls()
+    if !SHARD {
+        lit_template_decls()
+    }
     flush_big()
 
     for i in 0..CLOS_NODES.len {
@@ -3363,6 +3571,7 @@ fn emit_c() {
         if !is_mono_clos(f) || !ir.FNS[f].lowered {
             continue
         }
+        shard_mark(ir.FNS[f].cname)
         mono_clos_sig(f, false)
         fn_body(f, false)
     }
@@ -3381,6 +3590,7 @@ fn emit_c() {
         if !is_init_fn(f) || !ir.FNS[f].lowered {
             continue
         }
+        shard_mark(ir.FNS[f].cname)
         w("void {{ir.FNS[f].cname}}(void)")
         fn_body(f, false)
     }
@@ -3400,6 +3610,15 @@ fn emit_c() {
                 if is_main && TEST_MODE {
                     continue
                 }
+                if SERVER_SPLIT && (ast.NODES[d].op & dce.FN_SERVER) != 0 {
+                    // Client build: the signature with a trap body. The real
+                    // body is never emitted, so its literals are absent.
+                    let x = ast.ex(d)
+                    shard_mark(if ast.EXTRA[x].has_sname { ast.EXTRA[x].sname } else { "" })
+                    fn_sig(d, false)
+                    w(" { loam_panic(\"<server>\", 0, \"server function excluded from client build\"); __builtin_unreachable(); }\n")
+                    continue
+                }
                 emit_fn(d, is_main)
             }
         }
@@ -3413,18 +3632,25 @@ fn emit_c() {
         let ht = ELEM_HOOK_TYPES[h]
         let hcn = ctype(ht)
         let id = h + 1
-        w("static void loam_elem_retain_{{id}}(void *p) {\n")
+        shard_mark("loam_elem_{{id}}")
+        w("{{unit_static()}}void loam_elem_retain_{{id}}(void *p) {\n")
         w("    {{hcn}} *_e = ({{hcn}} *)p;\n")
         nested_keeps("(*_e)", ht, 1)
         w("}\n")
-        w("static void loam_elem_release_{{id}}(void *p) {\n")
+        w("{{unit_static()}}void loam_elem_release_{{id}}(void *p) {\n")
         w("    {{hcn}} *_e = ({{hcn}} *)p;\n")
         drop_place("(*_e)", ht, 1)
         w("}\n")
         flush_big()
         h = h + 1
     }
+    if SHARD {
+        w("\n/*@D*/\n#ifdef LOAM_SHARD_DEFS\n")
+    }
     lit_template_defs()
+    if SHARD {
+        w("#endif\n")
+    }
     if TEST_MODE {
         test_runner()
     }
