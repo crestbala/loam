@@ -1570,8 +1570,17 @@ the last list: §5.2 S0, typed handle cells (2026-11-11).
      batch binary of `suite_plain` gives the same output on all 128 cases
      whose output is deterministic (the other 7 print OS-chosen ports).
      `selfhost_driver` now also compares the batch and split C.
-   - [ ] P2: the wasm32 target (`--wasm-release`, `--wasm-split-input`, path
-     strip), what `zeli serve` and the wasm stanzas build.
+   - [x] P2 (2026-11-11): the wasm32 target, what `zeli serve` and the wasm
+     stanzas build: `--target wasm32`, `--wasm-release` (and its loader
+     warning on a full bare-package import in the entry, the only warning the
+     seed has), `--wasm-split-input`, the path strip (`codegen.PATH_STRIP`),
+     server split, the `#[c]`-reachable error, the wasm32 clang search
+     (`LOAM_WASM_CC`, Homebrew LLVM), `-ffile-prefix-map`s, the Canvas2D
+     `loader.js` copy, and sharded wasm builds with the runtime and web host
+     as cached units. Checked against the seed: the same C (dracula,
+     `zeus_carousel`, `trap_app`, plain and release); the same `.wasm` bytes
+     plain, release, split-input (and the same kept C) and sharded (the same
+     30 units); the same warning. `selfhost_driver` compares the wasm C.
    - [ ] P3: `--cost`.
    - [ ] P4: `--target ios` / `android`.
    - [ ] P5: `loam-lsp` on the Loam front end (a port of `lsp.c`), so no C

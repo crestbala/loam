@@ -30,6 +30,33 @@ const NONE: int = -1
 
 let mut HOME: string = ""
 
+/** *`--wasm-release`: a full import of a bare package in the entry module */
+/** *warns, since it keeps every declaration of that package. */
+let mut RELEASE_IMPORTS: bool = false
+/** *Warnings, as printed (`file:line:col: warning: msg`), in order. */
+let mut WARNINGS: []string = []string {}
+
+/** *Release builds: a full bare-package import in the entry keeps every decl. */
+fn warn_full_package_imports(idx: int, root: int) {
+    if !RELEASE_IMPORTS || idx != 0 {
+        return
+    }
+    let kids = ast.NODES[root].kids
+    for k in 0..kids.len {
+        let im = kids[k]
+        if ast.NODES[im].kind != Kind.Import || ast.NODES[im].kids.len != 0 {
+            continue
+        }
+        let x = ast.ex(im)
+        let spec = if ast.EXTRA[x].has_text { ast.EXTRA[x].text } else { "" }
+        if !is_bare_package_spec(spec) {
+            continue
+        }
+        let loc = ast.INFO[im].loc
+        push(WARNINGS, "{{dump.path_of(loc.file)}}:{{loc.line}}:{{loc.col}}: warning: full import of \"{{spec}}\"; prefer import { Name } \"{{spec}}\" to drop unused declarations")
+    }
+}
+
 /** *`dir` of a path: everything before its last `/` ("." when none). */
 fn parent_dir(p: string) -> string {
     let slash = str.last_index_of_byte(p, '/')
@@ -1147,6 +1174,8 @@ fn load_module(path: string, alias: string) -> bool {
     }
     ast.EXTRA[ast.ex_mut(root)].sname = unique
     ast.EXTRA[ast.ex_mut(root)].has_sname = true
+    // Before `#[proto]` injects `import "http"`, so that import does not warn.
+    warn_full_package_imports(idx, root)
     implicit_imports(root, alias)
     let kids = ast.NODES[root].kids
     for k in 0..kids.len {

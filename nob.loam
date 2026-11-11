@@ -2762,20 +2762,25 @@ fn ig_selfhost_driver() {
 /** *The build modes `--emit-c` can show, seed against `stage1`: a batch */
 /** *program (`LOAM_BATCH`: the per-case init table) of a plain and a Zeus */
 /** *fixture, and client builds (`LOAM_SERVER_SPLIT`: `#[server]` bodies become */
-/** *traps). One line per difference, empty when all match. */
+/** *traps), and the wasm32 target's C (split, paths stripped; release too). */
+/** *One line per difference, empty when all match. */
 fn selfhost_mode_cases(stage1: string, d: string) -> string {
     let fixtures = "{{ROOT}}/packages/loam/tests/compile_pass"
     let batch_src = "{{d}}/batch_suite.loam"
     write_text(batch_src, suite_source([]string { "{{fixtures}}/arrays.loam", "{{fixtures}}/zeus_carousel.loam", "{{fixtures}}/server_split.loam" }))
     let mut out = ""
-    let envs = []string { "LOAM_BATCH=1", "LOAM_SERVER_SPLIT=1", "LOAM_SERVER_SPLIT=1" }
-    let sources = []string { batch_src, "{{fixtures}}/server_split.loam", "{{ROOT}}/packages/loam/tests/c_client/server_only.loam" }
+    let envs = []string { "LOAM_BATCH=1", "LOAM_SERVER_SPLIT=1", "LOAM_SERVER_SPLIT=1", "LOAM_MODE=wasm", "LOAM_MODE=wasm" }
+    let flags = []string { "", "", "", "--target=wasm32", "--target=wasm32 --wasm-release" }
+    let sources = []string { batch_src, "{{fixtures}}/server_split.loam", "{{ROOT}}/packages/loam/tests/c_client/server_only.loam", "{{fixtures}}/zeus_carousel.loam", "{{ROOT}}/packages/loam/tests/wasm_smoke/trap_app.loam" }
     for i in 0..envs.len {
         let env = envs[i]
         let src = sources[i]
-        sys.exec("cd {{shq(ROOT)}} && export LOAM_HOME={{shq(ROOT)}} {{env}} && {{shq(LOAMC)}} --emit-c {{shq(src)}} -o {{shq(d)}}/mode_c.c >/dev/null 2>&1; {{shq(stage1)}} --emit-c {{shq(src)}} -o {{shq(d)}}/mode_s.c >/dev/null 2>&1")
-        if !is_nonempty("{{d}}/mode_c.c") || !diff_ok("{{d}}/mode_c.c", "{{d}}/mode_s.c") {
-            out = cat(out, "{{env}} --emit-c {{rel_of(src)}}\n")
+        let f = flags[i]
+        // The same output name for both, so their stdout lines match too.
+        let mode_c = "{{shq(d)}}/mode.c"
+        sys.exec("cd {{shq(ROOT)}} && export LOAM_HOME={{shq(ROOT)}} {{env}} && {{shq(LOAMC)}} {{f}} --emit-c {{shq(src)}} -o {{mode_c}} >{{shq(d)}}/mode_c.out 2>&1; mv -f {{mode_c}} {{shq(d)}}/mode_c.c 2>/dev/null; {{shq(stage1)}} {{f}} --emit-c {{shq(src)}} -o {{mode_c}} >{{shq(d)}}/mode_s.out 2>&1; mv -f {{mode_c}} {{shq(d)}}/mode_s.c 2>/dev/null")
+        if !is_nonempty("{{d}}/mode_c.c") || !diff_ok("{{d}}/mode_c.c", "{{d}}/mode_s.c") || !diff_ok("{{d}}/mode_c.out", "{{d}}/mode_s.out") {
+            out = cat(out, "{{env}} {{f}} --emit-c {{rel_of(src)}}\n")
         }
         sys.exec("rm -f {{shq(d)}}/mode_c.c {{shq(d)}}/mode_s.c")
     }

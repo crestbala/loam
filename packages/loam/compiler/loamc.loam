@@ -890,7 +890,8 @@ const SHARD_MIN: int = 96000
 const SHARD_MAX: int = 384000
 const SHARD_CUT: u64 = 8
 
-/** *One unit still to compile: its source, its object, and the command. */
+/** *One unit still to compile: its source, its object, and the command */
+/** *(compiler first). */
 struct ShardJob {
     cfile: string,
     obj: string,
@@ -905,6 +906,7 @@ let mut SHARD_LINKED: bool = false
 
 /** *Add one unit whose text is `text`. Its object is reused if `key` was */
 /** *built before; otherwise the text is written out and a compile queued. */
+/** *`cc_args` is the compile command up to its input, compiler first. */
 fn shard_unit(cc_args: &[]string, dir: string, key: u64, text: string) -> bool {
     let obj = "{{dir}}/{{hex16(key)}}.o"
     push(SHARD_OBJS, obj)
@@ -946,8 +948,7 @@ fn shard_run_jobs() -> bool {
     let mut next = 0
     while next < SHARD_JOBS.len || running.len > 0 {
         if next < SHARD_JOBS.len && running.len < cores {
-            let argv = cc_argv(&SHARD_JOBS[next].args)
-            let h = sys.spawn(&argv)
+            let h = sys.spawn(&SHARD_JOBS[next].args)
             if h < 0 {
                 shard_done(&SHARD_JOBS[next], 1)
                 ok = false
@@ -1009,7 +1010,7 @@ fn shard_prune(dir: string, hpath: string, rsp: string) {
 /** *Compile `cpath` as units under `dir`, and leave the object list in */
 /** *`<dir>/<key>.rsp` for the link to read as `@rsp`. The path of that list, */
 /** *or `""` on failure (the caller still has the whole program in `cpath`). */
-fn shard_compile(cpath: string, cc_args: &[]string, dir: string) -> string {
+fn shard_compile(cpath: string, cc_args: &[]string, dir: string, extra: &[]string) -> string {
     SHARD_OBJS = []string {}
     SHARD_JOBS = []ShardJob {}
     let r = sys.read(cpath)
@@ -1024,7 +1025,7 @@ fn shard_compile(cpath: string, cc_args: &[]string, dir: string) -> string {
     }
     let head = str.slice(src, 0, first)
     let rt = loader.runtime_dir()
-    let mut base = fnv(str.join(cc_argv(cc_args), " "), FNV_BASIS)
+    let mut base = fnv(str.join(*cc_args, " "), FNV_BASIS)
     base = dir_fingerprint(rt, base)
     base = dir_fingerprint("{{rt}}/wasm_inc", base)
     let hkey = fnv(head, base)
@@ -1043,7 +1044,7 @@ fn shard_compile(cpath: string, cc_args: &[]string, dir: string) -> string {
         let mut args = []string {}
         push_all(&mut args, cc_args)
         push_list(&mut args, []string { "-x", "c-header", hpath, "-o", tmp })
-        if !run_cc(&args) || sys.rename(tmp, pch) != 0 {
+        if sys.run(&args) != 0 || sys.rename(tmp, pch) != 0 {
             sys.remove_path(tmp)
             return ""
         }
@@ -1081,6 +1082,20 @@ fn shard_compile(cpath: string, cc_args: &[]string, dir: string) -> string {
     if !shard_unit(cc_args, dir, fnv(data, fnv(whole, base)), "{{whole}}{{data}}") {
         return ""
     }
+    // Files that never change between edits (a target's runtime and host),
+    // compiled from the cache too, so each needs its own directory on the path.
+    for i in 0..extra.len {
+        let er = sys.read(extra[i])
+        if er.tag != ResultTag.Ok {
+            return ""
+        }
+        let mut ecc = []string {}
+        push_all(&mut ecc, cc_args)
+        push(ecc, "-I{{loader.parent_dir(extra[i])}}")
+        if !shard_unit(&ecc, dir, fnv(er.val, base), "#line 1 \"{{extra[i]}}\"\n{{er.val}}") {
+            return ""
+        }
+    }
 
     if env_on("LOAM_TIME") {
         fmt.eprintln("loam: units {{SHARD_OBJS.len}}, compiling {{SHARD_JOBS.len}}")
@@ -1103,9 +1118,9 @@ fn shard_compile(cpath: string, cc_args: &[]string, dir: string) -> string {
 /** *The app's C as link inputs: the cached objects of a shard build, or the */
 /** *file itself. A shard build that failed falls back to the file, which is */
 /** *still one whole program given the macro that turns its definitions on. */
-fn app_input(shard_dir: string, cpath: string, cc_args: &[]string) -> []string {
+fn app_input(shard_dir: string, cpath: string, cc_args: &[]string, extra: &[]string) -> []string {
     if shard_dir.len > 0 {
-        let rsp = shard_compile(cpath, cc_args, shard_dir)
+        let rsp = shard_compile(cpath, cc_args, shard_dir, extra)
         if rsp.len > 0 {
             SHARD_LINKED = true
             return []string { "-x", "none", "@{{rsp}}" }
@@ -1116,12 +1131,214 @@ fn app_input(shard_dir: string, cpath: string, cc_args: &[]string) -> []string {
     return []string { "-x", "c", cpath }
 }
 
+// --- wasm32 (the browser canvas host) ----------------------------------------------
+
+/** *C runs on native builds only: a client build must not reach any `#[c]` */
+/** *fn. Prints one error per reachable one; `true` when there are none. */
+fn client_c_ok() -> bool {
+    let mut ok = true
+    for m in 0..typecheck.MODS.len {
+        let root = typecheck.MODS[m].root
+        if root == ast.NONE {
+            continue
+        }
+        let decls = ast.NODES[root].kids
+        for i in 0..decls.len {
+            let d = decls[i]
+            if ast.NODES[d].kind != Kind.Fn || codegen.c_sym_of(d).len == 0 || !dce.keep(d) {
+                continue
+            }
+            fmt.eprintln("{{typecheck.MODS[m].path}}:{{ast.INFO[d].loc.line}}: error: #[c] fn '{{ast.INFO[d].name}}' is reachable, and C runs only on native builds. Keep it behind #[server] or out of this target")
+            ok = false
+        }
+    }
+    return ok
+}
+
+/** *`cc` can compile for wasm32. A probe compile, its output discarded (the */
+/** *one shell use here: `sys.spawn` cannot silence a child). */
+fn wasm_cc_ok(cc_path: string) -> bool {
+    if cc_path.len == 0 {
+        return false
+    }
+    let probe = "{{tmp_dir()}}/loam_wasm_probe_{{BUILD_TAG}}.c"
+    if sys.write_file(probe, "void loam_wasm_probe(void){}\n") != 0 {
+        return false
+    }
+    let null = if sys.os() == "windows" { "NUL" } else { "/dev/null" }
+    sys.exec("\"{{cc_path}}\" --target=wasm32 -c -x c \"{{probe}}\" -o {{null}} >{{null}} 2>&1")
+    let ok = sys.exec_status() == 0
+    sys.remove_path(probe)
+    return ok
+}
+
+/** *A clang with the wasm32 backend: `LOAM_WASM_CC`, then the usual places. */
+/** *`""` when there is none (Apple's /usr/bin/clang has no wasm32). */
+fn find_wasm_cc() -> string {
+    let env = sys.env("LOAM_WASM_CC")
+    if env.len > 0 && wasm_cc_ok(env) {
+        return env
+    }
+    let cands = []string { "clang", "/opt/homebrew/opt/llvm/bin/clang", "/usr/local/opt/llvm/bin/clang", "emcc" }
+    for i in 0..cands.len {
+        if wasm_cc_ok(cands[i]) {
+            return cands[i]
+        }
+    }
+    return ""
+}
+
+/** *A directory a `-ffile-prefix-map` can name as is. */
+fn plain_abs_dir(p: string) -> bool {
+    if p.len == 0 || p[0] != '/' {
+        return false
+    }
+    for i in 0..p.len {
+        let c = p[i]
+        let ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+            c == '/' || c == '_' || c == '.' || c == '-' || c == '+'
+        if !ok {
+            return false
+        }
+    }
+    return true
+}
+
+/** *Remap `__FILE__` in the wasm build: the working dir, the temp dir, /tmp. */
+fn wasm_file_maps() -> []string {
+    let mut out = []string {}
+    let dirs = []string { sys.cwd(), sys.env("TMPDIR"), "/tmp" }
+    for i in 0..dirs.len {
+        let d = dirs[i]
+        if !plain_abs_dir(d) {
+            continue
+        }
+        let trimmed = if d.len > 1 && str.ends_with(d, "/") { str.slice(d, 0, d.len - 1) } else { d }
+        push(out, "-ffile-prefix-map={{trimmed}}/=")
+    }
+    return out
+}
+
+/** *Copy a file whole. `true` on success. */
+fn copy_file(from: string, to: string) -> bool {
+    let r = sys.read(from)
+    return r.tag == ResultTag.Ok && sys.write_file(to, r.val) == 0
+}
+
+/** *Build the wasm module from `cpath` (and the Canvas2D loader beside it). */
+/** *`false` after printing why not. */
+fn wasm_build(in_path: string, cpath: string, binpath: string, shard_dir: string, release: bool, split_input: bool) -> bool {
+    let rt = loader.runtime_dir()
+    let loader_src = "{{zeus_dir()}}/hosts/web/loader.js"
+    let loader_dst = "{{loader.parent_dir(binpath)}}/loader.js"
+    if !copy_file(loader_src, loader_dst) {
+        fmt.eprintln("loam: warning: could not copy {{loader_src}}")
+    }
+    let wcc = find_wasm_cc()
+    if wcc.len == 0 {
+        let keep = "{{binpath}}.c"
+        copy_file(cpath, keep)
+        fmt.eprintln("loam: no clang with wasm32 (Apple /usr/bin/clang cannot).\n  ./install.sh          # Homebrew LLVM, puts clang on PATH\n  or: brew install llvm\n  LOAM_WASM_CC=/opt/homebrew/opt/llvm/bin/clang ./bin/loamc --target=wasm32 {{in_path}} -o {{binpath}}\n  generated C kept at {{keep}} ; Canvas2D loader at {{loader_dst}}")
+        sys.remove_path(cpath)
+        return false
+    }
+    let maps = wasm_file_maps()
+    let owns = if types.string_owns { "-DLOAM_STRING_OWNS" } else { "" }
+    let net_c = if mods_use("http") || mods_use("net") { "{{rt}}/net.c" } else { "" }
+    // The allocation proof is a test harness, and a release is what visitors
+    // download.
+    let rel_flags = if release { []string { "-DLOAM_NO_TRAP_LOC", "-DLOAM_WEB_RELEASE" } } else { []string { "-DLOAM_ALLOC_TRACE" } }
+    let mut args = []string { wcc }
+    push_all(&mut args, &maps)
+    push_list(&mut args, []string { "--target=wasm32", "-nostdlib", "-ffreestanding", "-fno-stack-protector" })
+    if uses_zeus() {
+        // The runtime and the web host never change between edits, so a
+        // shard build keeps them as objects too.
+        let w_libc = "{{rt}}/zeus_wasm_libc.c"
+        let w_host = "{{zeus_dir()}}/hosts/web/wasm.c"
+        let w_plat = "{{rt}}/zeus_plat.c"
+        let w_key = "{{rt}}/zeus_key.c"
+        let mut wasm_in = []string { "-x", "c", cpath }
+        if shard_dir.len > 0 {
+            let mut unit_cc = []string { wcc }
+            push_all(&mut unit_cc, &maps)
+            push_list(&mut unit_cc, []string { "--target=wasm32", "-nostdlib", "-ffreestanding", "-fno-stack-protector", "-Oz", "-ffp-contract=off" })
+            push_all(&mut unit_cc, &rel_flags)
+            push_list(&mut unit_cc, []string { owns, "-I{{rt}}/wasm_inc", "-I{{rt}}" })
+            let mut unit_cc_set = []string {}
+            for i in 0..unit_cc.len {
+                if unit_cc[i].len > 0 {
+                    push(unit_cc_set, unit_cc[i])
+                }
+            }
+            let mut extra = []string { w_libc, w_host, w_plat, w_key }
+            if net_c.len > 0 {
+                push(extra, net_c)
+            }
+            wasm_in = app_input(shard_dir, cpath, &unit_cc_set, &extra)
+        }
+        // clang runs wasm-opt after any link it sees -O for, which strips the
+        // names the splitter needs, and most of a dev build's link is that
+        // pass; -Oz on the compile step alone keeps the optimized code.
+        if split_input || want_dev() {
+            push_list(&mut args, []string { "-Xclang", "-Oz" })
+        } else {
+            push(args, "-Oz")
+        }
+        push(args, "-ffp-contract=off")
+        push_all(&mut args, &rel_flags)
+        push_list(&mut args, []string { owns, "-I{{rt}}/wasm_inc", "-I{{rt}}" })
+        // --fatal-warnings: wasm-ld downgrades a prototype that disagrees with
+        // its definition to a warning and links a trapping stub. The loader
+        // resets the shadow stack after a trap (`__stack_pointer`). A 4 MB
+        // stack placed first: an overflow runs below 0 and traps cleanly
+        // instead of overwriting globals.
+        push_list(&mut args, []string { "-Wl,--no-entry", "-Wl,--export-dynamic", "-Wl,--fatal-warnings", "-Wl,--export=__stack_pointer", "-Wl,-z,stack-size=4194304", "-Wl,--stack-first" })
+        push_all(&mut args, &wasm_in)
+        if !SHARD_LINKED {
+            push_list(&mut args, []string { "-x", "none", w_libc, w_host, w_plat, w_key, net_c })
+        }
+    } else {
+        push_list(&mut args, []string { "-Oz", "-ffp-contract=off", owns, "-I{{rt}}/wasm_inc", "-I{{rt}}" })
+        push_list(&mut args, []string { "-Wl,--no-entry", "-Wl,--export-dynamic", "-Wl,--export=main", "-Wl,--fatal-warnings", "-Wl,-z,stack-size=4194304", "-Wl,--stack-first" })
+        push_list(&mut args, []string { "-x", "c", cpath, "-x", "none", "{{rt}}/zeus_wasm_libc.c", net_c })
+    }
+    push_list(&mut args, []string { "-o", binpath })
+    let mut argv = []string {}
+    for i in 0..args.len {
+        if args[i].len > 0 {
+            push(argv, args[i])
+        }
+    }
+    let t0 = async.now_ms()
+    if env_on("LOAM_TIME") {
+        fmt.eprintln("loam: cc {{wcc}}")
+    }
+    progress(if SHARD_LINKED { "link" } else { "cc" })
+    if sys.run(&argv) != 0 {
+        fmt.eprintln("loam: wasm compile failed (C: {{cpath}})")
+        return false
+    }
+    if env_on("LOAM_TIME") {
+        fmt.eprintln("loam: cc {{secs(async.now_ms() - t0)}}s")
+    }
+    if split_input && !copy_file(cpath, "{{binpath}}.c") {
+        fmt.eprintln("loam: could not keep the C for splitting")
+    }
+    sys.remove_path(cpath)
+    return true
+}
+
 // --- the frontend ------------------------------------------------------------------
 
 /** *Load, typecheck, and run the later passes. Every diagnostic is printed */
 /** *in order; `false` on any. */
 fn check(path: string) -> bool {
-    if !loader.load(path) {
+    let loaded = loader.load(path)
+    for i in 0..loader.WARNINGS.len {
+        fmt.eprintln(loader.WARNINGS[i])
+    }
+    if !loaded {
         dump.print_diags()
         return false
     }
@@ -1157,6 +1374,9 @@ fn main() {
     let mut check_only = false
     let mut test_mode = false
     let mut emit_ir = false
+    let mut target_wasm = false
+    let mut wasm_release = false
+    let mut wasm_split_input = false
     let n = sys.argc()
     let mut i = 1
     while i < n {
@@ -1177,9 +1397,13 @@ fn main() {
                 i += 1
                 t = sys.arg(i)
             }
-            if t == "wasm" || t == "wasm32" || t == "ios" || t == "android" {
+            if t == "wasm" || t == "wasm32" {
+                target_wasm = true
+            } else if t == "ios" || t == "android" {
                 not_here("--target {{t}}")
-            } else if t != "native" {
+            } else if t == "native" {
+                target_wasm = false
+            } else {
                 fmt.eprintln("unknown target {{t}} (want native, wasm32, ios, or android)")
                 sys.exit(1)
             }
@@ -1191,7 +1415,11 @@ fn main() {
             run = true
         } else if a == "--emit-ir" {
             emit_ir = true
-        } else if a == "--cost" || a == "--wasm-release" || a == "--wasm-split-input" || str.starts_with(a, "--dump-") {
+        } else if a == "--wasm-release" {
+            wasm_release = true
+        } else if a == "--wasm-split-input" {
+            wasm_split_input = true
+        } else if a == "--cost" || str.starts_with(a, "--dump-") {
             not_here(a)
         } else if a == "check" {
             check_only = true
@@ -1233,7 +1461,8 @@ fn main() {
                 return
             }
             if !test_mode {
-                fmt.println("loam: {{in_path}} -> {{out_path}}")
+                let what = if target_wasm { " (Canvas2D wasm)" } else { "" }
+                fmt.println("loam: {{in_path}} -> {{out_path}}{{what}}")
             }
             if run {
                 let argv = []string { runnable(out_path) }
@@ -1247,6 +1476,7 @@ fn main() {
 
     let mut t0 = async.now_ms()
     progress("check")
+    loader.RELEASE_IMPORTS = wasm_release
     if !check(in_path) {
         sys.exit(1)
     }
@@ -1297,7 +1527,8 @@ fn main() {
     if emit_c {
         cpath = if out_path.len > 0 { out_path } else { "{{srcdir}}/build/{{stem}}.c" }
     } else {
-        binpath = if out_path.len > 0 { out_path } else { "{{srcdir}}/build/{{stem}}" }
+        let ext = if target_wasm { ".wasm" } else { "" }
+        binpath = if out_path.len > 0 { out_path } else { "{{srcdir}}/build/{{stem}}{{ext}}" }
         // A test runner without `-o` is a throwaway: never in the app's build/.
         if test_mode && out_path.len == 0 {
             let run_key = "{{absolute(in_path)}}:{{async.now_ms()}}"
@@ -1315,7 +1546,7 @@ fn main() {
     }
     // App-owned C seam: `runtime/<stem>_runtime.c` beside the entry file.
     let mut app_rt = ""
-    if !emit_c {
+    if !emit_c && !target_wasm {
         let cand = "{{srcdir}}/runtime/{{stem}}_runtime.c"
         if sys.exists(cand) == 1 {
             app_rt = cand
@@ -1339,12 +1570,19 @@ fn main() {
     codegen.BATCH = env_on("LOAM_BATCH")
     // `#[server]` bodies are left out of client targets; `LOAM_SERVER_SPLIT`
     // forces it so the exclusion can be checked from a native build.
-    let server_split = sys.env("LOAM_SERVER_SPLIT").len > 0
+    let server_split = target_wasm || sys.env("LOAM_SERVER_SPLIT").len > 0
     dce.SERVER_SPLIT = server_split
     codegen.SERVER_SPLIT = server_split
+    // Wasm is published: Loam locations are written relative to where the
+    // compiler ran, and any other absolute path as its file name only.
+    codegen.PATH_STRIP = if target_wasm { sys.cwd() } else { "" }
     codegen.emit_c()
     if show_time {
         fmt.eprintln("loam: codegen {{secs(async.now_ms() - t0)}}s")
+    }
+    if target_wasm && !client_c_ok() {
+        sys.remove_path(cpath)
+        sys.exit(1)
     }
     if emit_c {
         fmt.println("loam: {{in_path}} -> {{cpath}}")
@@ -1370,6 +1608,17 @@ fn main() {
                 push(FRESH_DEPS, le[i])
             }
         }
+    }
+
+    if target_wasm {
+        if !wasm_build(in_path, cpath, binpath, shard_dir, wasm_release, wasm_split_input) {
+            sys.exit(1)
+        }
+        if key.len > 0 {
+            fresh_save(binpath, key)
+        }
+        fmt.println("loam: {{in_path}} -> {{binpath}} (Canvas2D wasm)")
+        return
     }
 
     let copt = copt_flags()
@@ -1412,10 +1661,11 @@ fn main() {
     }
 
     t0 = async.now_ms()
-    let mut unit_args = []string {}
+    let mut unit_args = cc()
     push_all(&mut unit_args, &copt)
     push(unit_args, "-I{{rt}}")
-    let app_in = app_input(shard_dir, cpath, &unit_args)
+    let no_extra = []string {}
+    let app_in = app_input(shard_dir, cpath, &unit_args, &no_extra)
     if !link_args(cpath, binpath, &copt, ld, &extra_link, &app_in, &mut args) {
         sys.remove_path(cpath)
         sys.exit(1)
