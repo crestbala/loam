@@ -2762,7 +2762,8 @@ fn ig_selfhost_driver() {
 /** *The build modes `--emit-c` can show, seed against `stage1`: a batch */
 /** *program (`LOAM_BATCH`: the per-case init table) of a plain and a Zeus */
 /** *fixture, and client builds (`LOAM_SERVER_SPLIT`: `#[server]` bodies become */
-/** *traps), and the wasm32 target's C (split, paths stripped; release too). */
+/** *traps), the wasm32 target's C (split, paths stripped; release too), and */
+/** *the `--cost` report. */
 /** *One line per difference, empty when all match. */
 fn selfhost_mode_cases(stage1: string, d: string) -> string {
     let fixtures = "{{ROOT}}/packages/loam/tests/compile_pass"
@@ -2783,6 +2784,16 @@ fn selfhost_mode_cases(stage1: string, d: string) -> string {
             out = cat(out, "{{env}} {{f}} --emit-c {{rel_of(src)}}\n")
         }
         sys.exec("rm -f {{shq(d)}}/mode_c.c {{shq(d)}}/mode_s.c")
+    }
+    // `--cost`: the report, byte for byte (counts, C bytes, per-package share).
+    let cost_entries = []string { "{{fixtures}}/zeus_carousel.loam", "{{fixtures}}/http_min.loam", "{{ROOT}}/nob.loam" }
+    for i in 0..cost_entries.len {
+        let src = cost_entries[i]
+        let seed_report = sys.exec("cd {{shq(ROOT)}} && LOAM_HOME={{shq(ROOT)}} {{shq(LOAMC)}} --cost {{shq(src)}} 2>&1")
+        let stage1_report = sys.exec("cd {{shq(ROOT)}} && LOAM_HOME={{shq(ROOT)}} {{shq(stage1)}} --cost {{shq(src)}} 2>&1")
+        if seed_report != stage1_report || !contains_str(seed_report, "loam: cost report") {
+            out = cat(out, "--cost {{rel_of(src)}}\n")
+        }
     }
     return out
 }
