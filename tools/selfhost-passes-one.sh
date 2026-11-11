@@ -24,7 +24,8 @@
 # calls a stage a diff, so a stale entry cannot fail a run, and only a real
 # match of all five is recorded.
 #
-# Run from the repo root. Env: LOAMC, EXE (tcdump), SCRATCH, REF, LOAMC_SUM,
+# Run from the repo root. Env: LOAMC, EXE (tcdump), SCRATCH (where the dumps go:
+# /dev/shm on Linux), REF, LOAMC_SUM,
 # EXE_SUM (`cksum` of each binary).
 entry_file=$1
 stages="typecheck check ir dce codegen"
