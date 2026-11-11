@@ -1,0 +1,22 @@
+// A `Future<T>` handle is a plain `{ id: int }`. The mailbox records its value
+// type when it is made, and every load and store checks it: reading a
+// `Future<[]string>` over a future of `[]int` panics instead of walking four
+// int bytes as sixteen-byte strings. `.trap` holds the message.
+import "std:fmt"
+import "std:async"
+import { Future } "std:async"
+
+fn first(f: Future<[]string>) -> string {
+    let v = async.await_value(f)
+    return v[0]
+}
+
+fn main() {
+    let nums = async.future([]int { 1, 2, 3 })
+    async.resolve(nums, []int { 4096, 64 })
+    let back = async.await_value(nums)
+    fmt.println(back[1])
+    async.resolve(nums, []int { 4096, 64 })
+    let s = first(Future<[]string> { id: nums.id })
+    fmt.println(s.len)
+}

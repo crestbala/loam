@@ -743,6 +743,9 @@ fn body(j: Job, id: string) -> string {
     if j.kind == "oob" {
         return "if ! {{build_of(j, id)}}; then\n  echo \"FAIL compile {{rel_of(j.src)}}\"\n  cat \"$RES/{{id}}.build\"\n  st=1\nelif {{exe_of(j)}} >\"$RES/{{id}}.out\" 2>\"$RES/{{id}}.err\"; then\n  echo \"FAIL should-trap {{rel_of(j.src)}}\"\n  st=1\nelif ! grep -q \"index out of bounds\" \"$RES/{{id}}.err\"; then\n  echo \"FAIL trap message {{rel_of(j.src)}}\"\n  cat \"$RES/{{id}}.err\"\n  st=1\nelse\n  echo \"ok   {{rel_of(j.src)}} (trapped)\"\n  st=0\nfi\n"
     }
+    if j.kind == "trap" {
+        return "if ! {{build_of(j, id)}}; then\n  echo \"FAIL compile {{j.desc}}\"\n  cat \"$RES/{{id}}.build\"\n  st=1\nelif {{exe_of(j)}} >\"$RES/{{id}}.out\" 2>\"$RES/{{id}}.err\"; then\n  echo \"FAIL should-trap {{j.desc}}\"\n  st=1\nelif ! grep -qF -f {{shq(j.want)}} \"$RES/{{id}}.err\"; then\n  echo \"FAIL trap message {{j.desc}}\"\n  cat \"$RES/{{id}}.err\"\n  st=1\nelse\n  echo \"ok   {{j.desc}} (trapped)\"\n  st=0\nfi\n"
+    }
     if j.kind == "argv" {
         return "if ! {{build_of(j, id)}}; then\n  echo \"FAIL argv (compile)\"\n  cat \"$RES/{{id}}.build\"\n  st=1\nelif ! {{exe_of(j)}} alpha \"beta gamma\" >\"$RES/{{id}}.out\" 2>&1; then\n  echo \"FAIL argv (run)\"\n  st=1\nelif ! diff -u {{shq(j.want)}} \"$RES/{{id}}.out\" >\"$RES/{{id}}.diff\" 2>&1; then\n  echo \"FAIL argv (output)\"\n  cat \"$RES/{{id}}.diff\"\n  st=1\nelse\n  echo \"ok   sys args (argc / arg / args, spaces preserved)\"\n  st=0\nfi\n"
     }
@@ -868,6 +871,13 @@ fn pass_jobs() -> []Job {
             let want = "{{drop_last(fs[i], 5)}}.expected"
             if sys.exists(want) != 0 {
                 j.want = want
+            }
+            // `<name>.trap`: the fixture must panic, and its stderr must hold
+            // the file's text.
+            let trap = "{{drop_last(fs[i], 5)}}.trap"
+            if sys.exists(trap) != 0 {
+                j.kind = "trap"
+                j.want = trap
             }
             push(out, j)
         }

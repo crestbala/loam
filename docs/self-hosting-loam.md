@@ -109,8 +109,8 @@ the same C translation unit as `loamc`, byte for byte. Phase 10a (the module
 loader) and 10b (the driver: `compiler/loamc.loam`, check, emit C, `cc`) are
 done: the Loam compiler builds itself, and the C it emits for itself matches
 the seed's byte for byte. The fixed point runs green in CI on Linux and
-Windows (§3). Next: finish 10c (speed and memory of the whole pipeline),
-a faster `./nob.sh test`, and the rest of "Next changes (pending)" at the end.
+Windows (§3). Next: the Windows seed, finishing 10c (speed and memory of
+the whole pipeline), and the rest of "Next changes (pending)" at the end.
 
 ---
 
@@ -620,15 +620,18 @@ Two holes reachable from safe Loam were found while writing this section
   (`compile_fail/c_attr_private.loam`, with `tests/mod/c_binding.loam`), and
   no program in the repo called another module's binding. The trusted code
   of a package is now exactly its `#[c]` modules and their C sources.
-- **Open: a handle can be forged at another element type.** `Chan<T>`,
+- **Fixed: a handle could be forged at another element type.** `Chan<T>`,
   `Future<T>` (`std:async`) and `Signal<T>` (Zeus) are plain `{ id: int }`
-  structs whose `T` no field uses. The runtime keeps each cell's bytes by
+  structs whose `T` no field uses, and the runtime kept each cell's bytes by
   id, untyped. `Chan<string> { id: pairs.id }` over a channel of
-  `struct { i64, i64 }` reads both words back as a string's pointer and
+  `struct { i64, i64 }` read both words back as a string's pointer and
   length: `s.len` was the chosen 64, and `s[3]` read address 4099 and
-  crashed. The fix is in the runtime, not the language: apps rely on
-  `Signal { id: 0 }` as a placeholder (53 uses), and Zeus builds signals
-  outside the module that declares them. S0 below.
+  crashed. A forged `Future<[]string>` over a `[]int` future read 32 bytes
+  out of an 8-byte buffer, silently. Each cell now records a type key and
+  every access checks it (S0 below). The fix is in the runtime and the
+  codegens, not the language: apps rely on `Signal { id: 0 }` as a
+  placeholder (53 uses), and Zeus builds signals outside the module that
+  declares them.
 
 Gaps, by how much they matter:
 
@@ -673,14 +676,40 @@ Gaps, by how much they matter:
 
 Plan, in order:
 
-- [ ] **S0. Typed handle cells.** Each channel, future and signal cell
-      records a type key when it is made: a hash of the element's C
-      spelling, a constant in the generated C. Every load, store, send and
-      receive passes the key it expects, and a mismatch panics ("handle used
-      at the wrong type"). One compare per access; no app changes. Both
-      codegens emit the key beside the `sizeof` they already pass, so the
-      stage-1 = seed C gates still hold. Tests: one `compile_pass` fixture
-      per handle that forges it and expects the panic.
+- [x] **S0. Typed handle cells.** Done. Each channel, future and signal
+      cell records a type key when it is made or first bound. Every send,
+      try_send, recv, pop, load, store, bind and change test passes the key
+      it expects, and a mismatch panics: "channel (future, signal) handle
+      used at the wrong type". One compare per access; no app changes.
+      - The key is FNV-1a (32-bit, never 0) over the type's spelling: its C
+        type, with what C erases spelled in (the element of `[]T`, `[N]T`
+        and `Box<T>`, a fn's signature, a handle's `T`). Without that,
+        `[]int` and `[]string` share `loam_vec`, and that forgery breaks
+        memory too. A type is resolved once in its generic instance and
+        then walked as it is: zeus records a `get<[]T>` instance (`T` bound
+        to `[]T`, emitted but never called), and resolving at each level
+        unrolled it forever.
+      - Both codegens emit the key beside the `sizeof` they already pass
+        (`handle_key` in `codegen_c.c` and `codegen.loam`), so the
+        stage-1 = seed gates still hold. The runtime's own int-signal paths
+        use `LOAM_HANDLE_KEY_INT`. A signal cell no bind has reached (the
+        `Signal { id: 0 }` placeholder) still loads as zeros at any type.
+        Wasm channels are inert and hold nothing to check; they gained the
+        `_owned` send stubs, which were missing.
+      - Tests: `compile_pass/handle_forge_{chan,future,signal}.loam`. A
+        `<name>.trap` beside a fixture makes `nob` expect a panic whose
+        stderr holds the file's text (the `trap` job, the `oob` job
+        generalized).
+      - Cost, measured (median of 5–6 runs): a Zeus frame is unchanged
+        (`zeus_anim_bench`: 110 µs per frame before and after). Loops that
+        do nothing but handle ops pay the compare, about 0.75 ns an access:
+        2M channel send/recv pairs 116 → 120 ms, 2M future store/load pairs
+        74 → 77 ms, 500k string-signal set/get pairs 129 → 132 ms. A build
+        with the compares disabled ran at the old speed, so this is the
+        compare, not the extra argument. The check sits inside
+        `loam_ch_get`: a separate wrapper was not inlined at `-O1` and cost
+        a second call per op. Codegen on dracula (240 keyed calls): Loam
+        0.13 s, C 0.23 s, same C.
 - [ ] **S1. Soundness fuzzing in CI.** Grow `fuzz-borrow` into a generator
       that also covers moves, globals, closures, threads and vec growth,
       and run the generated programs under ASan + UBSan. Keep a fixed seed
@@ -793,8 +822,8 @@ safely today:
   handling, the spawn table, `read_line` buffering, watch bookkeeping, the
   future table and the channel queue logic. The kernel call under each one
   stays a binding; the lock and condition-variable calls stay in the core.
-- **`zeus_plat.c`**: the signal byte store (a `[]u8` arena with typed cells,
-  which also closes §5.2 S0), the frame and trace logic, trap boundaries
+- **`zeus_plat.c`**: the signal byte store (a `[]u8` arena that keeps the
+  typed cells of §5.2 S0), the frame and trace logic, trap boundaries
   and media state. Calls into the host stay bindings.
 - **`net.c`**: connection state, buffering, timeouts and the non-blocking
   state machine. The socket and `poll` calls and the TLS library stay
@@ -808,9 +837,9 @@ safely today:
 
 ### 6.4 What the language needs first
 
-- **§5.2 S0 (typed handle cells).** Handles are how Loam code refers to
-  runtime state, so they must not be forgeable before more runtime moves
-  behind them.
+- **§5.2 S0 (typed handle cells), done.** Handles are how Loam code refers
+  to runtime state, so they had to stop being forgeable before more runtime
+  moves behind them.
 - **Opaque handles from bindings.** A binding that returns a C pointer gives
   an `i64` today, and the wrapper module must never let it escape. Make
   that checkable with no new syntax: the wrapper keeps pointers in a
@@ -848,10 +877,10 @@ Order, smallest risk and most logic first:
       over per-call bindings, on POSIX and Win32. The tests are the existing
       `sys` fixtures plus the Windows CI job.
 - [ ] **R3. Async and threads.** The future table and the channel queues in
-      Loam; the mutex, condition variable and thread start stay core. This
-      lands with S0 and T1 (ThreadSanitizer) from §5.
+      Loam, keeping S0's typed cells; the mutex, condition variable and
+      thread start stay core. This lands with T1 (ThreadSanitizer) from §5.
 - [ ] **R4. Zeus platform.** The `zeus_plat.c` logic, the signal store first
-      (S0), then frame, trace, traps, media.
+      (keeping S0's typed cells), then frame, trace, traps, media.
 - [ ] **R5. Net.** The socket state machine in Loam over socket and poll
       bindings. TLS stays a binding: SecureTransport on macOS. Linux and
       Windows need a TLS binding of their own, and `std:net` has no Windows
@@ -890,7 +919,7 @@ and `cc` stays the backend.
 | 2.7 | Memory safety of the compiler itself (arenas, no unsafe)            | design       | Yes -- must remain a memory-safe language |
 | 3   | Seed, fixed-point, determinism, differential tests, multi-OS CI     | tooling      | Yes, to call it "self-hosted"       |
 | 5.1 | Threads: TSan, `[]T` by move, I/O on workers, multi-core server     | runtime + std | No (the Send rule already rules out data races) |
-| 5.2 | Security: forged handles (open hole), soundness fuzzing, fuzzed runtime C, FFI listing, hardening, keyed hash, stack-overflow message | tooling + runtime | S0 now (memory safety); S1–S2 alongside; rest after the fixed point |
+| 5.2 | Security: forged handles (fixed, S0), soundness fuzzing, fuzzed runtime C, FFI listing, hardening, keyed hash, stack-overflow message | tooling + runtime | S1–S2 alongside; rest after the fixed point |
 | 6   | Runtime and packages' runtime C in Loam (trusted core + bindings + vendored stay C) | runtime + std | No for self-hosting; yes for the memory-safety goal |
 
 ---
@@ -1468,9 +1497,14 @@ and one zeus entry for each of the three runs):
 
 ### Next changes (pending)
 
+Every box still unchecked in this file, in the order to do them. Done since
+the last list: §5.2 S0, typed handle cells (2026-11-11).
+
+**To call Loam 100% self-hosted** (the boxes in "Remaining work" above):
+
 1. Windows from a fresh checkout: commit the Loam compiler's generated C as
-   the stage-0 seed (§3), or make the seed build on Windows. Then tick the
-   fresh-checkout box.
+   the stage-0 seed (§3 "Stage 0 seed"), or make the seed build on Windows.
+   Then tick the fresh-checkout box under Fixed-point and tooling.
 2. Finish phase 10c (the Driver box under Compiler port): speed and memory
    parity of the whole pipeline against the C driver, then tick it.
 3. Audit that the compiler uses only safe Loam (arenas + integer indices;
@@ -1478,22 +1512,51 @@ and one zeus entry for each of the three runs):
 4. Make the Loam `loamc` the default and delete the C compiler: the seed
    is the Loam compiler's committed C (item 1), not the C sources (§4 step
    7). The per-pass `selfhost_*` stanzas go with it; the fixed point stays.
-   `lsp.c` and `fmt.c` stay C until they are ported (§3).
-5. `packages/tooling/tree-sitter-loam`: replace the remote-less gitlink.
+5. Decide what else moves and what stays C (§3): `lsp.c` and `fmt.c` stay C
+   until they are ported, after the fixed point.
+
+**Security, alongside items 1–4** (every hole found is fixed in both
+compilers while both still exist):
+
+6. §5.2 S1: soundness fuzzing in CI (moves, globals, closures, threads, vec
+   growth; ASan + UBSan), and the borrow rules as a numbered list.
+7. §5.2 S2: fuzz the trusted C (`std:conv`, `parse_f64`, `str` slicing,
+   UTF-8, `std:json`, HTTP/1 and HTTP/2, `read_line` / `read_stdin`).
+
+**Housekeeping, not needed to self-host:**
+
+8. `packages/tooling/tree-sitter-loam`: replace the remote-less gitlink.
    Either vendor the grammar as plain files (recommended; the pre-commit hook
    and the commit-nested-repos rule assume gitlinks, so update them) or push
    it to a remote and add `.gitmodules`.
-6. `std:net` has no Windows port (`runtime/net.c` defines nothing on
-   `_WIN32`). This is not needed to self-host. The 12 networking fixtures
-   are skipped on Windows.
-7. Typed handle cells (§5.2 S0): an open memory-safety hole, so first.
-   Then soundness and trusted-C fuzzing (§5.2 S1, S2), alongside the items above:
-   every hole found is fixed in both compilers while both still exist.
-8. After the fixed point: threads (§5.1 T1–T4), then the rest of the security
-   plan (§5.2 S3–S10).
-9. After the fixed point: migrate the runtime and the packages' runtime C to
-   Loam (§6, R0–R7). It starts with the trusted-C counter, follows S0, and
-   each step must match the C it replaces in behaviour and speed and lower
-   the trusted-C count.
+9. `std:net` has no Windows port (`runtime/net.c` defines nothing on
+   `_WIN32`). The 12 networking fixtures are skipped on Windows. R5 needs it.
+
+**After the fixed point:**
+
+10. Threads (§5.1): T1 ThreadSanitizer stanza, T2 send a `[]T` by move, T3
+    I/O on workers, T4 a multi-core HTTP server; T5 join only if T3/T4 need
+    it.
+11. The rest of the security plan (§5.2): S3 FFI listing, S4 shell-free by
+    default, S5 hardened native builds, S6 stack overflow with a message, S7
+    keyed map hash, S8 the closure env leak, S9 trap containment for
+    servers, S10 reproducible seed.
+12. The runtime and the packages' runtime C in Loam (§6.5): R0 the
+    trusted-C counter, R1 pure logic, R2 `sys`, R3 async and threads, R4 the
+    Zeus platform, R5 net, R6 hosts, R7 the core reviewed. Each step must
+    match the C it replaces in behaviour and speed and lower the trusted-C
+    count.
+
+**Extensions, not part of the self-hosting claim:**
+
+13. C FFI (§1.7): import C headers, link listed `.c` files, memory-safe type
+    mapping, common patterns (opaque structs, fn pointers, C strings),
+    Linux and Windows.
+14. Embedded and robotics targets (§1.8): bare-metal runtime, cross
+    toolchains, HAL access through FFI, a fixed-arena memory model, real-time
+    notes, board packages, control-loop examples.
+15. Energy and carbon hooks (§2.6): `--cost` energy estimates,
+    `sys.energy_now` / `sys.carbon_intensity`, no forced instrumentation,
+    documented grid-data inputs.
 
 When every box above is checked, Loam is 100% self-hosted.

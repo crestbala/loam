@@ -363,6 +363,84 @@ fn w_ctype(t: int) {
     w(ctype(t))
 }
 
+// Typed handle cells (loam_rt.h): a channel, future or signal cell records the
+// key of its value type, and every access passes the key it expects. The key
+// is FNV-1a over the type's spelling: its C type, with what C erases spelled in
+// (the element of `[]T`, `[N]T` and `Box<T>`, a fn's signature, a handle's
+// `T`), resolved once in the current generic instance. Never 0, which marks
+// a cell no bind has reached. Memoized per type id, as `ctype` is.
+let mut HKEY_MEMO: []i64 = []i64 {}
+
+fn key_feed(h: i64, s: string) -> i64 {
+    let mut x = h
+    for i in 0..s.len {
+        x = ((x ^ i64(s[i])) * 16777619) & 4294967295
+    }
+    return x
+}
+
+fn is_typed_handle(t: int) -> bool {
+    let n = types.TYPES[t].name
+    return types.TYPES[t].has_name && (n == "Signal" || n == "Future" || n == "Chan")
+}
+
+/** *Walks a resolved type. Its parts are not resolved again: an argument can */
+/** *name a parameter of the same name (`T` bound to `[]T`), and substituting */
+/** *at each level would unroll that forever. */
+fn key_walk(h0: i64, t: int) -> i64 {
+    let kind = tkind(t)
+    let mut h = h0
+    if kind == TK.Vec {
+        return key_walk(key_feed(h, "[]"), types.TYPES[t].elem)
+    }
+    if kind == TK.Array {
+        return key_walk(key_feed(h, "[{{types.TYPES[t].array_len}}]"), types.TYPES[t].elem)
+    }
+    if kind == TK.Box {
+        return key_feed(key_walk(key_feed(h, "Box<"), types.TYPES[t].elem), ">")
+    }
+    if kind == TK.Proc {
+        h = key_feed(h, "fn(")
+        // Indexed afresh each time: resolving a parameter may grow `TYPES`.
+        let n = types.TYPES[t].params.len
+        for i in 0..n {
+            if i > 0 {
+                h = key_feed(h, ",")
+            }
+            h = key_walk(h, types.TYPES[t].params[i])
+        }
+        h = key_feed(h, ")")
+        let r = types.TYPES[t].ret
+        if r != NO_TYPE && tkind(r) != TK.Void {
+            return key_walk(h, r)
+        }
+        return key_feed(h, "void")
+    }
+    h = key_feed(h, ctype(t))
+    if kind == TK.Struct && is_typed_handle(t) && types.TYPES[t].params.len > 0 {
+        h = key_feed(key_walk(key_feed(h, "<"), types.TYPES[t].params[0]), ">")
+    }
+    return h
+}
+
+fn handle_key(t: int) -> i64 {
+    let memo = SUBST_NAMES.len == 0 && t >= 0
+    if memo && t < HKEY_MEMO.len && HKEY_MEMO[t] != 0 {
+        return HKEY_MEMO[t]
+    }
+    let mut h = key_walk(2166136261, resolve(t))
+    if h == 0 {
+        h = 1
+    }
+    if memo {
+        while HKEY_MEMO.len < types.TYPES.len {
+            push(HKEY_MEMO, i64(0))
+        }
+        HKEY_MEMO[t] = h
+    }
+    return h
+}
+
 /** *`T name`, with `[N]` after the name for a fixed array. */
 fn var_decl(t: int, name: string) {
     w(ctype(t))
@@ -506,7 +584,7 @@ fn sig_bind_vec(vt: int, id: string, val: string) {
     } else {
         w("NULL")
     }
-    w(");")
+    w(", {{handle_key(vt)}}u);")
 }
 
 fn sig_bind_owned(vt: int, id: string, val: string) {
@@ -518,7 +596,7 @@ fn sig_bind_owned(vt: int, id: string, val: string) {
     } else {
         w("NULL")
     }
-    w(");")
+    w(", {{handle_key(vt)}}u);")
 }
 
 // --- value keys and value equality --------------------------------------------------------
@@ -741,16 +819,16 @@ fn value_eq(t0: int, a: string, b: string) {
 /** *whose bytes name storage. */
 fn sig_changed(t: int, id: string, val: string) {
     if !ve_deep(t) {
-        w("loam_zeus_sig_changed({{id}}, &{{val}}, sizeof({{val}}))")
+        w("loam_zeus_sig_changed({{id}}, &{{val}}, sizeof({{val}}), {{handle_key(t)}}u)")
         return
     }
     let k = VK_TMP
     VK_TMP = VK_TMP + 1
-    w("({ int64_t _chg{{k}} = loam_zeus_sig_changed({{id}}, &{{val}}, sizeof({{val}})); ")
+    w("({ int64_t _chg{{k}} = loam_zeus_sig_changed({{id}}, &{{val}}, sizeof({{val}}), {{handle_key(t)}}u); ")
     w("if (_chg{{k}} && loam_zeus_sig_sized({{id}}, sizeof({{val}}))) { ")
     let cur = "_cur{{k}}"
     var_decl(t, cur)
-    w("; loam_zeus_sig_load({{id}}, &{{cur}}, sizeof({{cur}})); _chg{{k}} = !")
+    w("; loam_zeus_sig_load({{id}}, &{{cur}}, sizeof({{cur}}), {{handle_key(t)}}u); _chg{{k}} = !")
     value_eq(t, cur, val)
     w("; } _chg{{k}}; })")
 }
@@ -1699,7 +1777,7 @@ fn builtin_call(x: &Inst) -> bool {
             w(" }\n")
         } else if is_refcounted(vt) {
             w("{ loam_str _sigv = {{a0}}; loam_str_retain(_sigv); ")
-            w("loam_zeus_sig_bind_str({{d}}, &_sigv, sizeof(_sigv)); }\n")
+            w("loam_zeus_sig_bind_str({{d}}, &_sigv, sizeof(_sigv), {{handle_key(vt)}}u); }\n")
         } else if tkind(vt) == TK.Struct && needs_drop(vt) {
             w("{ ")
             w_ctype(vt)
@@ -1711,7 +1789,7 @@ fn builtin_call(x: &Inst) -> bool {
         } else {
             w("loam_zeus_sig_bind({{d}}, &{{a0}}, sizeof(")
             w_ctype(vt)
-            w("));\n")
+            w("), {{handle_key(vt)}}u);\n")
         }
         return true
     }
@@ -1719,7 +1797,7 @@ fn builtin_call(x: &Inst) -> bool {
         let d = lv(x.dst)
         w("loam_zeus_sig_load({{lv(arg_of(x, 0))}}, &{{d}}, sizeof(")
         w_ctype(x.ty)
-        w("));\n")
+        w("), {{handle_key(x.ty)}}u);\n")
         if is_copy_vec(x.ty) {
             indent(1)
             w("{{d}} = loam_vec_retain(&{{d}});\n")
@@ -1746,7 +1824,7 @@ fn builtin_call(x: &Inst) -> bool {
             sig_changed(vt, s, v)
             w(") {\n")
             indent(2)
-            w("loam_vec _old; loam_zeus_sig_load({{s}}, &_old, sizeof(_old));\n")
+            w("loam_vec _old; loam_zeus_sig_load({{s}}, &_old, sizeof(_old), {{handle_key(vt)}}u);\n")
             indent(2)
             w("loam_vec _new = loam_vec_retain(&{{v}}); ")
             sig_bind_vec(vt, s, "_new")
@@ -1761,10 +1839,10 @@ fn builtin_call(x: &Inst) -> bool {
             sig_changed(vt, s, v)
             w(") {\n")
             indent(2)
-            w("loam_str _old; loam_zeus_sig_load({{s}}, &_old, sizeof(_old));\n")
+            w("loam_str _old; loam_zeus_sig_load({{s}}, &_old, sizeof(_old), {{handle_key(vt)}}u);\n")
             indent(2)
             w("loam_str _new = {{v}}; loam_str_retain(_new); ")
-            w("loam_zeus_sig_bind_str({{s}}, &_new, sizeof(_new));\n")
+            w("loam_zeus_sig_bind_str({{s}}, &_new, sizeof(_new), {{handle_key(vt)}}u);\n")
             indent(2)
             w("loam_str_release(&_old); loam_arena_note_write({{s}});\n")
             indent(1)
@@ -1775,7 +1853,7 @@ fn builtin_call(x: &Inst) -> bool {
             w(") {\n")
             indent(2)
             w_ctype(vt)
-            w(" _old; loam_zeus_sig_load({{s}}, &_old, sizeof(_old));\n")
+            w(" _old; loam_zeus_sig_load({{s}}, &_old, sizeof(_old), {{handle_key(vt)}}u);\n")
             indent(2)
             w_ctype(vt)
             w(" _new = {{v}};\n")
@@ -1790,18 +1868,19 @@ fn builtin_call(x: &Inst) -> bool {
             w("}\n")
         } else {
             let ct = ctype(vt)
-            w("if (loam_zeus_sig_changed({{s}}, &{{v}}, sizeof({{ct}}))) { loam_zeus_sig_bind({{s}}, &{{v}}, sizeof({{ct}})); loam_arena_note_write({{s}}); }\n")
+            let key = handle_key(vt)
+            w("if (loam_zeus_sig_changed({{s}}, &{{v}}, sizeof({{ct}}), {{key}}u)) { loam_zeus_sig_bind({{s}}, &{{v}}, sizeof({{ct}}), {{key}}u); loam_arena_note_write({{s}}); }\n")
         }
         return true
     }
     if name == "loam_fut_push" && x.nargs >= 1 && has_dst {
         let a0 = lv(arg_of(x, 0))
         if is_copy_vec(x.ty) {
-            w("{ loam_vec _fv = loam_vec_retain(&{{a0}}); {{lv(x.dst)}} = loam_fut_push(&_fv, sizeof(_fv)); }\n")
+            w("{ loam_vec _fv = loam_vec_retain(&{{a0}}); {{lv(x.dst)}} = loam_fut_push(&_fv, sizeof(_fv), {{handle_key(x.ty)}}u); }\n")
         } else {
             w("{{lv(x.dst)}} = loam_fut_push(&{{a0}}, sizeof(")
             w_ctype(x.ty)
-            w("));\n")
+            w("), {{handle_key(x.ty)}}u);\n")
         }
         return true
     }
@@ -1809,7 +1888,7 @@ fn builtin_call(x: &Inst) -> bool {
         let d = lv(x.dst)
         w("loam_fut_load({{lv(arg_of(x, 0))}}, &{{d}}, sizeof(")
         w_ctype(x.ty)
-        w("));\n")
+        w("), {{handle_key(x.ty)}}u);\n")
         if is_copy_vec(x.ty) {
             indent(1)
             w("{{d}} = loam_vec_retain(&{{d}});\n")
@@ -1825,20 +1904,21 @@ fn builtin_call(x: &Inst) -> bool {
         let s = lv(arg_of(x, 0))
         let v = lv(a1)
         if is_copy_vec(vt) {
-            w("{ loam_vec _old; loam_fut_load({{s}}, &_old, sizeof(_old)); ")
-            w("loam_vec _new = loam_vec_retain(&{{v}}); loam_fut_store({{s}}, &_new, sizeof(_new)); ")
+            let key = handle_key(vt)
+            w("{ loam_vec _old; loam_fut_load({{s}}, &_old, sizeof(_old), {{key}}u); ")
+            w("loam_vec _new = loam_vec_retain(&{{v}}); loam_fut_store({{s}}, &_new, sizeof(_new), {{key}}u); ")
             w("loam_vec_drop(&_old); }\n")
         } else {
             w("loam_fut_store({{s}}, &{{v}}, sizeof(")
             w_ctype(vt)
-            w("));\n")
+            w("), {{handle_key(vt)}}u);\n")
         }
         return true
     }
     if name == "loam_ch_alloc" && x.nargs >= 1 && has_dst {
         w("{{lv(x.dst)}} = loam_ch_alloc({{lv(arg_of(x, 0))}}, sizeof(")
         w_ctype(x.ty)
-        w("));\n")
+        w("), {{handle_key(x.ty)}}u);\n")
         return true
     }
     if (name == "loam_ch_send" && x.nargs >= 2) || (name == "loam_ch_try_send" && x.nargs >= 2 && has_dst) {
@@ -1853,16 +1933,16 @@ fn builtin_call(x: &Inst) -> bool {
         w("({{lv(arg_of(x, 0))}}, &{{lv(arg_of(x, 1))}}, sizeof(")
         w_ctype(x.ty)
         if h > 0 {
-            w("), loam_elem_retain_{{h}});\n")
+            w("), loam_elem_retain_{{h}}, {{handle_key(x.ty)}}u);\n")
         } else {
-            w("));\n")
+            w("), {{handle_key(x.ty)}}u);\n")
         }
         return true
     }
     if (name == "loam_ch_recv" || name == "loam_ch_pop") && x.nargs >= 1 && has_dst {
         w("{{name}}({{lv(arg_of(x, 0))}}, &{{lv(x.dst)}}, sizeof(")
         w_ctype(x.ty)
-        w("));\n")
+        w("), {{handle_key(x.ty)}}u);\n")
         return true
     }
     if name == "loam_ch_ready" && x.nargs >= 1 && has_dst {
