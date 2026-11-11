@@ -1550,6 +1550,37 @@ the last list: §5.2 S0, typed handle cells (2026-11-11).
 4. Make the Loam `loamc` the default and delete the C compiler: the seed
    is the Loam compiler's committed C (item 1), not the C sources (§4 step
    7). The per-pass `selfhost_*` stanzas go with it; the fixed point stays.
+   First the Loam driver takes the builds it still refuses, in phases:
+   - [x] P1 (2026-11-11): `LOAM_BATCH`, `LOAM_SHARD`, `LOAM_HOST`,
+     `LOAM_SERVER_SPLIT`. Codegen marks each definition for the cutter, makes
+     what units share `extern`, puts the runtime's and the globals' storage
+     under `LOAM_SHARD_DEFS`, emits the batch program's per-case init table,
+     and gives a client build's `#[server]` fns trap bodies. The driver cuts
+     the C into units by marker, caches them by content hash in the shard
+     dir, builds the header once as a PCH, compiles the missing units one
+     per core (`sys.spawn` / `sys.wait`; one std addition, `sys.cpu_count`),
+     links `@rsp`, and prunes what it did not use; on failure it compiles the
+     whole program. A host build compiles the platform layer and desktop
+     host with `LOAM_HOST_BUILD` into `.host` objects. Checked against the
+     seed: the same C for batch programs (`suite_plain`, 135 fixtures, and
+     `suite_zeus`) and for split builds (dracula, every `#[server]` file);
+     a shard build of `zeus_carousel` compiles the same 25 units byte for
+     byte, links, runs the same, and a rebuild compiles 0 units and prunes a
+     stray file; a host build runs the same compiles with the same flags; a
+     batch binary of `suite_plain` gives the same output on all 128 cases
+     whose output is deterministic (the other 7 print OS-chosen ports).
+     `selfhost_driver` now also compares the batch and split C.
+   - [ ] P2: the wasm32 target (`--wasm-release`, `--wasm-split-input`, path
+     strip), what `zeli serve` and the wasm stanzas build.
+   - [ ] P3: `--cost`.
+   - [ ] P4: `--target ios` / `android`.
+   - [ ] P5: `loam-lsp` on the Loam front end (a port of `lsp.c`), so no C
+     front end is left.
+   - [ ] P6: `bin/loamc` is the Loam compiler everywhere, built from the seed;
+     `nob` builds no C compiler objects; one full `./nob.sh test`.
+   - [ ] P7: delete `driver.c` and the C front end, the per-pass stanzas and
+     dump tools; keep `selfhost_seed`. `fmt.c` (standalone) stays until it
+     is ported.
 5. Decide what else moves and what stays C (§3): `lsp.c` and `fmt.c` stay C
    until they are ported, after the fixed point.
 

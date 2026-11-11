@@ -11,6 +11,10 @@ fn os() -> string {}
 /** *The CPU: `"x86_64"`, `"aarch64"`, `"wasm32"`, or `"other"`. */
 fn arch() -> string {}
 
+/** *Online CPUs, at least 1: how many children a parallel job runs at once. */
+/** *`1` on wasm, iOS and Android. */
+fn cpu_count() -> int {}
+
 /** *Compile `--target`: `"wasm"`, `"ios"`, `"android"`, or `"native"`. */
 fn target() -> string {}
 

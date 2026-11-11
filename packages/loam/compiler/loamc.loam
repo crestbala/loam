@@ -13,9 +13,12 @@
 // compile once into `<runtime>/.obj/` and are rebuilt when a source is newer.
 //
 // Not here yet (the seed has them; each is refused by name, never ignored):
-// wasm, iOS and Android targets, `test`, `--emit-ir`, `--cost`, `--dump-*`,
-// and the `LOAM_BATCH` / `LOAM_SHARD` / `LOAM_SERVER_SPLIT` / `LOAM_HOST` /
-// `LOAM_NO_DCE` builds.
+// wasm, iOS and Android targets, `--cost` and `--dump-*`.
+//
+// `LOAM_BATCH` builds a program of many fixtures that runs the one `LOAM_CASE`
+// names; `LOAM_SHARD=<dir>` compiles a Zeus program as cached units in
+// parallel (see "shard builds"); `LOAM_HOST` builds a `zeli serve` host;
+// `LOAM_SERVER_SPLIT` gives `#[server]` fns trap bodies, as a client build does.
 //
 // A native build with `-o` records what it read in `<output>.fresh`, and the
 // same command run again reuses the output while nothing in it changed (see
@@ -24,6 +27,7 @@
 import "std:async"
 import "std:buf"
 import "std:conv"
+import "std:map"
 import "std:fmt"
 import "std:result"
 import "std:str"
@@ -613,6 +617,13 @@ fn mods_use(name: string) -> bool {
 /** *raylib's compile and link flags: `RAYLIB_PREFIX`, then pkg-config, then */
 /** *the Homebrew prefixes. Empty when raylib is missing (the link then fails */
 /** *with the C compiler's own message). */
+/** *Links the Zeus platform layer: a Zeus program, or a `zeli serve` host */
+/** *(`LOAM_HOST`), whose own source is a shim but whose loaded images call */
+/** *into that layer. */
+fn uses_zeus() -> bool {
+    return mods_use("zeus") || env_on("LOAM_HOST")
+}
+
 fn raylib_flags() -> []string {
     let p = sys.env("RAYLIB_PREFIX")
     if p.len > 0 {
@@ -638,8 +649,18 @@ fn zeus_objects(headless: bool, ok: &mut bool) -> []string {
     let rt = loader.runtime_dir()
     let zd = zeus_dir()
     let mem = env_on("ZEUS_MEM_STATS")
-    let tag = if mem { ".mem" } else { "" }
-    let mut host_flags = []string { "-DLOAM_ALLOC_TRACE" }
+    // A host build (`LOAM_HOST`) compiles the platform layer and the desktop
+    // host against the loaded image's dispatch table (`LOAM_HOST_BUILD`), into
+    // objects of their own, so the next app build does not link them.
+    let host = env_on("LOAM_HOST")
+    let host_tag = if host { ".host" } else { "" }
+    let mem_tag = if mem { ".mem" } else { "" }
+    let tag = "{{host_tag}}{{mem_tag}}"
+    let mut host_flags = []string {}
+    if host {
+        push(host_flags, "-DLOAM_HOST_BUILD")
+    }
+    push(host_flags, "-DLOAM_ALLOC_TRACE")
     if mem {
         push(host_flags, "-DZEUS_MEM_STATS")
     }
@@ -669,7 +690,11 @@ fn zeus_objects(headless: bool, ok: &mut bool) -> []string {
         let mac_o = "{{rt}}/.obj/zeus_mac{{tag}}.o"
         let draw_o = "{{rt}}/.obj/zeus_apple_draw{{tag}}.o"
         let media_o = "{{rt}}/.obj/zeus_apple_media{{tag}}.o"
-        let mac_flags = []string { "-x", "objective-c", "-I{{zd}}/hosts/apple" }
+        let mut mac_flags = []string { "-x", "objective-c" }
+        if host {
+            push(mac_flags, "-DLOAM_HOST_BUILD")
+        }
+        push(mac_flags, "-I{{zd}}/hosts/apple")
         let mac_deps = []string { mac_m, rt_h, key_h, apple_h }
         let draw_deps = []string { draw_m, rt_h, apple_h }
         let media_deps = []string { media_m, rt_h, apple_h }
@@ -718,12 +743,12 @@ fn cocoa_frameworks() -> []string {
 
 /** *What the C compiler gets for a host build: the optimizer and string */
 /** *flags, then output and inputs. `false` when a host object failed. */
-fn link_args(cpath: string, binpath: string, copt: &[]string, ld: string, extra_link: &[]string, args: &mut []string) -> bool {
+fn link_args(cpath: string, binpath: string, copt: &[]string, ld: string, extra_link: &[]string, app_in: &[]string, args: &mut []string) -> bool {
     let rt = loader.runtime_dir()
     let owns = []string { if types.string_owns { "-DLOAM_STRING_OWNS" } else { "" } }
     let net_c = "{{rt}}/net.c"
     push_all(args, copt)
-    if mods_use("zeus") {
+    if uses_zeus() {
         let headless = want_headless()
         let mut ok = true
         let objs = zeus_objects(headless, &mut ok)
@@ -733,7 +758,9 @@ fn link_args(cpath: string, binpath: string, copt: &[]string, ld: string, extra_
         if on_mac() && !headless {
             push(args, ld)
         }
-        push_list(args, []string { "-o", binpath, "-I{{rt}}", "-x", "c", cpath, "-x", "none" })
+        push_list(args, []string { "-o", binpath, "-I{{rt}}" })
+        push_all(args, app_in)
+        push_list(args, []string { "-x", "none" })
         push_all(args, &objs)
         if mods_use("http") || mods_use("net") {
             push(args, net_c)
@@ -829,7 +856,7 @@ fn copt_flags() -> []string {
     if env_on("LOAM_DEBUG") {
         push(f, "-g")
     }
-    if mods_use("zeus") {
+    if uses_zeus() {
         push(f, "-DLOAM_ALLOC_TRACE")
     }
     if env_on("ZEUS_MEM_STATS") {
@@ -839,6 +866,254 @@ fn copt_flags() -> []string {
         push(f, "-DLOAM_STRING_OWNS")
     }
     return f
+}
+
+// --- shard builds ------------------------------------------------------------------
+//
+// A development build has one job, which is to be fast the second time. The
+// generated program is one large C file, so one compiler on one core, and the
+// same work again after an edit that changed two lines of it. `LOAM_SHARD=<dir>`
+// cuts it along the markers codegen left (`codegen.SHARD`) into units that
+// compile in parallel and are kept in <dir> under a hash of their text, so an
+// edit compiles only what it changed. The shared header goes through a
+// precompiled header, which keeps each unit's cost close to its own code.
+//
+// When the link list is written, every file in <dir> this compile did not use
+// is removed, so a unit whose text changed leaves no old object behind. One
+// directory is one compile at a time.
+//
+// Units are cut where a fn's name hashes a certain way, not every N bytes: a
+// fixed size would move every later boundary when one fn grows, and every unit
+// after the edit would miss.
+
+const SHARD_MIN: int = 96000
+const SHARD_MAX: int = 384000
+const SHARD_CUT: u64 = 8
+
+/** *One unit still to compile: its source, its object, and the command. */
+struct ShardJob {
+    cfile: string,
+    obj: string,
+    args: []string,
+}
+
+/** *Every object of the shard build, and the compiles still needed. */
+let mut SHARD_OBJS: []string = []string {}
+let mut SHARD_JOBS: []ShardJob = []ShardJob {}
+/** *`app_input` left only a link to do. */
+let mut SHARD_LINKED: bool = false
+
+/** *Add one unit whose text is `text`. Its object is reused if `key` was */
+/** *built before; otherwise the text is written out and a compile queued. */
+fn shard_unit(cc_args: &[]string, dir: string, key: u64, text: string) -> bool {
+    let obj = "{{dir}}/{{hex16(key)}}.o"
+    push(SHARD_OBJS, obj)
+    if sys.exists(obj) == 1 {
+        return true
+    }
+    let cfile = "{{dir}}/{{hex16(key)}}.c"
+    if sys.write_file(cfile, text) != 0 {
+        return false
+    }
+    let mut args = []string {}
+    push_all(&mut args, cc_args)
+    push_list(&mut args, []string { "-x", "c", cfile, "-c", "-o", "{{obj}}.{{BUILD_TAG}}.tmp" })
+    push(SHARD_JOBS, ShardJob { cfile: cfile, obj: obj, args: args })
+    return true
+}
+
+/** *Finish one compile: its object renamed into place (a unit that exists */
+/** *is whole), its source removed. */
+fn shard_done(job: &ShardJob, status: int) -> bool {
+    let tmp = "{{job.obj}}.{{BUILD_TAG}}.tmp"
+    let ok = status == 0 && sys.rename(tmp, job.obj) == 0
+    if !ok {
+        sys.remove_path(tmp)
+    }
+    sys.remove_path(job.cfile)
+    return ok
+}
+
+/** *Run the queued compiles, one per core at a time. `true` if all passed. */
+fn shard_run_jobs() -> bool {
+    let total = SHARD_OBJS.len
+    let cores = sys.cpu_count()
+    let mut done = total - SHARD_JOBS.len
+    let mut ok = true
+    let mut running = []int {}
+    let mut running_jobs = []int {}
+    progress("units {{done}} {{total}}")
+    let mut next = 0
+    while next < SHARD_JOBS.len || running.len > 0 {
+        if next < SHARD_JOBS.len && running.len < cores {
+            let argv = cc_argv(&SHARD_JOBS[next].args)
+            let h = sys.spawn(&argv)
+            if h < 0 {
+                shard_done(&SHARD_JOBS[next], 1)
+                ok = false
+            } else {
+                push(running, h)
+                push(running_jobs, next)
+            }
+            next += 1
+            continue
+        }
+        // Wait for the oldest; the others keep running meanwhile.
+        let status = sys.wait(running[0])
+        if !shard_done(&SHARD_JOBS[running_jobs[0]], status) {
+            ok = false
+        }
+        let mut rest = []int {}
+        let mut rest_jobs = []int {}
+        for i in 1..running.len {
+            push(rest, running[i])
+            push(rest_jobs, running_jobs[i])
+        }
+        running = rest
+        running_jobs = rest_jobs
+        done += 1
+        progress("units {{done}} {{total}}")
+    }
+    return ok
+}
+
+/** *The file name after the last `/`. */
+fn base_name(p: string) -> string {
+    let slash = str.last_index_of_byte(p, '/')
+    return if slash < 0 { p } else { str.slice_from(p, slash + 1) }
+}
+
+/** *Drop every file in `dir` this compile did not just link. The header stays */
+/** *though its mtime is never refreshed: the compiler checks that file */
+/** *against the precompiled header. */
+fn shard_prune(dir: string, hpath: string, rsp: string) {
+    let mut keep: Map<int> = map_new(0)
+    map_put(&mut keep, base_name(hpath), 1)
+    map_put(&mut keep, "{{base_name(hpath)}}.pch", 1)
+    map_put(&mut keep, base_name(rsp), 1)
+    for i in 0..SHARD_OBJS.len {
+        map_put(&mut keep, base_name(SHARD_OBJS[i]), 1)
+    }
+    let names = sys.list_dir(dir)
+    for i in 0..names.len {
+        if map_has(&mut keep, names[i]) {
+            continue
+        }
+        let path = "{{dir}}/{{names[i]}}"
+        if sys.is_dir(path) == 0 {
+            sys.remove_path(path)
+        }
+    }
+}
+
+/** *Compile `cpath` as units under `dir`, and leave the object list in */
+/** *`<dir>/<key>.rsp` for the link to read as `@rsp`. The path of that list, */
+/** *or `""` on failure (the caller still has the whole program in `cpath`). */
+fn shard_compile(cpath: string, cc_args: &[]string, dir: string) -> string {
+    SHARD_OBJS = []string {}
+    SHARD_JOBS = []ShardJob {}
+    let r = sys.read(cpath)
+    if r.tag != ResultTag.Ok {
+        return ""
+    }
+    let src = r.val
+    let first = str.index_of(src, "\n/*@S ")
+    let defs = str.index_of(src, "\n/*@D*/\n")
+    if first < 0 || defs < 0 || sys.mkdir(dir) != 0 {
+        return ""
+    }
+    let head = str.slice(src, 0, first)
+    let rt = loader.runtime_dir()
+    let mut base = fnv(str.join(cc_argv(cc_args), " "), FNV_BASIS)
+    base = dir_fingerprint(rt, base)
+    base = dir_fingerprint("{{rt}}/wasm_inc", base)
+    let hkey = fnv(head, base)
+
+    // The precompiled header. Its .h is never touched once written: the
+    // compiler checks that file's time against the PCH.
+    let hpath = "{{dir}}/{{hex16(hkey)}}.h"
+    let pch = "{{hpath}}.pch"
+    if sys.exists(pch) == 0 {
+        progress("pch")
+        if sys.write_file(hpath, "{{head}}\n") != 0 {
+            return ""
+        }
+        let t0 = async.now_ms()
+        let tmp = "{{pch}}.{{BUILD_TAG}}.tmp"
+        let mut args = []string {}
+        push_all(&mut args, cc_args)
+        push_list(&mut args, []string { "-x", "c-header", hpath, "-o", tmp })
+        if !run_cc(&args) || sys.rename(tmp, pch) != 0 {
+            sys.remove_path(tmp)
+            return ""
+        }
+        if env_on("LOAM_TIME") {
+            fmt.eprintln("loam: pch {{secs(async.now_ms() - t0)}}s")
+        }
+    }
+
+    let mut pch_args = []string {}
+    push_all(&mut pch_args, cc_args)
+    push_list(&mut pch_args, []string { "-include-pch", pch })
+    // Cut the bodies between the first marker and the data into units.
+    let mut start = first
+    let mut p = first
+    while p < defs {
+        let mut next = str.index_from(src, "\n/*@S ", p + 1)
+        if next < 0 || next > defs {
+            next = defs
+        }
+        let close = str.index_from(src, "*/", p + 6)
+        let name = if close >= 0 && close <= next { str.slice(src, p + 6, close) } else { "" }
+        let size = next - start
+        if next == defs || size >= SHARD_MAX || (size >= SHARD_MIN && fnv(name, FNV_BASIS) % SHARD_CUT == u64(0)) {
+            let text = str.slice(src, start, next)
+            if !shard_unit(&pch_args, dir, fnv(text, hkey), text) {
+                return ""
+            }
+            start = next
+        }
+        p = next
+    }
+    // The one unit that owns the program's storage: the header, then the data.
+    let whole = "#define LOAM_SHARD_DEFS 1\n{{head}}"
+    let data = str.slice_from(src, defs)
+    if !shard_unit(cc_args, dir, fnv(data, fnv(whole, base)), "{{whole}}{{data}}") {
+        return ""
+    }
+
+    if env_on("LOAM_TIME") {
+        fmt.eprintln("loam: units {{SHARD_OBJS.len}}, compiling {{SHARD_JOBS.len}}")
+    }
+    if !shard_run_jobs() {
+        return ""
+    }
+    let rsp = "{{dir}}/{{hex16(hkey)}}.rsp"
+    let mut list = []u8 {}
+    for i in 0..SHARD_OBJS.len {
+        buf.push_str(&mut list, "\"{{SHARD_OBJS[i]}}\"\n")
+    }
+    if sys.write_bytes(rsp, &list) != 0 {
+        return ""
+    }
+    shard_prune(dir, hpath, rsp)
+    return rsp
+}
+
+/** *The app's C as link inputs: the cached objects of a shard build, or the */
+/** *file itself. A shard build that failed falls back to the file, which is */
+/** *still one whole program given the macro that turns its definitions on. */
+fn app_input(shard_dir: string, cpath: string, cc_args: &[]string) -> []string {
+    if shard_dir.len > 0 {
+        let rsp = shard_compile(cpath, cc_args, shard_dir)
+        if rsp.len > 0 {
+            SHARD_LINKED = true
+            return []string { "-x", "none", "@{{rsp}}" }
+        }
+        fmt.eprintln("loam: shard build failed; compiling the whole program")
+        return []string { "-DLOAM_SHARD_DEFS", "-x", "c", cpath }
+    }
+    return []string { "-x", "c", cpath }
 }
 
 // --- the frontend ------------------------------------------------------------------
@@ -941,9 +1216,6 @@ fn main() {
         usage()
         sys.exit(1)
     }
-    if sys.env("LOAM_BATCH").len > 0 || sys.env("LOAM_SERVER_SPLIT").len > 0 {
-        not_here("LOAM_BATCH / LOAM_SERVER_SPLIT")
-    }
     // LOAM_NO_DCE: emit every declaration (debug and size comparisons).
     dce.SKIP = sys.env("LOAM_NO_DCE").len > 0
     let show_time = env_on("LOAM_TIME")
@@ -1034,12 +1306,12 @@ fn main() {
         }
         BUILD_TAG = hex16(fnv(absolute(binpath), FNV_BASIS))
         cpath = "{{tmp_dir()}}/loam_{{stem}}_{{BUILD_TAG}}.c"
-        let dylib = str.ends_with(binpath, ".dylib")
-        if mods_use("zeus") && !dylib {
-            if sys.env("LOAM_SHARD").len > 0 || env_on("LOAM_HOST") {
-                not_here("LOAM_SHARD / LOAM_HOST")
-            }
-        }
+    }
+    // `LOAM_SHARD=<cache dir>`: a development build in units, for the Zeus
+    // link, the one that goes through `app_input`.
+    let mut shard_dir = sys.env("LOAM_SHARD")
+    if !uses_zeus() || emit_c || test_mode || str.ends_with(binpath, ".dylib") {
+        shard_dir = ""
     }
     // App-owned C seam: `runtime/<stem>_runtime.c` beside the entry file.
     let mut app_rt = ""
@@ -1063,6 +1335,13 @@ fn main() {
     codegen.SINK = cpath
     dce.TEST_MODE = test_mode
     codegen.TEST_MODE = test_mode
+    codegen.SHARD = shard_dir.len > 0
+    codegen.BATCH = env_on("LOAM_BATCH")
+    // `#[server]` bodies are left out of client targets; `LOAM_SERVER_SPLIT`
+    // forces it so the exclusion can be checked from a native build.
+    let server_split = sys.env("LOAM_SERVER_SPLIT").len > 0
+    dce.SERVER_SPLIT = server_split
+    codegen.SERVER_SPLIT = server_split
     codegen.emit_c()
     if show_time {
         fmt.eprintln("loam: codegen {{secs(async.now_ms() - t0)}}s")
@@ -1117,12 +1396,31 @@ fn main() {
         return
     }
 
+    if env_on("LOAM_BATCH") {
+        // The fork-per-case runner (`-x none`: the link may still be reading
+        // its inputs as C).
+        let run_c = "{{rt}}/batch_run.c"
+        let run_o = "{{rt}}/.obj/batch_run.o"
+        let no_flags = []string {}
+        let run_deps = []string { run_c }
+        if !ensure_obj(run_c, run_o, &no_flags, &run_deps) {
+            fmt.eprintln("loam: failed to compile the batch runner")
+            sys.remove_path(cpath)
+            sys.exit(1)
+        }
+        push_list(&mut extra_link, []string { "-x", "none", run_o })
+    }
+
     t0 = async.now_ms()
-    if !link_args(cpath, binpath, &copt, ld, &extra_link, &mut args) {
+    let mut unit_args = []string {}
+    push_all(&mut unit_args, &copt)
+    push(unit_args, "-I{{rt}}")
+    let app_in = app_input(shard_dir, cpath, &unit_args)
+    if !link_args(cpath, binpath, &copt, ld, &extra_link, &app_in, &mut args) {
         sys.remove_path(cpath)
         sys.exit(1)
     }
-    progress("cc")
+    progress(if SHARD_LINKED { "link" } else { "cc" })
     let ok = run_cc(&args)
     if show_time {
         fmt.eprintln("loam: cc {{secs(async.now_ms() - t0)}}s")

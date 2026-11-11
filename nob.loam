@@ -2748,14 +2748,38 @@ fn ig_selfhost_driver() {
         cat("{{shq(LOAMC)}} --emit-c {{shq(compiler)}} -o {{shq(d)}}/s0.c >/dev/null && {{shq(stage1)}} --emit-c {{shq(compiler)}} -o {{shq(d)}}/s1.c >/dev/null && ",
             "{{shq(stage2)}} --emit-c {{shq(compiler)}} -o {{shq(d)}}/s2.c >/dev/null && cmp -s {{shq(d)}}/s0.c {{shq(d)}}/s1.c && cmp -s {{shq(d)}}/s1.c {{shq(d)}}/s2.c || echo 'stage 0/1/2 C differs'")))
     let fresh = fresh_cache_case(stage1, "{{d}}/fresh", "s1")
+    let modes = selfhost_mode_cases(stage1, d)
     sys.exec("rm -rf {{shq(d)}}")
-    let diffs = trim(cat(checks, cat(runs, cat(ir_runs, cat(test_runs, cat(fixed, fresh))))))
+    let diffs = trim(cat(checks, cat(runs, cat(ir_runs, cat(test_runs, cat(fixed, cat(fresh, modes)))))))
     if diffs.len > 0 {
         bad("selfhost driver (differs from driver.c)", "")
         fmt.println(diffs)
         return
     }
     ok("selfhost driver matches driver.c on {{n_files}} files, runs {{n_runs}} fixtures, --emit-ir, {{n_tests}} `loam test` entries, stage 1 = stage 2, .fresh cache holds")
+}
+
+/** *The build modes `--emit-c` can show, seed against `stage1`: a batch */
+/** *program (`LOAM_BATCH`: the per-case init table) of a plain and a Zeus */
+/** *fixture, and client builds (`LOAM_SERVER_SPLIT`: `#[server]` bodies become */
+/** *traps). One line per difference, empty when all match. */
+fn selfhost_mode_cases(stage1: string, d: string) -> string {
+    let fixtures = "{{ROOT}}/packages/loam/tests/compile_pass"
+    let batch_src = "{{d}}/batch_suite.loam"
+    write_text(batch_src, suite_source([]string { "{{fixtures}}/arrays.loam", "{{fixtures}}/zeus_carousel.loam", "{{fixtures}}/server_split.loam" }))
+    let mut out = ""
+    let envs = []string { "LOAM_BATCH=1", "LOAM_SERVER_SPLIT=1", "LOAM_SERVER_SPLIT=1" }
+    let sources = []string { batch_src, "{{fixtures}}/server_split.loam", "{{ROOT}}/packages/loam/tests/c_client/server_only.loam" }
+    for i in 0..envs.len {
+        let env = envs[i]
+        let src = sources[i]
+        sys.exec("cd {{shq(ROOT)}} && export LOAM_HOME={{shq(ROOT)}} {{env}} && {{shq(LOAMC)}} --emit-c {{shq(src)}} -o {{shq(d)}}/mode_c.c >/dev/null 2>&1; {{shq(stage1)}} --emit-c {{shq(src)}} -o {{shq(d)}}/mode_s.c >/dev/null 2>&1")
+        if !is_nonempty("{{d}}/mode_c.c") || !diff_ok("{{d}}/mode_c.c", "{{d}}/mode_s.c") {
+            out = cat(out, "{{env}} --emit-c {{rel_of(src)}}\n")
+        }
+        sys.exec("rm -f {{shq(d)}}/mode_c.c {{shq(d)}}/mode_s.c")
+    }
+    return out
 }
 
 /** *`tests/fresh/check.sh` against `compiler` in `work`: the `.fresh` build */

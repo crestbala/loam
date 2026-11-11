@@ -1483,6 +1483,21 @@ static inline loam_str loam_sys_arch(void) {
 #endif
 }
 
+/** Online CPUs, at least 1: how many children a parallel build runs at once.
+ *  1 on wasm, iOS and Android, where nothing is spawned. */
+static inline int64_t loam_sys_cpu_count(void) {
+#if defined(__wasm32__) || defined(LOAM_IOS) || defined(LOAM_ANDROID)
+    return 1;
+#elif defined(_WIN32)
+    const char *n = getenv("NUMBER_OF_PROCESSORS");
+    long v = n ? strtol(n, NULL, 10) : 0;
+    return v > 0 ? (int64_t)v : 1;
+#else
+    long v = sysconf(_SC_NPROCESSORS_ONLN);
+    return v > 0 ? (int64_t)v : 1;
+#endif
+}
+
 /** Compile target: "wasm" | "ios" | "android" | "native". Used by
  *  `http.client()` to pick a default RPC address. */
 static inline loam_str loam_sys_target(void) {
