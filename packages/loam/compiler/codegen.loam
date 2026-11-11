@@ -1,6 +1,5 @@
-// codegen — the IR written out as one gnu99 C translation unit. The
-// self-hosted twin of src/codegen_c.c, diffed byte for byte against `loamc
-// --dump-c` (the C a default build emits).
+// codegen — the IR written out as one gnu99 C translation unit. A port
+// of the C compiler's codegen_c.c, which it matched byte for byte.
 //
 // Layout of the generated file:
 //   1. loam_rt.h pasted in, then zeus_rt.h / net_rt.h / maya_rt.h /
@@ -3354,7 +3353,7 @@ fn emit_c() {
         dce.run()
     }
     // Lowering appends to the IR tables, so a caller that lowered already
-    // (tcdump --all prints the IR first) must not lower twice.
+    // (`--emit-ir`, `--cost`) must not lower twice.
     if !ir.LOWERED {
         ir.lower_modules()
     }

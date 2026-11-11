@@ -1,6 +1,5 @@
-// lexer — Loam source to tokens. The self-hosted twin of src/lexer.c, and it
-// must agree with it token for token (`nob selfhost-lex` diffs the two over
-// every .loam file in the repo).
+// lexer — Loam source to tokens. A port of the C compiler's lexer.c,
+// which it matched token for token over every .loam file in the repo.
 //
 // A token is a span of the source (`start`, `len`) plus 1-based byte
 // positions; nothing is copied. Whitespace and comments are skipped, except a

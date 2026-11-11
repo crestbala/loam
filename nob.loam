@@ -450,15 +450,14 @@ struct CSrc {
 }
 
 /** *Every C source `loam-lsp` is made of (the C front end as its library, and */
-/** *`lsp.c`), with its object path under `obj/`. `driver.c`, the C compiler's */
-/** *main, is not built: `bin/loamc` is the Loam compiler (nob.sh). `fmt.c` is */
-/** *standalone and built on its own in `build`. */
+/** *`lsp.c`), with its object path under `obj/`. `fmt.c` is standalone and */
+/** *built on its own in `build`. */
 fn c_sources() -> []CSrc {
     let mut out = []CSrc {}
     let top = list_ext(SRC, ".c")
     for i in 0..top.len {
         let stem = stem_c(base(top[i]))
-        if stem == "driver" || stem == "fmt" {
+        if stem == "fmt" {
             continue
         }
         let lib = stem != "lsp"
@@ -2546,253 +2545,6 @@ fn ig_myapp() {
     ig_myapp_build()
 }
 
-/** *Package resolution, selective imports, and a reproducible vendor tree. */
-/** *Self-hosting: the Loam lexer (`packages/loam/compiler/lexer.loam`) must agree */
-/** *with `src/lexer.c` token for token — kind, span, and positions — on every */
-/** *`.loam` file in the repo. `loamc --dump-tokens` is the reference. */
-/** *A self-hosted compiler stage diffed against its C twin: `tool` (in */
-/** *packages/loam/compiler) and `loamc <flag>` dump every .loam file in the */
-/** *repo; stdout, stderr and the exit status must match byte for byte. */
-fn selfhost_diff(what: string, tool: string, flag: string, ok_msg: string) {
-    mark("selfhost {{what}}")
-    // A private scratch dir per run: concurrent runs sharing fixed tmp paths
-    // rewrite each other's binary (SIGKILL) and dumps (cmp SIGBUS).
-    let tmpl = tmpf("selfhost_{{tool}}.XXXXXX")
-    let d = trim(sys.exec("mkdir -p {{shq(TMP)}} && mktemp -d {{shq(tmpl)}}"))
-    if sys.exec_status() != 0 || d.len == 0 {
-        bad("selfhost {{what}} (mktemp)", d)
-        return
-    }
-    let exe = "{{d}}/{{tool}}"
-    let o = sys.exec("{{shq(LOAMC)}} {{shq(ROOT)}}/packages/loam/compiler/{{tool}}.loam -o {{shq(exe)}} 2>&1")
-    if sys.exec_status() != 0 {
-        sys.exec("rm -rf {{shq(d)}}")
-        bad("selfhost {{what}} (build {{tool}})", o)
-        return
-    }
-    let a = "{{d}}/out.c"
-    let b = "{{d}}/out.loam"
-    // `LOAM_HOME`: the Loam loader finds std and the runtime from it (the
-    // tool is built into a scratch dir, not `bin/`).
-    let script = cat(
-        "cd {{shq(ROOT)}} && export LOAM_HOME={{shq(ROOT)}} && n=0; bad=''; for f in $(find packages examples nob.loam -name '*.loam' ",
-        cat("-not -path '*/tmp/*' -not -path '*/build/*' -not -path '*/node_modules/*'); do n=$((n+1)); ",
-            cat("{{shq(LOAMC)}} {{flag}} \"$f\" > {{shq(a)}} 2>&1; echo \"exit $?\" >> {{shq(a)}}; ",
-                cat("{{shq(exe)}} \"$f\" > {{shq(b)}} 2>&1; echo \"exit $?\" >> {{shq(b)}}; ",
-                    "cmp -s {{shq(a)}} {{shq(b)}} || bad=\"$bad $f\"; done; echo \"$n\"; [ -z \"$bad\" ] || { echo \"differ:$bad\"; exit 1; }"))))
-    let r = sys.exec(script)
-    let st = sys.exec_status()
-    sys.exec("rm -rf {{shq(d)}}")
-    if st != 0 {
-        bad("selfhost {{what}} (dumps differ)", r)
-        return
-    }
-    ok("selfhost {{what}} matches {{ok_msg}} on {{trim(r)}} files")
-}
-
-/** *How many processes a stanza's own pool runs: one per core (4 if unknown). */
-fn core_count() -> int {
-    let cores = int_of(sys.exec("sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null"))
-    return if cores > 0 { cores } else { 4 }
-}
-
-/** *Every checker stage of the Loam compiler against its C twin, over every */
-/** *compile_pass / compile_fail / draw_golden / examples/language entry: */
-/** *`tcdump --all` (fed the module list C's loader resolved) against `loamc */
-/** *--dump-all`, which write per stage what `--dump-typed`, `--dump-checked`, */
-/** *`--dump-ir`, `--dump-dce` and `--dump-c` print (trees, tables, IR, kept fns, */
-/** *the C unit, diagnostics, exit status). Any difference in any stage fails. */
-/** *Files C cannot load (parse errors: selfhost_parse) are counted apart. */
-fn ig_selfhost_passes() {
-    mark("selfhost passes")
-    let scratch_template = tmpf("selfhost_passes.XXXXXX")
-    let scratch_dir = trim(sys.exec("mkdir -p {{shq(TMP)}} && mktemp -d {{shq(scratch_template)}}"))
-    if sys.exec_status() != 0 || scratch_dir.len == 0 {
-        bad("selfhost passes (mktemp)", scratch_dir)
-        return
-    }
-    let tcdump_exe = "{{scratch_dir}}/tcdump"
-    let build_log = sys.exec("{{shq(LOAMC)}} {{shq(ROOT)}}/packages/loam/compiler/tcdump.loam -o {{shq(tcdump_exe)}} 2>&1")
-    if sys.exec_status() != 0 {
-        sys.exec("rm -rf {{shq(scratch_dir)}}")
-        bad("selfhost passes (build tcdump)", build_log)
-        return
-    }
-    // One entry per tools/selfhost-passes-one.sh, one per core (the verdicts,
-    // the watchdog and the result cache in TMP are described there). The
-    // workers run in the background so the run reports progress as it goes.
-    // The cache holds results for the current seed and tcdump only: a new seed
-    // empties it, a new tcdump drops its past matches.
-    let entry_list = "{{scratch_dir}}/entries"
-    let verdicts = "{{scratch_dir}}/verdicts"
-    let done_marker = "{{scratch_dir}}/done"
-    let cache_dir = "{{TMP}}/selfhost_tc_ref"
-    let sums = "LOAMC_SUM=\"$(cksum < {{shq(LOAMC)}})\" EXE_SUM=\"$(cksum < {{shq(tcdump_exe)}})\""
-    sys.exec(cat("{{sums}}; c={{shq(cache_dir)}}; mkdir -p \"$c\"; ",
-        cat("if [ \"$(cat \"$c/.seed\" 2>/dev/null)\" != \"$LOAMC_SUM\" ]; then rm -rf \"$c\" && mkdir -p \"$c\" && echo \"$LOAMC_SUM\" > \"$c/.seed\"; fi; ",
-            "if [ \"$(cat \"$c/.tcdump\" 2>/dev/null)\" != \"$EXE_SUM\" ]; then find \"$c\" -name '*.ok' -exec rm -f {} +; echo \"$EXE_SUM\" > \"$c/.tcdump\"; fi")))
-    let entry_count = int_of(trim(sys.exec(cat(
-        "cd {{shq(ROOT)}} && ls packages/loam/tests/compile_pass/*.loam packages/loam/tests/compile_fail/*.loam packages/loam/tests/draw_golden/*.loam examples/language/*.loam ",
-        "> {{shq(entry_list)}}; : > {{shq(verdicts)}}; wc -l < {{shq(entry_list)}}"))))
-    // Each zeus entry writes ~75 MB of dumps per side (every zeus module, every
-    // stage): over 40 GB a run, which a CI runner's disk takes minutes to
-    // absorb. Where /dev/shm exists (Linux) the dumps stay in memory.
-    let mut dump_dir = scratch_dir
-    let shm_dir = trim(sys.exec("[ -d /dev/shm ] && [ -w /dev/shm ] && mktemp -d /dev/shm/loam_passes.XXXXXX 2>/dev/null"))
-    if sys.exec_status() == 0 && shm_dir.len > 0 {
-        dump_dir = shm_dir
-    }
-    let worker_env = "LOAMC={{shq(LOAMC)}} EXE={{shq(tcdump_exe)}} SCRATCH={{shq(dump_dir)}} REF={{shq(cache_dir)}} {{sums}}"
-    sys.exec(cat("cd {{shq(ROOT)}} && ( export {{worker_env}}; xargs -P {{core_count()}} -n 1 sh tools/selfhost-passes-one.sh < {{shq(entry_list)}} > {{shq(verdicts)}} 2>/dev/null; ",
-        ": > {{shq(done_marker)}} ) > /dev/null 2>&1 &"))
-    let mut reported = 0
-    while sys.exists(done_marker) == 0 {
-        // Five verdict lines per entry.
-        let finished = int_of(trim(sys.exec("sleep 1; wc -l < {{shq(verdicts)}}"))) / 5
-        if finished >= reported + 64 {
-            mark("selfhost passes {{finished}}/{{entry_count}}")
-            reported = finished
-        }
-    }
-    let stages = []string { "typecheck", "check", "ir", "dce", "codegen" }
-    let c_twins = []string { "typecheck.c", "threadcheck.c, borrowck.c, boundscheck.c", "ir.c", "dce.c", "codegen_c.c" }
-    for i in 0..stages.len {
-        let stage = stages[i]
-        let summary = sys.exec(cat("v={{shq(verdicts)}}; echo \"$(grep -c '^match {{stage}} ' $v) match, $(grep -c '^load {{stage}} ' $v) not loadable\"; ",
-            "! grep -E '^(diff|hang) {{stage}} ' $v"))
-        if sys.exec_status() != 0 {
-            bad("selfhost {{stage}} (dumps differ)", summary)
-        } else {
-            ok("selfhost {{stage}} vs {{c_twins[i]}}: {{trim(summary)}}")
-        }
-    }
-    sys.exec("rm -rf {{shq(scratch_dir)}} {{shq(dump_dir)}}")
-}
-
-/** *The driver: `compiler/loamc.loam` built by the seed (stage 1) against */
-/** *the seed itself. Over every .loam file, `check` must print the same and */
-/** *exit the same, and where it passes `--emit-c -o` must write the same C. */
-/** *Every compile_pass fixture with a `.expected` is built by stage 1 and run; */
-/** *`--emit-ir`, `loam test` and `LOAM_NO_DCE` match on a few entries. */
-/** *Then stage 1 builds itself (stage 2), and the C all three emit for the */
-/** *compiler must be the same bytes. */
-fn ig_selfhost_driver() {
-    mark("selfhost driver")
-    let tmpl = tmpf("selfhost_driver.XXXXXX")
-    let d = trim(sys.exec("mkdir -p {{shq(TMP)}} && mktemp -d {{shq(tmpl)}}"))
-    if sys.exec_status() != 0 || d.len == 0 {
-        bad("selfhost driver (mktemp)", d)
-        return
-    }
-    let stage1 = "{{d}}/loamc1"
-    let compiler = "{{ROOT}}/packages/loam/compiler/loamc.loam"
-    let o = sys.exec("{{shq(LOAMC)}} {{shq(compiler)}} -o {{shq(stage1)}} 2>&1")
-    if sys.exec_status() != 0 {
-        sys.exec("rm -rf {{shq(d)}}")
-        bad("selfhost driver (build stage 1)", o)
-        return
-    }
-    // One case per call: `one <n> <file>` (check, then emit-c) or `run <n>
-    // <file>` (build and run against .expected). Prints the case on a mismatch.
-    // `ir <n> <file>`: `--emit-ir` prints, exits and writes the same IR.
-    let ir_case = cat("elif [ \"$1\" = ir ]; then\n",
-        cat("  \"$C\" --emit-ir \"$f\" -o \"$w/c.ir\" >\"$w/a\" 2>&1; echo \"exit $?\" >>\"$w/a\"\n  \"$S\" --emit-ir \"$f\" -o \"$w/s.ir\" >\"$w/b\" 2>&1; echo \"exit $?\" >>\"$w/b\"\n",
-            "  cmp -s \"$w/a\" \"$w/b\" && cmp -s \"$w/c.ir\" \"$w/s.ir\" || echo \"emit-ir $f\"\n"))
-    // `test <n> <file>`: the `loam test` runner's C, the `LOAM_NO_DCE` C, and
-    // what running the tests prints.
-    let test_case = cat("elif [ \"$1\" = test ]; then\n",
-        cat("  \"$C\" test --emit-c \"$f\" -o \"$w/c.c\" >/dev/null 2>&1; \"$S\" test --emit-c \"$f\" -o \"$w/s.c\" >/dev/null 2>&1\n  cmp -s \"$w/c.c\" \"$w/s.c\" || echo \"test --emit-c $f\"\n",
-            cat("  LOAM_NO_DCE=1 \"$C\" --emit-c \"$f\" -o \"$w/c.c\" >/dev/null 2>&1; LOAM_NO_DCE=1 \"$S\" --emit-c \"$f\" -o \"$w/s.c\" >/dev/null 2>&1\n  cmp -s \"$w/c.c\" \"$w/s.c\" || echo \"LOAM_NO_DCE --emit-c $f\"\n",
-                "  \"$C\" test \"$f\" >\"$w/a\" 2>&1 </dev/null; echo \"exit $?\" >>\"$w/a\"\n  \"$S\" test \"$f\" >\"$w/b\" 2>&1 </dev/null; echo \"exit $?\" >>\"$w/b\"\n  cmp -s \"$w/a\" \"$w/b\" || echo \"test $f\"\n")))
-    let script = "{{d}}/case.sh"
-    sys.write_file(script, cat(
-        "set -u\nC={{shq(LOAMC)}}\nS={{shq(stage1)}}\nw={{shq(d)}}/w$2\nmkdir -p \"$w\"\nf=$3\n",
-        cat("if [ \"$1\" = one ]; then\n",
-            cat("  \"$C\" check \"$f\" >\"$w/a\" 2>&1; echo \"exit $?\" >>\"$w/a\"\n  \"$S\" check \"$f\" >\"$w/b\" 2>&1; echo \"exit $?\" >>\"$w/b\"\n",
-                cat("  if ! cmp -s \"$w/a\" \"$w/b\"; then echo \"check $f\"; rm -rf \"$w\"; exit 0; fi\n",
-                    cat("  if [ \"$(tail -n 1 \"$w/a\")\" = 'exit 0' ]; then\n",
-                        cat("    \"$C\" --emit-c \"$f\" -o \"$w/out.c\" >\"$w/a\" 2>&1; echo \"exit $?\" >>\"$w/a\"; mv \"$w/out.c\" \"$w/c0\" 2>/dev/null\n",
-                            cat("    \"$S\" --emit-c \"$f\" -o \"$w/out.c\" >\"$w/b\" 2>&1; echo \"exit $?\" >>\"$w/b\"\n",
-                                cat("    cmp -s \"$w/a\" \"$w/b\" && cmp -s \"$w/c0\" \"$w/out.c\" || echo \"emit-c $f\"\n  fi\n",
-                                    cat(ir_case, cat(test_case, cat("else\n",
-                                    cat("  if ! ZEUS_HEADLESS=1 \"$S\" \"$f\" -o \"$w/bin\" >\"$w/a\" 2>&1; then echo \"build $f\"; cat \"$w/a\";\n",
-                                        "  elif ! \"$w/bin\" </dev/null 2>/dev/null | cmp -s - \"${f%.loam}.expected\"; then echo \"run $f\"; fi\nfi\nrm -rf \"$w\"\n")))))))))))))
-    let find_all = "find packages examples nob.loam -name '*.loam' -not -path '*/tmp/*' -not -path '*/build/*' -not -path '*/node_modules/*'"
-    let par = core_count()
-    let checks = sys.exec("cd {{shq(ROOT)}} && export LOAM_HOME={{shq(ROOT)}} && {{find_all}} | sort | awk '{print \"one\", NR, $0}' | xargs -P {{par}} -n 3 sh {{shq(script)}} 2>&1")
-    let n_files = trim(sys.exec("cd {{shq(ROOT)}} && {{find_all}} | wc -l"))
-    let runs = sys.exec("cd {{shq(ROOT)}} && export LOAM_HOME={{shq(ROOT)}} && ls packages/loam/tests/compile_pass/*.expected | sed 's/[.]expected$/.loam/' | awk '{print \"run\", NR, $0}' | xargs -P {{par}} -n 3 sh {{shq(script)}} 2>&1")
-    let n_runs = trim(sys.exec("cd {{shq(ROOT)}} && ls packages/loam/tests/compile_pass/*.expected | wc -l"))
-    // Between them these two fixtures print every IR op and modifier the
-    // lowering produces; the lowering itself is gated by selfhost_passes.
-    let ir_entries = "packages/loam/tests/compile_pass/zeus_stream.loam packages/loam/tests/compile_pass/drop_nested.loam"
-    let ir_runs = sys.exec("cd {{shq(ROOT)}} && export LOAM_HOME={{shq(ROOT)}} ZEUS_HEADLESS=1 && for f in {{ir_entries}}; do echo $f; done | awk '{print \"ir\", NR, $0}' | xargs -P {{par}} -n 3 sh {{shq(script)}} 2>&1")
-    let test_entries = "ls packages/loam/tests/inlang/*tests.loam examples/language/ppm/*_tests.loam"
-    let test_runs = sys.exec("cd {{shq(ROOT)}} && export LOAM_HOME={{shq(ROOT)}} ZEUS_HEADLESS=1 && {{test_entries}} | awk '{print \"test\", NR, $0}' | xargs -P {{par}} -n 3 sh {{shq(script)}} 2>&1")
-    let n_tests = trim(sys.exec("cd {{shq(ROOT)}} && {{test_entries}} | wc -l"))
-    // Stage 1 builds itself; the C for the compiler from seed, stage 1 and
-    // stage 2 must be the same bytes.
-    let stage2 = "{{d}}/loamc2"
-    let fixed = sys.exec(cat("cd {{shq(ROOT)}} && export LOAM_HOME={{shq(ROOT)}} && {{shq(stage1)}} {{shq(compiler)}} -o {{shq(stage2)}} >/dev/null 2>&1 || echo 'stage 2 build failed'; ",
-        cat("{{shq(LOAMC)}} --emit-c {{shq(compiler)}} -o {{shq(d)}}/s0.c >/dev/null && {{shq(stage1)}} --emit-c {{shq(compiler)}} -o {{shq(d)}}/s1.c >/dev/null && ",
-            "{{shq(stage2)}} --emit-c {{shq(compiler)}} -o {{shq(d)}}/s2.c >/dev/null && cmp -s {{shq(d)}}/s0.c {{shq(d)}}/s1.c && cmp -s {{shq(d)}}/s1.c {{shq(d)}}/s2.c || echo 'stage 0/1/2 C differs'")))
-    let fresh = fresh_cache_case(stage1, "{{d}}/fresh", "s1")
-    let modes = selfhost_mode_cases(stage1, d)
-    sys.exec("rm -rf {{shq(d)}}")
-    let diffs = trim(cat(checks, cat(runs, cat(ir_runs, cat(test_runs, cat(fixed, cat(fresh, modes)))))))
-    if diffs.len > 0 {
-        bad("selfhost driver (differs from driver.c)", "")
-        fmt.println(diffs)
-        return
-    }
-    ok("selfhost driver matches driver.c on {{n_files}} files, runs {{n_runs}} fixtures, --emit-ir, {{n_tests}} `loam test` entries, stage 1 = stage 2, .fresh cache holds")
-}
-
-/** *The build modes `--emit-c` can show, seed against `stage1`: a batch */
-/** *program (`LOAM_BATCH`: the per-case init table) of a plain and a Zeus */
-/** *fixture, and client builds (`LOAM_SERVER_SPLIT`: `#[server]` bodies become */
-/** *traps), the wasm32 target's C (split, paths stripped; release too), and */
-/** *the Android Gradle project, and the `--cost` report. */
-/** *One line per difference, empty when all match. */
-fn selfhost_mode_cases(stage1: string, d: string) -> string {
-    let fixtures = "{{ROOT}}/packages/loam/tests/compile_pass"
-    let batch_src = "{{d}}/batch_suite.loam"
-    write_text(batch_src, suite_source([]string { "{{fixtures}}/arrays.loam", "{{fixtures}}/zeus_carousel.loam", "{{fixtures}}/server_split.loam" }))
-    let mut out = ""
-    let envs = []string { "LOAM_BATCH=1", "LOAM_SERVER_SPLIT=1", "LOAM_SERVER_SPLIT=1", "LOAM_MODE=wasm", "LOAM_MODE=wasm" }
-    let flags = []string { "", "", "", "--target=wasm32", "--target=wasm32 --wasm-release" }
-    let sources = []string { batch_src, "{{fixtures}}/server_split.loam", "{{ROOT}}/packages/loam/tests/c_client/server_only.loam", "{{fixtures}}/zeus_carousel.loam", "{{ROOT}}/packages/loam/tests/wasm_smoke/trap_app.loam" }
-    for i in 0..envs.len {
-        let env = envs[i]
-        let src = sources[i]
-        let f = flags[i]
-        // The same output name for both, so their stdout lines match too.
-        let mode_c = "{{shq(d)}}/mode.c"
-        sys.exec("cd {{shq(ROOT)}} && export LOAM_HOME={{shq(ROOT)}} {{env}} && {{shq(LOAMC)}} {{f}} --emit-c {{shq(src)}} -o {{mode_c}} >{{shq(d)}}/mode_c.out 2>&1; mv -f {{mode_c}} {{shq(d)}}/mode_c.c 2>/dev/null; {{shq(stage1)}} {{f}} --emit-c {{shq(src)}} -o {{mode_c}} >{{shq(d)}}/mode_s.out 2>&1; mv -f {{mode_c}} {{shq(d)}}/mode_s.c 2>/dev/null")
-        if !is_nonempty("{{d}}/mode_c.c") || !diff_ok("{{d}}/mode_c.c", "{{d}}/mode_s.c") || !diff_ok("{{d}}/mode_c.out", "{{d}}/mode_s.out") {
-            out = cat(out, "{{env}} {{f}} --emit-c {{rel_of(src)}}\n")
-        }
-        sys.exec("rm -f {{shq(d)}}/mode_c.c {{shq(d)}}/mode_s.c")
-    }
-    // `--target android`: the Gradle project tree (it needs no SDK to write).
-    let android_src = "{{fixtures}}/zeus_carousel.loam"
-    sys.exec("cd {{shq(ROOT)}} && export LOAM_HOME={{shq(ROOT)}} && {{shq(LOAMC)}} --target=android {{shq(android_src)}} -o {{shq(d)}}/android_c >/dev/null 2>&1; {{shq(stage1)}} --target=android {{shq(android_src)}} -o {{shq(d)}}/android_s >/dev/null 2>&1")
-    if !is_file("{{d}}/android_c/app/src/main/cpp/app.c") || !sh("diff -r {{shq(d)}}/android_c {{shq(d)}}/android_s >/dev/null 2>&1") {
-        out = cat(out, "--target android {{rel_of(android_src)}}\n")
-    }
-    // `--cost`: the report, byte for byte (counts, C bytes, per-package share).
-    let cost_entries = []string { "{{fixtures}}/zeus_carousel.loam", "{{fixtures}}/http_min.loam", "{{ROOT}}/nob.loam" }
-    for i in 0..cost_entries.len {
-        let src = cost_entries[i]
-        let seed_report = sys.exec("cd {{shq(ROOT)}} && LOAM_HOME={{shq(ROOT)}} {{shq(LOAMC)}} --cost {{shq(src)}} 2>&1")
-        let stage1_report = sys.exec("cd {{shq(ROOT)}} && LOAM_HOME={{shq(ROOT)}} {{shq(stage1)}} --cost {{shq(src)}} 2>&1")
-        if seed_report != stage1_report || !contains_str(seed_report, "loam: cost report") {
-            out = cat(out, "--cost {{rel_of(src)}}\n")
-        }
-    }
-    return out
-}
-
 /** *`tests/fresh/check.sh` against `compiler` in `work`: the `.fresh` build */
 /** *cache's cases, one line per failure, empty when all hold. */
 fn fresh_cache_case(compiler: string, work: string, tag: string) -> string {
@@ -2800,9 +2552,9 @@ fn fresh_cache_case(compiler: string, work: string, tag: string) -> string {
     return sys.exec("rm -rf {{shq(work)}} && LOAM_HOME={{shq(ROOT)}} sh {{shq(script)}} {{shq(compiler)}} {{shq(work)}} {{shq(tag)}} 2>&1")
 }
 
-/** *The seed's `.fresh` build cache: a repeated build is reused, and an edit */
-/** *to a module, a `#![c_source]`, the runtime, the flags, the environment, or */
-/** *the output rebuilds. `selfhost_driver` runs the same cases on stage 1. */
+/** *The `.fresh` build cache: a repeated build is reused, and an edit to a */
+/** *module, a `#![c_source]`, the runtime, the flags, the environment, or the */
+/** *output rebuilds. `selfhost_seed` runs the same cases on stage 1. */
 fn ig_fresh_cache() {
     mark("fresh cache")
     let tmpl = tmpf("fresh_cache.XXXXXX")
@@ -2846,11 +2598,13 @@ fn seed() -> int {
     return 0
 }
 
-/** *The committed seed still bootstraps: `cc` builds it, it builds the */
-/** *current compiler (stage 1), and stage 1 emits for itself the same C the */
-/** *seed emits for it, so stage 2 (built from that C) is stage 1: the fixed */
-/** *point. That C must also be what the C compiler emits. The seed may lag */
-/** *the sources; the verdict says whether it does. */
+/** *The committed seed still bootstraps, and the compiler is a fixed point: */
+/** *`cc` builds the seed, it builds the current compiler (stage 1), stage 1 */
+/** *builds itself (stage 2), and the C the seed, stage 1 and stage 2 each */
+/** *emit for the compiler is the same bytes, so stage 2 is stage 1. The */
+/** *`.fresh` cache cases hold on stage 1 too (`fresh_cache` runs them on */
+/** *`bin/loamc`). The seed may lag the sources; the verdict says whether it */
+/** *does. */
 fn ig_selfhost_seed() {
     mark("selfhost seed")
     if sys.exists(seed_path()) == 0 {
@@ -2863,56 +2617,95 @@ fn ig_selfhost_seed() {
         bad("selfhost seed (mktemp)", d)
         return
     }
+    // `LOAM_HOME`: the stages are built into a scratch dir, not `bin/`.
     let home = "cd {{shq(ROOT)}} && export LOAM_HOME={{shq(ROOT)}} &&"
     let seed_bin = "{{d}}/seed"
     let stage1 = "{{d}}/loamc1"
+    let stage2 = "{{d}}/loamc2"
     let compiler = "packages/loam/compiler/loamc.loam"
-    // The flags nob.sh builds the seed with on Windows.
-    let o = sys.exec("{{home}} cc -std=gnu99 -O1 -fno-asynchronous-unwind-tables -fomit-frame-pointer -ffp-contract=off -w -DLOAM_STRING_OWNS bootstrap/loamc.c -o {{shq(seed_bin)}} -lm 2>&1")
+    // The flags nob.sh builds the seed with.
+    let seed_log = sys.exec("{{home}} cc -std=gnu99 -O1 -fno-asynchronous-unwind-tables -fomit-frame-pointer -ffp-contract=off -w -DLOAM_STRING_OWNS bootstrap/loamc.c -o {{shq(seed_bin)}} -lm 2>&1")
     if sys.exec_status() != 0 {
         sys.exec("rm -rf {{shq(d)}}")
-        bad("selfhost seed (cc bootstrap/loamc.c)", o)
+        bad("selfhost seed (cc bootstrap/loamc.c)", seed_log)
         return
     }
-    let o1 = sys.exec("{{home}} {{shq(seed_bin)}} --emit-c {{compiler}} -o {{shq(d)}}/seed.c 2>&1 && {{shq(seed_bin)}} {{compiler}} -o {{shq(stage1)}} 2>&1")
+    let stage1_log = sys.exec("{{home}} {{shq(seed_bin)}} --emit-c {{compiler}} -o {{shq(d)}}/seed.c 2>&1 && {{shq(seed_bin)}} {{compiler}} -o {{shq(stage1)}} 2>&1")
     if sys.exec_status() != 0 {
         sys.exec("rm -rf {{shq(d)}}")
-        bad("selfhost seed (the seed cannot build the current compiler; run nob seed)", o1)
+        bad("selfhost seed (the seed cannot build the current compiler; run nob seed)", stage1_log)
         return
     }
-    let o2 = sys.exec("{{home}} {{shq(stage1)}} --emit-c {{compiler}} -o {{shq(d)}}/s1.c 2>&1 && {{shq(LOAMC)}} --emit-c {{compiler}} -o {{shq(d)}}/s0.c 2>&1")
-    let fixed = sys.exec_status() == 0 && sys.read_file("{{d}}/seed.c") == sys.read_file("{{d}}/s1.c")
-    let same_as_c = fixed && sys.read_file("{{d}}/s0.c") == sys.read_file("{{d}}/s1.c")
-    let current = sys.read_file(seed_path()) == sys.read_file("{{d}}/s1.c")
-    let bytes = sys.read_file("{{d}}/s1.c").len
+    let stage2_log = sys.exec("{{home}} {{shq(stage1)}} --emit-c {{compiler}} -o {{shq(d)}}/s1.c 2>&1 && {{shq(stage1)}} {{compiler}} -o {{shq(stage2)}} 2>&1 && {{shq(stage2)}} --emit-c {{compiler}} -o {{shq(d)}}/s2.c 2>&1")
+    let stages_ran = sys.exec_status() == 0
+    let stage1_c = sys.read_file("{{d}}/s1.c")
+    let fixed = stages_ran && stage1_c.len > 0 && sys.read_file("{{d}}/seed.c") == stage1_c && sys.read_file("{{d}}/s2.c") == stage1_c
+    let current = sys.read_file(seed_path()) == stage1_c
+    let fresh_failures = trim(fresh_cache_case(stage1, "{{d}}/fresh", "s1"))
     sys.exec("rm -rf {{shq(d)}}")
     if !fixed {
-        bad("selfhost seed (stage 1 emits other C than the seed does for it: no fixed point)", o2)
+        bad("selfhost seed (the seed, stage 1 and stage 2 do not emit the same C for the compiler: no fixed point)", stage2_log)
         return
     }
-    if !same_as_c {
-        bad("selfhost seed (stage 1 emits other C than the C compiler)", "")
+    if fresh_failures.len > 0 {
+        bad("selfhost seed (.fresh cache on stage 1)", fresh_failures)
         return
     }
     let lag = if current { "current" } else { "lags the sources" }
-    ok("selfhost seed: bootstrap/loamc.c builds the compiler, stage 1 = stage 2 = C compiler ({{bytes}} bytes of C); seed {{lag}}")
+    ok("selfhost seed: bootstrap/loamc.c builds the compiler, seed = stage 1 = stage 2 ({{stage1_c.len}} bytes of C), .fresh cache holds; seed {{lag}}")
 }
 
-fn ig_selfhost_lex() {
-    selfhost_diff("lexer", "tokdump", "--dump-tokens", "lexer.c")
+/** *The loader's package rules: `loamc check` on every entry file under */
+/** *tests/loader (see its README) prints and exits as `expected.txt` records, */
+/** *diagnostics included. `NOB_UPDATE_EXPECTED=1` rewrites the record. */
+fn ig_loader_cases() {
+    mark("loader cases")
+    let expected = "{{TESTS}}/loader/expected.txt"
+    let actual = tmpf("loader_cases.out")
+    let count = trim(sys.exec(cat("cd {{shq(ROOT)}} && for f in $(find packages/loam/tests/loader -name '*.loam' | LC_ALL=C sort); do ",
+        "echo \"== $f\"; {{shq(LOAMC)}} check \"$f\" 2>&1; echo \"exit $?\"; done > {{shq(actual)}}; grep -c '^== ' {{shq(actual)}}")))
+    if sys.env("NOB_UPDATE_EXPECTED") == "1" {
+        cp(actual, expected)
+    }
+    let diff_path = tmpf("loader_cases.diff")
+    if !diff_log(expected, actual, diff_path) {
+        bad("loader cases (output differs from tests/loader/expected.txt)", diff_path)
+        return
+    }
+    ok("loader cases ({{count}} entry files: packages, locks, workspaces, cycles)")
 }
 
-/** *The module loader: `moddump` against `loamc --dump-modules` (module */
-/** *names, load ranks, std flags, paths, every import's resolution, and the */
-/** *load and parse diagnostics), with every .loam file as the entry. */
-fn ig_selfhost_load() {
-    selfhost_diff("loader", "moddump", "--dump-modules", "compile.c, pkgresolve.c")
-}
-
-/** *The parser: `astdump` against `loamc --dump-ast` (trees, diagnostics, and */
-/** *exit status), compile_fail files included. */
-fn ig_selfhost_parse() {
-    selfhost_diff("parser", "astdump", "--dump-ast", "parser.c")
+/** *`--target android` writes the whole Gradle project (it needs no SDK for */
+/** *that): the program as `app.c`, the Java host, the manifest and the */
+/** *Gradle and CMake files. */
+fn ig_android_project() {
+    mark("android project")
+    let tmpl = tmpf("android_project.XXXXXX")
+    let d = trim(sys.exec("mkdir -p {{shq(TMP)}} && mktemp -d {{shq(tmpl)}}"))
+    if sys.exec_status() != 0 || d.len == 0 {
+        bad("android project (mktemp)", d)
+        return
+    }
+    let project = "{{d}}/project"
+    let log = sys.exec("cd {{shq(ROOT)}} && {{shq(LOAMC)}} --target=android packages/loam/tests/compile_pass/zeus_carousel.loam -o {{shq(project)}} 2>&1")
+    let files = []string {
+        "app/build.gradle", "app/src/main/AndroidManifest.xml", "app/src/main/cpp/CMakeLists.txt", "app/src/main/cpp/app.c",
+        "app/src/main/java/com/loam/zeus/ZeusActivity.java", "app/src/main/java/com/loam/zeus/ZeusView.java",
+        "app/src/main/res/xml/network_security_config.xml", "build.gradle", "gradle.properties", "settings.gradle",
+    }
+    let mut missing = ""
+    for i in 0..files.len {
+        if !is_nonempty("{{project}}/{{files[i]}}") {
+            missing = cat(missing, " {{files[i]}}")
+        }
+    }
+    let has_entry = file_has("{{project}}/app/src/main/cpp/app.c", "zeus_carousel")
+    sys.exec("rm -rf {{shq(d)}}")
+    if missing.len > 0 || !has_entry {
+        bad("android project (missing or empty:{{missing}})", log)
+        return
+    }
+    ok("android project ({{files.len}} files, the program as app.c)")
 }
 
 /** *Floats on wasm: the wasm libc's exact `%g` / `strtod` match the host libc */
@@ -2945,6 +2738,7 @@ fn ig_wasm_float() {
     ok("wasm float (exact %g / strtod; {{trim(o)}}; wasm prints what native prints)")
 }
 
+/** *Package resolution, selective imports, and a reproducible vendor tree. */
 fn ig_modules() {
     mark("modules")
     let tests = "{{ROOT}}/packages/loam/tests"
@@ -3090,20 +2884,14 @@ fn stanza_dispatch(name: string) -> bool {
         ig_modules()
     } else if name == "wasm_float" {
         ig_wasm_float()
-    } else if name == "selfhost_lex" {
-        ig_selfhost_lex()
-    } else if name == "selfhost_parse" {
-        ig_selfhost_parse()
-    } else if name == "selfhost_load" {
-        ig_selfhost_load()
-    } else if name == "selfhost_driver" {
-        ig_selfhost_driver()
+    } else if name == "loader_cases" {
+        ig_loader_cases()
+    } else if name == "android_project" {
+        ig_android_project()
     } else if name == "selfhost_seed" {
         ig_selfhost_seed()
     } else if name == "fresh_cache" {
         ig_fresh_cache()
-    } else if name == "selfhost_passes" {
-        ig_selfhost_passes()
     } else if name == "suite_zeus" {
         ig_suite("zeus")
     } else if name == "suite_plain" {
@@ -3151,13 +2939,10 @@ fn stanza_names() -> []string {
     push(v, "arena_lint")
     push(v, "api_freeze")
     push(v, "modules")
-    push(v, "selfhost_lex")
-    push(v, "selfhost_parse")
-    push(v, "selfhost_load")
-    push(v, "selfhost_driver")
     push(v, "selfhost_seed")
     push(v, "fresh_cache")
-    push(v, "selfhost_passes")
+    push(v, "android_project")
+    push(v, "loader_cases")
     push(v, "wasm_float")
     return v
 }
@@ -3221,19 +3006,18 @@ fn pool_stanzas(names: []string, limit_s: int) -> int {
 /** *app. The wasm module's entry points, the server/client split, and the */
 /** *language server all sit next to the compiler. */
 fn host_stanzas() -> []string {
-    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "api_freeze", "modules", "fresh_cache", "wasm_float" }
+    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "api_freeze", "modules", "fresh_cache", "android_project", "loader_cases", "wasm_float" }
 }
 
-/** *How long one stanza may run before its pool kills it. The selfhost ones */
-/** *are whole-repo differential runs: `selfhost_driver` takes ~3 min on 8 */
-/** *Mac cores and ~7 on CI's 4-core runner, alone on that runner. They go */
-/** *when the C compiler does (docs/self-hosting-loam.md, Next changes 4). */
+/** *How long one stanza may run before its pool kills it. `selfhost_seed` */
+/** *builds the compiler three times (about 20 s on 8 Mac cores, longer on */
+/** *CI's 4-core runner). */
 const INTEGRATION_LIMIT_S: int = 300
 const SELFHOST_LIMIT_S: int = 1200
 
-/** *The Loam compiler against the C one, stage by stage, and the fixed point. */
-/** *Nearly all of a full run's time, so `test` leaves them out: `nob selfhost` */
-/** *runs them, and CI runs each on its own runner (selfhost.yml). */
+/** *The committed seed and the fixed point. A full compiler bootstrap, so */
+/** *`test` leaves it out: `nob selfhost` runs it, and CI on its own runner */
+/** *(selfhost.yml). */
 fn selfhost_stanzas() -> []string {
     return []string { "selfhost_seed" }
 }

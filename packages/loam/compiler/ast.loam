@@ -1,4 +1,5 @@
-// ast — the syntax tree as an arena. The self-hosted twin of src/ast.h.
+// ast — the syntax tree as an arena. A port of the C compiler's
+// ast.h (the C compiler is gone; `C` below means that original).
 //
 // Every node lives in one `[]Node`, and a node names another by its index, so
 // the tree holds no references (Loam keeps them out of data structures). A node

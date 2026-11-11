@@ -1,6 +1,5 @@
 // dce — which fn declarations codegen emits: reachability over the resolved
-// call graph. The self-hosted twin of src/dce.c, diffed against
-// `loamc --dump-dce`.
+// call graph. A port of the C compiler's dce.c.
 //
 // Roots: every fn of the entry module (but a `#[c]` one, kept by its
 // callers), every `#[test]` fn, every module `let` initializer (codegen runs

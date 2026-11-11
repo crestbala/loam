@@ -1,5 +1,5 @@
-// threadcheck — the Send discipline for std:thread. The self-hosted twin of
-// src/threadcheck.c, function for function (its header has the rules): a
+// threadcheck — the Send discipline for std:thread. A port of the C
+// compiler's threadcheck.c, function for function. The rules: a
 // `thread.spawn` callback is a closure or a fn name, its captures are Send,
 // and it and everything it calls touch no module global and no C-seam symbol
 // outside the allowlist.

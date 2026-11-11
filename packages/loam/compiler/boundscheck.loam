@@ -1,5 +1,5 @@
-// boundscheck — mark `a[k]` safe when the compiler can prove k in range. The
-// self-hosted twin of src/sema/boundscheck.c, function for function.
+// boundscheck — mark `a[k]` safe when the compiler can prove k in range. A
+// port of the C compiler's boundscheck.c, function for function.
 //
 // Two proofs:
 //   - `a[LITERAL]` with `0 <= LITERAL < N` for `[N]T`.

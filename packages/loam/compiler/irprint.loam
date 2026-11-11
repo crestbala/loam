@@ -1,6 +1,5 @@
-// irprint — the IR as `loamc --emit-ir` writes it (`ir_print` in src/ir.c):
-// per fn a header and its locals, then each block's instructions and
-// terminator, one line each. The readable form; irdump.loam is the full one.
+// irprint — the IR as `loamc --emit-ir` writes it: per fn a header and its
+// locals, then each block's instructions and terminator, one line each.
 
 import "std:buf"
 import "std:conv"
