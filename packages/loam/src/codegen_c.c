@@ -72,6 +72,7 @@ static void elem_hook_cnames(Type *elem, char *retain, size_t rc, char *release,
 /** `loam_zeus_sig_bind_vec(id, &val, …)`: a `[]T` cell keeps the reference in
  *  `val` and drops it, elements through their release hook, when it is freed. */
 static void format_ctype(char *buf, size_t cap, Type *t);
+static uint32_t handle_key(Type *t);
 
 /* `&T` / `&mut T` for an already-formatted `inner`. A shared ref to a pointer
    is `T * const *`: `const T * *` would const the pointee instead, and C has
@@ -93,8 +94,8 @@ static void emit_sig_bind_vec(FILE *o, Type *vt, const char *id, const char *val
     elem_hook_cnames(vt ? vt->elem : NULL, rr, sizeof rr, rl, sizeof rl);
     if (vt && vt->elem) format_ctype(cn, sizeof cn, vt->elem);
     else snprintf(cn, sizeof cn, "char");
-    fprintf(o, "loam_zeus_sig_bind_vec(%s, &%s, sizeof(%s), sizeof(%s), %s);", id, val, val, cn,
-            rl[0] ? rl : "NULL");
+    fprintf(o, "loam_zeus_sig_bind_vec(%s, &%s, sizeof(%s), sizeof(%s), %s, %uu);", id, val, val, cn,
+            rl[0] ? rl : "NULL", handle_key(vt));
 }
 
 /** `loam_zeus_sig_bind_owned(id, &val, …)`: a struct cell keeps the references
@@ -103,8 +104,8 @@ static void emit_sig_bind_vec(FILE *o, Type *vt, const char *id, const char *val
 static void emit_sig_bind_owned(FILE *o, Type *vt, const char *id, const char *val) {
     char rr[64], rl[64];
     elem_hook_cnames(vt, rr, sizeof rr, rl, sizeof rl);
-    fprintf(o, "loam_zeus_sig_bind_owned(%s, &%s, sizeof(%s), %s);", id, val, val,
-            rl[0] ? rl : "NULL");
+    fprintf(o, "loam_zeus_sig_bind_owned(%s, &%s, sizeof(%s), %s, %uu);", id, val, val,
+            rl[0] ? rl : "NULL", handle_key(vt));
 }
 
 /** Pre-register every element type a vec in this program will need a hook for,
@@ -398,6 +399,81 @@ static void format_ctype(char *buf, size_t cap, Type *t) {
     }
 }
 
+/* Typed handle cells (loam_rt.h): a channel, future or signal cell records
+   the key of its value type, and every access passes the key it expects.
+   The key is FNV-1a over the type's spelling: its C type, with what C erases
+   spelled in (the element of `[]T`, `[N]T` and `Box<T>`, a fn's signature, a
+   handle's `T`), resolved once in the current generic instance. Never 0,
+   which marks a cell no bind has reached. */
+static void key_feed(uint32_t *h, const char *s) {
+    for (; *s; s++) *h = (*h ^ (uint8_t)*s) * 16777619u;
+}
+
+static int is_typed_handle(const Type *t) {
+    return t->name && (strcmp(t->name, "Signal") == 0 || strcmp(t->name, "Future") == 0 ||
+                       strcmp(t->name, "Chan") == 0);
+}
+
+/* `t` inside the current generic instance, as format_ctype resolves it. */
+static Type *key_resolve(Type *t) {
+    if (t && subst_n) t = typecheck_subst(t, subst_names, subst_args, subst_n);
+    if (t && t->kind == TY_PARAM && subst_n) {
+        for (size_t i = 0; i < subst_n; i++) {
+            if (subst_names[i] && t->name && strcmp(subst_names[i], t->name) == 0 && subst_args[i])
+                return key_resolve(subst_args[i]);
+        }
+    }
+    return t;
+}
+
+/* Walks a resolved type. Its parts are not resolved again: an argument can
+   name a parameter of the same name (`T` bound to `[]T`), and substituting at
+   each level would unroll that forever. */
+static void key_walk(uint32_t *h, Type *t) {
+    char buf[256];
+    if (t && t->kind == TY_VEC) {
+        key_feed(h, "[]");
+        key_walk(h, t->elem);
+        return;
+    }
+    if (t && t->kind == TY_ARRAY) {
+        snprintf(buf, sizeof buf, "[%lld]", (long long)t->array_len);
+        key_feed(h, buf);
+        key_walk(h, t->elem);
+        return;
+    }
+    if (t && t->kind == TY_BOX) {
+        key_feed(h, "Box<");
+        key_walk(h, t->elem);
+        key_feed(h, ">");
+        return;
+    }
+    if (t && t->kind == TY_PROC) {
+        key_feed(h, "fn(");
+        for (size_t i = 0; i < t->param_count; i++) {
+            if (i) key_feed(h, ",");
+            key_walk(h, t->params[i]);
+        }
+        key_feed(h, ")");
+        if (t->ret && t->ret->kind != TY_VOID) key_walk(h, t->ret);
+        else key_feed(h, "void");
+        return;
+    }
+    format_ctype(buf, sizeof buf, t);
+    key_feed(h, buf);
+    if (t && t->kind == TY_STRUCT && is_typed_handle(t) && t->param_count > 0) {
+        key_feed(h, "<");
+        key_walk(h, t->params[0]);
+        key_feed(h, ">");
+    }
+}
+
+static uint32_t handle_key(Type *t) {
+    uint32_t h = 2166136261u;
+    key_walk(&h, key_resolve(t));
+    return h ? h : 1u;
+}
+
 static void emit_var_decl_type(FILE *o, Type *t, const char *name) {
     emit_ctype(o, t);
     fprintf(o, " %s", name);
@@ -649,18 +725,19 @@ static void emit_value_eq(FILE *o, Type *t, const char *a, const char *b) {
 static void emit_sig_changed(FILE *o, Type *t, const char *id, const char *val) {
     int k;
     if (!ve_deep(t)) {
-        fprintf(o, "loam_zeus_sig_changed(%s, &%s, sizeof(%s))", id, val, val);
+        fprintf(o, "loam_zeus_sig_changed(%s, &%s, sizeof(%s), %uu)", id, val, val, handle_key(t));
         return;
     }
     k = vk_tmp++;
-    fprintf(o, "({ int64_t _chg%d = loam_zeus_sig_changed(%s, &%s, sizeof(%s)); "
+    fprintf(o, "({ int64_t _chg%d = loam_zeus_sig_changed(%s, &%s, sizeof(%s), %uu); "
                "if (_chg%d && loam_zeus_sig_sized(%s, sizeof(%s))) { ",
-            k, id, val, val, k, id, val);
+            k, id, val, val, handle_key(t), k, id, val);
     {
         char cur[32];
         snprintf(cur, sizeof cur, "_cur%d", k);
         emit_var_decl_type(o, t, cur);
-        fprintf(o, "; loam_zeus_sig_load(%s, &%s, sizeof(%s)); _chg%d = !", id, cur, cur, k);
+        fprintf(o, "; loam_zeus_sig_load(%s, &%s, sizeof(%s), %uu); _chg%d = !", id, cur, cur,
+                handle_key(t), k);
         emit_value_eq(o, t, cur, val);
         fprintf(o, "; } _chg%d; })", k);
     }
@@ -1649,8 +1726,8 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                     /* The cell takes its own reference to the string, and is
                        released when the cell dies or changes type. */
                     fprintf(o, "{ loam_str _sigv = %s; loam_str_retain(_sigv); "
-                               "loam_zeus_sig_bind_str(%s, &_sigv, sizeof(_sigv)); }\n",
-                            lv(in->args[0]), lv(in->dst));
+                               "loam_zeus_sig_bind_str(%s, &_sigv, sizeof(_sigv), %uu); }\n",
+                            lv(in->args[0]), lv(in->dst), handle_key(vt));
                 } else if (vt && vt->kind == TY_STRUCT && type_needs_drop(vt)) {
                     /* A struct that owns strings / lists: the cell takes its own
                        reference to every owned leaf, or the caller's drop frees
@@ -1665,7 +1742,7 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                 } else {
                     fprintf(o, "loam_zeus_sig_bind(%s, &%s, sizeof(", lv(in->dst), lv(in->args[0]));
                     emit_ctype(o, vt);
-                    fprintf(o, "));\n");
+                    fprintf(o, "), %uu);\n", handle_key(vt));
                 }
                 break;
             }
@@ -1673,7 +1750,7 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                 in->nargs >= 1 && in->dst >= 0) {
                 fprintf(o, "loam_zeus_sig_load(%s, &%s, sizeof(", lv(in->args[0]), lv(in->dst));
                 emit_ctype(o, in->ty);
-                fprintf(o, "));\n");
+                fprintf(o, "), %uu);\n", handle_key(in->ty));
                 if (type_is_copy_vec(in->ty)) {
                     indent(o, 1);
                     fprintf(o, "%s = loam_vec_retain(&%s);\n", lv(in->dst), lv(in->dst));
@@ -1704,8 +1781,8 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                     indent(o, 2);
                     /* `_old` is the cell's own reference (see the expression
                        form): take the new one first, then drop it. */
-                    fprintf(o, "loam_vec _old; loam_zeus_sig_load(%s, &_old, sizeof(_old));\n",
-                            lv(in->args[0]));
+                    fprintf(o, "loam_vec _old; loam_zeus_sig_load(%s, &_old, sizeof(_old), %uu);\n",
+                            lv(in->args[0]), handle_key(vt));
                     indent(o, 2);
                     fprintf(o, "loam_vec _new = loam_vec_retain(&%s); ", lv(in->args[1]));
                     emit_sig_bind_vec(o, vt, lv(in->args[0]), "_new");
@@ -1722,12 +1799,12 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                     emit_sig_changed(o, vt, lv(in->args[0]), lv(in->args[1]));
                     fprintf(o, ") {\n");
                     indent(o, 2);
-                    fprintf(o, "loam_str _old; loam_zeus_sig_load(%s, &_old, sizeof(_old));\n",
-                            lv(in->args[0]));
+                    fprintf(o, "loam_str _old; loam_zeus_sig_load(%s, &_old, sizeof(_old), %uu);\n",
+                            lv(in->args[0]), handle_key(vt));
                     indent(o, 2);
                     fprintf(o, "loam_str _new = %s; loam_str_retain(_new); "
-                               "loam_zeus_sig_bind_str(%s, &_new, sizeof(_new));\n",
-                            lv(in->args[1]), lv(in->args[0]));
+                               "loam_zeus_sig_bind_str(%s, &_new, sizeof(_new), %uu);\n",
+                            lv(in->args[1]), lv(in->args[0]), handle_key(vt));
                     indent(o, 2);
                     fprintf(o, "loam_str_release(&_old); loam_arena_note_write(%s);\n", lv(in->args[0]));
                     indent(o, 1);
@@ -1740,8 +1817,8 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                     fprintf(o, ") {\n");
                     indent(o, 2);
                     emit_ctype(o, vt);
-                    fprintf(o, " _old; loam_zeus_sig_load(%s, &_old, sizeof(_old));\n",
-                            lv(in->args[0]));
+                    fprintf(o, " _old; loam_zeus_sig_load(%s, &_old, sizeof(_old), %uu);\n",
+                            lv(in->args[0]), handle_key(vt));
                     indent(o, 2);
                     emit_ctype(o, vt);
                     fprintf(o, " _new = %s;\n", lv(in->args[1]));
@@ -1758,10 +1835,11 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                     fprintf(o, "if (loam_zeus_sig_changed(%s, &%s, sizeof(", lv(in->args[0]),
                             lv(in->args[1]));
                     emit_ctype(o, vt);
-                    fprintf(o, "))) { loam_zeus_sig_bind(%s, &%s, sizeof(", lv(in->args[0]),
-                            lv(in->args[1]));
+                    fprintf(o, "), %uu)) { loam_zeus_sig_bind(%s, &%s, sizeof(", handle_key(vt),
+                            lv(in->args[0]), lv(in->args[1]));
                     emit_ctype(o, vt);
-                    fprintf(o, ")); loam_arena_note_write(%s); }\n", lv(in->args[0]));
+                    fprintf(o, "), %uu); loam_arena_note_write(%s); }\n", handle_key(vt),
+                            lv(in->args[0]));
                 }
                 break;
             }
@@ -1769,12 +1847,12 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                 in->nargs >= 1 && in->dst >= 0) {
                 Type *vt = in->ty;
                 if (type_is_copy_vec(vt)) {
-                    fprintf(o, "{ loam_vec _fv = loam_vec_retain(&%s); %s = loam_fut_push(&_fv, sizeof(_fv)); }\n",
-                            lv(in->args[0]), lv(in->dst));
+                    fprintf(o, "{ loam_vec _fv = loam_vec_retain(&%s); %s = loam_fut_push(&_fv, sizeof(_fv), %uu); }\n",
+                            lv(in->args[0]), lv(in->dst), handle_key(vt));
                 } else {
                     fprintf(o, "%s = loam_fut_push(&%s, sizeof(", lv(in->dst), lv(in->args[0]));
                     emit_ctype(o, vt);
-                    fprintf(o, "));\n");
+                    fprintf(o, "), %uu);\n", handle_key(vt));
                 }
                 break;
             }
@@ -1782,7 +1860,7 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                 in->nargs >= 1 && in->dst >= 0) {
                 fprintf(o, "loam_fut_load(%s, &%s, sizeof(", lv(in->args[0]), lv(in->dst));
                 emit_ctype(o, in->ty);
-                fprintf(o, "));\n");
+                fprintf(o, "), %uu);\n", handle_key(in->ty));
                 if (type_is_copy_vec(in->ty)) {
                     indent(o, 1);
                     fprintf(o, "%s = loam_vec_retain(&%s);\n", lv(in->dst), lv(in->dst));
@@ -1795,14 +1873,15 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                 if (vt && vt->kind == TY_VOID && in->args[1] >= 0 && in->args[1] < CF->nlocals)
                     vt = CF->locals[in->args[1]].ty;
                 if (type_is_copy_vec(vt)) {
-                    fprintf(o, "{ loam_vec _old; loam_fut_load(%s, &_old, sizeof(_old)); "
-                               "loam_vec _new = loam_vec_retain(&%s); loam_fut_store(%s, &_new, sizeof(_new)); "
+                    fprintf(o, "{ loam_vec _old; loam_fut_load(%s, &_old, sizeof(_old), %uu); "
+                               "loam_vec _new = loam_vec_retain(&%s); loam_fut_store(%s, &_new, sizeof(_new), %uu); "
                                "loam_vec_drop(&_old); }\n",
-                            lv(in->args[0]), lv(in->args[1]), lv(in->args[0]));
+                            lv(in->args[0]), handle_key(vt), lv(in->args[1]), lv(in->args[0]),
+                            handle_key(vt));
                 } else {
                     fprintf(o, "loam_fut_store(%s, &%s, sizeof(", lv(in->args[0]), lv(in->args[1]));
                     emit_ctype(o, vt);
-                    fprintf(o, "));\n");
+                    fprintf(o, "), %uu);\n", handle_key(vt));
                 }
                 break;
             }
@@ -1812,7 +1891,7 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                 in->nargs >= 1 && in->dst >= 0) {
                 fprintf(o, "%s = loam_ch_alloc(%s, sizeof(", lv(in->dst), lv(in->args[0]));
                 emit_ctype(o, in->ty);
-                fprintf(o, "));\n");
+                fprintf(o, "), %uu);\n", handle_key(in->ty));
                 break;
             }
             if (in->op == IR_CALL && in->callee && strcmp(in->callee, "loam_ch_send") == 0 &&
@@ -1823,8 +1902,8 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                 fprintf(o, "loam_ch_send%s(%s, &%s, sizeof(", rr[0] ? "_owned" : "",
                         lv(in->args[0]), lv(in->args[1]));
                 emit_ctype(o, in->ty);
-                if (rr[0]) fprintf(o, "), %s);\n", rr);
-                else fprintf(o, "));\n");
+                if (rr[0]) fprintf(o, "), %s, %uu);\n", rr, handle_key(in->ty));
+                else fprintf(o, "), %uu);\n", handle_key(in->ty));
                 break;
             }
             if (in->op == IR_CALL && in->callee && strcmp(in->callee, "loam_ch_try_send") == 0 &&
@@ -1835,22 +1914,22 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                 fprintf(o, "%s = loam_ch_try_send%s(%s, &%s, sizeof(", lv(in->dst),
                         rr[0] ? "_owned" : "", lv(in->args[0]), lv(in->args[1]));
                 emit_ctype(o, in->ty);
-                if (rr[0]) fprintf(o, "), %s);\n", rr);
-                else fprintf(o, "));\n");
+                if (rr[0]) fprintf(o, "), %s, %uu);\n", rr, handle_key(in->ty));
+                else fprintf(o, "), %uu);\n", handle_key(in->ty));
                 break;
             }
             if (in->op == IR_CALL && in->callee && strcmp(in->callee, "loam_ch_recv") == 0 &&
                 in->nargs >= 1 && in->dst >= 0) {
                 fprintf(o, "loam_ch_recv(%s, &%s, sizeof(", lv(in->args[0]), lv(in->dst));
                 emit_ctype(o, in->ty);
-                fprintf(o, "));\n");
+                fprintf(o, "), %uu);\n", handle_key(in->ty));
                 break;
             }
             if (in->op == IR_CALL && in->callee && strcmp(in->callee, "loam_ch_pop") == 0 &&
                 in->nargs >= 1 && in->dst >= 0) {
                 fprintf(o, "loam_ch_pop(%s, &%s, sizeof(", lv(in->args[0]), lv(in->dst));
                 emit_ctype(o, in->ty);
-                fprintf(o, "));\n");
+                fprintf(o, "), %uu);\n", handle_key(in->ty));
                 break;
             }
             if (in->op == IR_CALL && in->callee && strcmp(in->callee, "loam_ch_ready") == 0 &&

@@ -52,6 +52,9 @@ typedef struct {
     /* Set for a struct payload with owned leaves: drops the value in place
        (the compiler's per-type release hook) when the cell is freed. */
     loam_elem_fn drop;
+    /* The value type's key, set by the first bind; 0 until then and after
+       the cell is freed (typed handle cells, zeus_rt.h). */
+    uint32_t key;
 } ZeusCell;
 
 static ZeusCell *g_cells;
@@ -79,12 +82,19 @@ static void cell_grow(int64_t id) {
     g_ncells = need;
 }
 
-void loam_zeus_sig_bind(int64_t id, const void *src, int64_t n) {
+/* A cell bound at one type and reached through a handle of another. */
+static void cell_check(const ZeusCell *c, uint32_t key) {
+    if (__builtin_expect(c->key != key && c->key != 0, 0)) loam_handle_wrong_type("signal");
+}
+
+void loam_zeus_sig_bind(int64_t id, const void *src, int64_t n, uint32_t key) {
     ZeusCell *c;
     size_t nn;
     if (id < 0 || n < 0) return;
     cell_grow(id);
     c = &g_cells[id];
+    cell_check(c, key);
+    c->key = key;
     nn = (size_t)n;
     if (c->n != nn) {
         free(c->p);
@@ -107,16 +117,17 @@ void loam_zeus_sig_bind(int64_t id, const void *src, int64_t n) {
 /* Bind an owned string: the cell keeps a reference and releases it when the
    cell is freed or rebound to another type. The caller has already taken the
    reference (`loam_str_retain`) and released the one the cell held. */
-void loam_zeus_sig_bind_str(int64_t id, const void *src, int64_t n) {
-    loam_zeus_sig_bind(id, src, n);
+void loam_zeus_sig_bind_str(int64_t id, const void *src, int64_t n, uint32_t key) {
+    loam_zeus_sig_bind(id, src, n, key);
     if (id >= 0 && (size_t)id < g_ncells) g_cells[id].owns_str = 1;
 }
 
 /* Bind a `loam_vec` handle: the cell keeps the reference the caller took and
    drops it when the cell is freed. `esz` and `rel` are the element size and
    release hook, as `loam_vec_drop_owned` takes them. */
-void loam_zeus_sig_bind_vec(int64_t id, const void *src, int64_t n, int64_t esz, loam_elem_fn rel) {
-    loam_zeus_sig_bind(id, src, n);
+void loam_zeus_sig_bind_vec(int64_t id, const void *src, int64_t n, int64_t esz, loam_elem_fn rel,
+                            uint32_t key) {
+    loam_zeus_sig_bind(id, src, n, key);
     if (id >= 0 && (size_t)id < g_ncells && n == (int64_t)sizeof(loam_vec)) {
         g_cells[id].owns_vec = 1;
         g_cells[id].vec_esz = (size_t)esz;
@@ -127,26 +138,29 @@ void loam_zeus_sig_bind_vec(int64_t id, const void *src, int64_t n, int64_t esz,
 /* Bind a value that owns strings / lists (a struct): the cell keeps the
    references the caller took for it, and `drop` releases them when the cell
    is freed. */
-void loam_zeus_sig_bind_owned(int64_t id, const void *src, int64_t n, loam_elem_fn drop) {
-    loam_zeus_sig_bind(id, src, n);
+void loam_zeus_sig_bind_owned(int64_t id, const void *src, int64_t n, loam_elem_fn drop,
+                              uint32_t key) {
+    loam_zeus_sig_bind(id, src, n, key);
     if (id >= 0 && (size_t)id < g_ncells) g_cells[id].drop = drop;
 }
 
-void loam_zeus_sig_load(int64_t id, void *dst, int64_t n) {
+void loam_zeus_sig_load(int64_t id, void *dst, int64_t n, uint32_t key) {
     size_t nn, k;
     if (!dst || n <= 0) return;
     nn = (size_t)n;
     memset(dst, 0, nn);
     if (id < 0 || (size_t)id >= g_ncells) return;
     if (!g_cells[id].p) return;
+    cell_check(&g_cells[id], key);
     k = g_cells[id].n < nn ? g_cells[id].n : nn;
     memcpy(dst, g_cells[id].p, k);
 }
 
-int64_t loam_zeus_sig_changed(int64_t id, const void *src, int64_t n) {
+int64_t loam_zeus_sig_changed(int64_t id, const void *src, int64_t n, uint32_t key) {
     if (id < 0 || !src || n <= 0) return 1;
-    if ((size_t)id >= g_ncells || !g_cells[id].p || g_cells[id].n != (size_t)n)
-        return 1;
+    if ((size_t)id >= g_ncells || !g_cells[id].p) return 1;
+    cell_check(&g_cells[id], key);
+    if (g_cells[id].n != (size_t)n) return 1;
     return memcmp(g_cells[id].p, src, (size_t)n) != 0;
 }
 
@@ -175,7 +189,7 @@ Signal loam_zeus_signal(int64_t value) {
     loam_arena_ensure();
     s.id = sig_slot_zero();
     ((int32_t *)loam_arena_sigs.ptr)[s.id] = v32;
-    loam_zeus_sig_bind(s.id, &v32, (int64_t)sizeof(v32));
+    loam_zeus_sig_bind(s.id, &v32, (int64_t)sizeof(v32), LOAM_HANDLE_KEY_INT);
     return s;
 }
 
@@ -183,7 +197,7 @@ int64_t loam_zeus_get(Signal sig) {
     int32_t v = 0;
     loam_arena_ensure();
     loam_track_note_read(sig.id);
-    loam_zeus_sig_load(sig.id, &v, (int64_t)sizeof(v));
+    loam_zeus_sig_load(sig.id, &v, (int64_t)sizeof(v), LOAM_HANDLE_KEY_INT);
     return (int64_t)v;
 }
 
@@ -194,7 +208,7 @@ void loam_zeus_set(Signal sig, int64_t value) {
 
 void loam_runtime_sig_bind_int(int64_t id, int64_t value) {
     int32_t v32 = (int32_t)value;
-    loam_zeus_sig_bind(id, &v32, (int64_t)sizeof(v32));
+    loam_zeus_sig_bind(id, &v32, (int64_t)sizeof(v32), LOAM_HANDLE_KEY_INT);
 }
 
 int64_t loam_runtime_sig_gen(int64_t id) {
@@ -255,7 +269,7 @@ int64_t loam_zeus_sig_alloc_int(int64_t value) {
     int32_t v32 = (int32_t)value;
     int64_t id = sig_slot_zero();
     ((int32_t *)loam_arena_sigs.ptr)[id] = v32;
-    loam_zeus_sig_bind(id, &v32, sizeof(v32));
+    loam_zeus_sig_bind(id, &v32, sizeof(v32), LOAM_HANDLE_KEY_INT);
     return id;
 }
 
@@ -281,6 +295,7 @@ void loam_zeus_sig_free(int64_t id) {
     g_cells[id].owns_str = 0;
     g_cells[id].owns_vec = 0;
     g_cells[id].drop = NULL;
+    g_cells[id].key = 0;
     free_sig_push(id);
 }
 

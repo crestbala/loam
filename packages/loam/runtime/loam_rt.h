@@ -2341,6 +2341,20 @@ static inline int64_t loam_sys_watch_close(int64_t fd) {
 #endif
 #endif
 
+/* --- typed handle cells -------------------------------------------------
+   `Future<T>`, `Chan<T>` and `Signal<T>` are plain `{ id: int }` structs, so a
+   program can build one at any `T`. Each cell records the key of the type it
+   was made for (a hash of the type's spelling, a constant in the generated
+   C; never 0), and every access passes the key it expects. A mismatch is a
+   forged handle: reading the cell's bytes as another type could take an int
+   for a pointer, so it panics instead. */
+__attribute__((noinline, noreturn, cold, unused)) static void loam_handle_wrong_type(const char *what) {
+    char msg[96];
+    snprintf(msg, sizeof msg, "%s handle used at the wrong type", what);
+    loam_panic(__FILE__, __LINE__, msg);
+    abort();
+}
+
 /* --- async: std/async.loam. Timers/queues live in Loam; the C seam is a  ---
    --- monotonic clock, a blocking sleep, and typed Future<T> mailboxes.  --- */
 
@@ -2348,13 +2362,14 @@ typedef struct {
     void *ptr;
     size_t sz;
     int64_t ready;
+    uint32_t key; /* the value type's key (typed handle cells, above) */
 } loam_fut_slot;
 
 LOAM_RT_STATE loam_fut_slot *loam_fut_slots;
 LOAM_RT_STATE size_t loam_fut_n;
 LOAM_RT_STATE size_t loam_fut_cap;
 
-static inline int64_t loam_fut_push(const void *val, size_t sz) {
+static inline int64_t loam_fut_push(const void *val, size_t sz, uint32_t key) {
     loam_fut_slot s;
     if (loam_fut_n == loam_fut_cap) {
         size_t nc = loam_fut_cap ? loam_fut_cap * 2 : 16;
@@ -2365,6 +2380,7 @@ static inline int64_t loam_fut_push(const void *val, size_t sz) {
     }
     s.sz = sz;
     s.ready = 0;
+    s.key = key;
     s.ptr = malloc(sz ? sz : 1);
     if (!s.ptr) loam_panic(__FILE__, __LINE__, "out of memory");
     if (val && sz) memcpy(s.ptr, val, sz);
@@ -2387,20 +2403,22 @@ static inline void loam_fut_clear(int64_t id) {
     loam_fut_slots[id].ready = 0;
 }
 
-static inline void loam_fut_load(int64_t id, void *out, size_t sz) {
+static inline void loam_fut_load(int64_t id, void *out, size_t sz, uint32_t key) {
     size_t n;
     if (!out) return;
     if (!loam_fut_live(id)) {
         memset(out, 0, sz);
         return;
     }
+    if (__builtin_expect(loam_fut_slots[id].key != key, 0)) loam_handle_wrong_type("future");
     n = sz < loam_fut_slots[id].sz ? sz : loam_fut_slots[id].sz;
     if (n) memcpy(out, loam_fut_slots[id].ptr, n);
     if (sz > n) memset((char *)out + n, 0, sz - n);
 }
 
-static inline void loam_fut_store(int64_t id, const void *val, size_t sz) {
+static inline void loam_fut_store(int64_t id, const void *val, size_t sz, uint32_t key) {
     if (!loam_fut_live(id) || !val) return;
+    if (__builtin_expect(loam_fut_slots[id].key != key, 0)) loam_handle_wrong_type("future");
     if (sz != loam_fut_slots[id].sz) {
         free(loam_fut_slots[id].ptr);
         loam_fut_slots[id].ptr = malloc(sz ? sz : 1);
@@ -2449,6 +2467,7 @@ LOAM_RT_STATE pthread_mutex_t loam_thread_mtx LOAM_RT_INIT(PTHREAD_MUTEX_INITIAL
 typedef struct {
     unsigned char *buf;     /* cap * esz ring */
     size_t esz;             /* payload byte size (sizeof T) */
+    uint32_t key;           /* the payload type's key (typed handle cells) */
     int64_t cap;            /* slots */
     int64_t head;           /* first live slot */
     int64_t count;          /* live slots */
@@ -2460,7 +2479,7 @@ LOAM_RT_STATE loam_ch **loam_chs;
 LOAM_RT_STATE size_t loam_ch_n, loam_ch_cap;
 LOAM_RT_STATE pthread_mutex_t loam_ch_tab_mtx LOAM_RT_INIT(PTHREAD_MUTEX_INITIALIZER);
 
-static int64_t loam_ch_alloc(int64_t cap, size_t esz) {
+static int64_t loam_ch_alloc(int64_t cap, size_t esz, uint32_t key) {
     loam_ch *c;
     size_t i;
     if (cap < 1) cap = 1;
@@ -2468,6 +2487,7 @@ static int64_t loam_ch_alloc(int64_t cap, size_t esz) {
     c = (loam_ch *)loam_new(sizeof(loam_ch), "channel", 0);
     c->buf = (unsigned char *)loam_new((size_t)cap * esz, "channel", 0);
     c->esz = esz;
+    c->key = key;
     c->cap = cap;
     c->head = 0;
     c->count = 0;
@@ -2489,7 +2509,11 @@ static int64_t loam_ch_alloc(int64_t cap, size_t esz) {
     return (int64_t)i;
 }
 
-static inline loam_ch *loam_ch_get(int64_t id) {
+/* The channel `id` names, checked against the payload type the caller holds
+   (typed handle cells, above). `key` 0 skips the check: `ready` only reports
+   a count. The key never changes after `loam_ch_alloc`, so the compare needs
+   no lock; doing it here keeps each op at one call. */
+static inline loam_ch *loam_ch_get(int64_t id, uint32_t key) {
     loam_ch *c;
     /* Readers may run on worker threads while the UI thread grows the table
        (realloc). Lock the table for the fetch so the entry pointer is read
@@ -2500,11 +2524,12 @@ static inline loam_ch *loam_ch_get(int64_t id) {
     else
         c = loam_chs[(size_t)id];
     pthread_mutex_unlock(&loam_ch_tab_mtx);
+    if (__builtin_expect(c && key && c->key != key, 0)) loam_handle_wrong_type("channel");
     return c;
 }
 
-static inline void loam_ch_send(int64_t id, const void *val, size_t sz) {
-    loam_ch *c = loam_ch_get(id);
+static inline void loam_ch_send(int64_t id, const void *val, size_t sz, uint32_t key) {
+    loam_ch *c = loam_ch_get(id, key);
     if (!c || !val) return;
     pthread_mutex_lock(&c->mtx);
     while (c->count == c->cap) pthread_cond_wait(&c->has_space, &c->mtx);
@@ -2516,8 +2541,8 @@ static inline void loam_ch_send(int64_t id, const void *val, size_t sz) {
     pthread_mutex_unlock(&c->mtx);
 }
 
-static inline int64_t loam_ch_try_send(int64_t id, const void *val, size_t sz) {
-    loam_ch *c = loam_ch_get(id);
+static inline int64_t loam_ch_try_send(int64_t id, const void *val, size_t sz, uint32_t key) {
+    loam_ch *c = loam_ch_get(id, key);
     if (!c || !val) return 0;
     pthread_mutex_lock(&c->mtx);
     if (c->count == c->cap) {
@@ -2533,8 +2558,8 @@ static inline int64_t loam_ch_try_send(int64_t id, const void *val, size_t sz) {
     return 1;
 }
 
-static inline void loam_ch_recv(int64_t id, void *out, size_t sz) {
-    loam_ch *c = loam_ch_get(id);
+static inline void loam_ch_recv(int64_t id, void *out, size_t sz, uint32_t key) {
+    loam_ch *c = loam_ch_get(id, key);
     if (!c || !out) return;
     pthread_mutex_lock(&c->mtx);
     while (c->count == 0) pthread_cond_wait(&c->has_data, &c->mtx);
@@ -2546,8 +2571,8 @@ static inline void loam_ch_recv(int64_t id, void *out, size_t sz) {
     pthread_mutex_unlock(&c->mtx);
 }
 
-static inline int64_t loam_ch_pop(int64_t id, void *out, size_t sz) {
-    loam_ch *c = loam_ch_get(id);
+static inline int64_t loam_ch_pop(int64_t id, void *out, size_t sz, uint32_t key) {
+    loam_ch *c = loam_ch_get(id, key);
     if (!c || !out) return 0;
     pthread_mutex_lock(&c->mtx);
     if (c->count == 0) {
@@ -2570,8 +2595,8 @@ static inline int64_t loam_ch_pop(int64_t id, void *out, size_t sz) {
    it). A payload still queued when the channel dies is not released — bounded,
    and only when a producer enqueues what no consumer drains. */
 static inline void loam_ch_send_owned(int64_t id, const void *val, size_t sz,
-                                      loam_elem_fn retain) {
-    loam_ch *c = loam_ch_get(id);
+                                      loam_elem_fn retain, uint32_t key) {
+    loam_ch *c = loam_ch_get(id, key);
     if (!c || !val) return;
     pthread_mutex_lock(&c->mtx);
     while (c->count == c->cap) pthread_cond_wait(&c->has_space, &c->mtx);
@@ -2585,8 +2610,8 @@ static inline void loam_ch_send_owned(int64_t id, const void *val, size_t sz,
 }
 
 static inline int64_t loam_ch_try_send_owned(int64_t id, const void *val, size_t sz,
-                                             loam_elem_fn retain) {
-    loam_ch *c = loam_ch_get(id);
+                                             loam_elem_fn retain, uint32_t key) {
+    loam_ch *c = loam_ch_get(id, key);
     if (!c || !val) return 0;
     pthread_mutex_lock(&c->mtx);
     if (c->count == c->cap) {
@@ -2604,7 +2629,7 @@ static inline int64_t loam_ch_try_send_owned(int64_t id, const void *val, size_t
 }
 
 static inline int64_t loam_ch_ready(int64_t id) {
-    loam_ch *c = loam_ch_get(id);
+    loam_ch *c = loam_ch_get(id, 0);
     int64_t r;
     if (!c) return 0;
     pthread_mutex_lock(&c->mtx);
@@ -2655,30 +2680,44 @@ static inline int64_t loam_thread_running(void) {
     return n;
 }
 #else /* __wasm32__: no threads; channel ops are inert so std:thread compiles */
-static inline int64_t loam_ch_alloc(int64_t cap, size_t esz) {
+/* The key is unused: an inert channel holds no bytes to misread. */
+static inline int64_t loam_ch_alloc(int64_t cap, size_t esz, uint32_t key) {
     (void)cap;
     (void)esz;
+    (void)key;
     return -1;
 }
-static inline void loam_ch_send(int64_t id, const void *val, size_t sz) {
+static inline void loam_ch_send(int64_t id, const void *val, size_t sz, uint32_t key) {
     (void)id;
     (void)val;
     (void)sz;
+    (void)key;
 }
-static inline int64_t loam_ch_try_send(int64_t id, const void *val, size_t sz) {
+static inline int64_t loam_ch_try_send(int64_t id, const void *val, size_t sz, uint32_t key) {
     (void)id;
     (void)val;
     (void)sz;
+    (void)key;
     return 0;
 }
-static inline void loam_ch_recv(int64_t id, void *out, size_t sz) {
+static inline void loam_ch_send_owned(int64_t id, const void *val, size_t sz,
+                                      loam_elem_fn retain, uint32_t key) {
+    (void)retain;
+    loam_ch_send(id, val, sz, key);
+}
+static inline int64_t loam_ch_try_send_owned(int64_t id, const void *val, size_t sz,
+                                             loam_elem_fn retain, uint32_t key) {
+    (void)retain;
+    return loam_ch_try_send(id, val, sz, key);
+}
+static inline void loam_ch_recv(int64_t id, void *out, size_t sz, uint32_t key) {
     (void)id;
-    (void)sz;
+    (void)key;
     if (out) memset(out, 0, sz);
 }
-static inline int64_t loam_ch_pop(int64_t id, void *out, size_t sz) {
+static inline int64_t loam_ch_pop(int64_t id, void *out, size_t sz, uint32_t key) {
     (void)id;
-    (void)sz;
+    (void)key;
     if (out) memset(out, 0, sz);
     return 0;
 }

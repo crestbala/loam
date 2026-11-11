@@ -40,18 +40,27 @@ void loam_zeus_sig_free(int64_t id);
 int64_t loam_zeus_get(Signal sig);
 void loam_zeus_set(Signal sig, int64_t value);
 
-void loam_zeus_sig_bind(int64_t id, const void *src, int64_t n);
+/* Typed cells: `key` is the value type's key, as the generated C spells it
+   (typed handle cells in loam_rt.h). The first bind records it; every later
+   bind, load and change test must pass the same key, or the handle was forged
+   at another type and the call panics. A cell no bind has reached loads as
+   zeros at any type. */
+/* The key of `int` (`int32_t`), for the runtime's own int-signal paths. */
+#define LOAM_HANDLE_KEY_INT 3226083260u
+void loam_zeus_sig_bind(int64_t id, const void *src, int64_t n, uint32_t key);
 /* Bind an owned `loam_str` payload: the cell keeps a reference and releases it
-   when the cell dies or is rebound to another type (see zeus_plat.c). */
-void loam_zeus_sig_bind_str(int64_t id, const void *src, int64_t n);
+   when the cell dies (see zeus_plat.c). */
+void loam_zeus_sig_bind_str(int64_t id, const void *src, int64_t n, uint32_t key);
 /* Bind a `loam_vec` handle: the cell keeps a reference and drops it (elements
    through `rel`) when the cell is freed. */
-void loam_zeus_sig_bind_vec(int64_t id, const void *src, int64_t n, int64_t esz, loam_elem_fn rel);
+void loam_zeus_sig_bind_vec(int64_t id, const void *src, int64_t n, int64_t esz, loam_elem_fn rel,
+                            uint32_t key);
 /* Bind a struct that owns strings / lists: `drop` releases them when the cell
    is freed. */
-void loam_zeus_sig_bind_owned(int64_t id, const void *src, int64_t n, loam_elem_fn drop);
-void loam_zeus_sig_load(int64_t id, void *dst, int64_t n);
-int64_t loam_zeus_sig_changed(int64_t id, const void *src, int64_t n);
+void loam_zeus_sig_bind_owned(int64_t id, const void *src, int64_t n, loam_elem_fn drop,
+                              uint32_t key);
+void loam_zeus_sig_load(int64_t id, void *dst, int64_t n, uint32_t key);
+int64_t loam_zeus_sig_changed(int64_t id, const void *src, int64_t n, uint32_t key);
 int64_t loam_zeus_sig_sized(int64_t id, int64_t n);
 int64_t loam_zeus_sig_gen(int64_t id);
 

@@ -1,0 +1,26 @@
+// A `Signal<T>` handle is a plain `{ id: int }`, and apps build them
+// (`Signal { id: 0 }` placeholders), so the cell checks instead: it records
+// its value type when it is bound, and every load and store compares. Reading
+// `Signal<string>` over a signal of a two-`i64` struct panics instead of
+// taking the pair as a string's pointer and length. `.trap` holds the message.
+import "std:fmt"
+import "zeus"
+
+struct Pair {
+    addr: i64,
+    n: i64,
+}
+
+fn read(s: Signal<string>) -> string {
+    return s.get()
+}
+
+fn main() {
+    let pair = zeus.signal(Pair { addr: i64(4096), n: i64(64) })
+    fmt.println(pair.get().n)
+    let empty = Signal<string> { id: 0 }
+    fmt.println(read(empty).len)
+    let s = read(Signal<string> { id: pair.id })
+    fmt.println(s.len)
+    fmt.println(s[3])
+}

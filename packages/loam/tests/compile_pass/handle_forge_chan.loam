@@ -1,0 +1,28 @@
+// A `Chan<T>` handle is a plain `{ id: int }`, so a program can build one at
+// any element type. The channel records its element type when it is made, and
+// every send and receive checks it: forging `Chan<string>` over a channel of
+// two `i64`s panics instead of reading the pair back as a string's pointer
+// and length (that read address 4099 before). `.trap` holds the message.
+import "std:fmt"
+import "std:thread"
+import { Chan } "std:thread"
+
+struct Pair {
+    addr: i64,
+    n: i64,
+}
+
+fn take(c: Chan<string>) -> string {
+    return c.try_recv()
+}
+
+fn main() {
+    let pairs = thread.chan(4, Pair { addr: i64(0), n: i64(0) })
+    pairs.try_send(Pair { addr: i64(4096), n: i64(64) })
+    let back = pairs.try_recv()
+    fmt.println(back.n)
+    pairs.try_send(Pair { addr: i64(4096), n: i64(64) })
+    let s = take(Chan<string> { id: pairs.id })
+    fmt.println(s.len)
+    fmt.println(s[3])
+}
