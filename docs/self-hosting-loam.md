@@ -1182,8 +1182,11 @@ beyond what the checklist requires.
         a type naming a parameter is substituted (`subst_type` allocates a
         new type per call); each local's spelling is made once per fn; the
         text streams out in 64 KB pieces.
-- [ ] Driver (module loading, package resolution, `cc` invocation) in Loam
-      (phase 10). Plan: 10a the loader (`compile.c`, `pkgresolve.c`); 10b
+- [x] Driver (module loading, package resolution, `cc` invocation) in Loam
+      (phase 10). Done for host builds (10c closed 2026-11-11, numbers at the
+      end of this item). The refused builds (wasm, iOS, Android, `--cost`,
+      batch, shard, server split, `LOAM_HOST`) are ported under Next changes
+      4, before the C compiler goes. Plan: 10a the loader (`compile.c`, `pkgresolve.c`); 10b
       `compiler/loamc.loam`, the whole pipeline in one process with `-o`,
       `--emit-c`, `--check` and the `cc` calls (host targets only: wasm, iOS,
       Android, shards, `--cost` and the LSP stay C until after the fixed
@@ -1391,7 +1394,28 @@ beyond what the checklist requires.
           in `runtime/`; `LOAM_NO_FRESH`; a deleted output. `check` and
           `--emit-c` must leave no stamp. The `fresh_cache` stanza runs the
           cases on the seed, and `selfhost_driver` on stage 1.
-- [ ] Compiler itself uses only safe Loam (arenas + integer indices; §2.7)
+      - 10c closed. The whole pipeline, one process per run, best of 5,
+        C compiler vs Loam compiler (macOS arm64, 2026-11-11):
+
+        | entry | check | `--emit-c` | peak RSS check / emit |
+        |---|---|---|---|
+        | `zeus_show` | 0.23 vs 0.17 s | 0.36 vs 0.25 s | 65 vs 68 / 114 vs 99 MB |
+        | dracula | 0.31 vs 0.23 s | 0.55 vs 0.37 s | 85 vs 84 / 156 vs 150 MB |
+        | the compiler | 0.09 vs 0.07 s | 0.20 vs 0.14 s | 27 vs 37 / 62 vs 60 MB |
+
+        Faster everywhere; memory at or under C's except `check` on the
+        compiler itself (+10 MB). That one entry's peak is the 4× growth of
+        its arenas past 256 KB (see the vec growth note above): over-reserved
+        but small, and `--emit-c`, the run that builds anything, is under C.
+- [x] Compiler itself uses only safe Loam (arenas + integer indices; §2.7).
+      Audited 2026-11-11 over `packages/loam/compiler/`: no `#[c]` fn, no
+      `#![c_source]` / `#![c_link]` (the matches are strings it parses or
+      emits for user programs); the AST, types, IR and scopes are arenas of
+      plain structs addressed by `int`, with `Box` only in a few fields
+      (allowed by §2.7); the C it trusts is the shared runtime and std hooks,
+      which every Loam program trusts (§6). One `sys.exec`, a fixed
+      `pkg-config` string for raylib with nothing interpolated; S4 replaces it
+      with a spawn that captures output.
 
 ### Fixed-point and tooling
 Checked on a fresh `git clone` of `e5c0657` (macOS, 2026-11-10): `./nob.sh`
@@ -1521,10 +1545,8 @@ the last list: §5.2 S0, typed handle cells (2026-11-11).
    builds from the checkout alone. Left: run the selfhost workflow, then
    tick the fresh-checkout box and §3 "Stage 0 seed". S10 (reproducible seed)
    can later check the lagging seed against the sources it was made from.
-2. Finish phase 10c (the Driver box under Compiler port): speed and memory
-   parity of the whole pipeline against the C driver, then tick it.
-3. Audit that the compiler uses only safe Loam (arenas + integer indices;
-   §2.7) and tick that box.
+2. Done (2026-11-11): phase 10c, whole-pipeline parity (Driver box).
+3. Done (2026-11-11): the compiler uses only safe Loam (§2.7 box).
 4. Make the Loam `loamc` the default and delete the C compiler: the seed
    is the Loam compiler's committed C (item 1), not the C sources (§4 step
    7). The per-pass `selfhost_*` stanzas go with it; the fixed point stays.
