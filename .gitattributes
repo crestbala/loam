@@ -2,3 +2,7 @@
 # .loam sources are pasted into it or read for positions: check text files out
 # with LF everywhere, Windows included (git would otherwise write CRLF there).
 * text=auto eol=lf
+
+# The stage-0 seed (`nob seed`): generated, 4 MB. Text with LF like the rest,
+# but no line diff in `git diff` / reviews when it is refreshed.
+bootstrap/loamc.c linguist-generated -diff

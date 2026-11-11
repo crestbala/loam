@@ -11,10 +11,38 @@
 #
 # The flags build the *seed* compiler in one shot. Keep them in sync with
 # `cflags()` in nob.loam, which owns the incremental object build from then on.
+#
+# On Windows (MSYS2 / MinGW) the C compiler's driver.c is POSIX and does not
+# build, so bin/loamc is built from bootstrap/loamc.c instead: the Loam
+# compiler's own generated C, committed (`nob seed` regenerates it). It finds
+# std and the runtime from its own path (<root>/bin/loamc), so the C holds no
+# absolute paths. `nob` itself does not run there (`sys.exec` goes through
+# cmd.exe, and nob's commands are POSIX sh), so this stops after bin/loamc.
 set -e
 
 ROOT=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 cd "$ROOT"
+
+case "$(uname -s)" in
+MINGW* | MSYS* | CYGWIN*)
+  if [ ! -x bin/loamc.exe ] || [ bootstrap/loamc.c -nt bin/loamc.exe ]; then
+    mkdir -p bin
+    cc=${CC:-cc}
+    command -v "${cc%% *}" >/dev/null 2>&1 || cc=gcc
+    echo "  cc  bin/loamc (from bootstrap/loamc.c)"
+    # The flags the Loam driver builds a program with (copt_flags in
+    # packages/loam/compiler/loamc.loam); -w because the C is generated.
+    # shellcheck disable=SC2086
+    $cc -std=gnu99 -O1 -fno-asynchronous-unwind-tables -fomit-frame-pointer -ffp-contract=off \
+      -w -DLOAM_STRING_OWNS bootstrap/loamc.c -o bin/loamc.exe -lm
+  fi
+  if [ $# -gt 0 ]; then
+    echo "nob.sh: only the build runs on Windows (nob needs a POSIX shell for sys.exec)" >&2
+    exit 2
+  fi
+  exit 0
+  ;;
+esac
 
 # Rebuild when missing *or* stale: `nob.loam` imports std, which may use syntax
 # only the current sources understand, so an old binary cannot build `nob`.

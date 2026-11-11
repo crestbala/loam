@@ -12,6 +12,7 @@
 //     nob integration      the zeli/serve/pkg/fmt suite (slow; on demand)
 //     nob selfhost [s]     the Loam compiler against the C one, stage by stage,
 //                          and the fixed point (not in `test`; CI runs it)
+//     nob seed             regenerate bootstrap/loamc.c, the Loam compiler's C
 //     nob lsp              build the language server (and its objects) only
 //     nob bench            build, then run packages/loam/tests/bench/run.sh
 //     nob grammar          regenerate, check and publish the tree-sitter grammar
@@ -2776,6 +2777,87 @@ fn ig_fresh_cache() {
     ok("fresh cache: reuse and every rebuild case on the seed")
 }
 
+/** *Where the stage-0 seed lives: the Loam compiler's generated C, committed */
+/** *so a checkout builds `loamc` with only a C compiler (Windows does; see */
+/** *nob.sh). It lags: `nob seed` refreshes it only when it can no longer */
+/** *build the current compiler, so everyday commits carry no 4 MB diff. */
+fn seed_path() -> string {
+    return "{{ROOT}}/bootstrap/loamc.c"
+}
+
+/** *`nob seed`: write the current compiler's C to bootstrap/loamc.c. From the */
+/** *root with a relative path, so its `#line`s are repo-relative. */
+fn seed() -> int {
+    if build("all") != 0 {
+        fmt.println("nob: build failed; seed not written")
+        return 1
+    }
+    sys.mkdir("{{ROOT}}/bootstrap")
+    let before = sys.read_file(seed_path())
+    let o = sys.exec("cd {{shq(ROOT)}} && {{shq(LOAMC)}} --emit-c packages/loam/compiler/loamc.loam -o bootstrap/loamc.c 2>&1")
+    if sys.exec_status() != 0 {
+        fmt.println(o)
+        fmt.println("nob: seed: --emit-c of the compiler failed")
+        return 1
+    }
+    let after = sys.read_file(seed_path())
+    let what = if before == after { "unchanged" } else { "updated" }
+    fmt.println("nob: bootstrap/loamc.c {{what}} ({{after.len}} bytes)")
+    return 0
+}
+
+/** *The committed seed still bootstraps: `cc` builds it, it builds the */
+/** *current compiler (stage 1), and stage 1 emits for itself the same C the */
+/** *seed emits for it, so stage 2 (built from that C) is stage 1: the fixed */
+/** *point. That C must also be what the C compiler emits. The seed may lag */
+/** *the sources; the verdict says whether it does. */
+fn ig_selfhost_seed() {
+    mark("selfhost seed")
+    if sys.exists(seed_path()) == 0 {
+        bad("selfhost seed (no bootstrap/loamc.c; run nob seed)", "")
+        return
+    }
+    let tmpl = tmpf("selfhost_seed.XXXXXX")
+    let d = trim(sys.exec("mkdir -p {{shq(TMP)}} && mktemp -d {{shq(tmpl)}}"))
+    if sys.exec_status() != 0 || d.len == 0 {
+        bad("selfhost seed (mktemp)", d)
+        return
+    }
+    let home = "cd {{shq(ROOT)}} && export LOAM_HOME={{shq(ROOT)}} &&"
+    let seed_bin = "{{d}}/seed"
+    let stage1 = "{{d}}/loamc1"
+    let compiler = "packages/loam/compiler/loamc.loam"
+    // The flags nob.sh builds the seed with on Windows.
+    let o = sys.exec("{{home}} cc -std=gnu99 -O1 -fno-asynchronous-unwind-tables -fomit-frame-pointer -ffp-contract=off -w -DLOAM_STRING_OWNS bootstrap/loamc.c -o {{shq(seed_bin)}} -lm 2>&1")
+    if sys.exec_status() != 0 {
+        sys.exec("rm -rf {{shq(d)}}")
+        bad("selfhost seed (cc bootstrap/loamc.c)", o)
+        return
+    }
+    let o1 = sys.exec("{{home}} {{shq(seed_bin)}} --emit-c {{compiler}} -o {{shq(d)}}/seed.c 2>&1 && {{shq(seed_bin)}} {{compiler}} -o {{shq(stage1)}} 2>&1")
+    if sys.exec_status() != 0 {
+        sys.exec("rm -rf {{shq(d)}}")
+        bad("selfhost seed (the seed cannot build the current compiler; run nob seed)", o1)
+        return
+    }
+    let o2 = sys.exec("{{home}} {{shq(stage1)}} --emit-c {{compiler}} -o {{shq(d)}}/s1.c 2>&1 && {{shq(LOAMC)}} --emit-c {{compiler}} -o {{shq(d)}}/s0.c 2>&1")
+    let fixed = sys.exec_status() == 0 && sys.read_file("{{d}}/seed.c") == sys.read_file("{{d}}/s1.c")
+    let same_as_c = fixed && sys.read_file("{{d}}/s0.c") == sys.read_file("{{d}}/s1.c")
+    let current = sys.read_file(seed_path()) == sys.read_file("{{d}}/s1.c")
+    let bytes = sys.read_file("{{d}}/s1.c").len
+    sys.exec("rm -rf {{shq(d)}}")
+    if !fixed {
+        bad("selfhost seed (stage 1 emits other C than the seed does for it: no fixed point)", o2)
+        return
+    }
+    if !same_as_c {
+        bad("selfhost seed (stage 1 emits other C than the C compiler)", "")
+        return
+    }
+    let lag = if current { "current" } else { "lags the sources" }
+    ok("selfhost seed: bootstrap/loamc.c builds the compiler, stage 1 = stage 2 = C compiler ({{bytes}} bytes of C); seed {{lag}}")
+}
+
 fn ig_selfhost_lex() {
     selfhost_diff("lexer", "tokdump", "--dump-tokens", "lexer.c")
 }
@@ -2976,6 +3058,8 @@ fn stanza_dispatch(name: string) -> bool {
         ig_selfhost_load()
     } else if name == "selfhost_driver" {
         ig_selfhost_driver()
+    } else if name == "selfhost_seed" {
+        ig_selfhost_seed()
     } else if name == "fresh_cache" {
         ig_fresh_cache()
     } else if name == "selfhost_passes" {
@@ -3031,6 +3115,7 @@ fn stanza_names() -> []string {
     push(v, "selfhost_parse")
     push(v, "selfhost_load")
     push(v, "selfhost_driver")
+    push(v, "selfhost_seed")
     push(v, "fresh_cache")
     push(v, "selfhost_passes")
     push(v, "wasm_float")
@@ -3102,7 +3187,7 @@ fn host_stanzas() -> []string {
 /** *Nearly all of a full run's time, so `test` leaves them out: `nob selfhost` */
 /** *runs them, and CI runs each on its own runner (selfhost.yml). */
 fn selfhost_stanzas() -> []string {
-    return []string { "selfhost_lex", "selfhost_parse", "selfhost_load", "selfhost_passes", "selfhost_driver" }
+    return []string { "selfhost_lex", "selfhost_parse", "selfhost_load", "selfhost_passes", "selfhost_driver", "selfhost_seed" }
 }
 
 /** *One after another, for an `--isolated` run; a batched run pools them. */
@@ -3437,7 +3522,8 @@ fn usage() {
     fmt.println("  lsp     bin/loam-lsp and its objects only")
     fmt.println("  integration  the zeli/serve/pkg/fmt suite (slow; on demand)")
     fmt.println("  selfhost [s]  the Loam compiler against the C one, and the fixed point")
-    fmt.println("          (not in test; s = one of selfhost_lex/_parse/_load/_passes/_driver)")
+    fmt.println("          (not in test; s = one of selfhost_lex/_parse/_load/_passes/_driver/_seed)")
+    fmt.println("  seed    regenerate bootstrap/loamc.c, the committed stage-0 seed")
     fmt.println("  bench   build, then run packages/loam/tests/bench/run.sh")
     fmt.println("  grammar  regenerate, check and publish the tree-sitter grammar")
     fmt.println("  grammar-check  check the grammar against the compiler's parser")
@@ -3578,6 +3664,8 @@ fn main() {
             names = []string { only }
         }
         sys.exit(run_stanzas_only(names))
+    } else if cmd == "seed" {
+        sys.exit(seed())
     } else if cmd == "bench" {
         sys.exit(bench())
     } else if cmd == "grammar" {
