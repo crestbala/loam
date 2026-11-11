@@ -3381,6 +3381,7 @@ fn check_call(n: int, expect: int) -> int {
                 err(nloc, "no method '{{fnn}}'")
                 return types.ty_void()
             }
+            check_c_private(f, nloc)
             ast.NODES[cal].res = f
             ast.NODES[cal].ty = fn_type_of(f)
             let recv = ast.NODES[cal].a
@@ -3412,6 +3413,7 @@ fn check_call(n: int, expect: int) -> int {
             err(nloc, "no function '{{fnn}}' in module '{{md}}'")
             return types.ty_void()
         }
+        check_c_private(f, nloc)
         ast.NODES[cal].res = f
         ast.NODES[cal].ty = fn_type_of(f)
         mark_module_ident(ast.NODES[cal].a, md)
@@ -3437,6 +3439,7 @@ fn check_call(n: int, expect: int) -> int {
             err(nloc, "unknown function '{{nm}}'")
             return types.ty_void()
         }
+        check_c_private(f, nloc)
         ast.NODES[cal].res = f
         ast.INFO[cal].def_line = ast.INFO[f].loc.line
         ast.INFO[cal].def_col = ast.INFO[f].loc.col
@@ -3739,6 +3742,40 @@ fn is_gvar(d: int) -> bool {
     return d >= 0 && (ast.INFO[d].marks & ast.M_GLOBAL_VAR) != 0
 }
 
+/** *The module that declares `d`, or `NONE`. */
+fn decl_mod(d: int) -> int {
+    for m in 0..MODS.len {
+        let root = MODS[m].root
+        if root == NONE {
+            continue
+        }
+        let decls = &ast.NODES[root].kids
+        for i in 0..decls.len {
+            if decls[i] == d {
+                return m
+            }
+        }
+    }
+    return NONE
+}
+
+/** *A `#[c]` binding is private to the module that declares it. Its C can do */
+/** *anything (a raw `free`, a `memcpy` from an address held in an `i64`), so */
+/** *only that module's own fns may call it; importers get its safe wrappers. */
+/** *This keeps every place that trusts C inside the module that names it. */
+fn check_c_private(f: int, loc: Loc) {
+    if f == NONE || kind(f) != Kind.Fn || !ast.EXTRA[ast.ex(f)].has_text {
+        return
+    }
+    let owner = decl_mod(f)
+    if owner == NONE || owner == Gcur {
+        return
+    }
+    let fname = ast.INFO[f].name
+    let mname = MODS[owner].name
+    err(loc, "#[c] fn '{{fname}}' is private to module '{{mname}}'; call one of its safe wrappers instead")
+}
+
 /** *`n` now names fn `f` as a value. */
 fn resolve_fn_value(n: int, f: int) -> int {
     ast.INFO[f].marks = ast.INFO[f].marks | ast.M_AS_VALUE
@@ -3842,6 +3879,7 @@ fn check_ident(n: int) -> int {
             err(x.loc, "cannot use generic function '{{name}}' as a value")
             return set_ty(n, types.ty_void())
         }
+        check_c_private(ifn, x.loc)
         return resolve_fn_value(n, ifn)
     }
     err(x.loc, "unknown identifier '{{name}}'")
@@ -4055,6 +4093,7 @@ fn check_field(n: int) -> int {
                 ast.NODES[n].a = NONE
                 ast.NODES[n].op = 0
                 ast.NODES[n].res = NONE
+                check_c_private(mfn, x.loc)
                 return resolve_fn_value(n, mfn)
             }
             err(x.loc, "no '{{name}}' in module '{{base}}'")
