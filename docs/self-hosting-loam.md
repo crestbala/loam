@@ -442,7 +442,14 @@ Needed (can land after the fixed-point, but design the hooks early):
 - [ ] **Stage 0 seed**: keep the C compiler buildable as the seed, or commit
       the generated C of the Loam compiler (`loamc.c`) so a fresh checkout
       builds with only `cc` — the same move `make` already makes for `nob`.
-      Must produce working binaries on Linux and Windows.
+      Must produce working binaries on Linux and Windows. *Committed as
+      `bootstrap/loamc.c` (4.0 MB, no absolute paths; the compiler finds std
+      and the runtime from its own path).* `nob seed` regenerates it; it lags
+      the sources and is refreshed only when it can no longer build the
+      current compiler. On Windows `./nob.sh` builds `bin/loamc` from it.
+      `selfhost_seed` checks that `cc` builds it, that it builds the current
+      compiler, and that the result reaches the fixed point. Tick once the
+      Windows job has run green on it (see the fresh-checkout box below).
 - [x] **Fixed-point check** in `nob`: C-`loamc` builds Loam-`loamc` (stage 1);
       stage 1 builds itself (stage 2); stage 1 and stage 2 must emit
       byte-identical C for the compiler and for every test in `compile_pass`
@@ -1410,11 +1417,18 @@ five verdicts.
       no addresses to order by. Emitting each file twice gives the same bytes.
 - [ ] Fresh checkout builds on macOS, Linux, and Windows from the C seed.
       macOS: done (above). Linux: done; CI checks out fresh and builds with
-      `./nob.sh` (run 42804061060). Windows: not yet from the checkout alone.
-      The Windows job builds the Loam compiler from C that the Linux job
-      emitted (`win-bundle`), because the C seed's driver is POSIX. To close
-      this, commit the Loam compiler's generated C (§3 Stage 0 seed), or make
-      the seed build on Windows.
+      `./nob.sh` (run 42804061060). Windows: in place, not yet run in CI.
+      The C compiler's driver is POSIX, so the Loam compiler's generated C is
+      committed as `bootstrap/loamc.c` (§3 Stage 0 seed), and on Windows
+      `./nob.sh` builds `bin/loamc` from it with MinGW gcc (`nob` itself does
+      not run there: `sys.exec` goes through `cmd.exe`). The Windows job no
+      longer downloads anything from Linux. It builds from the seed, emits
+      the fixtures' C, builds and runs them, and has the seed build the current
+      compiler, which reaches the fixed point (`tools/win-selfhost.sh`). A
+      `same-c` job then compares that C with Linux's, byte for byte. Checked
+      locally: `zig cc -target x86_64-windows-gnu` builds the seed into a
+      Windows binary through `nob.sh`'s Windows branch, and `selfhost_seed`
+      passes on macOS in 18 s. Tick once the Windows job has run green.
 - [x] CI runs the fixed-point check on at least one Linux and one Windows
       runner. Green in run 42804061060 (`260ab67`): the suite, including
       `selfhost_driver`, on Linux x86_64 and aarch64. On Windows x86_64,
@@ -1488,8 +1502,8 @@ and one zeus entry for each of the three runs):
    sources, as now). Persist `tests/tmp/selfhost_tc_ref` in CI with
    `actions/cache`.
 4. Done. `./nob.sh test` no longer runs them: `nob selfhost [stanza]` runs
-   `selfhost_lex`, `_parse`, `_load`, `_passes` and `_driver` (all five, or
-   one), and CI's `selfhost` job runs each on its own runner beside the test
+   `selfhost_lex`, `_parse`, `_load`, `_passes`, `_driver` and `_seed`
+   (all six, or one), and CI's `selfhost` job runs each on its own runner beside the test
    job (`selfhost_driver` on x86_64 and aarch64), so the workflow takes about
    as long as the slowest stanza. Local `./nob.sh test`: 403 s → 15 s (606
    checks). Once the C compiler is gone (Next changes, 1 and 4), the per-pass
@@ -1502,9 +1516,11 @@ the last list: §5.2 S0, typed handle cells (2026-11-11).
 
 **To call Loam 100% self-hosted** (the boxes in "Remaining work" above):
 
-1. Windows from a fresh checkout: commit the Loam compiler's generated C as
-   the stage-0 seed (§3 "Stage 0 seed"), or make the seed build on Windows.
-   Then tick the fresh-checkout box under Fixed-point and tooling.
+1. Windows from a fresh checkout: the seed is committed
+   (`bootstrap/loamc.c`, `nob seed`, `selfhost_seed`), and the Windows job
+   builds from the checkout alone. Left: run the selfhost workflow, then
+   tick the fresh-checkout box and §3 "Stage 0 seed". S10 (reproducible seed)
+   can later check the lagging seed against the sources it was made from.
 2. Finish phase 10c (the Driver box under Compiler port): speed and memory
    parity of the whole pipeline against the C driver, then tick it.
 3. Audit that the compiler uses only safe Loam (arenas + integer indices;
