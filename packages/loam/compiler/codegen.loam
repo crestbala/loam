@@ -150,9 +150,26 @@ fn c_len(s: string) -> int {
 
 /** *Path safe to embed: an absolute path (`/x`, or `C:/x` on Windows) */
 /** *contributes its final component. */
+/** *Wasm is what gets published: a path under this prefix (the directory the */
+/** *compiler ran in) is written relative to it. Empty: no prefix. */
+let mut PATH_STRIP: string = ""
+
+/** *A path safe to embed. Under `PATH_STRIP`, the relative tail; any other */
+/** *absolute path, only its final component. */
 fn public_file(file: string) -> string {
     if file.len == 0 {
         return "loam"
+    }
+    let n = PATH_STRIP.len
+    if n > 0 && file.len >= n && starts_with(file, PATH_STRIP) && (file.len == n || file[n] == '/') {
+        if file.len == n {
+            return "loam"
+        }
+        let mut tail = []u8 {}
+        for i in n + 1..file.len {
+            push(tail, u8(file[i]))
+        }
+        return buf.to_string(&tail)
     }
     if sys.is_abs(file) {
         let mut slash = file.len - 1
