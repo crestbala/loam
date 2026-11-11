@@ -1,17 +1,19 @@
 // nob — the Loam build and test tool.
 //
-// `nob` is a Loam program, so something else has to build the first compiler:
-// `nob.sh` compiles a seed `bin/loamc` and `bin/nob`, then hands every command
-// here. Everything after that bootstrap lives in this file.
+// `nob` and the compiler are Loam programs, so something else has to build the
+// first compiler: `nob.sh` compiles the committed seed (bootstrap/loamc.c) into
+// `bin/loamc0`, which builds `bin/loamc` from packages/loam/compiler, which
+// builds `bin/nob`; then it hands every command here. Everything after that
+// bootstrap lives in this file.
 //
-//     nob                  build bin/loamc, bin/loam-lsp, bin/loam-fmt, bin/zeli
+//     nob                  build bin/loam-lsp, bin/loam-fmt, bin/zeli
 //     nob test [-j N]      build, then run the language suites and host checks
 //     nob test --isolated  the same, but every fixture as its own binary
 //     nob test <filter>    only fixtures whose path contains <filter>, isolated
 //     nob test <f.loam>    build and run exactly this file
 //     nob integration      the zeli/serve/pkg/fmt suite (slow; on demand)
-//     nob selfhost [s]     the Loam compiler against the C one, stage by stage,
-//                          and the fixed point (not in `test`; CI runs it)
+//     nob selfhost         the committed seed builds the compiler, and the
+//                          fixed point (not in `test`; CI runs it)
 //     nob seed             regenerate bootstrap/loamc.c, the Loam compiler's C
 //     nob lsp              build the language server (and its objects) only
 //     nob bench            build, then run packages/loam/tests/bench/run.sh
@@ -426,9 +428,9 @@ fn split_lines(s: string) -> []string {
 
 // --- compiler build ------------------------------------------------------
 
-/** *The flags the compiler is built with. Kept in one place: `nob.sh`'s seed */
-/** *build mirrors this, and `build` stamps the value into `obj/.cflags` so a */
-/** *change here forces a full object rebuild. */
+/** *The flags the C tools (`loam-lsp` and the C front end it links, and */
+/** *`loam-fmt`) are built with. `build` stamps the value into `obj/.cflags` so */
+/** *a change here forces a full object rebuild. */
 fn cflags() -> string {
     let mut s = "-std=c11 -D_GNU_SOURCE -Wall -Wextra -Wpedantic -O2 -g"
     s = cat(s, " -DLOAM_RT_PATH='\"{{ROOT}}/packages/loam/runtime/loam_rt.h\"'")
@@ -447,13 +449,19 @@ struct CSrc {
     lib: bool,
 }
 
-/** *Every compiler source, with its object path under `obj/`. */
+/** *Every C source `loam-lsp` is made of (the C front end as its library, and */
+/** *`lsp.c`), with its object path under `obj/`. `driver.c`, the C compiler's */
+/** *main, is not built: `bin/loamc` is the Loam compiler (nob.sh). `fmt.c` is */
+/** *standalone and built on its own in `build`. */
 fn c_sources() -> []CSrc {
     let mut out = []CSrc {}
     let top = list_ext(SRC, ".c")
     for i in 0..top.len {
         let stem = stem_c(base(top[i]))
-        let lib = stem != "driver" && stem != "lsp" && stem != "fmt"
+        if stem == "driver" || stem == "fmt" {
+            continue
+        }
+        let lib = stem != "lsp"
         push(out, CSrc {
             full: top[i],
             rel: "packages/loam/src/{{stem}}.c",
@@ -485,16 +493,11 @@ fn quoted_list(v: []string) -> string {
     return s
 }
 
-/** *The objects that link into a given binary: `loamc` adds `driver.o`, `lsp` */
-/** *adds `lsp.o`; both take every library object. */
-fn objs_of(srcs: []CSrc, what: string) -> []string {
+/** *The objects that link into `loam-lsp`: every library object and `lsp.o`. */
+fn lsp_objects(srcs: []CSrc) -> []string {
     let mut out = []string {}
     for i in 0..srcs.len {
-        let s = srcs[i]
-        let take = s.lib || (what == "loamc" && s.rel == "packages/loam/src/driver.c") || (what == "lsp" && s.rel == "packages/loam/src/lsp.c")
-        if take {
-            push(out, s.obj)
-        }
+        push(out, srcs[i].obj)
     }
     return out
 }
@@ -535,27 +538,24 @@ fn link(objs: []string, out: string) -> bool {
     return true
 }
 
-/** *`all` builds every binary; `lsp` stops after the language server. */
+/** *`all` builds every binary but the compiler; `lsp` stops after the language */
+/** *server. `bin/loamc` is already there: nob.sh builds it from the seed */
+/** *before it starts `nob`, and rebuilds it when a compiler source changes. */
 fn build(what: string) -> int {
     sys.mkdir(OBJ)
     sys.mkdir("{{OBJ}}/sema")
     sys.mkdir(BIN)
 
     let srcs = c_sources()
-    let mut ref = "{{BIN}}/loamc"
-    if what == "lsp" {
-        ref = "{{BIN}}/loam-lsp"
-    }
 
-    // A full rebuild is needed when the reference binary is missing, when the
+    // A full rebuild is needed when the language server is missing, when the
     // flags changed since the last build, or when any header is newer than that
-    // build. Not newer than `ref`: the seed build links bin/loamc first, which
-    // would hide the header and leave objects built against the old layout.
+    // build.
     let mut full = false
     let stamp = "{{OBJ}}/.cflags"
     if sys.read_file(stamp) != cflags() {
         full = true
-    } else if sys.exists(ref) == 0 {
+    } else if sys.exists("{{BIN}}/loam-lsp") == 0 {
         full = true
     } else {
         let newer = sys.exec("cd {{shq(ROOT)}} && find packages/loam/src -name '*.h' -newer {{shq(rel_of(stamp))}} -print -quit")
@@ -570,24 +570,13 @@ fn build(what: string) -> int {
     }
     sys.write_file(stamp, cflags())
 
-    if what == "lsp" {
-        if CHANGED || sys.exists("{{BIN}}/loam-lsp") == 0 {
-            if !link(objs_of(srcs, "lsp"), "{{BIN}}/loam-lsp") {
-                return 1
-            }
-        }
-        return 0
-    }
-
-    if CHANGED || sys.exists("{{BIN}}/loamc") == 0 {
-        if !link(objs_of(srcs, "loamc"), "{{BIN}}/loamc") {
-            return 1
-        }
-    }
     if CHANGED || sys.exists("{{BIN}}/loam-lsp") == 0 {
-        if !link(objs_of(srcs, "lsp"), "{{BIN}}/loam-lsp") {
+        if !link(lsp_objects(srcs), "{{BIN}}/loam-lsp") {
             return 1
         }
+    }
+    if what == "lsp" {
+        return 0
     }
 
     // `loam-fmt` is standalone: its own main and nothing else linked in.
@@ -600,7 +589,7 @@ fn build(what: string) -> int {
         }
     }
 
-    // `zeli` is a Loam program built by the compiler above it in this file.
+    // `zeli` is a Loam program, built by `bin/loamc`.
     if sys.exists("{{BIN}}/zeli") == 0 || is_newer("{{BIN}}/loamc", "{{BIN}}/zeli") || is_newer("{{ROOT}}/packages/zeus/cli/zeli.loam", "{{BIN}}/zeli") || is_newer("{{ROOT}}/packages/zeus/cli/chunks.loam", "{{BIN}}/zeli") {
         fmt.println("  loamc packages/zeus/cli/zeli.loam -> bin/zeli")
         sys.exec("cd {{shq(ROOT)}} && ./bin/loamc packages/zeus/cli/zeli.loam -o bin/zeli")
@@ -2828,7 +2817,7 @@ fn ig_fresh_cache() {
         bad("fresh cache", fails)
         return
     }
-    ok("fresh cache: reuse and every rebuild case on the seed")
+    ok("fresh cache: reuse and every rebuild case")
 }
 
 /** *Where the stage-0 seed lives: the Loam compiler's generated C, committed */
@@ -2839,13 +2828,10 @@ fn seed_path() -> string {
     return "{{ROOT}}/bootstrap/loamc.c"
 }
 
-/** *`nob seed`: write the current compiler's C to bootstrap/loamc.c. From the */
-/** *root with a relative path, so its `#line`s are repo-relative. */
+/** *`nob seed`: `bin/loamc` (the current compiler, which nob.sh just built) */
+/** *writes its own C to bootstrap/loamc.c. From the root with a relative path, */
+/** *so its `#line`s are repo-relative. */
 fn seed() -> int {
-    if build("all") != 0 {
-        fmt.println("nob: build failed; seed not written")
-        return 1
-    }
     sys.mkdir("{{ROOT}}/bootstrap")
     let before = sys.read_file(seed_path())
     let o = sys.exec("cd {{shq(ROOT)}} && {{shq(LOAMC)}} --emit-c packages/loam/compiler/loamc.loam -o bootstrap/loamc.c 2>&1")
@@ -3249,7 +3235,7 @@ const SELFHOST_LIMIT_S: int = 1200
 /** *Nearly all of a full run's time, so `test` leaves them out: `nob selfhost` */
 /** *runs them, and CI runs each on its own runner (selfhost.yml). */
 fn selfhost_stanzas() -> []string {
-    return []string { "selfhost_lex", "selfhost_parse", "selfhost_load", "selfhost_passes", "selfhost_driver", "selfhost_seed" }
+    return []string { "selfhost_seed" }
 }
 
 /** *One after another, for an `--isolated` run; a batched run pools them. */
@@ -3575,7 +3561,7 @@ fn usage() {
     fmt.println("")
     fmt.println("usage: nob [command] [-j N]")
     fmt.println("")
-    fmt.println("  build   (default) bin/loamc, bin/loam-lsp, bin/loam-fmt, bin/zeli")
+    fmt.println("  build   (default) bin/loam-lsp, bin/loam-fmt, bin/zeli (nob.sh builds bin/loamc)")
     fmt.println("  test    language suites + host checks (no zeli)")
     fmt.println("  test --isolated  the same, every fixture as its own binary")
     fmt.println("  test <s>  only fixtures whose path contains <s>, each as its own")
@@ -3583,8 +3569,8 @@ fn usage() {
     fmt.println("  test <f.loam>  build and run exactly this file")
     fmt.println("  lsp     bin/loam-lsp and its objects only")
     fmt.println("  integration  the zeli/serve/pkg/fmt suite (slow; on demand)")
-    fmt.println("  selfhost [s]  the Loam compiler against the C one, and the fixed point")
-    fmt.println("          (not in test; s = one of selfhost_lex/_parse/_load/_passes/_driver/_seed)")
+    fmt.println("  selfhost  the committed seed builds the compiler, and the fixed point")
+    fmt.println("          (selfhost_seed; not in test)")
     fmt.println("  seed    regenerate bootstrap/loamc.c, the committed stage-0 seed")
     fmt.println("  bench   build, then run packages/loam/tests/bench/run.sh")
     fmt.println("  grammar  regenerate, check and publish the tree-sitter grammar")

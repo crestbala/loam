@@ -92,8 +92,9 @@ skipped when `pkg-config raylib` is absent). Set `LOAM_TIME=1` to print
 check / codegen / cc timings.
 
 The build and the test plan live in [`nob.loam`](nob.loam), a Loam program. The
-Makefile is only a bootstrap: it compiles a seed `bin/loamc` (the one step a
-Loam program cannot do for itself) and then forwards to `nob`. `make test` is
+`nob.sh` is only a bootstrap: `cc` builds the committed seed
+(`bootstrap/loamc.c`, the compiler's own generated C), the seed builds
+`bin/loamc` from `packages/loam/compiler`, and then it forwards to `nob`. `make test` is
 `nob test`, which runs the language suites and the host checks that sit next to
 the compiler (wasm entry points, server/client split, LSP):
 

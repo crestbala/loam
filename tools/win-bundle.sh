@@ -1,8 +1,7 @@
 #!/bin/sh
 # Emit what tools/win-run.sh needs to build and run the non-GUI compile_pass
-# fixtures on Windows (see docs/platforms.md), with whatever bin/loamc is: the
-# C compiler on Linux, the seed-built Loam compiler on Windows. The selfhost
-# workflow runs it on both and compares the C. For each fixture, its generated C (`<name>.c`), the
+# fixtures on Windows (see docs/platforms.md), with bin/loamc. The selfhost
+# workflow runs it on Linux and Windows and compares the C. For each fixture, its generated C (`<name>.c`), the
 # extra C it links (`<name>.deps`, lines `dir|path|flags` or `link||flags`),
 # its `.expected` output when it has one, and its `.trap` (the panic message
 # stderr must hold) when it must panic; and the Loam compiler's own C
