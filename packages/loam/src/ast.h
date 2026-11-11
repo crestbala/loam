@@ -356,21 +356,4 @@ AstNode *ast_deref(AstNode *target, SourceLoc loc);
 AstNode *ast_addr(AstNode *target, int is_mut, SourceLoc loc);
 AstNode *ast_type(const char *name, int tag, AstNode *elem, int64_t alen, SourceLoc loc);
 
-/** `loamc --dump-ast file.loam` (ast_dump.c): the parsed tree as text. */
-int ast_dump_file(const char *path);
-/** `--dump-modules` / `--dump-typed` (ast_dump.c): the loader's module list,
-    and the typechecked trees with typecheck's tables. */
-int ast_dump_modules(const char *path);
-int ast_dump_typed(const char *path);
-int ast_dump_checked(const char *path);
-/** `--dump-dce`: the fn declarations the dead-code pass keeps. */
-int ast_dump_dce(const char *path);
-/** `--dump-ir`: the checked program lowered to IR, all of it codegen reads. */
-int ast_dump_ir(const char *path);
-/** `--dump-c`: the C a default build emits, on stdout. Exit status as
-    `--dump-checked`. */
-int ast_dump_c(const char *path);
-/** `--dump-all <dir>`: the five dumps above, from one session, into `dir`. */
-int ast_dump_all(const char *dir, const char *path);
-
 #endif

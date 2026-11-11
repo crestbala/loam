@@ -1,4 +1,4 @@
-// types — Loam types as an arena. The self-hosted twin of src/sema/type.c.
+// types — Loam types as an arena. A port of the C compiler's type.c.
 //
 // A type is an `int` index into `TYPES`. Every `type_new` in the C compiler is
 // one new entry here, and the scalars are fixed singletons at the first ids,

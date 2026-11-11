@@ -1,19 +1,16 @@
-// loamc — the self-hosted compiler: load, check, emit C, and run the C
-// compiler, in one process. The twin of src/driver.c for native host builds.
+// loamc — the Loam compiler: load, check, emit C, and run the C compiler, in
+// one process. A port of the C compiler's driver.c, which it matched in
+// stdout, stderr, exit status and the C written.
 //
 //   loamc [build] [options] file.loam    build <dir>/build/<stem> (or -o PATH)
 //   loamc check file.loam                the frontend only
 //   loamc --emit-c [-o out.c] file.loam  the C translation unit only
 //
-// stdout, stderr, exit status and the C written match the seed compiler's
-// (`nob integration selfhost_driver`). The C compiler is `CC` (split on
+// The C compiler is `CC` (split on
 // spaces, so `zig cc` works), else the first of `cc`, `clang`, `gcc` on
 // `PATH`. It runs through `sys.spawn` with an argument list, never a shell.
 // Runtime objects (the Zeus platform layer, its hosts, `#![c_source]` files)
 // compile once into `<runtime>/.obj/` and are rebuilt when a source is newer.
-//
-// Not here: the `--dump-*` modes, the seed's per-pass dumps for the
-// differential gates (the Loam twins are `tcdump`, `tokdump`, `moddump`).
 //
 // `LOAM_BATCH` builds a program of many fixtures that runs the one `LOAM_CASE`
 // names; `LOAM_SHARD=<dir>` compiles a Zeus program as cached units in
@@ -72,12 +69,6 @@ fn zeus_dir() -> string {
 
 fn raygui_dir() -> string {
     return "{{loader.home()}}/packages/raygui"
-}
-
-/** *Refuse a mode only the seed compiler has. */
-fn not_here(what: string) {
-    fmt.eprintln("loam: {{what}} is not in the self-hosted compiler yet; build with the seed loamc")
-    sys.exit(1)
 }
 
 /** *Seconds as `%.3f`, from milliseconds. */
@@ -1932,8 +1923,6 @@ fn main() {
             wasm_split_input = true
         } else if a == "--cost" {
             cost = true
-        } else if str.starts_with(a, "--dump-") {
-            not_here(a)
         } else if a == "check" {
             check_only = true
         } else if a == "--int64-compat" {

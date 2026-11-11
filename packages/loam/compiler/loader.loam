@@ -1,6 +1,5 @@
-// loader — find, read and parse every module a program imports. The
-// self-hosted twin of src/compile.c (loading) and src/pkgresolve.c (package
-// roots), diffed against `loamc --dump-modules`.
+// loader — find, read and parse every module a program imports. A port
+// of the C compiler's compile.c (loading) and pkgresolve.c (package roots).
 //
 // `std:name` is the language library (`<home>/packages/loam/std`). A bare
 // `import "name"` or `import "name:module"` is a package: a vendored one next to
@@ -1232,40 +1231,4 @@ fn load(path: string) -> bool {
     typecheck.STD_DIR = std_dir()
     discover(path)
     return load_module(path, stem_of(path))
-}
-
-/** *The module list as `loamc --dump-modules` prints it. */
-fn dump_modules(b: &mut []u8) {
-    buf.push_str(b, "rt ")
-    dump.put_str(b, rt_path())
-    buf.push_str(b, "\nstd ")
-    dump.put_str(b, std_dir())
-    push(b, u8('\n'))
-    for m in 0..typecheck.MODS.len {
-        let md = typecheck.MODS[m]
-        buf.push_str(b, "module ")
-        buf.push_int(b, m)
-        dump.attr_str(b, "name", true, md.name)
-        buf.push_str(b, " rank=")
-        buf.push_int(b, md.rank)
-        buf.push_str(b, if md.is_std { " std=1" } else { " std=0" })
-        dump.attr_str(b, "path", true, md.path)
-        push(b, u8('\n'))
-        if md.root == NONE {
-            continue
-        }
-        let kids = ast.NODES[md.root].kids
-        for k in 0..kids.len {
-            let im = kids[k]
-            if ast.NODES[im].kind != Kind.Import {
-                continue
-            }
-            let x = ast.ex(im)
-            buf.push_str(b, "  import")
-            dump.attr_str(b, "alias", ast.INFO[im].has_name, ast.INFO[im].name)
-            dump.attr_str(b, "spec", ast.EXTRA[x].has_text, ast.EXTRA[x].text)
-            dump.attr_str(b, "resolved", ast.EXTRA[x].has_sname, ast.EXTRA[x].sname)
-            push(b, u8('\n'))
-        }
-    }
 }

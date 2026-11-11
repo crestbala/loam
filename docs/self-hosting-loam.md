@@ -110,7 +110,8 @@ loader) and 10b (the driver: `compiler/loamc.loam`, check, emit C, `cc`) are
 done: the Loam compiler builds itself, and the C it emits for itself matches
 the seed's byte for byte. The fixed point runs green in CI on Linux and
 Windows (§3). The Loam compiler is now `bin/loamc` on every OS, built from
-the committed seed (Next changes 4, P6). Next: deleting the C compiler (P7),
+the committed seed, and the C compiler is deleted (Next changes 4, P6 and
+P7); the per-pass differential stanzas named below went with it. Next:
 `loam-lsp` on the Loam front end (P5), and the rest of "Next changes
 (pending)" at the end.
 
@@ -460,7 +461,10 @@ Needed (can land after the fixed-point, but design the hooks early):
       runner. *Done in `nob` (`selfhost_driver`):* seed and stage 1 emit the
       same C for every `.loam` file in the repo, and stage 1 and stage 2 the
       same C for the compiler, so stage 2 is the same program as stage 1.
-      CI: see Windows CI below.
+      CI: see Windows CI below. *Since the C compiler was deleted (Next
+      changes 4, P7) the check is `selfhost_seed`:* the committed seed builds
+      stage 1, stage 1 builds stage 2, and all three emit the same C for the
+      compiler.
 - [x] **Deterministic output**: no pointer-address ordering, no hash-order
       iteration in emitted C (iterate maps by insertion order or sorted keys).
 - [x] **Differential testing**: for each `tests/compile_pass`, `golden`, and
@@ -507,7 +511,9 @@ Needed (can land after the fixed-point, but design the hooks early):
 6. **Driver** (module loading, package resolution, `cc` invocation). Make
    sure it works headless on Linux and native on Windows.
 7. **Fixed point** (§3), then make the Loam `loamc` the default and keep the
-   C one only as the seed. Add Linux + Windows CI.
+   C one only as the seed. Add Linux + Windows CI. *Done; the seed is the
+   Loam compiler's own committed C (`bootstrap/loamc.c`), and the C compiler
+   is deleted (Next changes 4, P6 and P7).*
 8. **Energy / carbon hooks** (§2.6) — optional APIs and `--cost` extensions.
 9. **Embedded runtime & board packages** (§1.8) — bare-metal subset, cross-toolchain
    examples, and first robotics wrappers (after the host self-host is solid).
@@ -1622,9 +1628,26 @@ the last list: §5.2 S0, typed handle cells (2026-11-11).
      only `selfhost_seed` (x86_64 and aarch64): the per-pass stanzas need a
      C `loamc` and go in P7. Full `./nob.sh test` with the Loam compiler:
      610 passed, 0 failed in 25 s (macOS, 8 cores).
-   - [ ] P7: delete `driver.c` and the C front end, the per-pass stanzas and
-     dump tools; keep `selfhost_seed`. `fmt.c` (standalone) stays until it
-     is ported.
+   - [x] P7 (2026-11-11): the C compiler is deleted. Gone: `driver.c`,
+     `codegen_c.c`, `ir.c`, `dce.c`, `ast_dump.c` and their headers (9,800
+     lines; nothing but the driver used them), the C `--dump-*` modes, the
+     per-pass stanzas (`selfhost_lex`, `_parse`, `_load`, `_passes`,
+     `_driver`) and their tools (`tcdump`, `tokdump`, `moddump`, `astdump`,
+     `irdump`, `passbench`, `tools/selfhost-passes-one.sh`); `dump.loam`
+     keeps only the diagnostics text. Nothing else used `--dump-*` (the
+     grammar check reads the tree-sitter parser only). `selfhost_seed`
+     stays and took over what was not differential in `selfhost_driver`:
+     the seed builds stage 1, stage 1 builds stage 2, the seed, stage 1 and
+     stage 2 emit the same C for the compiler, and the `.fresh` cache cases
+     hold on stage 1. Two things only the differential runs covered now
+     have their own checks in `nob test`: `loader_cases` (`loamc check` on
+     the 24 entry files of `tests/loader` against a recorded
+     `expected.txt`: lock checksums, workspaces, cycles, missing packages)
+     and `android_project` (the Gradle tree `--target android` writes).
+     CI's selfhost job runs `selfhost_seed` on x86_64 and aarch64. The rest
+     of the C front end (`lexer.c`, `parser.c`, `sema/*`, `compile.c`,
+     `pkgresolve.c`, …) is linked only by `loam-lsp` and goes with P5;
+     `fmt.c` (standalone) stays until it is ported.
 5. Decide what else moves and what stays C (§3): `lsp.c` and `fmt.c` stay C
    until they are ported, after the fixed point.
 

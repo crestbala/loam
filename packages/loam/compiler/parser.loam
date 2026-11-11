@@ -1,7 +1,6 @@
-// parser — tokens to the arena AST. The self-hosted twin of src/parser.c, and
-// it must agree with it node for node and diagnostic for diagnostic
-// (`nob integration selfhost_parse` diffs `astdump` against
-// `loamc --dump-ast` over every .loam file in the repo).
+// parser — tokens to the arena AST. A port of the C compiler's parser.c,
+// which it matched node for node and diagnostic for diagnostic over every
+// .loam file in the repo.
 //
 // Recursive descent with one token of lookahead (`cur` / `peek`), a Pratt loop
 // for binary operators, and the same desugarings as the C parser: a trailing

@@ -1,7 +1,6 @@
-// borrowck — moves, shared vs exclusive borrows, and reference escape. The
-// self-hosted twin of src/sema/borrowck.c, function for function in the C
-// file's order (its header has the rules; docs/reference-escape.md the
-// design).
+// borrowck — moves, shared vs exclusive borrows, and reference escape. A
+// port of the C compiler's borrowck.c, function for function in the C file's
+// order (docs/reference-escape.md has the rules and the design).
 //
 // The C pass is a pointer graph; here it is arenas and indices:
 //   - BINDINGS is an arena that never reuses a slot, ACTIVE the stack of live

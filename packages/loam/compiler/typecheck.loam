@@ -1,7 +1,6 @@
-// typecheck — names, types, auto-borrow, generics, closures. The self-hosted
-// twin of src/sema/typecheck.c, ported in slices (docs/self-hosting-loam.md,
-// phase 6), function for function in the C file's order so the two read side
-// by side. The `selfhost_passes` stanza diffs it against `loamc --dump-typed`.
+// typecheck — names, types, auto-borrow, generics, closures. A port of
+// the C compiler's typecheck.c (docs/self-hosting-loam.md, phase 6), function
+// for function in the C file's order.
 //
 // The C checker's pointers become indices: a node is an index into
 // `ast.NODES`, a type into `types.TYPES`, a module into `MODS`, and a scope

@@ -1,5 +1,5 @@
-// ir — the checked tree lowered to the backend-neutral IR. The self-hosted
-// twin of src/ir.c, diffed against `loamc --dump-ir` (irdump.loam prints it).
+// ir — the checked tree lowered to the backend-neutral IR. A port of the
+// C compiler's ir.c.
 //
 // Control flow is blocks and terminators, drops are instructions, generics are
 // monomorphized, and every operand is a numbered local with a type: a backend

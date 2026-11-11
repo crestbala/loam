@@ -1,0 +1,72 @@
+== packages/loam/tests/loader/app1/src/badsum.loam
+packages/loam/tests/loader/app1/src/badsum.loam:1:1: error: package 'bad' does not match loam.lock (run `zeli pkg sync`)
+exit 1
+== packages/loam/tests/loader/app1/src/emptycolon.loam
+packages/loam/tests/loader/app1/src/emptycolon.loam:1:1: error: import spec ':x' needs a package and a module
+exit 1
+== packages/loam/tests/loader/app1/src/missing.loam
+packages/loam/tests/loader/app1/src/missing.loam:1:1: error: cannot find package 'nothere' (add it to loam.toml and run `zeli pkg sync`)
+exit 1
+== packages/loam/tests/loader/app1/src/nomod.loam
+packages/loam/tests/loader/app1/src/nomod.loam:1:1: error: cannot find module 'nomod' in package 'good'
+exit 1
+== packages/loam/tests/loader/app1/src/ok.loam
+loam: packages/loam/tests/loader/app1/src/ok.loam ok
+exit 0
+== packages/loam/tests/loader/app1/src/stdname.loam
+packages/loam/tests/loader/app1/src/stdname.loam:1:1: error: cannot find package 'fmt' (language modules use std:, as in import "std:fmt")
+exit 1
+== packages/loam/tests/loader/app1/src/stdpkg.loam
+packages/loam/tests/loader/app1/src/stdpkg.loam:1:1: error: cannot find std module 'good' (std: is the language standard library; import "good")
+exit 1
+== packages/loam/tests/loader/app1/src/unlisted.loam
+packages/loam/tests/loader/app1/src/unlisted.loam:1:1: error: cannot find package 'stray' (vendor/stray is not in loam.lock; run `zeli pkg sync`)
+exit 1
+== packages/loam/tests/loader/app1/src/unlisted_pkg.loam
+packages/loam/tests/loader/app1/src/unlisted_pkg.loam:1:1: error: cannot find package 'stray' (vendor/stray is not in loam.lock; run `zeli pkg sync`)
+exit 1
+== packages/loam/tests/loader/app1/vendor/bad/bad.loam
+loam: packages/loam/tests/loader/app1/vendor/bad/bad.loam ok
+exit 0
+== packages/loam/tests/loader/app1/vendor/good/good.loam
+loam: packages/loam/tests/loader/app1/vendor/good/good.loam ok
+exit 0
+== packages/loam/tests/loader/app1/vendor/stray/main.loam
+loam: packages/loam/tests/loader/app1/vendor/stray/main.loam ok
+exit 0
+== packages/loam/tests/loader/misc/a.loam
+packages/loam/tests/loader/misc/a.loam:1:1: error: import cycle involving 'packages/loam/tests/loader/misc/a.loam'
+exit 1
+== packages/loam/tests/loader/misc/b.loam
+packages/loam/tests/loader/misc/b.loam:1:1: error: import cycle involving 'packages/loam/tests/loader/misc/b.loam'
+exit 1
+== packages/loam/tests/loader/misc/clash.loam
+loam: packages/loam/tests/loader/misc/clash.loam ok
+exit 0
+== packages/loam/tests/loader/misc/fmt.loam
+loam: packages/loam/tests/loader/misc/fmt.loam ok
+exit 0
+== packages/loam/tests/loader/misc/missingfile.loam
+packages/loam/tests/loader/misc/missingfile.loam:1:1: error: cannot open imported file 'packages/loam/tests/loader/misc/gone.loam'
+exit 1
+== packages/loam/tests/loader/misc/noquote.loam
+packages/loam/tests/loader/misc/noquote.loam:2:1: error: expected import path string after import (got fn)
+exit 1
+== packages/loam/tests/loader/ws/apps/a/main.loam
+loam: packages/loam/tests/loader/ws/apps/a/main.loam ok
+exit 0
+== packages/loam/tests/loader/ws/libs/shake/src/part.loam
+loam: packages/loam/tests/loader/ws/libs/shake/src/part.loam ok
+exit 0
+== packages/loam/tests/loader/ws/libs/shake/src/top.loam
+loam: packages/loam/tests/loader/ws/libs/shake/src/top.loam ok
+exit 0
+== packages/loam/tests/loader/ws2/app.loam
+loam: packages/loam/tests/loader/ws2/app.loam ok
+exit 0
+== packages/loam/tests/loader/ws2/m/mm.loam
+loam: packages/loam/tests/loader/ws2/m/mm.loam ok
+exit 0
+== packages/loam/tests/loader/ws3/app.loam
+loam: packages/loam/tests/loader/ws3/app.loam ok
+exit 0
