@@ -850,9 +850,29 @@ beyond what the checklist requires.
         (`codegen.SINK`); no file-append API was needed. One std addition,
         `sys.arch()`, for the arm64-only flag.
       - Refused by name until after the fixed point (the seed keeps them):
-        wasm / iOS / Android, `test`, `--emit-ir`, `--cost`, `--dump-*`, and
-        the `LOAM_BATCH` / `LOAM_SHARD` / `LOAM_SERVER_SPLIT` / `LOAM_HOST` /
-        `LOAM_NO_DCE` builds. The `.fresh` build cache moved to 10c (done there).
+        wasm / iOS / Android, `--cost`, `--dump-*`, and the `LOAM_BATCH` /
+        `LOAM_SHARD` / `LOAM_SERVER_SPLIT` / `LOAM_HOST` builds. The `.fresh`
+        build cache moved to 10c (done there).
+      - Ported since: `--emit-ir`, `loam test` and `LOAM_NO_DCE`.
+        `compiler/irprint.loam` ports `ir_print`, the readable IR that
+        `--emit-ir` writes (to `-o` or stdout; exit 1 when the verifier objects),
+        with one std hook, `conv.f64_to_g6` (C's `%g`, how it spells a float).
+        It matches the seed on all 1,026 `.loam` files in the repo: exit
+        status, stdout, stderr and IR bytes. `loam test` leaves the program's
+        `main` out, keeps the `test` module's fns in DCE, and emits a runner
+        that calls the module inits and then every kept `#[test]` fn between
+        `test.begin` and `test.ok`. The runner binary goes to a temp path and is
+        removed after the run unless `-o` names it. `LOAM_NO_DCE` skips the
+        pass, so every fn is kept. On the 34 `std:test` entries the runner C,
+        the `LOAM_NO_DCE` C and the test output match the seed.
+        `selfhost_driver` gates all three: `--emit-ir` on `zeus_stream` and
+        `drop_nested`, which between them print every op and modifier the
+        lowering makes (the lowering itself is gated by `selfhost_passes`),
+        and `loam test` on the in-language test entries.
+      - The port surfaced a seed bug. `loam test` without `-o` reserved its
+        binary's name with `mkstemp` and left the empty file in `$TMPDIR`
+        when the build failed after that point. It now unlinks the file at
+        once and keeps only the name; `cc` creates the file.
       - The strict `selfhost_driver` stanza: over all 972 `.loam` files,
         `check` prints and exits the same as the seed, and where it passes
         `--emit-c -o` writes the same C; the 34 `compile_pass` fixtures with a

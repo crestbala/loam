@@ -201,6 +201,10 @@ fn f64_to_str(x: f64) -> string {}
 /** *`0.10000000000000001`. What generated C writes for a float constant. */
 fn f64_to_g17(x: f64) -> string {}
 
+/** *`x` printed as C's `%g` (6 significant digits), as `loamc --emit-ir` */
+/** *writes a float constant. */
+fn f64_to_g6(x: f64) -> string {}
+
 /** *`strtod` over text already checked by `parse_f64`. */
 fn strtod(s: string) -> f64 {}
 

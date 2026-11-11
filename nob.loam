@@ -2664,7 +2664,8 @@ fn ig_selfhost_passes() {
 /** *The driver: `compiler/loamc.loam` built by the seed (stage 1) against */
 /** *the seed itself. Over every .loam file, `check` must print the same and */
 /** *exit the same, and where it passes `--emit-c -o` must write the same C. */
-/** *Every compile_pass fixture with a `.expected` is built by stage 1 and run. */
+/** *Every compile_pass fixture with a `.expected` is built by stage 1 and run; */
+/** *`--emit-ir`, `loam test` and `LOAM_NO_DCE` match on a few entries. */
 /** *Then stage 1 builds itself (stage 2), and the C all three emit for the */
 /** *compiler must be the same bytes. */
 fn ig_selfhost_driver() {
@@ -2685,6 +2686,16 @@ fn ig_selfhost_driver() {
     }
     // One case per call: `one <n> <file>` (check, then emit-c) or `run <n>
     // <file>` (build and run against .expected). Prints the case on a mismatch.
+    // `ir <n> <file>`: `--emit-ir` prints, exits and writes the same IR.
+    let ir_case = cat("elif [ \"$1\" = ir ]; then\n",
+        cat("  \"$C\" --emit-ir \"$f\" -o \"$w/c.ir\" >\"$w/a\" 2>&1; echo \"exit $?\" >>\"$w/a\"\n  \"$S\" --emit-ir \"$f\" -o \"$w/s.ir\" >\"$w/b\" 2>&1; echo \"exit $?\" >>\"$w/b\"\n",
+            "  cmp -s \"$w/a\" \"$w/b\" && cmp -s \"$w/c.ir\" \"$w/s.ir\" || echo \"emit-ir $f\"\n"))
+    // `test <n> <file>`: the `loam test` runner's C, the `LOAM_NO_DCE` C, and
+    // what running the tests prints.
+    let test_case = cat("elif [ \"$1\" = test ]; then\n",
+        cat("  \"$C\" test --emit-c \"$f\" -o \"$w/c.c\" >/dev/null 2>&1; \"$S\" test --emit-c \"$f\" -o \"$w/s.c\" >/dev/null 2>&1\n  cmp -s \"$w/c.c\" \"$w/s.c\" || echo \"test --emit-c $f\"\n",
+            cat("  LOAM_NO_DCE=1 \"$C\" --emit-c \"$f\" -o \"$w/c.c\" >/dev/null 2>&1; LOAM_NO_DCE=1 \"$S\" --emit-c \"$f\" -o \"$w/s.c\" >/dev/null 2>&1\n  cmp -s \"$w/c.c\" \"$w/s.c\" || echo \"LOAM_NO_DCE --emit-c $f\"\n",
+                "  \"$C\" test \"$f\" >\"$w/a\" 2>&1 </dev/null; echo \"exit $?\" >>\"$w/a\"\n  \"$S\" test \"$f\" >\"$w/b\" 2>&1 </dev/null; echo \"exit $?\" >>\"$w/b\"\n  cmp -s \"$w/a\" \"$w/b\" || echo \"test $f\"\n")))
     let script = "{{d}}/case.sh"
     sys.write_file(script, cat(
         "set -u\nC={{shq(LOAMC)}}\nS={{shq(stage1)}}\nw={{shq(d)}}/w$2\nmkdir -p \"$w\"\nf=$3\n",
@@ -2694,15 +2705,23 @@ fn ig_selfhost_driver() {
                     cat("  if [ \"$(tail -n 1 \"$w/a\")\" = 'exit 0' ]; then\n",
                         cat("    \"$C\" --emit-c \"$f\" -o \"$w/out.c\" >\"$w/a\" 2>&1; echo \"exit $?\" >>\"$w/a\"; mv \"$w/out.c\" \"$w/c0\" 2>/dev/null\n",
                             cat("    \"$S\" --emit-c \"$f\" -o \"$w/out.c\" >\"$w/b\" 2>&1; echo \"exit $?\" >>\"$w/b\"\n",
-                                cat("    cmp -s \"$w/a\" \"$w/b\" && cmp -s \"$w/c0\" \"$w/out.c\" || echo \"emit-c $f\"\n  fi\nelse\n",
+                                cat("    cmp -s \"$w/a\" \"$w/b\" && cmp -s \"$w/c0\" \"$w/out.c\" || echo \"emit-c $f\"\n  fi\n",
+                                    cat(ir_case, cat(test_case, cat("else\n",
                                     cat("  if ! ZEUS_HEADLESS=1 \"$S\" \"$f\" -o \"$w/bin\" >\"$w/a\" 2>&1; then echo \"build $f\"; cat \"$w/a\";\n",
-                                        "  elif ! \"$w/bin\" </dev/null 2>/dev/null | cmp -s - \"${f%.loam}.expected\"; then echo \"run $f\"; fi\nfi\nrm -rf \"$w\"\n"))))))))))
+                                        "  elif ! \"$w/bin\" </dev/null 2>/dev/null | cmp -s - \"${f%.loam}.expected\"; then echo \"run $f\"; fi\nfi\nrm -rf \"$w\"\n")))))))))))))
     let find_all = "find packages examples nob.loam -name '*.loam' -not -path '*/tmp/*' -not -path '*/build/*' -not -path '*/node_modules/*'"
     let par = core_count()
     let checks = sys.exec("cd {{shq(ROOT)}} && export LOAM_HOME={{shq(ROOT)}} && {{find_all}} | sort | awk '{print \"one\", NR, $0}' | xargs -P {{par}} -n 3 sh {{shq(script)}} 2>&1")
     let n_files = trim(sys.exec("cd {{shq(ROOT)}} && {{find_all}} | wc -l"))
     let runs = sys.exec("cd {{shq(ROOT)}} && export LOAM_HOME={{shq(ROOT)}} && ls packages/loam/tests/compile_pass/*.expected | sed 's/[.]expected$/.loam/' | awk '{print \"run\", NR, $0}' | xargs -P {{par}} -n 3 sh {{shq(script)}} 2>&1")
     let n_runs = trim(sys.exec("cd {{shq(ROOT)}} && ls packages/loam/tests/compile_pass/*.expected | wc -l"))
+    // Between them these two fixtures print every IR op and modifier the
+    // lowering produces; the lowering itself is gated by selfhost_passes.
+    let ir_entries = "packages/loam/tests/compile_pass/zeus_stream.loam packages/loam/tests/compile_pass/drop_nested.loam"
+    let ir_runs = sys.exec("cd {{shq(ROOT)}} && export LOAM_HOME={{shq(ROOT)}} ZEUS_HEADLESS=1 && for f in {{ir_entries}}; do echo $f; done | awk '{print \"ir\", NR, $0}' | xargs -P {{par}} -n 3 sh {{shq(script)}} 2>&1")
+    let test_entries = "ls packages/loam/tests/inlang/*tests.loam examples/language/ppm/*_tests.loam"
+    let test_runs = sys.exec("cd {{shq(ROOT)}} && export LOAM_HOME={{shq(ROOT)}} ZEUS_HEADLESS=1 && {{test_entries}} | awk '{print \"test\", NR, $0}' | xargs -P {{par}} -n 3 sh {{shq(script)}} 2>&1")
+    let n_tests = trim(sys.exec("cd {{shq(ROOT)}} && {{test_entries}} | wc -l"))
     // Stage 1 builds itself; the C for the compiler from seed, stage 1 and
     // stage 2 must be the same bytes.
     let stage2 = "{{d}}/loamc2"
@@ -2711,13 +2730,13 @@ fn ig_selfhost_driver() {
             "{{shq(stage2)}} --emit-c {{shq(compiler)}} -o {{shq(d)}}/s2.c >/dev/null && cmp -s {{shq(d)}}/s0.c {{shq(d)}}/s1.c && cmp -s {{shq(d)}}/s1.c {{shq(d)}}/s2.c || echo 'stage 0/1/2 C differs'")))
     let fresh = fresh_cache_case(stage1, "{{d}}/fresh", "s1")
     sys.exec("rm -rf {{shq(d)}}")
-    let diffs = trim(cat(checks, cat(runs, cat(fixed, fresh))))
+    let diffs = trim(cat(checks, cat(runs, cat(ir_runs, cat(test_runs, cat(fixed, fresh))))))
     if diffs.len > 0 {
         bad("selfhost driver (differs from driver.c)", "")
         fmt.println(diffs)
         return
     }
-    ok("selfhost driver matches driver.c on {{n_files}} files, runs {{n_runs}} fixtures, stage 1 = stage 2, .fresh cache holds")
+    ok("selfhost driver matches driver.c on {{n_files}} files, runs {{n_runs}} fixtures, --emit-ir, {{n_tests}} `loam test` entries, stage 1 = stage 2, .fresh cache holds")
 }
 
 /** *`tests/fresh/check.sh` against `compiler` in `work`: the `.fresh` build */

@@ -38,6 +38,8 @@ import "dce.loam"
 import "codegen.loam"
 import "loader.loam"
 import "dump.loam"
+import "ir.loam"
+import "irprint.loam"
 
 // --- environment -------------------------------------------------------------------
 
@@ -378,6 +380,7 @@ fn fresh_key(in_path: string) -> string {
     let envs = []string {
         "ZEUS_HEADLESS", "LOAM_HEADLESS", "MAYA_HEADLESS", "LOAM_DEV", "LOAM_DEBUG",
         "ZEUS_MEM_STATS", "LOAM_LINK_EXTRA", "CC", "RAYLIB_PREFIX",
+        "LOAM_BATCH", "LOAM_SHARD", "LOAM_HOST", "LOAM_SERVER_SPLIT", "LOAM_WASM_CC", "LOAM_NO_DCE",
     }
     for i in 0..envs.len {
         h = fnv(sys.env(envs[i]), fnv("\n", fnv(envs[i], fnv("\n", h))))
@@ -877,6 +880,8 @@ fn main() {
     let mut emit_c = false
     let mut run = false
     let mut check_only = false
+    let mut test_mode = false
+    let mut emit_ir = false
     let n = sys.argc()
     let mut i = 1
     while i < n {
@@ -905,7 +910,13 @@ fn main() {
             }
         } else if a == "--run" {
             run = true
-        } else if a == "test" || a == "--emit-ir" || a == "--cost" || a == "--wasm-release" || a == "--wasm-split-input" || str.starts_with(a, "--dump-") {
+        } else if a == "test" {
+            // Build a runner for every `#[test]` fn and run it.
+            test_mode = true
+            run = true
+        } else if a == "--emit-ir" {
+            emit_ir = true
+        } else if a == "--cost" || a == "--wasm-release" || a == "--wasm-split-input" || str.starts_with(a, "--dump-") {
             not_here(a)
         } else if a == "check" {
             check_only = true
@@ -930,9 +941,11 @@ fn main() {
         usage()
         sys.exit(1)
     }
-    if sys.env("LOAM_BATCH").len > 0 || sys.env("LOAM_SERVER_SPLIT").len > 0 || sys.env("LOAM_NO_DCE").len > 0 {
-        not_here("LOAM_BATCH / LOAM_SERVER_SPLIT / LOAM_NO_DCE")
+    if sys.env("LOAM_BATCH").len > 0 || sys.env("LOAM_SERVER_SPLIT").len > 0 {
+        not_here("LOAM_BATCH / LOAM_SERVER_SPLIT")
     }
+    // LOAM_NO_DCE: emit every declaration (debug and size comparisons).
+    dce.SKIP = sys.env("LOAM_NO_DCE").len > 0
     let show_time = env_on("LOAM_TIME")
 
     // A build with `-o` whose inputs have not changed since the last one
@@ -944,7 +957,12 @@ fn main() {
             if show_time {
                 fmt.eprintln("loam: fresh")
             }
-            fmt.println("loam: {{in_path}} -> {{out_path}}")
+            if emit_ir {
+                return
+            }
+            if !test_mode {
+                fmt.println("loam: {{in_path}} -> {{out_path}}")
+            }
             if run {
                 let argv = []string { runnable(out_path) }
                 if sys.run(&argv) != 0 {
@@ -968,6 +986,37 @@ fn main() {
         fmt.println("loam: {{in_path}} ok")
         return
     }
+    // The generated runner calls test.begin / ok / summary.
+    if test_mode && !mods_use("test") {
+        fmt.eprintln("loam test: {{in_path}} must import \"std:test\"")
+        sys.exit(1)
+    }
+    // The IR as text, to `-o` or stdout; exit 1 if the verifier objects.
+    if emit_ir {
+        ir.lower_modules()
+        let bad = ir.verify()
+        let mut text = []u8 {}
+        irprint.print_ir(&mut text)
+        if out_path.len > 0 {
+            if !ensure_parent_dir(out_path) {
+                fmt.eprintln("error: cannot create directory for output")
+                sys.exit(1)
+            }
+            if sys.write_bytes(out_path, &text) != 0 {
+                fmt.eprintln("error: cannot write '{{out_path}}'")
+                sys.exit(1)
+            }
+            if !bad && key.len > 0 {
+                fresh_save(out_path, key)
+            }
+        } else {
+            fmt.write(buf.to_string(&text))
+        }
+        if bad {
+            sys.exit(1)
+        }
+        return
+    }
 
     let stem = loader.stem_of(in_path)
     let srcdir = loader.parent_dir(in_path)
@@ -977,6 +1026,12 @@ fn main() {
         cpath = if out_path.len > 0 { out_path } else { "{{srcdir}}/build/{{stem}}.c" }
     } else {
         binpath = if out_path.len > 0 { out_path } else { "{{srcdir}}/build/{{stem}}" }
+        // A test runner without `-o` is a throwaway: never in the app's build/.
+        if test_mode && out_path.len == 0 {
+            let run_key = "{{absolute(in_path)}}:{{async.now_ms()}}"
+            let run_tag = hex16(fnv(run_key, FNV_BASIS))
+            binpath = "{{tmp_dir()}}/loam_test_{{stem}}_{{run_tag}}"
+        }
         BUILD_TAG = hex16(fnv(absolute(binpath), FNV_BASIS))
         cpath = "{{tmp_dir()}}/loam_{{stem}}_{{BUILD_TAG}}.c"
         let dylib = str.ends_with(binpath, ".dylib")
@@ -1006,6 +1061,8 @@ fn main() {
     t0 = async.now_ms()
     progress("codegen")
     codegen.SINK = cpath
+    dce.TEST_MODE = test_mode
+    codegen.TEST_MODE = test_mode
     codegen.emit_c()
     if show_time {
         fmt.eprintln("loam: codegen {{secs(async.now_ms() - t0)}}s")
@@ -1078,10 +1135,16 @@ fn main() {
     if key.len > 0 {
         fresh_save(binpath, key)
     }
-    fmt.println("loam: {{in_path}} -> {{binpath}}")
+    if !test_mode {
+        fmt.println("loam: {{in_path}} -> {{binpath}}")
+    }
     if run {
         let argv = []string { runnable(binpath) }
-        if sys.run(&argv) != 0 {
+        let status = sys.run(&argv)
+        if test_mode && out_path.len == 0 {
+            sys.remove_path(binpath)
+        }
+        if status != 0 {
             sys.exit(1)
         }
     }
