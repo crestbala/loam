@@ -632,6 +632,25 @@ fn find_pkg(name: string) -> int {
     return NONE
 }
 
+/** *The package a source file belongs to, for `--cost`: `std`, or the name */
+/** *of the registered package whose directory holds it most closely; `""` */
+/** *for none. */
+fn package_label(path: string) -> string {
+    if path_under(path, std_dir()) {
+        return "std"
+    }
+    let mut best = ""
+    let mut best_len = 0
+    for i in 0..PKGS.len {
+        let n = PKGS[i].dir.len
+        if n > best_len && path_under(path, PKGS[i].dir) {
+            best = PKGS[i].name
+            best_len = n
+        }
+    }
+    return best
+}
+
 fn add_pkg(name: string, dir: string, entry: string, from_vendor: bool, sum: string) {
     if name.len == 0 || dir.len == 0 || find_pkg(name) != NONE || PKGS.len >= PKG_MAX {
         return

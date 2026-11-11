@@ -13,7 +13,7 @@
 // compile once into `<runtime>/.obj/` and are rebuilt when a source is newer.
 //
 // Not here yet (the seed has them; each is refused by name, never ignored):
-// wasm, iOS and Android targets, `--cost` and `--dump-*`.
+// iOS and Android targets and `--dump-*`.
 //
 // `LOAM_BATCH` builds a program of many fixtures that runs the one `LOAM_CASE`
 // names; `LOAM_SHARD=<dir>` compiles a Zeus program as cached units in
@@ -1329,6 +1329,179 @@ fn wasm_build(in_path: string, cpath: string, binpath: string, shard_dir: string
     return true
 }
 
+// --- `--cost`: a static cost report for the whole program -------------------------
+//
+// The counts come from the lowering the backend already does: every box
+// allocation, drop, bounds check and checked (trap-carrying) arithmetic is an
+// explicit IR instruction, so they report what the emitted C will do. The C
+// byte count is the size of the real translation unit, from the same codegen a
+// build runs, minus `cc`.
+
+/** *`n` right-aligned in `width` columns (C's `%8ld`). */
+fn pad_left(n: i64, width: int) -> string {
+    let t = "{{n}}"
+    let mut out = ""
+    for i in t.len..width {
+        out = "{{out}} "
+    }
+    return "{{out}}{{t}}"
+}
+
+/** *`s` left-aligned in `width` columns (C's `%-14s`). */
+fn pad_right(s: string, width: int) -> string {
+    let mut out = s
+    for i in s.len..width {
+        out = "{{out}} "
+    }
+    return out
+}
+
+/** *The module a `loam_<mod>_<fn>` C name belongs to (the longest module */
+/** *name that fits), or -1 for an entry fn. */
+fn cname_mod_index(cname: string) -> int {
+    if !str.starts_with(cname, "loam_") {
+        return -1
+    }
+    let mut best = -1
+    let mut best_len = 0
+    for i in 0..typecheck.MODS.len {
+        let name = typecheck.MODS[i].name
+        let n = name.len
+        if n == 0 || n <= best_len || cname.len <= 5 + n {
+            continue
+        }
+        if str.slice(cname, 5, 5 + n) == name && cname[5 + n] == '_' {
+            best = i
+            best_len = n
+        }
+    }
+    return best
+}
+
+/** *The package a fn's code is billed to: `std`, a package's name, or */
+/** *`(entry)` for the program's own modules. */
+fn cost_bucket(f: int) -> string {
+    let fx = &ir.FNS[f]
+    let mut idx = -1
+    if fx.has_name && fx.name == "__init" {
+        idx = fx.init_mod
+        if idx < 0 || idx >= typecheck.MODS.len {
+            return "(entry)"
+        }
+    } else {
+        idx = if fx.has_cname { cname_mod_index(fx.cname) } else { -1 }
+        if idx < 0 {
+            return "(entry)"
+        }
+    }
+    if idx == 0 {
+        return "(entry)"
+    }
+    let label = loader.package_label(typecheck.MODS[idx].path)
+    return if label.len > 0 { label } else { "(entry)" }
+}
+
+/** *Lower, count, size the C, and print the report. */
+fn cost_report() {
+    // The same reachability pruning a real build does, so the report counts
+    // the code that would ship.
+    if !dce.SKIP {
+        dce.run()
+    }
+    ir.lower_modules()
+    ir.verify()
+    let mut fns: i64 = i64(0)
+    let mut blocks: i64 = i64(0)
+    let mut insts: i64 = i64(0)
+    let mut allocs: i64 = i64(0)
+    let mut drops: i64 = i64(0)
+    let mut moves: i64 = i64(0)
+    let mut bounds: i64 = i64(0)
+    let mut checked: i64 = i64(0)
+    let mut calls: i64 = i64(0)
+    let mut closures: i64 = i64(0)
+    let mut strings: i64 = i64(0)
+    let mut widest: i64 = i64(0)
+    let mut widest_name = ""
+    let mut bucket_names = []string {}
+    let mut bucket_insts = []i64 {}
+    let mut total: i64 = i64(0)
+    for f in 0..ir.FNS.len {
+        let fx = &ir.FNS[f]
+        let mut n: i64 = i64(0)
+        for b in fx.blocks..fx.blocks + fx.nblocks {
+            let first = ir.BLOCKS[b].first
+            n = n + i64(ir.BLOCKS[b].count)
+            for i in first..first + ir.BLOCKS[b].count {
+                let op = ir.INSTS[i].op
+                if op == Op.Alloc {
+                    allocs = allocs + i64(1)
+                } else if op == Op.Drop {
+                    drops = drops + i64(1)
+                } else if op == Op.Move {
+                    moves = moves + i64(1)
+                } else if op == Op.Bound {
+                    bounds = bounds + i64(1)
+                } else if op == Op.Clos {
+                    closures = closures + i64(1)
+                } else if op == Op.ConstStr {
+                    strings = strings + i64(1)
+                } else if op == Op.Call || op == Op.CallVal {
+                    calls = calls + i64(1)
+                } else if op == Op.Bin && (ir.INSTS[i].bits & ir.I_CHECKED) != 0 {
+                    checked = checked + i64(1)
+                }
+            }
+        }
+        blocks = blocks + i64(fx.nblocks)
+        insts = insts + n
+        fns = fns + i64(1)
+        if n > widest {
+            widest = n
+            widest_name = if fx.has_name { fx.name } else { fx.cname }
+        }
+        total = total + n
+        let bucket = cost_bucket(f)
+        let mut k = 0
+        while k < bucket_names.len && bucket_names[k] != bucket {
+            k += 1
+        }
+        if k == bucket_names.len {
+            if bucket_names.len < 72 {
+                push(bucket_names, bucket)
+                push(bucket_insts, n)
+            }
+        } else {
+            bucket_insts[k] = bucket_insts[k] + n
+        }
+    }
+    // Size the real translation unit: codegen into a temp file.
+    let sink = "{{tmp_dir()}}/loam_cost_{{BUILD_TAG}}.c"
+    codegen.SINK = sink
+    codegen.emit_c()
+    let c_bytes = i64(sys.read_file(sink).len)
+    sys.remove_path(sink)
+    fmt.println("loam: cost report")
+    fmt.println("  functions      {{pad_left(fns, 8)}}")
+    fmt.println("  blocks         {{pad_left(blocks, 8)}}")
+    fmt.println("  IR insts       {{pad_left(insts, 8)}}")
+    fmt.println("  allocs (malloc){{pad_left(allocs, 8)}}")
+    fmt.println("  drops (frees)  {{pad_left(drops, 8)}}")
+    fmt.println("  moves          {{pad_left(moves, 8)}}")
+    fmt.println("  bounds checks  {{pad_left(bounds, 8)}}")
+    fmt.println("  overflow traps {{pad_left(checked, 8)}}")
+    fmt.println("  calls          {{pad_left(calls, 8)}}")
+    fmt.println("  closures       {{pad_left(closures, 8)}}")
+    fmt.println("  string literals{{pad_left(strings, 8)}}")
+    fmt.println("  C bytes        {{pad_left(c_bytes, 8)}}")
+    for k in 0..bucket_names.len {
+        let share = if total > i64(0) { c_bytes * bucket_insts[k] / total } else { i64(0) }
+        fmt.println("  package {{pad_right(bucket_names[k], 14)}} {{pad_left(share, 8)}} bytes")
+    }
+    let wn = if widest_name.len > 0 { widest_name } else { "-" }
+    fmt.println("  largest fn     {{wn}} ({{widest}} IR insts)")
+}
+
 // --- the frontend ------------------------------------------------------------------
 
 /** *Load, typecheck, and run the later passes. Every diagnostic is printed */
@@ -1374,6 +1547,7 @@ fn main() {
     let mut check_only = false
     let mut test_mode = false
     let mut emit_ir = false
+    let mut cost = false
     let mut target_wasm = false
     let mut wasm_release = false
     let mut wasm_split_input = false
@@ -1419,7 +1593,9 @@ fn main() {
             wasm_release = true
         } else if a == "--wasm-split-input" {
             wasm_split_input = true
-        } else if a == "--cost" || str.starts_with(a, "--dump-") {
+        } else if a == "--cost" {
+            cost = true
+        } else if str.starts_with(a, "--dump-") {
             not_here(a)
         } else if a == "check" {
             check_only = true
@@ -1451,7 +1627,7 @@ fn main() {
     // A build with `-o` whose inputs have not changed since the last one
     // reuses its output. `--emit-c` and `check` never use the cache.
     let mut key = ""
-    if out_path.len > 0 && !check_only && !emit_c && !fresh_off() {
+    if out_path.len > 0 && !check_only && !cost && !emit_c && !fresh_off() {
         key = fresh_key(in_path)
         if fresh_match(out_path, key) {
             if show_time {
@@ -1484,6 +1660,13 @@ fn main() {
         fmt.eprintln("loam: check {{secs(async.now_ms() - t0)}}s")
     }
     progress("modules {{typecheck.MODS.len}}")
+    if cost {
+        if BUILD_TAG.len == 0 {
+            BUILD_TAG = hex16(fnv("{{absolute(in_path)}}:{{async.now_ms()}}", FNV_BASIS))
+        }
+        cost_report()
+        return
+    }
     if check_only {
         fmt.println("loam: {{in_path}} ok")
         return

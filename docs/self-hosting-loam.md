@@ -1581,7 +1581,13 @@ the last list: §5.2 S0, typed handle cells (2026-11-11).
      `zeus_carousel`, `trap_app`, plain and release); the same `.wasm` bytes
      plain, release, split-input (and the same kept C) and sharded (the same
      30 units); the same warning. `selfhost_driver` compares the wasm C.
-   - [ ] P3: `--cost`.
+   - [x] P3 (2026-11-11): `--cost`. Lowers once, counts fns, blocks, IR
+     insts, allocs, drops, moves, bounds checks, overflow traps, calls,
+     closures and string literals, sizes the C through the build's own
+     codegen, and bills each fn's share of the C to `std`, a package
+     (`loader.package_label`) or `(entry)`. The same report as the seed on
+     arrays, `zeus_carousel`, dracula, myapp, `http_min`, `nob.loam` and the
+     compiler; `selfhost_driver` compares three of them.
    - [ ] P4: `--target ios` / `android`.
    - [ ] P5: `loam-lsp` on the Loam front end (a port of `lsp.c`), so no C
      front end is left.
