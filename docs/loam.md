@@ -174,7 +174,8 @@ Build the compiler once from the repo root:
 make
 ```
 
-`make` is only a bootstrap: it compiles a seed `bin/loamc`, then runs
+`make` is only a bootstrap: `cc` builds the committed seed
+(`bootstrap/loamc.c`), the seed builds `bin/loamc`, and then it runs
 [`nob.loam`](../nob.loam) (`nob build`), which owns the incremental build. The
 same program runs the suite (`./bin/nob test`, or `make test`).
 

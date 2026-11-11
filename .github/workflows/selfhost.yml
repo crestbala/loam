@@ -6,21 +6,17 @@
 # without starting a runner) and by hand. Standard GitHub-hosted runners are free
 # for public repositories.
 #
-# The C compiler's driver is POSIX, so Windows builds from the checkout alone
-# through the committed seed: `./nob.sh` compiles bootstrap/loamc.c (the Loam
-# compiler's own C) with MinGW-w64 gcc into bin/loamc. That compiler emits
-# each fixture's C (tools/win-bundle.sh); the fixtures are built and run
-# (tools/win-run.sh); it builds the current compiler, which reaches the fixed
-# point and builds and runs the fixtures through its own driver
-# (tools/win-selfhost.sh). The same-c job then checks that Windows emitted the
-# same C as Linux for the compiler and every fixture. Linux checks the fixed
-# point (`selfhost_driver`, `selfhost_seed`) in the selfhost job. See
-# docs/platforms.md.
-#
-# `./nob.sh test` leaves out the self-hosting stanzas (the Loam compiler against
-# the C one, and the fixed point): they are nearly all of a full run's time. The
-# selfhost job runs each on its own runner, beside the test job, so the
-# workflow takes about as long as the slowest stanza, not their sum.
+# Every OS bootstraps the same way from the checkout alone: `./nob.sh` compiles
+# the committed seed, bootstrap/loamc.c (the Loam compiler's own C), into
+# bin/loamc0, which builds bin/loamc from packages/loam/compiler. On Linux
+# `nob` then runs the suite. On Windows (MinGW-w64 gcc; `nob` needs a POSIX
+# shell) that compiler emits each fixture's C (tools/win-bundle.sh); the
+# fixtures are built and run (tools/win-run.sh); it builds itself again, which
+# reaches the fixed point, and builds and runs the fixtures through its own
+# driver (tools/win-selfhost.sh). The same-c job then checks that Windows
+# emitted the same C as Linux for the compiler and every fixture. Linux checks
+# the seed and the fixed point (`selfhost_seed`) in the selfhost job, on
+# x86_64 and aarch64. See docs/platforms.md.
 
 name: selfhost
 
@@ -54,7 +50,7 @@ jobs:
         with:
           deno-version: v2.x
 
-      - name: Build the seed compiler and tools
+      - name: Build the compiler from the seed, and the tools
         run: ./nob.sh
 
       - name: Test suite
@@ -76,12 +72,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        stanza: [selfhost_lex, selfhost_parse, selfhost_load, selfhost_passes, selfhost_driver, selfhost_seed]
-        os: [ubuntu-24.04]
-        include:
-          # The fixed point on aarch64 too.
-          - stanza: selfhost_driver
-            os: ubuntu-24.04-arm
+        stanza: [selfhost_seed]
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     steps:
@@ -90,7 +82,7 @@ jobs:
       - name: Install build dependencies
         run: sudo apt-get -o Acquire::Retries=5 update && sudo apt-get -o Acquire::Retries=5 install -y --no-install-recommends libx11-dev pkg-config
 
-      - name: Build the seed compiler and tools
+      - name: Build the compiler from the seed, and the tools
         run: ./nob.sh
 
       - name: ${{ matrix.stanza }}
@@ -112,7 +104,7 @@ jobs:
           update: false
           install: mingw-w64-x86_64-gcc diffutils
 
-      - name: Build bin/loamc from the committed seed
+      - name: Build bin/loamc from the committed seed (bootstrap/loamc.c -> bin/loamc0 -> bin/loamc)
         run: ./nob.sh
 
       - name: Emit the fixtures' C with it
@@ -121,7 +113,7 @@ jobs:
       - name: Build and run the fixtures natively
         run: bash tools/win-run.sh win-bundle
 
-      - name: Build the current compiler from the seed; fixed point
+      - name: The compiler builds itself; fixed point
         run: bash tools/win-selfhost.sh win-bundle
 
       - uses: actions/upload-artifact@v4
@@ -131,7 +123,7 @@ jobs:
           retention-days: 3
 
   # Generated C must be the same bytes on every OS: the compiler's own and
-  # every fixture's, Windows (seed-built compiler) against Linux (C compiler).
+  # every fixture's, Windows against Linux.
   same-c:
     needs: [linux, windows]
     runs-on: ubuntu-24.04
