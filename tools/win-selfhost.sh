@@ -47,7 +47,12 @@ for c in "$IN"/*.c; do
     "$work/loamc1.exe" --emit-c "$f" -o "$work/$b.c" >"$log" 2>&1 || ok=0
     if [ $ok = 1 ] && ! cmp -s "$c" "$work/$b.c"; then echo "C differs from the seed's" >>"$log"; ok=0; fi
     [ $ok = 1 ] && { "$work/loamc1.exe" "$f" -o "$work/$b" >>"$log" 2>&1 || ok=0; }
-    [ $ok = 1 ] && { "$work/$b.exe" </dev/null >"$work/$b.out" 2>>"$log" || { echo "exit status $?" >>"$log"; ok=0; }; }
+    if [ $ok = 1 ] && [ -f "$IN/$b.trap" ]; then
+        if "$work/$b.exe" </dev/null >"$work/$b.out" 2>"$work/$b.err"; then echo "exited 0; should have panicked" >>"$log"; ok=0
+        elif ! grep -qF -f "$IN/$b.trap" "$work/$b.err"; then cat "$work/$b.err" >>"$log"; echo "panic message differs from $b.trap" >>"$log"; ok=0; fi
+    elif [ $ok = 1 ]; then
+        "$work/$b.exe" </dev/null >"$work/$b.out" 2>>"$log" || { echo "exit status $?" >>"$log"; ok=0; }
+    fi
     if [ $ok = 1 ] && [ -f "$IN/$b.expected" ] && ! cmp -s "$work/$b.out" "$IN/$b.expected"; then
         echo "stdout differs from $b.expected" >>"$log"; ok=0
     fi
