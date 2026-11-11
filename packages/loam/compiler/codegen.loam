@@ -39,6 +39,9 @@ let mut OUT: []u8 = []u8 {}
 /** *Where `emit_c` writes: `""` is stdout, in pieces; a path gets the whole */
 /** *unit in one write when it is done. */
 let mut SINK: string = ""
+/** *`loam test`: the program's `main` is left out and a runner calls every */
+/** *kept `#[test]` fn instead. */
+let mut TEST_MODE: bool = false
 
 fn w(s: string) {
     buf.push_str(&mut OUT, s)
@@ -2407,6 +2410,39 @@ fn is_init_fn(f: int) -> bool {
     return ir.FNS[f].has_name && ir.FNS[f].name == "__init"
 }
 
+/** *`loam test`'s `main`: name each test through `test.begin`, call it, and */
+/** *leave the report to `test.ok` / `test.summary`. Naming the test before the */
+/** *call means a trap (which aborts without unwinding) still says which test */
+/** *was running. The program's own `main` would run the module inits, so the */
+/** *runner calls them too. */
+fn test_runner() {
+    w("\nint main(void) {\n")
+    init_calls()
+    let nmods = typecheck.MODS.len
+    for m in 0..nmods {
+        let root = typecheck.MODS[m].root
+        if root == NONE {
+            continue
+        }
+        let module_name = typecheck.MODS[m].name
+        let decls = ast.NODES[root].kids
+        for i in 0..decls.len {
+            let d = decls[i]
+            if !is_fn(d) || (ast.NODES[d].op & dce.FN_TEST) == 0 || !dce.keep(d) {
+                continue
+            }
+            let fn_name = ast.INFO[d].name
+            let label = if m == 0 || module_name.len == 0 { fn_name } else { "{{module_name}}.{{fn_name}}" }
+            w("    loam_test_begin(")
+            str_lit(label)
+            w(");\n")
+            w("    {{fn_cname(d)}}();\n")
+            w("    loam_test_ok();\n")
+        }
+    }
+    w("    return loam_test_summary();\n}\n")
+}
+
 /** *Every module's `__init`, each after the inits of everything it imports. */
 fn init_calls() {
     let nmods = typecheck.MODS.len
@@ -3031,9 +3067,12 @@ fn copy_runtime() {
 }
 
 /** *Write the whole C translation unit to stdout, or to `SINK`. Dead-code */
-/** *elimination and IR lowering (unless `ir.LOWERED`) run first. */
+/** *elimination (unless `dce.SKIP`) and IR lowering (unless `ir.LOWERED`) */
+/** *run first. */
 fn emit_c() {
-    dce.run()
+    if !dce.SKIP {
+        dce.run()
+    }
     // Lowering appends to the IR tables, so a caller that lowered already
     // (tcdump --all prints the IR first) must not lower twice.
     if !ir.LOWERED {
@@ -3276,7 +3315,12 @@ fn emit_c() {
                 if !is_fn(d) || is_intrinsic(d) || is_generic(d) || !dce.keep(d) {
                     continue
                 }
-                emit_fn(d, m == 0 && ast.INFO[d].name == "main")
+                let is_main = m == 0 && ast.INFO[d].name == "main"
+                // The runner owns `main`.
+                if is_main && TEST_MODE {
+                    continue
+                }
+                emit_fn(d, is_main)
             }
         }
         m = m - 1
@@ -3301,6 +3345,9 @@ fn emit_c() {
         h = h + 1
     }
     lit_template_defs()
+    if TEST_MODE {
+        test_runner()
+    }
     flush()
     if SINK.len > 0 {
         if sys.write_bytes(SINK, &OUT) != 0 {

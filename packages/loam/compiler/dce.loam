@@ -28,6 +28,10 @@ let mut TEST_MODE: bool = false
 /** *`#[server]` bodies are dropped from this build, so what only they call */
 /** *is not reachable. */
 let mut SERVER_SPLIT: bool = false
+/** *`LOAM_NO_DCE`: `emit_c` skips the pass and every fn is kept. */
+let mut SKIP: bool = false
+/** *`run` has filled `KEPT`; until then `keep` keeps everything. */
+let mut RAN: bool = false
 
 /** *Per node: kept (its C is emitted), and its body already walked. */
 let mut KEPT: []bool = []bool {}
@@ -226,6 +230,7 @@ fn root_full_package_imports() {
 
 /** *Find what codegen keeps; then `keep(f)` answers per fn declaration. */
 fn run() {
+    RAN = true
     KEPT = []bool {}
     DONE = []bool {}
     for i in 0..ast.NODES.len {
@@ -314,5 +319,8 @@ fn run() {
 }
 
 fn keep(f: int) -> bool {
+    if !RAN {
+        return f != NONE
+    }
     return f != NONE && f < KEPT.len && KEPT[f]
 }

@@ -1877,7 +1877,7 @@ int main(int argc, char **argv) {
         cpath_is_temp = 1;
         if (test_mode && !out_path) {
             /* The runner binary is a throwaway; never write it into the app's
-               build/ tree. `cc` overwrites the mkstemp'd empty file.
+               build/ tree.
                `loam test -o <bin>` keeps that path so the next identical run
                can reuse it. */
             char tb[1024];
@@ -1893,6 +1893,9 @@ int main(int argc, char **argv) {
                 return 1;
             }
             close(tfd);
+            /* Only the unique name is needed: `cc` creates the file. Left in
+               place, any failed build after this point leaked it. */
+            unlink(tb);
             snprintf(binpath, sizeof binpath, "%s", tb);
         }
     }

@@ -1,0 +1,323 @@
+// irprint — the IR as `loamc --emit-ir` writes it (`ir_print` in src/ir.c):
+// per fn a header and its locals, then each block's instructions and
+// terminator, one line each. The readable form; irdump.loam is the full one.
+
+import "std:buf"
+import "std:conv"
+import "lexer.loam"
+import "types.loam"
+import "ir.loam"
+
+fn op_name(op: int) -> string {
+    switch op {
+        case Tok.Plus:
+            return "add"
+        case Tok.Minus:
+            return "sub"
+        case Tok.Star:
+            return "mul"
+        case Tok.Slash:
+            return "div"
+        case Tok.Percent:
+            return "rem"
+        case Tok.EqEq:
+            return "eq"
+        case Tok.BangEq:
+            return "ne"
+        case Tok.Lt:
+            return "lt"
+        case Tok.Gt:
+            return "gt"
+        case Tok.LtEq:
+            return "le"
+        case Tok.GtEq:
+            return "ge"
+        case Tok.Bang:
+            return "not"
+    }
+    return "?"
+}
+
+fn local_ref(b: &mut []u8, local: int) {
+    push(b, u8('%'))
+    buf.push_int(b, local)
+}
+
+fn text_or(index: int, fallback: string) -> string {
+    return if index == ir.NONE { fallback } else { ir.TEXTS[index] }
+}
+
+fn put_place(b: &mut []u8, p: int) {
+    if p == ir.NONE {
+        buf.push_str(b, "<null>")
+        return
+    }
+    let x = ir.PLACES[p]
+    if x.kind == PlaceKind.Local {
+        local_ref(b, x.local)
+    } else if x.kind == PlaceKind.Field {
+        put_place(b, x.base)
+        push(b, u8('.'))
+        buf.push_str(b, x.field)
+    } else if x.kind == PlaceKind.Index {
+        put_place(b, x.base)
+        buf.push_str(b, "[%")
+        buf.push_int(b, x.index)
+        push(b, u8(']'))
+    } else if x.kind == PlaceKind.Deref {
+        push(b, u8('*'))
+        put_place(b, x.base)
+    }
+}
+
+/** *`, %a, %b, …` over an instruction's call arguments, without the first comma. */
+fn put_args(b: &mut []u8, x: &Inst) {
+    for k in 0..x.nargs {
+        if k > 0 {
+            buf.push_str(b, ", ")
+        }
+        local_ref(b, ir.ARGS[x.args + k])
+    }
+}
+
+fn put_inst(b: &mut []u8, i: int) {
+    let x = ir.INSTS[i]
+    buf.push_str(b, "    ")
+    if x.dst >= 0 {
+        local_ref(b, x.dst)
+        buf.push_str(b, " = ")
+    }
+    switch x.op {
+        case Op.ConstInt:
+            buf.push_str(b, "const ")
+            buf.push_i64(b, x.imm)
+            break
+        case Op.ConstFloat:
+            buf.push_str(b, "const.f ")
+            buf.push_str(b, conv.f64_to_g6(x.fimm))
+            break
+        case Op.ConstBool:
+            buf.push_str(b, if x.imm != i64(0) { "const true" } else { "const false" })
+            break
+        case Op.ConstStr:
+            buf.push_str(b, "str \"")
+            buf.push_str(b, text_or(x.text, ""))
+            push(b, u8('"'))
+            break
+        case Op.Load:
+            buf.push_str(b, if (x.bits & ir.I_BORROWED) != 0 { "load.borrow " } else { "load " })
+            put_place(b, x.place)
+            break
+        case Op.Store:
+            buf.push_str(b, "store")
+            if x.binop == Tok.PlusEq {
+                buf.push_str(b, ".add")
+            } else if x.binop == Tok.MinusEq {
+                buf.push_str(b, ".sub")
+            } else if x.binop == Tok.StarEq {
+                buf.push_str(b, ".mul")
+            } else if x.binop == Tok.SlashEq {
+                buf.push_str(b, ".div")
+            }
+            push(b, u8(' '))
+            put_place(b, x.place)
+            buf.push_str(b, ", ")
+            local_ref(b, x.a)
+            break
+        case Op.Addr:
+            buf.push_str(b, if (x.bits & ir.I_MUT) != 0 { "addr mut " } else { "addr " })
+            put_place(b, x.place)
+            break
+        case Op.Move:
+            buf.push_str(b, "move ")
+            local_ref(b, x.a)
+            break
+        case Op.Bin:
+            buf.push_str(b, op_name(x.binop))
+            if (x.bits & ir.I_CHECKED) != 0 {
+                buf.push_str(b, ".chk")
+            }
+            push(b, u8(' '))
+            local_ref(b, x.a)
+            buf.push_str(b, ", ")
+            local_ref(b, x.b)
+            break
+        case Op.Un:
+            buf.push_str(b, op_name(x.binop))
+            push(b, u8(' '))
+            local_ref(b, x.a)
+            break
+        case Op.Call:
+            buf.push_str(b, "call ")
+            buf.push_str(b, text_or(x.text, "?"))
+            push(b, u8('('))
+            put_args(b, &x)
+            push(b, u8(')'))
+            if (x.bits & ir.I_MOVED) != 0 {
+                buf.push_str(b, " move")
+            }
+            break
+        case Op.CallVal:
+            buf.push_str(b, "call.val ")
+            local_ref(b, x.a)
+            push(b, u8('('))
+            put_args(b, &x)
+            push(b, u8(')'))
+            if (x.bits & ir.I_MOVED) != 0 {
+                buf.push_str(b, " move")
+            }
+            break
+        case Op.Alloc:
+            buf.push_str(b, "alloc ")
+            local_ref(b, x.a)
+            break
+        case Op.Drop:
+            buf.push_str(b, "drop ")
+            local_ref(b, x.a)
+            break
+        case Op.Bound:
+            buf.push_str(b, "bound ")
+            local_ref(b, x.a)
+            buf.push_str(b, ", ")
+            if x.b >= 0 {
+                local_ref(b, x.b)
+            } else {
+                buf.push_i64(b, x.imm)
+            }
+            break
+        case Op.StructLit, Op.ArrayLit:
+            buf.push_str(b, if x.op == Op.StructLit { "struct {" } else { "array {" })
+            for k in 0..x.nints {
+                if k > 0 {
+                    buf.push_str(b, ", ")
+                }
+                buf.push_i64(b, ir.INTS[x.ints + k])
+            }
+            for k in 0..x.nargs {
+                if k > 0 {
+                    buf.push_str(b, ", ")
+                }
+                let arg = ir.ARGS[x.args + k]
+                if arg < 0 && x.dflt != ir.NONE {
+                    buf.push_str(b, "default")
+                } else {
+                    local_ref(b, arg)
+                }
+            }
+            push(b, u8('}'))
+            break
+        case Op.FnVal:
+            buf.push_str(b, "fnval ")
+            buf.push_str(b, text_or(x.text, "?"))
+            break
+        case Op.Clos:
+            buf.push_str(b, "clos ")
+            buf.push_str(b, text_or(x.text, "?"))
+            buf.push_str(b, " {")
+            put_args(b, &x)
+            push(b, u8('}'))
+            break
+        case Op.Cast:
+            buf.push_str(b, "cast ")
+            local_ref(b, x.a)
+            break
+        case Op.Sizeof:
+            buf.push_str(b, "sizeof ")
+            buf.push_str(b, if x.ty == types.NO_TYPE { "?" } else { types.type_name(x.ty) })
+            break
+        case Op.Panic:
+            buf.push_str(b, "panic ")
+            local_ref(b, x.a)
+            break
+    }
+    push(b, u8('\n'))
+}
+
+fn put_term(b: &mut []u8, blk: &Block) {
+    switch blk.term {
+        case Term.Ret:
+            if blk.term_val >= 0 {
+                buf.push_str(b, "    ret ")
+                local_ref(b, blk.term_val)
+                push(b, u8('\n'))
+            } else {
+                buf.push_str(b, "    ret\n")
+            }
+            break
+        case Term.Jmp:
+            buf.push_str(b, "    jmp bb")
+            buf.push_int(b, blk.succ0)
+            push(b, u8('\n'))
+            break
+        case Term.Br:
+            buf.push_str(b, "    br ")
+            local_ref(b, blk.term_val)
+            buf.push_str(b, ", bb")
+            buf.push_int(b, blk.succ0)
+            buf.push_str(b, ", bb")
+            buf.push_int(b, blk.succ1)
+            push(b, u8('\n'))
+            break
+        case Term.Switch:
+            buf.push_str(b, "    switch ")
+            local_ref(b, blk.term_val)
+            buf.push_str(b, " [")
+            for c in 0..blk.sw_n {
+                if c > 0 {
+                    buf.push_str(b, ", ")
+                }
+                buf.push_i64(b, ir.SW_VALS[blk.sw + c])
+                buf.push_str(b, ": bb")
+                buf.push_int(b, ir.SW_BLOCKS[blk.sw + c])
+            }
+            buf.push_str(b, "], default bb")
+            buf.push_int(b, blk.succ0)
+            push(b, u8('\n'))
+            break
+        case Term.Unreachable:
+            buf.push_str(b, "    unreachable\n")
+            break
+    }
+}
+
+/** *The whole program's IR, as `--emit-ir` writes it. */
+fn print_ir(b: &mut []u8) {
+    for f in 0..ir.FNS.len {
+        let fx = ir.FNS[f]
+        buf.push_str(b, "fn ")
+        buf.push_str(b, if fx.has_cname { fx.cname } else { fx.name })
+        buf.push_str(b, "  ; ")
+        buf.push_int(b, fx.nlocals)
+        buf.push_str(b, " locals, ")
+        buf.push_int(b, fx.nblocks)
+        buf.push_str(b, " blocks")
+        if !fx.lowered {
+            buf.push_str(b, "  [PARTIAL]")
+        }
+        push(b, u8('\n'))
+        for l in 0..fx.nlocals {
+            let lo = ir.LOCALS[fx.locals + l]
+            buf.push_str(b, "  %")
+            buf.push_int(b, l)
+            if lo.has_name {
+                push(b, u8(' '))
+                buf.push_str(b, ir.local_name(f, l))
+            }
+            if (lo.flags & ir.L_DROP) != 0 {
+                buf.push_str(b, " [drop]")
+            }
+            push(b, u8('\n'))
+        }
+        for k in 0..fx.nblocks {
+            let blk = ir.BLOCKS[fx.blocks + k]
+            buf.push_str(b, "  bb")
+            buf.push_int(b, k)
+            buf.push_str(b, ":\n")
+            for i in 0..blk.count {
+                put_inst(b, blk.first + i)
+            }
+            put_term(b, &blk)
+        }
+        push(b, u8('\n'))
+    }
+}
