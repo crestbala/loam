@@ -12,8 +12,8 @@
 // Runtime objects (the Zeus platform layer, its hosts, `#![c_source]` files)
 // compile once into `<runtime>/.obj/` and are rebuilt when a source is newer.
 //
-// Not here yet (the seed has them; each is refused by name, never ignored):
-// iOS and Android targets and `--dump-*`.
+// Not here: the `--dump-*` modes, the seed's per-pass dumps for the
+// differential gates (the Loam twins are `tcdump`, `tokdump`, `moddump`).
 //
 // `LOAM_BATCH` builds a program of many fixtures that runs the one `LOAM_CASE`
 // names; `LOAM_SHARD=<dir>` compiles a Zeus program as cached units in
@@ -1329,6 +1329,343 @@ fn wasm_build(in_path: string, cpath: string, binpath: string, shard_dir: string
     return true
 }
 
+// --- iOS Simulator and Android -------------------------------------------------------
+
+/** *Run `cmd` through `sh -c`, its output on the terminal. `true` on exit 0. */
+/** *For the simulator and Gradle steps, which are shell pipelines. */
+fn sh_run(cmd: string) -> bool {
+    let argv = []string { "sh", "-c", cmd }
+    return sys.run(&argv) == 0
+}
+
+/** *The iPhone Simulator SDK path, or `""` without Xcode. */
+fn ios_sdk_path() -> string {
+    let out = sys.exec("xcrun --sdk iphonesimulator --show-sdk-path 2>/dev/null")
+    let nl = str.index_of_byte(out, '\n')
+    let first = if nl >= 0 { str.slice(out, 0, nl) } else { out }
+    return str.trim(first)
+}
+
+fn write_ios_plist(path: string, exe: string, bid: string) -> bool {
+    if !ensure_parent_dir(path) {
+        return false
+    }
+    let body = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>CFBundleExecutable</key><string>{{exe}}</string>\n  <key>CFBundleIdentifier</key><string>{{bid}}</string>\n  <key>CFBundleName</key><string>{{exe}}</string>\n  <key>CFBundlePackageType</key><string>APPL</string>\n  <key>CFBundleVersion</key><string>1</string>\n  <key>CFBundleShortVersionString</key><string>1.0</string>\n  <key>MinimumOSVersion</key><string>16.0</string>\n  <key>LSRequiresIPhoneOS</key><true/>\n  <key>UIDeviceFamily</key><array><integer>1</integer></array>\n  <key>CFBundleSupportedPlatforms</key><array><string>iPhoneSimulator</string></array>\n  <key>UILaunchScreen</key><dict/>\n  <key>UIStatusBarHidden</key><true/>\n  <key>UIViewControllerBasedStatusBarAppearance</key><true/>\n  <key>NSAppTransportSecurity</key>\n  <dict>\n    <key>NSAllowsLocalNetworking</key><true/>\n  </dict>\n</dict>\n</plist>\n"
+    return sys.write_file(path, body) == 0
+}
+
+/** *Boot a simulator, install `app`, launch it. `ZEUS_RUN_LOG` gets the app's */
+/** *console (what `zeli serve` follows). */
+fn ios_sim_run(app: string, bid: string) -> bool {
+    let run_log = sys.env("ZEUS_RUN_LOG")
+    let launch = if run_log.len > 0 { "(xcrun simctl launch --console booted {{bid}} >>\"{{run_log}}\" 2>&1 </dev/null &)" } else { "xcrun simctl launch booted {{bid}}" }
+    sh_run("open -a Simulator >/dev/null 2>&1")
+    return sh_run("udid=$(xcrun simctl list devices available 2>/dev/null | awk -F '[()]' '/iPhone/{gsub(/^ +| +$/,\"\",$2); print $2; exit}'); if [ -z \"$udid\" ]; then echo 'loam: no iPhone Simulator found' >&2; exit 1; fi; xcrun simctl boot \"$udid\" >/dev/null 2>&1 || true; xcrun simctl bootstatus \"$udid\" -b >/dev/null; xcrun simctl install booted \"{{app}}\" && {{launch}}")
+}
+
+/** *`ensure_obj` for the iOS objects: their own compiler and flags, and one */
+/** *list of headers they all read. */
+fn ios_obj(cc_args: &[]string, src: string, obj: string) -> bool {
+    let rt = loader.runtime_dir()
+    let deps = []string { src, "{{rt}}/zeus_rt.h", "{{rt}}/loam_rt.h", "{{rt}}/zeus_key.h", "{{rt}}/net_rt.h", "{{zeus_dir()}}/hosts/apple/zeus_apple.h" }
+    if sys.exists(obj) == 1 {
+        let mut stale = false
+        for i in 0..deps.len {
+            if src_newer(deps[i], obj) {
+                stale = true
+            }
+        }
+        if !stale {
+            return true
+        }
+    }
+    if !ensure_parent_dir(obj) {
+        return false
+    }
+    let tmp = "{{obj}}.{{BUILD_TAG}}.tmp"
+    let mut argv = []string {}
+    push_all(&mut argv, cc_args)
+    push_list(&mut argv, []string { src, "-c", "-o", tmp })
+    if env_on("LOAM_TIME") {
+        fmt.eprintln("loam: cc {{src}}")
+    }
+    if sys.run(&argv) != 0 || sys.rename(tmp, obj) != 0 {
+        sys.remove_path(tmp)
+        return false
+    }
+    return true
+}
+
+/** *An iOS Simulator `.app` around the program. `false` after saying why. */
+fn ios_build(in_path: string, cpath: string, binpath: string, stem: string, shard_dir: string, run: bool) -> bool {
+    let rt = loader.runtime_dir()
+    let zd = zeus_dir()
+    let arch = if sys.arch() == "aarch64" { "arm64" } else { "x86_64" }
+    if !uses_zeus() {
+        fmt.eprintln("loam: --target=ios requires import \"std:zeus\"")
+        return false
+    }
+    let sdk = ios_sdk_path()
+    if sdk.len == 0 {
+        fmt.eprintln("loam: no iPhone Simulator SDK. Install Xcode (App Store), then:\n  xcodebuild -downloadPlatform iOS\n  or open Xcode → Settings → Platforms")
+        return false
+    }
+    let appdir = if str.ends_with(binpath, ".app") { binpath } else { "{{binpath}}.app" }
+    if sys.mkdir(appdir) != 0 {
+        fmt.eprintln("loam: cannot create {{appdir}}")
+        return false
+    }
+    let exe = "{{appdir}}/{{stem}}"
+    let bid = "com.loam.{{stem}}"
+    if !write_ios_plist("{{appdir}}/Info.plist", stem, bid) {
+        fmt.eprintln("loam: cannot write Info.plist")
+        return false
+    }
+    // The runtime and the host are the same files on every build, and
+    // compiling them is most of a build next to the app's own C, so they are
+    // cached objects that keep -O1 in a dev build.
+    let owns = if types.string_owns { "-DLOAM_STRING_OWNS" } else { "" }
+    let mut flags = []string { "-isysroot", sdk, "-target", "{{arch}}-apple-ios16.0-simulator", "-std=gnu99", "-ffp-contract=off", "-DLOAM_ALLOC_TRACE", "-fno-asynchronous-unwind-tables", "-DLOAM_IOS" }
+    if owns.len > 0 {
+        push(flags, owns)
+    }
+    push(flags, "-I{{rt}}")
+    let mut ios_cc = []string { "xcrun", "clang", "-O1" }
+    push_all(&mut ios_cc, &flags)
+    let mut ios_mcc = []string {}
+    push_all(&mut ios_mcc, &ios_cc)
+    push_list(&mut ios_mcc, []string { "-x", "objective-c", "-fno-objc-arc", "-I{{zd}}/hosts/apple" })
+    let mut c_srcs = []string { "{{rt}}/zeus_plat.c", "{{rt}}/zeus_key.c" }
+    let mut c_names = []string { "zeus_plat", "zeus_key" }
+    if mods_use("http") {
+        push(c_srcs, "{{rt}}/net.c")
+        push(c_names, "net")
+    }
+    let m_srcs = []string { "{{zd}}/hosts/ios/ios.m", "{{zd}}/hosts/apple/apple_draw.m", "{{zd}}/hosts/apple/apple_media.m" }
+    let m_names = []string { "ios", "apple_draw", "apple_media" }
+    let noowns = if types.string_owns { "" } else { ".noowns" }
+    let obj_dir = "{{rt}}/.obj/ios-{{base_name(sdk)}}-{{arch}}{{noowns}}"
+    let mut objs = []string {}
+    for i in 0..c_srcs.len + m_srcs.len {
+        let objc = i >= c_srcs.len
+        let src = if objc { m_srcs[i - c_srcs.len] } else { c_srcs[i] }
+        let name = if objc { m_names[i - c_srcs.len] } else { c_names[i] }
+        let o = "{{obj_dir}}/{{name}}.o"
+        let ok = if objc { ios_obj(&ios_mcc, src, o) } else { ios_obj(&ios_cc, src, o) }
+        if !ok {
+            fmt.eprintln("loam: iOS compile failed ({{src}})")
+            return false
+        }
+        push(objs, o)
+    }
+    let mut acc = []string { "xcrun", "clang", if want_dev() { "-O0" } else { "-O1" } }
+    push_all(&mut acc, &flags)
+    let no_extra = []string {}
+    let app_in = app_input(shard_dir, cpath, &acc, &no_extra)
+    let mut argv = []string {}
+    push_all(&mut argv, &acc)
+    push_all(&mut argv, &app_in)
+    push(argv, "-x")
+    push(argv, "none")
+    push_all(&mut argv, &objs)
+    let fws = []string { "UIKit", "Foundation", "CoreGraphics", "CoreText", "QuartzCore", "ImageIO", "AVFoundation", "CoreMedia", "CoreVideo", "VideoToolbox", "Security", "CoreFoundation" }
+    for i in 0..fws.len {
+        push(argv, "-framework")
+        push(argv, fws[i])
+    }
+    push(argv, "-o")
+    push(argv, exe)
+    let t0 = async.now_ms()
+    if env_on("LOAM_TIME") {
+        fmt.eprintln("loam: cc ios")
+    }
+    progress(if SHARD_LINKED { "link" } else { "cc" })
+    if sys.run(&argv) != 0 {
+        fmt.eprintln("loam: iOS compile failed (C: {{cpath}})")
+        return false
+    }
+    let sign = []string { "codesign", "--sign", "-", "--force", "--timestamp=none", appdir }
+    sys.run(&sign)
+    if env_on("LOAM_TIME") {
+        fmt.eprintln("loam: cc {{secs(async.now_ms() - t0)}}s")
+    }
+    sys.remove_path(cpath)
+    fmt.println("loam: {{in_path}} -> {{appdir}} (iOS Simulator)")
+    if run && !ios_sim_run(appdir, bid) {
+        sys.exit(1)
+    }
+    return true
+}
+
+/** *An Android SDK: `ANDROID_HOME`, `ANDROID_SDK_ROOT`, the usual homes, */
+/** *Homebrew's command-line tools. `""` when none. */
+fn find_android_sdk() -> string {
+    let mut e = sys.env("ANDROID_HOME")
+    if e.len == 0 {
+        e = sys.env("ANDROID_SDK_ROOT")
+    }
+    if e.len > 0 && sys.is_dir(e) == 1 {
+        return e
+    }
+    let home = sys.env("HOME")
+    if home.len > 0 {
+        if sys.is_dir("{{home}}/Library/Android/sdk") == 1 {
+            return "{{home}}/Library/Android/sdk"
+        }
+        if sys.is_dir("{{home}}/Android/Sdk") == 1 {
+            return "{{home}}/Android/Sdk"
+        }
+    }
+    let brew = []string { "/opt/homebrew/share/android-commandlinetools", "/usr/local/share/android-commandlinetools" }
+    for i in 0..brew.len {
+        if sys.is_dir(brew[i]) == 1 {
+            return brew[i]
+        }
+    }
+    return ""
+}
+
+/** *`gradle` on `PATH`, else the Homebrew places; `""` when none. */
+fn find_gradle() -> string {
+    let dirs = str.split(sys.env("PATH"), ":")
+    for i in 0..dirs.len {
+        if dirs[i].len > 0 && sys.exists("{{dirs[i]}}/gradle") == 1 {
+            return "{{dirs[i]}}/gradle"
+        }
+    }
+    let cands = []string { "/opt/homebrew/bin/gradle", "/usr/local/bin/gradle" }
+    for i in 0..cands.len {
+        if sys.exists(cands[i]) == 1 {
+            return cands[i]
+        }
+    }
+    return ""
+}
+
+/** *`com.loam.<stem>`, the stem made a Java identifier. */
+fn android_app_id(stem: string) -> string {
+    let s = if stem.len > 0 { stem } else { "app" }
+    let mut out = []u8 {}
+    if s[0] >= '0' && s[0] <= '9' {
+        push(out, u8('a'))
+    }
+    for i in 0..s.len {
+        let c = s[i]
+        let ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+        push(out, if ok { u8(c) } else { u8('_') })
+        if out.len >= 127 {
+            break
+        }
+    }
+    return "com.loam.{{buf.to_string(&out)}}"
+}
+
+fn android_cmake(uses_http: bool) -> string {
+    let rt = loader.runtime_dir()
+    let net = if uses_http { "  \"{{rt}}/net.c\"\n" } else { "" }
+    let owns = if types.string_owns { " LOAM_STRING_OWNS" } else { "" }
+    // A dev build leaves only the app's code unoptimized, as on the native
+    // targets: it is what an edit recompiles.
+    let dev = if want_dev() { "set_source_files_properties(app.c PROPERTIES COMPILE_OPTIONS -O0)\n" } else { "" }
+    return "cmake_minimum_required(VERSION 3.22.1)\nproject(zeus C)\nadd_library(zeus SHARED\n  app.c\n  \"{{zeus_dir()}}/hosts/android/android.c\"\n  \"{{rt}}/zeus_plat.c\"\n  \"{{rt}}/zeus_key.c\"\n{{net}})\ntarget_include_directories(zeus PRIVATE \"{{rt}}\")\ntarget_compile_definitions(zeus PRIVATE LOAM_ANDROID LOAM_ALLOC_TRACE{{owns}})\ntarget_compile_options(zeus PRIVATE -std=gnu99 -O1 -ffp-contract=off -fno-asynchronous-unwind-tables)\n{{dev}}target_link_libraries(zeus android log)\n"
+}
+
+fn android_app_gradle(app_id: string) -> string {
+    return "apply plugin: 'com.android.application'\nandroid {\n    namespace 'com.loam.zeus'\n    compileSdk 34\n    defaultConfig {\n        applicationId \"{{app_id}}\"\n        minSdk 26\n        targetSdk 34\n        ndk { abiFilters 'arm64-v8a', 'x86_64' }\n    }\n    compileOptions {\n        sourceCompatibility JavaVersion.VERSION_1_8\n        targetCompatibility JavaVersion.VERSION_1_8\n    }\n    externalNativeBuild {\n        cmake { path file('src/main/cpp/CMakeLists.txt') }\n    }\n}\n"
+}
+
+/** *Write `body` to `path`, creating its directory. */
+fn write_with_dir(path: string, body: string) -> bool {
+    return ensure_parent_dir(path) && sys.write_file(path, body) == 0
+}
+
+/** *The Gradle project: the Java host, manifest and Gradle files copied from */
+/** *the Zeus Android host, the program's C as `app.c`, and the CMake and app */
+/** *build files written for it. */
+fn android_emit_project(proj: string, cpath: string, app_id: string) -> bool {
+    if sys.mkdir(proj) != 0 {
+        return false
+    }
+    let host = "{{zeus_dir()}}/hosts/android"
+    let froms = []string { "{{host}}/java/com/loam/zeus/ZeusActivity.java", "{{host}}/java/com/loam/zeus/ZeusView.java", "{{host}}/AndroidManifest.xml", "{{host}}/network_security_config.xml", "{{host}}/root-build.gradle", "{{host}}/settings.gradle", "{{host}}/gradle.properties", cpath }
+    let tos = []string { "{{proj}}/app/src/main/java/com/loam/zeus/ZeusActivity.java", "{{proj}}/app/src/main/java/com/loam/zeus/ZeusView.java", "{{proj}}/app/src/main/AndroidManifest.xml", "{{proj}}/app/src/main/res/xml/network_security_config.xml", "{{proj}}/build.gradle", "{{proj}}/settings.gradle", "{{proj}}/gradle.properties", "{{proj}}/app/src/main/cpp/app.c" }
+    for i in 0..froms.len {
+        let r = sys.read(froms[i])
+        if r.tag != ResultTag.Ok || !write_with_dir(tos[i], r.val) {
+            fmt.eprintln("loam: cannot copy {{froms[i]}} -> {{tos[i]}}")
+            return false
+        }
+    }
+    if !write_with_dir("{{proj}}/app/src/main/cpp/CMakeLists.txt", android_cmake(mods_use("http"))) {
+        return false
+    }
+    if !write_with_dir("{{proj}}/app/build.gradle", android_app_gradle(app_id)) {
+        return false
+    }
+    let sdk = find_android_sdk()
+    if sdk.len > 0 && !write_with_dir("{{proj}}/local.properties", "sdk.dir={{sdk}}\n") {
+        return false
+    }
+    return true
+}
+
+fn android_howto(proj: string, pkg: string) {
+    fmt.eprintln("  Gradle project: {{proj}}\n  applicationId:  {{pkg}}\n  Open in Android Studio, or with ANDROID_HOME, NDK, and Gradle 8.2+:\n    cd \"{{proj}}\" && gradle installDebug\n    adb shell am start -n {{pkg}}/com.loam.zeus.ZeusActivity\n  Emulator RPC host is 10.0.2.2 (not 127.0.0.1). A physical device\n  needs the Mac LAN IP instead, and the backend must bind that path.")
+    let sdk = find_android_sdk()
+    if sdk.len > 0 {
+        fmt.eprintln("  SDK: {{sdk}}")
+    } else {
+        fmt.eprintln("  No Android SDK found. For the counter example:\n    ./zeus/examples/counter/android/install.sh\n  That installs Temurin, command-line tools, Gradle, platform 34, NDK,\n  and an AVD named loam (macOS + Homebrew). Then:\n    emulator -avd loam\n    ./zeus/examples/counter/android/run.sh\n  Or install Android Studio and set ANDROID_HOME=~/Library/Android/sdk")
+    }
+}
+
+/** *Install and start the app with Gradle and adb. */
+fn android_run(proj: string, pkg: string) -> bool {
+    let gradle = find_gradle()
+    if gradle.len == 0 {
+        fmt.eprintln("loam: no gradle on PATH. Install Gradle 8.2+ or open the project in Android Studio.")
+        android_howto(proj, pkg)
+        return false
+    }
+    let sdk = find_android_sdk()
+    if sdk.len == 0 {
+        fmt.eprintln("loam: no Android SDK (set ANDROID_HOME).")
+        android_howto(proj, pkg)
+        return false
+    }
+    let jbr = "/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+    let java_export = if sys.env("JAVA_HOME").len == 0 && sys.is_dir(jbr) == 1 { "export JAVA_HOME=\"{{jbr}}\"; " } else { "" }
+    return sh_run("{{java_export}}export ANDROID_HOME=\"{{sdk}}\"; export ANDROID_SDK_ROOT=\"{{sdk}}\"; export PATH=\"{{sdk}}/platform-tools:$PATH\"; cd \"{{proj}}\" && \"{{gradle}}\" installDebug && adb shell am start -n {{pkg}}/com.loam.zeus.ZeusActivity")
+}
+
+/** *The Android Gradle project for the program; with `run`, install and */
+/** *start it. `false` after saying why. */
+fn android_build(in_path: string, cpath: string, binpath: string, stem: string, run: bool) -> bool {
+    if !uses_zeus() {
+        fmt.eprintln("loam: --target=android requires import \"std:zeus\"")
+        return false
+    }
+    let pkg = android_app_id(stem)
+    if sys.mkdir(binpath) != 0 {
+        fmt.eprintln("loam: cannot create {{binpath}}")
+        return false
+    }
+    if !android_emit_project(binpath, cpath, pkg) {
+        fmt.eprintln("loam: cannot write Android project to {{binpath}}")
+        return false
+    }
+    sys.remove_path(cpath)
+    fmt.println("loam: {{in_path}} -> {{binpath}} (Android Gradle)")
+    if run {
+        if !android_run(binpath, pkg) {
+            sys.exit(1)
+        }
+    } else {
+        android_howto(binpath, pkg)
+    }
+    return true
+}
+
 // --- `--cost`: a static cost report for the whole program -------------------------
 //
 // The counts come from the lowering the backend already does: every box
@@ -1549,6 +1886,8 @@ fn main() {
     let mut emit_ir = false
     let mut cost = false
     let mut target_wasm = false
+    let mut target_ios = false
+    let mut target_android = false
     let mut wasm_release = false
     let mut wasm_split_input = false
     let n = sys.argc()
@@ -1571,12 +1910,10 @@ fn main() {
                 i += 1
                 t = sys.arg(i)
             }
-            if t == "wasm" || t == "wasm32" {
-                target_wasm = true
-            } else if t == "ios" || t == "android" {
-                not_here("--target {{t}}")
-            } else if t == "native" {
-                target_wasm = false
+            if t == "native" || t == "wasm" || t == "wasm32" || t == "ios" || t == "android" {
+                target_wasm = t == "wasm" || t == "wasm32"
+                target_ios = t == "ios"
+                target_android = t == "android"
             } else {
                 fmt.eprintln("unknown target {{t}} (want native, wasm32, ios, or android)")
                 sys.exit(1)
@@ -1627,7 +1964,7 @@ fn main() {
     // A build with `-o` whose inputs have not changed since the last one
     // reuses its output. `--emit-c` and `check` never use the cache.
     let mut key = ""
-    if out_path.len > 0 && !check_only && !cost && !emit_c && !fresh_off() {
+    if out_path.len > 0 && !check_only && !cost && !emit_c && !target_ios && !target_android && !fresh_off() {
         key = fresh_key(in_path)
         if fresh_match(out_path, key) {
             if show_time {
@@ -1710,7 +2047,7 @@ fn main() {
     if emit_c {
         cpath = if out_path.len > 0 { out_path } else { "{{srcdir}}/build/{{stem}}.c" }
     } else {
-        let ext = if target_wasm { ".wasm" } else { "" }
+        let ext = if target_wasm { ".wasm" } else if target_ios { ".app" } else { "" }
         binpath = if out_path.len > 0 { out_path } else { "{{srcdir}}/build/{{stem}}{{ext}}" }
         // A test runner without `-o` is a throwaway: never in the app's build/.
         if test_mode && out_path.len == 0 {
@@ -1724,12 +2061,12 @@ fn main() {
     // `LOAM_SHARD=<cache dir>`: a development build in units, for the Zeus
     // link, the one that goes through `app_input`.
     let mut shard_dir = sys.env("LOAM_SHARD")
-    if !uses_zeus() || emit_c || test_mode || str.ends_with(binpath, ".dylib") {
+    if !uses_zeus() || emit_c || test_mode || target_android || str.ends_with(binpath, ".dylib") {
         shard_dir = ""
     }
     // App-owned C seam: `runtime/<stem>_runtime.c` beside the entry file.
     let mut app_rt = ""
-    if !emit_c && !target_wasm {
+    if !emit_c && !target_wasm && !target_ios && !target_android {
         let cand = "{{srcdir}}/runtime/{{stem}}_runtime.c"
         if sys.exists(cand) == 1 {
             app_rt = cand
@@ -1763,7 +2100,7 @@ fn main() {
     if show_time {
         fmt.eprintln("loam: codegen {{secs(async.now_ms() - t0)}}s")
     }
-    if target_wasm && !client_c_ok() {
+    if (target_wasm || target_ios || target_android) && !client_c_ok() {
         sys.remove_path(cpath)
         sys.exit(1)
     }
@@ -1801,6 +2138,20 @@ fn main() {
             fresh_save(binpath, key)
         }
         fmt.println("loam: {{in_path}} -> {{binpath}} (Canvas2D wasm)")
+        return
+    }
+    if target_ios {
+        if !ios_build(in_path, cpath, binpath, stem, shard_dir, run) {
+            sys.remove_path(cpath)
+            sys.exit(1)
+        }
+        return
+    }
+    if target_android {
+        if !android_build(in_path, cpath, binpath, stem, run) {
+            sys.remove_path(cpath)
+            sys.exit(1)
+        }
         return
     }
 

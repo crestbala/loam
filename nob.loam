@@ -2763,7 +2763,7 @@ fn ig_selfhost_driver() {
 /** *program (`LOAM_BATCH`: the per-case init table) of a plain and a Zeus */
 /** *fixture, and client builds (`LOAM_SERVER_SPLIT`: `#[server]` bodies become */
 /** *traps), the wasm32 target's C (split, paths stripped; release too), and */
-/** *the `--cost` report. */
+/** *the Android Gradle project, and the `--cost` report. */
 /** *One line per difference, empty when all match. */
 fn selfhost_mode_cases(stage1: string, d: string) -> string {
     let fixtures = "{{ROOT}}/packages/loam/tests/compile_pass"
@@ -2784,6 +2784,12 @@ fn selfhost_mode_cases(stage1: string, d: string) -> string {
             out = cat(out, "{{env}} {{f}} --emit-c {{rel_of(src)}}\n")
         }
         sys.exec("rm -f {{shq(d)}}/mode_c.c {{shq(d)}}/mode_s.c")
+    }
+    // `--target android`: the Gradle project tree (it needs no SDK to write).
+    let android_src = "{{fixtures}}/zeus_carousel.loam"
+    sys.exec("cd {{shq(ROOT)}} && export LOAM_HOME={{shq(ROOT)}} && {{shq(LOAMC)}} --target=android {{shq(android_src)}} -o {{shq(d)}}/android_c >/dev/null 2>&1; {{shq(stage1)}} --target=android {{shq(android_src)}} -o {{shq(d)}}/android_s >/dev/null 2>&1")
+    if !is_file("{{d}}/android_c/app/src/main/cpp/app.c") || !sh("diff -r {{shq(d)}}/android_c {{shq(d)}}/android_s >/dev/null 2>&1") {
+        out = cat(out, "--target android {{rel_of(android_src)}}\n")
     }
     // `--cost`: the report, byte for byte (counts, C bytes, per-package share).
     let cost_entries = []string { "{{fixtures}}/zeus_carousel.loam", "{{fixtures}}/http_min.loam", "{{ROOT}}/nob.loam" }
