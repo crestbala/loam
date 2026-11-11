@@ -2645,7 +2645,15 @@ fn ig_selfhost_passes() {
     let entry_count = int_of(trim(sys.exec(cat(
         "cd {{shq(ROOT)}} && ls packages/loam/tests/compile_pass/*.loam packages/loam/tests/compile_fail/*.loam packages/loam/tests/draw_golden/*.loam examples/language/*.loam ",
         "> {{shq(entry_list)}}; : > {{shq(verdicts)}}; wc -l < {{shq(entry_list)}}"))))
-    let worker_env = "LOAMC={{shq(LOAMC)}} EXE={{shq(tcdump_exe)}} SCRATCH={{shq(scratch_dir)}} REF={{shq(cache_dir)}} {{sums}}"
+    // Each zeus entry writes ~75 MB of dumps per side (every zeus module, every
+    // stage): over 40 GB a run, which a CI runner's disk takes minutes to
+    // absorb. Where /dev/shm exists (Linux) the dumps stay in memory.
+    let mut dump_dir = scratch_dir
+    let shm_dir = trim(sys.exec("[ -d /dev/shm ] && [ -w /dev/shm ] && mktemp -d /dev/shm/loam_passes.XXXXXX 2>/dev/null"))
+    if sys.exec_status() == 0 && shm_dir.len > 0 {
+        dump_dir = shm_dir
+    }
+    let worker_env = "LOAMC={{shq(LOAMC)}} EXE={{shq(tcdump_exe)}} SCRATCH={{shq(dump_dir)}} REF={{shq(cache_dir)}} {{sums}}"
     sys.exec(cat("cd {{shq(ROOT)}} && ( export {{worker_env}}; xargs -P {{core_count()}} -n 1 sh tools/selfhost-passes-one.sh < {{shq(entry_list)}} > {{shq(verdicts)}} 2>/dev/null; ",
         ": > {{shq(done_marker)}} ) > /dev/null 2>&1 &"))
     let mut reported = 0
@@ -2669,7 +2677,7 @@ fn ig_selfhost_passes() {
             ok("selfhost {{stage}} vs {{c_twins[i]}}: {{trim(summary)}}")
         }
     }
-    sys.exec("rm -rf {{shq(scratch_dir)}}")
+    sys.exec("rm -rf {{shq(scratch_dir)}} {{shq(dump_dir)}}")
 }
 
 /** *The driver: `compiler/loamc.loam` built by the seed (stage 1) against */
@@ -3123,9 +3131,10 @@ fn stanza_names() -> []string {
 }
 
 /** *Run the stanzas as `bin/nob integration <name>` children, bounded by `JOBS`. */
+/** *A stanza still running after `limit_s` seconds is killed (a hang guard). */
 /** *Each child is a fresh process with its own Loam state, so the same pool the */
 /** *fixtures use works here — and control flow stays in Loam, not in a script. */
-fn pool_stanzas(names: []string) -> int {
+fn pool_stanzas(names: []string, limit_s: int) -> int {
     let n = names.len
     if n == 0 {
         return 0
@@ -3142,7 +3151,7 @@ fn pool_stanzas(names: []string) -> int {
     let mut ids = ""
     for i in 0..n {
         let id = pad4(i)
-        s = cat(s, "{{id}})\n  {\n    {{shq(self)}} integration {{names[i]}} &\n    p=$!\n    ( sleep 300; kill $p 2>/dev/null ) >/dev/null 2>&1 &\n    w=$!\n    wait $p; st=$?\n    kill $w 2>/dev/null\n    echo $st >\"$RES/{{id}}.status\"\n  } 2>&1 | tee \"$RES/{{id}}.log\" >&2\n  ;;\n")
+        s = cat(s, "{{id}})\n  {\n    {{shq(self)}} integration {{names[i]}} &\n    p=$!\n    ( sleep {{limit_s}}; kill $p 2>/dev/null ) >/dev/null 2>&1 &\n    w=$!\n    wait $p; st=$?\n    kill $w 2>/dev/null\n    echo $st >\"$RES/{{id}}.status\"\n  } 2>&1 | tee \"$RES/{{id}}.log\" >&2\n  ;;\n")
         ids = cat(ids, "{{id}}\n")
     }
     s = cat(s, "esac\nexit 0\n")
@@ -3183,6 +3192,13 @@ fn host_stanzas() -> []string {
     return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "api_freeze", "modules", "fresh_cache", "wasm_float" }
 }
 
+/** *How long one stanza may run before its pool kills it. The selfhost ones */
+/** *are whole-repo differential runs: `selfhost_driver` takes ~3 min on 8 */
+/** *Mac cores and ~7 on CI's 4-core runner, alone on that runner. They go */
+/** *when the C compiler does (docs/self-hosting-loam.md, Next changes 4). */
+const INTEGRATION_LIMIT_S: int = 300
+const SELFHOST_LIMIT_S: int = 1200
+
 /** *The Loam compiler against the C one, stage by stage, and the fixed point. */
 /** *Nearly all of a full run's time, so `test` leaves them out: `nob selfhost` */
 /** *runs them, and CI runs each on its own runner (selfhost.yml). */
@@ -3202,7 +3218,7 @@ fn host_checks() -> int {
 
 /** *`nob integration` and `nob selfhost`: these stanzas alone, after a build. */
 /** *Same reporting as `test`, without the fixture pools. */
-fn run_stanzas_only(names: []string) -> int {
+fn run_stanzas_only(names: []string, limit_s: int) -> int {
     sys.mkdir(TMP)
     sys.mkdir(NOB)
     if build("all") != 0 {
@@ -3217,7 +3233,7 @@ fn run_stanzas_only(names: []string) -> int {
     FAILURES = []string {}
     let t0 = now_s()
     TSTART = t0
-    let failed = pool_stanzas(names)
+    let failed = pool_stanzas(names, limit_s)
     let secs = now_s() - t0
     fmt.println("")
     if failed != 0 {
@@ -3653,7 +3669,7 @@ fn main() {
             }
             sys.exit(0)
         }
-        sys.exit(run_stanzas_only(stanza_names()))
+        sys.exit(run_stanzas_only(stanza_names(), INTEGRATION_LIMIT_S))
     } else if cmd == "selfhost" {
         let mut names = selfhost_stanzas()
         if only != "" {
@@ -3663,7 +3679,7 @@ fn main() {
             }
             names = []string { only }
         }
-        sys.exit(run_stanzas_only(names))
+        sys.exit(run_stanzas_only(names, SELFHOST_LIMIT_S))
     } else if cmd == "seed" {
         sys.exit(seed())
     } else if cmd == "bench" {
