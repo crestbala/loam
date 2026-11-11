@@ -5,7 +5,7 @@
 #   tools/win-run.sh BUNDLEDIR
 #
 # A fixture passes when it builds, exits 0, and — if it has a `.expected` —
-# prints exactly that (byte for byte: the runtime puts stdout in binary mode).
+# prints exactly that; one with a `.trap` must instead panic with that message (byte for byte: the runtime puts stdout in binary mode).
 set -u
 ROOT=$(cd -- "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
@@ -28,7 +28,14 @@ for c in "$IN"/*.c; do
     done < "$IN/$b.deps"
     # shellcheck disable=SC2086
     [ $ok = 1 ] && { $CC -std=gnu99 -O1 -w -I packages/loam/runtime "$c" $objs -o "$work/$b.exe" $links >>"$log" 2>&1 || ok=0; }
-    if [ $ok = 1 ]; then
+    if [ $ok = 1 ] && [ -f "$IN/$b.trap" ]; then
+        # Must panic, with the `.trap` message on stderr.
+        if "$work/$b.exe" < /dev/null > "$work/$b.out" 2>"$work/$b.err"; then
+            echo "exited 0; should have panicked" >>"$log"; ok=0
+        elif ! grep -qF -f "$IN/$b.trap" "$work/$b.err"; then
+            { echo "--- panic message differs from $b.trap:"; cat "$work/$b.err"; } >>"$log"; ok=0
+        fi
+    elif [ $ok = 1 ]; then
         "$work/$b.exe" < /dev/null > "$work/$b.out" 2>>"$log" || { echo "exit status $?" >>"$log"; ok=0; }
     fi
     if [ $ok = 1 ] && [ -f "$IN/$b.expected" ] && ! cmp -s "$work/$b.out" "$IN/$b.expected"; then
