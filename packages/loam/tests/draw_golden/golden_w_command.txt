@@ -15,10 +15,10 @@ fill 72 32 1 18 1382429 0
 restore
 save
 clip 35 67 489 320
-text 43 73 5528165 11 File
-fill 35 90 489 34 15725044 2
-text 45 98 1382429 14 New file
-text 45 132 1382429 14 Save
-text 43 164 5528165 11 View
-text 45 189 1382429 14 Toggle theme
+text 43 73 5528165 12 File
+fill 35 91 489 34 15725044 2
+text 45 99 1382429 14 New file
+text 45 133 1382429 14 Save
+text 43 165 5528165 12 View
+text 45 191 1382429 14 Toggle theme
 restore
