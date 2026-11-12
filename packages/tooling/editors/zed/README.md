@@ -9,7 +9,7 @@ Syntax highlighting (Tree-sitter) and error checking (`loam-lsp`).
 3. In Zed: command palette → **zed: install dev extension**
 4. Choose `packages/tooling/editors/zed`
 
-Zed clones the grammar from `packages/tooling/tree-sitter-loam` via `file://`. That directory must be its own git repo (`./nob.sh grammar` creates it). If install fails with **failed to compile grammar 'loam'**:
+Zed clones a grammar from a git repo. The grammar is plain files in `packages/tooling/tree-sitter-loam`, so `./nob.sh grammar` copies them into a scratch repo, `out/zed-grammar`, and points `extension.toml` at it via `file://`. If install fails with **failed to compile grammar 'loam'**:
 
 ```bash
 rm -rf packages/tooling/editors/zed/grammars
@@ -30,4 +30,4 @@ For the `.loam` file icon: command palette → **theme selector: toggle icon the
 ./nob.sh grammar
 ```
 
-That regenerates the parser, commits the nested grammar repo, writes the new SHA into `extension.toml`, and deletes Zed’s cached clone. Then reinstall the dev extension.
+That regenerates the parser, rebuilds `out/zed-grammar`, writes its path and SHA into `extension.toml` (the SHA depends only on the grammar files), and deletes Zed’s cached clone. Commit the grammar and `extension.toml` together. Then reinstall the dev extension.
