@@ -95,16 +95,16 @@ for the 100% self-hosted claim. They are valuable extensions that can land
 after the fixed point. Under the essentialist rule they stay out of the
 critical path.
 
-**Current status**: Not yet 100% self-hosted. The compiler and every tool
-are Loam, the fixed point holds, and the build works from the seed on macOS,
-Linux and Windows. Left (definition item 5; listed in full at the top of
-"Next changes (pending)"):
-
-- **The CI run on the ownership fixes** (Linux, Windows). The memory-safety
-  hole in generated code (`Box::new` of a value with owned fields left the
-  box pointing at freed memory) and the module-`let` leak are fixed
-  ([box-and-init-ownership.md](box-and-init-ownership.md)), and CI was
-  green on P5 and the formatter port.
+**Current status** (2026-11-12): **100% self-hosted.** Every item of the
+definition above holds. The compiler and every tool are Loam, the committed
+seed builds stage 1, the fixed point holds (seed = stage 1 = stage 2), the
+differential runs against the C compiler passed before it was deleted, safe
+Loam has no known memory-safety hole (the last one, `Box` contents, fixed in
+[box-and-init-ownership.md](box-and-init-ownership.md)), and CI builds and
+passes from a fresh checkout on Linux x86_64 and arm64 and on Windows (run
+43226387422), as the suite does on macOS. What comes next is outside the
+claim: [security.md](security.md), [threads.md](threads.md) and
+[runtime-in-loam.md](runtime-in-loam.md).
 
 History: Phase 1 (§1.1, §1.4, the §1.3 `u64`
 bugs), phase 2 (§1.2, the rest of §1.3, stderr / `mtime` / read errors
@@ -1200,7 +1200,7 @@ Every box still unchecked in this file, in the order to do them. Done since
 the last list: S0, typed handle cells (2026-11-11,
 [security.md](security.md)).
 
-**To call Loam 100% self-hosted: what is left** (2026-11-12). Against the
+**To call Loam 100% self-hosted** (done 2026-11-12). Against the
 definition at the top, items 1–4 and 7 hold:
 
 - the compiler and every tool are Loam;
@@ -1210,8 +1210,8 @@ definition at the top, items 1–4 and 7 hold:
 - the differential runs against the C compiler passed before it was
   deleted.
 
-Item 6 (memory safety) holds since 0a below. What is left is a re-run of
-item 5 (every OS from a fresh checkout) on that work:
+Item 6 (memory safety) holds since 0a below, and item 5 (every OS from a
+fresh checkout) since 0c:
 
 - [x] 0a. **The `Box` ownership hole is fixed** (2026-11-12; [security.md](security.md),
       [box-and-init-ownership.md](box-and-init-ownership.md), bug 1).
@@ -1236,15 +1236,16 @@ item 5 (every OS from a fresh checkout) on that work:
       doc, bug 2): `emit_drops_at_exits()` in `lower_init`. The probe goes
       from 1 leak to 0. `loam-lsp` over 12 rechecks goes from 14 leaks
       (5,008 bytes, the constant 5 KB of P5) to 0.
-- [ ] 0c. **CI on this work:** the `selfhost` workflow (a pull-request run:
+- [x] 0c. **CI on this work:** the `selfhost` workflow (a pull-request run:
       Linux x86_64 and aarch64, Windows).
       - [x] Green on P5 and the formatter port (be79599): all 6 checks in run
         43133993514 (Linux x86_64 and aarch64, `same-c`, `selfhost_seed` on
         both Linux architectures, Windows). Since P5, the Linux test job
         also builds `loam-lsp` and `loam-fmt` with `bin/loamc`.
-      - [ ] Green again on 0a and 0b. This is also the first CI run of
-        `ownership_asan`, whose leak check runs only on Linux, and of the
-        new seed.
+      - [x] Green again on 0a and 0b (ad85786, with the docs split, e35fa7a):
+        all 6 checks in run 43226387422. `ownership_asan` passed on both
+        Linux architectures with leak checking on, the new seed built
+        everywhere, and the log has no gcc warnings.
       - The Linux logs had gcc warnings in every compile of generated C:
         `-Wstringop-overflow` and `-Wfree-nonheap-object` on the refcount
         update and free in `loam_str_retain` / `loam_str_release`, on the
