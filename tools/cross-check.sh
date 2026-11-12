@@ -13,7 +13,8 @@
 # into std:net, and every `#![c_source(path, flags...)]` / `#![c_link(...)]`
 # of the fixture and of the packages it imports. Fixtures that import a GUI
 # package (zeus, zui, maya, raygui) are skipped. Needs zig on PATH
-# (`brew install zig`).
+# (`brew install zig`). Each binary and object is deleted once its link is
+# checked; only zig's compile cache stays in out/cross/cache (`nob clean`).
 set -e
 ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
@@ -43,6 +44,9 @@ cc_one() { # target c-file out fixture
     done
     IFS=' '
     zig cc -target "$1" -std=gnu99 -O1 -w -I packages/loam/runtime "$2" $objs -o "$3" $links 2>&1 | grep -E "error" | head -3
+    # Only "it links" is checked: drop what this link made (the binary, a
+    # Windows .pdb/.lib, the dep objects and the emitted C) right away.
+    rm -f "$3" "$3".* "$2" "$OUT"/dep*-"$1".o
 }
 
 fail=0
@@ -67,6 +71,7 @@ for t in $targets; do
         e=$(cc_one "$t" "$OUT/$b.c" "$OUT/$b-$t" "$f")
         [ -n "$e" ] && { echo "$t $b: $e"; bad=$((bad+1)); }
     done
+    rm -f "$OUT/net-$t.o"
     echo "cross-check $t: nob + $n fixtures, $bad failed"
     [ -n "$nogap" ] && echo "  known gap, skipped (std:net has no Windows port):$nogap"
     [ "$bad" -eq 0 ] || fail=1
