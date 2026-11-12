@@ -2587,6 +2587,36 @@ fn ig_android_project() {
     ok("android project ({{files.len}} files, the program as app.c)")
 }
 
+/** *Ownership in generated code (docs/box-and-init-ownership.md): the */
+/** *`box_and_init_ownership` fixture built with ASan must print its expected */
+/** *output with no report (leak checking on too, on Linux), and on macOS a */
+/** *plain build must show 0 leaks under `leaks --atExit`. */
+fn ig_ownership_asan() {
+    mark("ownership asan")
+    let src = "{{TESTS}}/compile_pass/box_and_init_ownership.loam"
+    let want = "{{TESTS}}/compile_pass/box_and_init_ownership.expected"
+    let asan_bin = tmpf("ownership_asan")
+    let plain_bin = tmpf("ownership_plain")
+    let got = tmpf("ownership_asan.out")
+    let log = tmpf("ownership_asan.log")
+    let script = cat(
+        "LOAM_NO_FRESH=1 LOAM_LINK_EXTRA='-O0 -g -fsanitize=address' {{shq(LOAMC)}} {{shq(src)}} -o {{shq(asan_bin)}} >{{shq(log)}} 2>&1 || exit 1; ",
+        cat("if [ \"$(uname)\" = Linux ]; then export ASAN_OPTIONS=detect_leaks=1; fi; ",
+            cat("{{shq(asan_bin)}} >{{shq(got)}} 2>>{{shq(log)}} || exit 1; ! grep -q Sanitizer {{shq(log)}} || exit 1; ",
+                cat("if [ \"$(uname)\" = Darwin ]; then {{shq(LOAMC)}} {{shq(src)}} -o {{shq(plain_bin)}} >>{{shq(log)}} 2>&1 || exit 1; ",
+                    "leaks --atExit -- {{shq(plain_bin)}} >>{{shq(log)}} 2>&1 || exit 1; fi"))))
+    if !sh(script) {
+        bad("ownership asan (ASan report, leak, or build failure)", log)
+        return
+    }
+    let diff_path = tmpf("ownership_asan.diff")
+    if !diff_log(want, got, diff_path) {
+        bad("ownership asan (output differs from box_and_init_ownership.expected)", diff_path)
+        return
+    }
+    ok("ownership asan (Box contents and module-let temporaries: ASan clean, no leaks)")
+}
+
 /** *Floats on wasm: the wasm libc's exact `%g` / `strtod` match the host libc */
 /** *(float_diff.c over the wasm-float block), and a program printing and parsing */
 /** *floats writes the same bytes as a wasm module as it does natively. */
@@ -2767,6 +2797,8 @@ fn stanza_dispatch(name: string) -> bool {
         ig_loader_cases()
     } else if name == "android_project" {
         ig_android_project()
+    } else if name == "ownership_asan" {
+        ig_ownership_asan()
     } else if name == "selfhost_seed" {
         ig_selfhost_seed()
     } else if name == "fresh_cache" {
@@ -2821,6 +2853,7 @@ fn stanza_names() -> []string {
     push(v, "selfhost_seed")
     push(v, "fresh_cache")
     push(v, "android_project")
+    push(v, "ownership_asan")
     push(v, "loader_cases")
     push(v, "wasm_float")
     return v
@@ -2885,7 +2918,7 @@ fn pool_stanzas(names: []string, limit_s: int) -> int {
 /** *app. The wasm module's entry points, the server/client split, and the */
 /** *language server all sit next to the compiler. */
 fn host_stanzas() -> []string {
-    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "api_freeze", "modules", "fresh_cache", "android_project", "loader_cases", "wasm_float" }
+    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "api_freeze", "modules", "fresh_cache", "android_project", "ownership_asan", "loader_cases", "wasm_float" }
 }
 
 /** *How long one stanza may run before its pool kills it. `selfhost_seed` */

@@ -1465,6 +1465,13 @@ fn drop_place(pl: string, t: int, ind: int) {
     }
     let k = types.TYPES[t].kind
     if k == TK.Box {
+        // The box owns its value: release it first, through the element hook
+        // so a type that holds itself through a box is not expanded forever.
+        let h = elem_hook(types.TYPES[t].elem)
+        if h > 0 {
+            indent(ind)
+            w("if ({{pl}}) loam_elem_release_{{h}}({{pl}});\n")
+        }
         indent(ind)
         w("loam_drop((void **)&{{pl}});\n")
         return
@@ -2385,6 +2392,15 @@ fn inst(i: int) {
             if x.a >= 0 {
                 indent(1)
                 w("*{{lv(x.dst)}} = {{lv(x.a)}};\n")
+                // The box gets its own references, as a move does: kept for a
+                // Copy value, stolen from the source otherwise.
+                if needs_drop(et) {
+                    if types.is_copy(et) {
+                        nested_keeps("(*{{lv(x.dst)}})", et, 1)
+                    } else {
+                        steal(lv(x.a), et, 1)
+                    }
+                }
             }
             break
         case Op.Drop:

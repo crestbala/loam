@@ -1,0 +1,101 @@
+// Ownership in generated code (docs/box-and-init-ownership.md).
+// `Box` owns its value: built from a temporary, a named local, a vec or a
+// recursive list, the box keeps its own references and releases them when it
+// drops. A module `let` initializer drops its temporaries, so a reassigned
+// global releases its first value. The `ownership_asan` stanza runs this
+// under ASan (and `leaks` on macOS): no read after free and no leak.
+import "std:fmt"
+import "std:result"
+
+struct Node {
+    v: int,
+    name: string,
+}
+
+struct List {
+    name: string,
+    next: Option<Box<List>>,
+}
+
+fn make_ints() -> []int {
+    let mut v = []int {}
+    push(v, 1)
+    return v
+}
+
+let mut INTS: []int = make_ints()
+let mut LIT: []int = []int { 1, 2, 3 }
+let mut WORD: string = "w{{LIT.len}}"
+
+struct Holder {
+    b: Box<Node>,
+    tag: string,
+}
+
+// A box that outlives the fn that built it, from a temporary.
+fn mk(n: int) -> Box<Node> {
+    return Box::new(Node { v: n, name: "n{{n}}" })
+}
+
+fn mk_names(n: int) -> Box<[]string> {
+    let mut xs = []string {}
+    for i in 0..n {
+        push(xs, "s{{i}}")
+    }
+    return Box::new(xs)
+}
+
+fn cons(name: string, next: Option<Box<List>>) -> Option<Box<List>> {
+    return some(Box::new(List { name: name, next: next }))
+}
+
+fn chain(depth: int) -> Option<Box<List>> {
+    if depth == 0 {
+        return some(Box::new(List { name: "tail", next: none }))
+    }
+    return cons("level{{depth}}", chain(depth - 1))
+}
+
+fn walk(l: &Option<Box<List>>) -> string {
+    if l.tag == OptionTag.Some {
+        let rest = walk(&l.val.next)
+        return "{{l.val.name}}>{{rest}}"
+    }
+    return "end"
+}
+
+fn main() {
+    let b = mk(2)
+    fmt.println(b.name)
+
+    let names = mk_names(3)
+    fmt.println("{{names.len}} {{names[0]}} {{names[2]}}")
+
+    // A named local boxed, then still used.
+    let local = Node { v: 7, name: "local{{b.v}}" }
+    let bl = Box::new(local)
+    fmt.println("{{bl.name}} {{local.name}}")
+
+    let l = chain(3)
+    if l.tag == OptionTag.Some {
+        fmt.println(walk(&l))
+    }
+
+    // A box field reassigned: the old box and its string drop.
+    let mut h = Holder { b: mk(1), tag: "t" }
+    h.b = mk(5)
+    fmt.println("{{h.b.name}} {{h.tag}}")
+
+    // Boxes in a vec, replaced and dropped.
+    let mut bs = []Box<Node> {}
+    for i in 0..4 {
+        push(bs, mk(i * 10))
+    }
+    fmt.println("{{bs[3].name}}")
+
+    fmt.println("{{INTS.len}} {{LIT.len}} {{WORD}}")
+    INTS = []int {}
+    LIT = []int {}
+    WORD = "x"
+    fmt.println("{{INTS.len}} {{LIT.len}} {{WORD}}")
+}

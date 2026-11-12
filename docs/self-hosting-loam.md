@@ -96,14 +96,14 @@ critical path.
 
 **Current status**: Not yet 100% self-hosted. The compiler and every tool
 are Loam, the fixed point holds, and the build works from the seed on macOS,
-Linux and Windows. Left (definition items 5 and 6; listed in full at the top
-of "Next changes (pending)"):
+Linux and Windows. Left (definition item 5; listed in full at the top of
+"Next changes (pending)"):
 
-- **A memory-safety hole in generated code.** `Box::new` of a value with
-  owned fields leaves the box pointing at freed memory once it outlives the
-  fn that built it ([box-and-init-ownership.md](box-and-init-ownership.md)).
-- **A leak:** temporaries of module `let` initializers are never dropped.
-- **The CI run on this work** (Linux, Windows) of P5 and the formatter port.
+- **The CI run on the ownership fixes** (Linux, Windows). The memory-safety
+  hole in generated code (`Box::new` of a value with owned fields left the
+  box pointing at freed memory) and the module-`let` leak are fixed
+  ([box-and-init-ownership.md](box-and-init-ownership.md)), and CI was
+  green on P5 and the formatter port.
 
 History: Phase 1 (§1.1, §1.4, the §1.3 `u64`
 bugs), phase 2 (§1.2, the rest of §1.3, stderr / `mtime` / read errors
@@ -664,13 +664,14 @@ Two holes reachable from safe Loam were found while writing this section
   placeholder (53 uses), and Zeus builds signals outside the module that
   declares them.
 
-Open (2026-11-12): **`Box::new` of a value with owned fields dangles**
-once the box outlives its fn: `Box::new(Node { name: "n{{n}}" })`
-returned from a fn reads a freed string. Codegen copies the value into the
-box without taking references (`Op.Alloc`), and a box's drop is shallow, so
-the two hid each other. Both halves and the fix are in
-[box-and-init-ownership.md](box-and-init-ownership.md). It is item 0 of
-"Next changes (pending)".
+Fixed (2026-11-12): **`Box::new` of a value with owned fields dangled**
+once the box outlived its fn: `Box::new(Node { name: "n{{n}}" })`
+returned from a fn read a freed string. Codegen copied the value into the
+box without taking references (`Op.Alloc`), and a box's drop was shallow, so
+the two hid each other. Both halves, the fix and its checks (the
+`ownership_asan` stanza, the compiler under ASan) are in
+[box-and-init-ownership.md](box-and-init-ownership.md); item 0a of "Next
+changes (pending)".
 
 Gaps, by how much they matter:
 
@@ -1581,27 +1582,48 @@ definition at the top, items 1–4 and 7 hold:
 - the differential runs against the C compiler passed before it was
   deleted.
 
-What is left is item 6 (memory safety) and a re-run of item 5 (every OS from
-a fresh checkout) on the newest work:
+Item 6 (memory safety) holds since 0a below. What is left is a re-run of
+item 5 (every OS from a fresh checkout) on that work:
 
-- [ ] 0a. **Fix the `Box` ownership hole** (§5.2,
+- [x] 0a. **The `Box` ownership hole is fixed** (2026-11-12; §5.2,
       [box-and-init-ownership.md](box-and-init-ownership.md), bug 1).
-      `Op.Alloc` must give the box its own references (as `move_inst` does),
-      and a box's drop must release its value through the element hook. Land
-      it with:
-      - a `compile_pass` fixture per shape, under `leaks` / ASan;
-      - the compiler building itself under ASan;
-      - the full suite, `nob selfhost`, and a new seed if the compiler's own
-        C changes.
-      Until then a safe program can read freed memory, so the §2.7 claim does
-      not hold.
-- [ ] 0b. **Fix the module-`let` temporary leak** (same doc, bug 2):
-      `emit_drops_at_exits()` in `lower_init`. Not a safety issue, but every
-      reassigned global leaks its first value; it lands with 0a's gates.
+      `Op.Alloc` gives the box its own references, as `move_inst` does
+      (`nested_keeps` for a Copy value, `steal` otherwise), and a box's
+      drop releases its value through the element hook before it frees the
+      box (`if (b) loam_elem_release_<h>(b);`).
+      - `compile_pass/box_and_init_ownership.loam` covers each shape, and
+        the new `ownership_asan` stanza in `nob test` builds it with ASan
+        (leak checking on Linux, `leaks --atExit` on macOS). Built by the
+        old code generator, it reads a freed string
+        (`heap-use-after-free`).
+      - `bin/loamc` built with ASan compiles itself with no report and emits
+        the same C, then emitted C for 337 more files, also with no report.
+      - Full `./nob.sh test`: 614 passed, 0 failed in 25 s. `nob selfhost`:
+        seed = stage 1 = stage 2. The seed is regenerated, so it is current
+        again; it had lagged since P1, and now holds the P1–P4 driver too.
+      - Speed: a build-and-drop benchmark of boxed lists and trees takes
+        0.15 s against 0.11 s, but the old code had freed every inner box
+        as soon as it was stored, so it timed a list of dangling pointers.
+- [x] 0b. **The module-`let` temporary leak is fixed** (2026-11-12, same
+      doc, bug 2): `emit_drops_at_exits()` in `lower_init`. The probe goes
+      from 1 leak to 0. `loam-lsp` over 12 rechecks goes from 14 leaks
+      (5,008 bytes, the constant 5 KB of P5) to 0.
 - [ ] 0c. **CI on this work:** the `selfhost` workflow (a pull-request run:
-      Linux x86_64 and aarch64, Windows) green on the commit with P5 and the
-      formatter port, then again on 0a and 0b. Since P5, the Linux test job
-      also builds `loam-lsp` and `loam-fmt` with `bin/loamc`.
+      Linux x86_64 and aarch64, Windows).
+      - [x] Green on P5 and the formatter port (be79599): all 6 checks in run
+        43133993514 (Linux x86_64 and aarch64, `same-c`, `selfhost_seed` on
+        both Linux architectures, Windows). Since P5, the Linux test job
+        also builds `loam-lsp` and `loam-fmt` with `bin/loamc`.
+      - [ ] Green again on 0a and 0b. This is also the first CI run of
+        `ownership_asan`, whose leak check runs only on Linux, and of the
+        new seed.
+      - The Linux logs had gcc warnings in every compile of generated C:
+        `-Wstringop-overflow` and `-Wfree-nonheap-object` on the refcount
+        update and free in `loam_str_retain` / `loam_str_release`, on the
+        literal path that the `own` test makes dead. `loam_rt.h` now
+        silences those two warnings around the two functions, for gcc only.
+        gcc 15 compiles the seed without a warning, at -O0 and -O1, against
+        22 warnings before.
 - Then item 6 of "Security" below (S1), so the next hole of this kind is
   found by a generator, not by accident: `Box` construction and drops belong
   in it.

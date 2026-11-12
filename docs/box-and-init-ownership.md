@@ -1,9 +1,10 @@
 # Two ownership bugs in generated code: `Box` contents and module `__init`
 
 Found 2026-11-12 while measuring `loam-lsp`'s memory over a long session
-([self-hosting-loam.md](self-hosting-loam.md), Next changes 4, P5). Neither is
-fixed yet. Both are in the code generator, so they affect every program, the
-compiler included. One is a **memory-safety hole reachable from safe Loam**
+([self-hosting-loam.md](self-hosting-loam.md), Next changes 4, P5), and both
+fixed the same day (items 0a and 0b there; "Fix" under each bug). Both were
+in the code generator, so they affected every program, the compiler
+included. One is a **memory-safety hole reachable from safe Loam**
 (§5.2 of the self-hosting doc says there must be none), and the other is a
 leak.
 
@@ -81,7 +82,9 @@ Both came over as they were from the C compiler (`codegen_c.c`), so the bug
 is older than the port. The differential gates compared the Loam compiler's
 C with C's output, so they could not see it.
 
-### Fix (written, then reverted untested)
+### Fix
+
+Fixed 2026-11-12, as planned below:
 
 - **`Op.Alloc`:** after `*dst = src`, if the element type needs a drop, call
   `nested_keeps("(*dst)", et)` when it is Copy and `steal(src, et)` when it
@@ -121,6 +124,35 @@ C with C's output, so they could not see it.
   `Box` construction and drops, so the next such hole is found by a test,
   not by accident.
 
+### What checked it
+
+- **Fixture:** `compile_pass/box_and_init_ownership.loam` covers every
+  shape above (a boxed struct returned from the fn that built it, a boxed
+  `[]string`, `Box::new(local)` with the local used afterwards, a
+  three-level `Option<Box<List>>` of strings, a reassigned `Box` field,
+  boxes in a `[]Box<Node>`), plus bug 2's reassigned globals. Its output is
+  compared as every fixture's is. The new `ownership_asan` host stanza
+  (in `nob test`, about 3 s) builds it with ASan and fails on any report.
+  Leak checking is on under Linux, and on macOS a plain build must pass
+  `leaks --atExit`. Built by the old code generator (the previous seed),
+  the fixture prints `\003\0` where it should print `n2`, and ASan stops
+  it with `heap-use-after-free` in `loam_str_retain`.
+- **The compiler under ASan:** `bin/loamc` built with `-fsanitize=address`
+  compiles itself without a report and emits the same C as `bin/loamc`. It
+  then emitted C for 337 files (every `compile_pass` fixture, the language
+  examples, `lsp.loam`, `loamfmt.loam`), also without a report.
+- **Speed:** a program that builds and drops a 10,000-node
+  `Option<Box<L>>` chain and a depth-12 boxed tree 200 times takes 0.15 s
+  (2.7 MB peak) against 0.11 s (2.0 MB) before. That is no regression. The
+  old code freed each inner box as soon as it was stored in the outer one
+  (`loam_drop(&tmp.next.val)` after `*box = tmp`), so the "before" timing
+  measured a list of dangling pointers. The new time is the cost of keeping
+  the nodes and then freeing all of them.
+- **Recursion depth:** a box's drop recurses once per node through the
+  element hook, as Rust's does. A chain can only be built by recursion,
+  which takes more stack per node than the drop, so every chain a program
+  can build, it can also drop.
+
 ## Bug 2 (leak): temporaries of a module `let` initializer
 
 ### Reproduction
@@ -149,12 +181,13 @@ into the global takes its own reference (`loam_A = loam_vec_retain(&_l2)`).
 The temporary then never drops, and the first value keeps a refcount of 2.
 Reassigning the global releases one of them; the other is never released.
 
-### Fix (written, then reverted untested)
+### Fix
 
-`emit_drops_at_exits()` in `lower_init`, before `scope_pop_to(-1)`, as in
+Fixed 2026-11-12: `emit_drops_at_exits()` in `lower_init`, before `scope_pop_to(-1)`, as in
 `lower_body`. Module globals are `L_GLOBAL` locals and never carry `L_DROP`,
-so only the temporaries are dropped. With the fix, the probe and `loam-lsp`
-reported 0 leaks. It changes the C of every program with a non-constant
+so only the temporaries are dropped. With the fix, the probe reports 0 leaks
+(1 leak, 48 bytes, before), and so does the fixture's global section under
+the `ownership_asan` stanza. It changes the C of every program with a non-constant
 module `let`, so it lands with the same gates as bug 1.
 
 ## Not a leak: the language server's RSS

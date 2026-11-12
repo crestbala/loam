@@ -699,6 +699,16 @@ static inline loam_str loam_str_slice(loam_str s, int32_t a, int32_t b) {
     return loam_str_copy(s.ptr + lo, hi - lo);
 }
 
+/* gcc follows the literal path (`own == 0`) into the refcount update and the
+   free after inlining, and warns that it writes before a literal or frees
+   one. The `own` test makes that path dead; clang does not warn. Silenced
+   here only, for these two functions. */
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
+#pragma GCC diagnostic ignored "-Wfree-nonheap-object"
+#endif
+
 /** Take another reference to `s` (no-op for a literal). */
 static inline void loam_str_retain(loam_str s) {
     if (s.own && s.ptr)
@@ -716,6 +726,9 @@ static inline void loam_str_release(loam_str *s) {
     s->len = 0;
     s->own = 0;
 }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 static inline void *loam_move_ptr(void **src) {
     void *p = src ? *src : NULL;
