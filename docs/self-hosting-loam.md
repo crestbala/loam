@@ -461,9 +461,8 @@ Needed (can land after the fixed-point, but design the hooks early):
       builds with only `cc` — as `nob.sh` already does for `nob`.
       Must produce working binaries on Linux and Windows. *Committed as
       `bootstrap/loamc.c` (4.0 MB, no absolute paths; the compiler finds std
-      and the runtime from its own path).* `nob seed` regenerates it; it lags
-      the sources and is refreshed only when it can no longer build the
-      current compiler. On every OS `./nob.sh` builds it into `bin/loamc0`,
+      and the runtime from its own path).* `nob seed` regenerates it, and it must
+      match the sources byte for byte (S10, `selfhost_seed`). On every OS `./nob.sh` builds it into `bin/loamc0`,
       which builds `bin/loamc` from `packages/loam/compiler` (Next changes 4,
       P6). `selfhost_seed` checks that `cc` builds it, that it builds the
       current compiler, and that the result reaches the fixed point. The
@@ -1267,8 +1266,8 @@ Done, in order:
 1. Done (2026-11-11): Windows from a fresh checkout. The seed is committed
    (`bootstrap/loamc.c`, `nob seed`, `selfhost_seed`), and the Windows job
    builds from the checkout alone; it and `same-c` are green in run
-   43065909932. S10 (reproducible seed) can later check the lagging seed
-   against the sources it was made from.
+   43065909932. S10 (reproducible seed, done 2026-11-12) now fails CI when
+   the seed lags the sources.
 2. Done (2026-11-11): phase 10c, whole-pipeline parity (Driver box).
 3. Done (2026-11-11): the compiler uses only safe Loam (§2.7 box).
 4. Make the Loam `loamc` the default and delete the C compiler: the seed

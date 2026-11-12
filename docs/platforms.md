@@ -73,9 +73,10 @@ from the committed generated C of the Loam compiler (`bootstrap/loamc.c`),
 so porting the C driver would have been work thrown away
 (docs/self-hosting-loam.md, essentialism rule).
 
-**The seed lags.** `bootstrap/loamc.c` is refreshed by `nob seed` only when
-it can no longer build the current compiler, not on every compiler change,
-so everyday commits carry no 4 MB diff. `nob selfhost selfhost_seed` checks
-that it still builds the current compiler, that the result reaches the fixed
-point, and says whether the seed lags the sources. A seed that fails that
-check is the signal to run `nob seed`.
+**The seed is current.** `bootstrap/loamc.c` is the C the current compiler
+emits for itself, byte for byte, so a commit that changes the compiler runs
+`nob seed` and commits the new seed with it. `nob selfhost selfhost_seed`
+(CI runs it on every pull request into `master`) checks that `cc` builds
+the seed, that the seed builds the current compiler, that the result
+reaches the fixed point, and that the C it emits is the committed seed. Any
+byte difference fails and prints the first differing lines.
