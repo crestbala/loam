@@ -1,0 +1,246 @@
+================================================================================
+call on the next line is a new statement
+================================================================================
+
+fn main() {
+    let g = f
+    (x)
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_item
+    name: (identifier)
+    parameters: (fn_parameters)
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (identifier))
+      (expression_statement
+        (parenthesized_expression
+          (identifier))))))
+
+================================================================================
+index on the next line is a new statement
+================================================================================
+
+fn main() {
+    let a = v
+    [2]int { 9, 9 }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_item
+    name: (identifier)
+    parameters: (fn_parameters)
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (identifier))
+      (expression_statement
+        (array_literal
+          (number)
+          (identifier)
+          (number)
+          (number))))))
+
+================================================================================
+increment on the next line applies to the next line
+================================================================================
+
+fn main() {
+    let c = a
+    ++b
+    let p = a++
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_item
+    name: (identifier)
+    parameters: (fn_parameters)
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (identifier))
+      (expression_statement
+        (update_expression
+          value: (identifier)))
+      (let_statement
+        name: (identifier)
+        value: (update_expression
+          value: (identifier))))))
+
+================================================================================
+deref on the next line is a new statement
+================================================================================
+
+fn main() {
+    let a = 1
+    *a = 2
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_item
+    name: (identifier)
+    parameters: (fn_parameters)
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (number))
+      (assignment_statement
+        (unary_expression
+          (identifier))
+        (number)))))
+
+================================================================================
+comments between the lines do not hide the break
+================================================================================
+
+fn main() {
+    let g = f // about f
+    /* more */
+    (x)
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_item
+    name: (identifier)
+    parameters: (fn_parameters)
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (identifier))
+      (comment)
+      (comment)
+      (expression_statement
+        (parenthesized_expression
+          (identifier))))))
+
+================================================================================
+a trailing operator continues, and precedence survives
+================================================================================
+
+fn main() {
+    let a = b + c * d
+    let e = f &&
+        g
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_item
+    name: (identifier)
+    parameters: (fn_parameters)
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (binary_expression
+          left: (identifier)
+          right: (binary_expression
+            left: (identifier)
+            right: (identifier))))
+      (let_statement
+        name: (identifier)
+        value: (binary_expression
+          left: (identifier)
+          right: (identifier))))))
+
+================================================================================
+a leading dot continues the expression
+================================================================================
+
+fn main() {
+    let a = b
+        .c
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_item
+    name: (identifier)
+    parameters: (fn_parameters)
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (field_expression
+          value: (identifier)
+          field: (identifier))))))
+
+================================================================================
+arguments may span lines, and a compound assignment may too
+================================================================================
+
+fn main() {
+    f(
+        a,
+        (b),
+    )
+    x
+        += 1
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_item
+    name: (identifier)
+    parameters: (fn_parameters)
+    body: (block
+      (expression_statement
+        (call_expression
+          function: (identifier)
+          arguments: (arguments
+            (identifier)
+            (parenthesized_expression
+              (identifier)))))
+      (assignment_statement
+        (identifier)
+        (number)))))
+
+================================================================================
+bare return reads a value from the next line
+================================================================================
+
+fn main() {
+    return
+    (x)
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_item
+    name: (identifier)
+    parameters: (fn_parameters)
+    body: (block
+      (return_statement
+        (parenthesized_expression
+          (identifier))))))
+
+================================================================================
+module level let ends at the newline
+================================================================================
+
+let a = b
+let c = 1
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (const_item
+    name: (identifier)
+    value: (identifier))
+  (const_item
+    name: (identifier)
+    value: (number)))

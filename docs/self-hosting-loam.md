@@ -1135,10 +1135,15 @@ five verdicts.
       unit, so `sys.arg(0)` read "" outside the unit holding `main`. That
       state now has one definition, in the unit that owns the trap state.
 
-A clone has `packages/tooling/tree-sitter-loam` as an empty directory: the
-gitlink has no `.gitmodules` entry, and the grammar repo has no remote. The
-build and the suite never read it, but `git submodule status` fails, and so
-do `nob grammar` and the Zed extension, in any checkout other than this one.
+*Fixed (2026-11-12, item 9):* a clone had `packages/tooling/tree-sitter-loam`
+as an empty directory: the gitlink had no `.gitmodules` entry, and the
+grammar repo had no remote. The grammar is plain files in the repo now.
+`zed-grammar.sh` builds the git repo Zed clones from in `out/zed-grammar`,
+with a fixed author and date, so its revision depends only on the grammar
+files. `check.sh` had two failures nobody saw: `loamfmt.loam` uses an `if`
+value as a right operand (`r.w + if r.all { tail } else { 0 }`), which the
+grammar now parses, and `loader/misc/noquote.loam` is invalid on purpose and
+joins the known list.
 
 ### `./nob.sh test` is slow (fixed: the self-hosting stanzas moved out)
 
@@ -1439,10 +1444,11 @@ doc:**
 
 **Housekeeping, not needed to self-host:**
 
-9. `packages/tooling/tree-sitter-loam`: replace the remote-less gitlink.
-   Either vendor the grammar as plain files (recommended; the pre-commit hook
-   and the commit-nested-repos rule assume gitlinks, so update them) or push
-   it to a remote and add `.gitmodules`.
+9. Done (2026-11-12): `packages/tooling/tree-sitter-loam` is vendored as
+   plain files, not a remote-less gitlink. The local pre-commit hook now
+   refuses any gitlink without a `.gitmodules` entry. In the same change,
+   `selfhost.yml` runs on every pull request that targets `master` (it ran
+   only for `feat/self-hosting`, which is merged), still never on push.
 10. `std:net` has no Windows port (`runtime/net.c` defines nothing on
     `_WIN32`). The 12 networking fixtures are skipped on Windows. R5 needs it.
 

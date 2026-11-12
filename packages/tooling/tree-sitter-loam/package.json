@@ -1,0 +1,8 @@
+{
+  "name": "tree-sitter-loam",
+  "version": "0.1.0",
+  "description": "Tree-sitter grammar for Loam",
+  "main": "bindings/node",
+  "keywords": ["tree-sitter", "loam"],
+  "license": "MIT"
+}

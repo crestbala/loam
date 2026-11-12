@@ -14,8 +14,8 @@ out of scope here; this is the path `loamc`, `nob`, and any CLI program take.
 | Windows aarch64           | same as x86_64                    | not run                             | `cross-check.sh` (built and linked only)            |
 | WASM, iOS, Android        | as before (secondary)             | —                                   | their own suites                                    |
 
-**CI** (`.github/workflows/selfhost.yml`) runs on pull requests from
-`feat/self-hosting` and by hand. Every OS builds from the checkout alone, the
+**CI** (`.github/workflows/selfhost.yml`) runs on pull requests that
+target `master` and by hand, never on push. Every OS builds from the checkout alone, the
 same way: `./nob.sh` has the C compiler build the committed seed,
 `bootstrap/loamc.c`, into `bin/loamc0`, and that builds `bin/loamc` from
 `packages/loam/compiler`. Linux then runs `./nob.sh test` on x86_64 and

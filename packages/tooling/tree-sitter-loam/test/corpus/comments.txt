@@ -1,0 +1,54 @@
+================================================================================
+C comments and doc comments
+================================================================================
+
+/** *Adds two integers. */
+fn add(a: int, b: int) -> int { return a + b }
+// module
+/* plain */
+/*** banner ***/
+// line
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (doc_comment)
+  (function_item
+    name: (identifier)
+    parameters: (fn_parameters
+      (defaulted_parameter
+        (parameter
+          name: (identifier)
+          type: (identifier)))
+      (defaulted_parameter
+        (parameter
+          name: (identifier)
+          type: (identifier))))
+    return_type: (identifier)
+    body: (block
+      (return_statement
+        (binary_expression
+          left: (identifier)
+          right: (identifier)))))
+  (comment)
+  (comment)
+  (comment)
+  (comment))
+
+================================================================================
+a multi-line item doc is one doc comment
+================================================================================
+
+/**
+ * Adds two integers.
+ */
+fn add() {}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (doc_comment)
+  (function_item
+    name: (identifier)
+    parameters: (fn_parameters)
+    body: (block)))

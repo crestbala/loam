@@ -2,9 +2,8 @@
 # Linux x86_64 and aarch64, and the non-GUI fixtures built and *run* natively on
 # Windows x86_64.
 #
-# Runs on pull requests whose branch is feat/self-hosting (any other PR skips it
-# without starting a runner) and by hand. Standard GitHub-hosted runners are free
-# for public repositories.
+# Runs on pull requests that target master, and by hand; never on push.
+# Standard GitHub-hosted runners are free for public repositories.
 #
 # Every OS bootstraps the same way from the checkout alone: `./nob.sh` compiles
 # the committed seed, bootstrap/loamc.c (the Loam compiler's own C), into
@@ -22,6 +21,7 @@ name: selfhost
 
 on:
   pull_request:
+    branches: [master]
   workflow_dispatch:
 
 permissions:
@@ -33,7 +33,6 @@ concurrency:
 
 jobs:
   linux:
-    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'feat/self-hosting'
     strategy:
       fail-fast: false
       matrix:
@@ -68,7 +67,6 @@ jobs:
           retention-days: 3
 
   selfhost:
-    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'feat/self-hosting'
     strategy:
       fail-fast: false
       matrix:
@@ -89,7 +87,6 @@ jobs:
         run: ./nob.sh selfhost ${{ matrix.stanza }}
 
   windows:
-    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'feat/self-hosting'
     runs-on: windows-latest
     timeout-minutes: 30
     defaults:
