@@ -163,5 +163,6 @@ Order, smallest risk and most logic first:
       earns it, the core stays C and Loam has no `unsafe`.
 
 Not in scope: rewriting vendored libraries, raw pointers or `unsafe`
-beyond the rules of §4, or moving the C compiler `cc` itself. Loam still
-emits C, and `cc` stays the backend.
+beyond the rules of §4, or delegating codegen to an external C compiler —
+there is no C-emission stage (stage 0). Loam lowers IR directly to machine
+code while conforming to the platform C ABI.

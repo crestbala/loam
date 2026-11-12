@@ -1,0 +1,14 @@
+program,lang,run_s_best3,bin_bytes,c_bytes,ir_allocs,ir_drops,ir_bounds,ir_traps,energy,energy_mode
+hello,loam,0.00,33560,120124,0,1,0,0,n/a (ESTIMATED from wall time),ESTIMATED
+hello,c,0.00,33432,0,0,0,0,0,n/a (ESTIMATED from wall time),ESTIMATED
+sum_loop,loam,0.00,33696,120671,0,0,0,1,n/a (ESTIMATED from wall time),ESTIMATED
+sum_loop,c,0.00,33432,0,0,0,0,0,n/a (ESTIMATED from wall time),ESTIMATED
+fib,loam,0.05,33688,120798,0,0,0,1,n/a (ESTIMATED from wall time),ESTIMATED
+fib,c,0.05,33432,0,0,0,0,0,n/a (ESTIMATED from wall time),ESTIMATED
+vec_push,loam,0.00,34272,121569,0,3,0,2,n/a (ESTIMATED from wall time),ESTIMATED
+vec_push,c,0.00,33560,0,0,0,0,0,n/a (ESTIMATED from wall time),ESTIMATED
+str_cat,loam,0.00,34240,120779,0,4,0,1,n/a (ESTIMATED from wall time),ESTIMATED
+str_cat,c,0.00,33560,0,0,0,0,0,n/a (ESTIMATED from wall time),ESTIMATED
+map_insert,loam,0.09,34880,140787,0,24,21,21,n/a (ESTIMATED from wall time),ESTIMATED
+map_insert,c,0.05,33744,0,0,0,0,0,n/a (ESTIMATED from wall time),ESTIMATED
+json_parse,loam,0.07,68992,197828,0,335,60,94,n/a (ESTIMATED from wall time),ESTIMATED

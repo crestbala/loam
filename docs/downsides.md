@@ -29,8 +29,9 @@ over a new keyword.
 | Bodyless `fn` as the C hook | `extern`, macros, comptime |
 | `for i in lo..hi`, trailing constant defaults | Iterators, mid-list defaults, labeled break |
 
-Costs that still bite and stay unless a later phase names them: C99 + `cc`
-backend (debuggers see generated C); `loam` is C11; no package registry;
+Costs that still bite and stay unless a later phase names them: the direct
+native backend (debuggers see machine code with Loam debug info, not C
+source); no package registry;
 references are second-class (no struct
 field, list, or `Box` holds one, so a borrowing view such as a parser over a
 `&string` copies or keeps indices); a loan ends when its holder is

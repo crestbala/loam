@@ -1,0 +1,13 @@
+import "std:fmt"
+
+fn main() {
+    let mut v = []int {}
+    for i in 0..1000000 {
+        push(v, i)
+    }
+    let mut s: i64 = i64(0)
+    for i in 0..v.len {
+        s = wrapping_add(s, i64(v[i]))
+    }
+    fmt.println(v.len, s)
+}

@@ -1,0 +1,14 @@
+import "std:fmt"
+import "std:map"
+
+fn main() {
+    let mut m: Map<int> = map_new(0 - 1)
+    for i in 0..200000 {
+        map_put(&mut m, "k{{i}}", i)
+    }
+    let mut s: i64 = i64(0)
+    for i in 0..200000 {
+        s = wrapping_add(s, i64(map_get(&mut m, "k{{i}}")))
+    }
+    fmt.println(m.len, s)
+}
