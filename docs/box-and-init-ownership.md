@@ -5,12 +5,12 @@ Found 2026-11-12 while measuring `loam-lsp`'s memory over a long session
 fixed the same day (items 0a and 0b there; "Fix" under each bug). Both were
 in the code generator, so they affected every program, the compiler
 included. One is a **memory-safety hole reachable from safe Loam**
-(§5.2 of the self-hosting doc says there must be none), and the other is a
+([security.md](security.md) says there must be none), and the other is a
 leak.
 
 ## Memory safety is not leak freedom
 
-Loam's guarantee (§2.7, §5.2) is that safe code cannot corrupt memory:
+Loam's guarantee (self-hosting §2.7, [security.md](security.md)) is that safe code cannot corrupt memory:
 
 - no use after free;
 - no double free;
@@ -20,7 +20,7 @@ Loam's guarantee (§2.7, §5.2) is that safe code cannot corrupt memory:
 A leak breaks none of these. Memory that is never freed is still valid
 memory. Rust makes the same promise and the same exception (`Box::leak`,
 `Rc` cycles), and Loam already lists its known leak, capturing closures, as a
-resource problem rather than a safety one (§2.4, §5.2 S8).
+resource problem rather than a safety one (self-hosting §2.4, [security.md](security.md) S8).
 
 So of the two bugs below, bug 1 breaks the guarantee and is a blocker, and
 bug 2 is a resource leak, the same class as the closure leak. Bug 1 is also
@@ -120,7 +120,7 @@ Fixed 2026-11-12, as planned below:
   dracula), timed before and after.
 - **Everything else:** the full `./nob.sh test`, `nob selfhost`, then a new
   seed if the compiler's own C changes.
-- **The soundness generator:** §5.2 S1 (soundness fuzzing) should generate
+- **The soundness generator:** [security.md](security.md) S1 (soundness fuzzing) should generate
   `Box` construction and drops, so the next such hole is found by a test,
   not by accident.
 
