@@ -3011,12 +3011,31 @@ fn grammar() -> int {
     return rc("sh packages/tooling/tree-sitter-loam/zed-grammar.sh 1>&2")
 }
 
-fn clean() {
-    sys.remove_path(OBJ)
-    sys.remove_path(BIN)
-    sys.remove_path(TMP)
-    sys.remove_path("{{ROOT}}/packages/loam/runtime/.obj")
-    fmt.println("nob: clean")
+/** *`nob clean`: remove what builds and tests generate, everywhere in the */
+/** *repo, and keep `bin/` (the tools a checkout runs). Goes: every `build/`, */
+/** *`.zeus/` and `*.dSYM` dir, every `*.o`, the test scratch, the runtime's */
+/** *object cache, `out/cross` (zig's cache too) and the Zed extension's */
+/** *cargo `target/`. Each path goes through `git clean`, so a tracked file */
+/** *(a few fixtures keep a binary under `build/`) is never touched. Kept: */
+/** *`node_modules`, `out/zed-grammar` (Zed's grammar repo), local data. */
+fn clean() -> int {
+    let size_before = trim(sys.exec("cd {{shq(ROOT)}} && du -sk . | cut -f1"))
+    let fixed_paths = []string {
+        "obj", "packages/loam/tests/tmp", "packages/loam/runtime/.obj", "out/cross",
+        "packages/tooling/editors/zed/target", "packages/tooling/editors/zed/grammars",
+        "packages/tooling/editors/zed/extension.wasm",
+    }
+    let mut listed = "printf '%s\\n'"
+    for i in 0..fixed_paths.len {
+        listed = "{{listed}} {{shq(fixed_paths[i])}}"
+    }
+    // Generated dirs and objects anywhere, outside .git, node_modules, bin/
+    // and the paths above.
+    let found = "find . \\( -path ./.git -o -path ./bin -o -name node_modules -o -path ./packages/loam/tests/tmp -o -path ./out/cross -o -path ./packages/tooling/editors/zed/target \\) -prune -o -type d \\( -name build -o -name .zeus -o -name '*.dSYM' \\) -prune -print -o -type f -name '*.o' -print"
+    let status = rc("cd {{shq(ROOT)}} && { {{listed}}; {{found}}; } | tr '\\n' '\\0' | xargs -0 git clean -fdxq --")
+    let size_after = trim(sys.exec("cd {{shq(ROOT)}} && du -sk . | cut -f1"))
+    fmt.println("nob: clean: {{int_of(size_before) / 1024}} MB -> {{int_of(size_after) / 1024}} MB (bin/ kept)")
+    return status
 }
 
 // --- fuzz-borrow: look for borrow-checker holes with AddressSanitizer -------
@@ -3284,7 +3303,7 @@ fn usage() {
     fmt.println("  grammar  regenerate, check and publish the tree-sitter grammar")
     fmt.println("  grammar-check  check the grammar against the compiler's parser")
     fmt.println("  install-editor  install the VS Code extension")
-    fmt.println("  clean   remove obj/, bin/ and packages/loam/tests/tmp")
+    fmt.println("  clean   remove every build/, .zeus/, *.o and test scratch; keeps bin/")
     fmt.println("  fuzz-borrow [N]  N random programs (default 200): any the checker")
     fmt.println("          accepts that ASan flags is a borrow-checker hole")
     fmt.println("")
@@ -3436,8 +3455,7 @@ fn main() {
         }
         sys.exit(fuzz_borrow(n))
     } else if cmd == "clean" {
-        clean()
-        sys.exit(0)
+        sys.exit(clean())
     } else if cmd == "help" {
         usage()
         sys.exit(0)
