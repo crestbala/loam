@@ -2838,6 +2838,8 @@ fn lower_init(mi: int) {
     if !block_closed() {
         term_ret(NONE, ast.INFO[root].loc)
     }
+    // Only the initializers' temporaries drop: globals never carry `L_DROP`.
+    emit_drops_at_exits()
     scope_pop_to(-1)
     finish_fn()
 }
