@@ -200,8 +200,16 @@ changes (pending)" in [self-hosting-loam.md](self-hosting-loam.md)).
       already confines a trap to one worker, whose parent restarts it.
       Document this as the answer to "a panic kills the server" instead of
       adding recovery to the language.
-- [ ] **S10. Reproducible seed.** A `nob` check that regenerates the
+- [x] **S10. Reproducible seed.** A `nob` check that regenerates the
       committed seed C from the Loam sources with the previous seed and
       fails on any byte difference (this is the fixed point, run against the
       committed file). Combined with S1/S2, it makes the seed trustworthy
-      without a line-by-line review.
+      without a line-by-line review. *Done 2026-11-12:* `selfhost_seed`
+      builds the committed seed with `cc`, has it build the compiler
+      (stage 1), and fails unless the C stage 1 emits for itself is the
+      committed file byte for byte; it prints the first differing lines.
+      It used to report "seed lags the sources" and pass, which let the
+      seed go unregenerated from P1 until 0c. CI runs it on x86_64 and
+      aarch64 for every pull request into `master`. Fixed with it: `nob`'s
+      failure lines printed a log only when given a file path, so every
+      stanza that passed captured output printed no detail.

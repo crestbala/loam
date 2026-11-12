@@ -1433,11 +1433,18 @@ fn skip(msg: string) {
     fmt.println("skip {{msg}}")
 }
 
-fn catlog(p: string) {
-    if sys.exists(p) == 1 {
-        let t = sys.read_file(p)
-        if t.len > 0 {
-            fmt.write(t)
+/** *Prints a failure's detail. Callers pass either a log file (one absolute */
+/** *line naming a file that exists) or the captured output itself. */
+fn catlog(log_or_text: string) {
+    if log_or_text.len == 0 {
+        return
+    }
+    let is_log_file = starts_with(log_or_text, "/") && !contains_str(log_or_text, "\n") && sys.exists(log_or_text) == 1
+    let text = if is_log_file { sys.read_file(log_or_text) } else { log_or_text }
+    if text.len > 0 {
+        fmt.write(text)
+        if text[text.len - 1] != '\n' {
+            fmt.write("\n")
         }
     }
 }
@@ -2453,8 +2460,9 @@ fn ig_fresh_cache() {
 
 /** *Where the stage-0 seed lives: the Loam compiler's generated C, committed */
 /** *so a checkout builds `loamc` with only a C compiler (Windows does; see */
-/** *nob.sh). It lags: `nob seed` refreshes it only when it can no longer */
-/** *build the current compiler, so everyday commits carry no 4 MB diff. */
+/** *nob.sh). It must be the C the current compiler emits for itself, byte */
+/** *for byte: a commit that changes the compiler runs `nob seed` too, and */
+/** *`selfhost_seed` fails when it did not. */
 fn seed_path() -> string {
     return "{{ROOT}}/bootstrap/loamc.c"
 }
@@ -2482,8 +2490,8 @@ fn seed() -> int {
 /** *builds itself (stage 2), and the C the seed, stage 1 and stage 2 each */
 /** *emit for the compiler is the same bytes, so stage 2 is stage 1. The */
 /** *`.fresh` cache cases hold on stage 1 too (`fresh_cache` runs them on */
-/** *`bin/loamc`). The seed may lag the sources; the verdict says whether it */
-/** *does. */
+/** *`bin/loamc`). And the committed seed is that same C: a seed that lags */
+/** *the sources fails, with the first lines that differ. */
 fn ig_selfhost_seed() {
     mark("selfhost seed")
     if sys.exists(seed_path()) == 0 {
@@ -2520,6 +2528,7 @@ fn ig_selfhost_seed() {
     let stage1_c = sys.read_file("{{d}}/s1.c")
     let fixed = stages_ran && stage1_c.len > 0 && sys.read_file("{{d}}/seed.c") == stage1_c && sys.read_file("{{d}}/s2.c") == stage1_c
     let current = sys.read_file(seed_path()) == stage1_c
+    let seed_diff = if current { "" } else { sys.exec("cd {{shq(ROOT)}} && diff bootstrap/loamc.c {{shq(d)}}/s1.c 2>&1 | head -20") }
     let fresh_failures = trim(fresh_cache_case(stage1, "{{d}}/fresh", "s1"))
     sys.exec("rm -rf {{shq(d)}}")
     if !fixed {
@@ -2530,8 +2539,11 @@ fn ig_selfhost_seed() {
         bad("selfhost seed (.fresh cache on stage 1)", fresh_failures)
         return
     }
-    let lag = if current { "current" } else { "lags the sources" }
-    ok("selfhost seed: bootstrap/loamc.c builds the compiler, seed = stage 1 = stage 2 ({{stage1_c.len}} bytes of C), .fresh cache holds; seed {{lag}}")
+    if !current {
+        bad("selfhost seed (bootstrap/loamc.c lags the sources: run ./nob.sh seed and commit it)", seed_diff)
+        return
+    }
+    ok("selfhost seed: bootstrap/loamc.c builds the compiler and is current, seed = stage 1 = stage 2 ({{stage1_c.len}} bytes of C), .fresh cache holds")
 }
 
 /** *The loader's package rules: `loamc check` on every entry file under */
