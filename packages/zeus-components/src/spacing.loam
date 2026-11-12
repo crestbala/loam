@@ -3,6 +3,27 @@
 // dialog / pagination / chart / calendar dimensions. These are the values a
 // theme leaves alone.
 //
+// ─── the rule ─────────────────────────────────────────────────────────────
+// Essentialism, applied to chrome: every metric a component draws comes from
+// one of four scales — space, type, radius, stroke — and nothing else. A raw
+// number in a recipe (`gap = 6`, `radius = 3`, `font = 26`, `borderWidth = 2`)
+// is drift: it is a value nobody can retune, that repeats a neighbour with a
+// different spelling, and that no reader can point at a scale for. The scales
+// below are deliberately short. When a component wants a value that is not on
+// one, the answer is the nearest step, not a new constant — `nob.sh test`
+// enforces this (the `design_lint` stanza fails on a raw number in these
+// tiers, so the rule survives the next component).
+//
+//   space   Space.Exxxs 4 · Space.Exs 8 · Space.Xs 12 · Space.Sm 16 ·
+//           Space.Md 20 · Space.Lg 24 · Space.Xl 32, plus the two steps the
+//           enum omits and tight chrome needs: GAP_HAIR 2 · GAP_SNUG 6
+//   type    FONT_OVERLINE 10 · FONT_CAPTION 12 · FONT_CONTROL 13 ·
+//           FONT_BODY 14 · FONT_TITLE 18 · FONT_HEADING 22 · FONT_DISPLAY 32
+//           (~1.15× apart, so every step is visibly a different size; a
+//           control's font and icon are derived from it, never hardcoded)
+//   radius  RAD_SM 2 · RAD_MD 4 · RAD_LG 6 · RAD_XL 8 · RAD_FULL (a circle)
+//   stroke  HAIRLINE 1 · RING_W 2
+//
 // The live palette and the role accessors live in `colors`. The inline SVG icon
 // set stays in `zeus_constants`, together with `VIRT_OVERSCAN` — the one
 // constant `zeusbase` itself reads, so it cannot move above it.
@@ -19,18 +40,155 @@ const LEAD_SNUG: int = 130
 const LEAD_NORMAL: int = 150
 const LEAD_RELAXED: int = 170
 
-/** *Type scale. Canvas hosts draw one weight, so hierarchy leans on size and */
-/** *color. Body stays at 14; the quiet chrome around it is what carries the scale. */
+/** *Type scale: seven steps, spaced so each is *distinct* rather than merely */
+/** *different. */
+/** * */
+/** *The old scale ran 10 / 11 / 12 for its three small steps — one pixel apart, */
+/** *which is not a scale but a rounding error: overline, caption, and control */
+/** *type were the same size under three names, so nothing could be retuned and a */
+/** *caption could not be told from a form label. The steps below widen the top */
+/** *(17→18, 14→13 keeps body the anchor) so the hierarchy actually reads. */
+/** * */
+/** *The three small steps stay within 2px of each other, and that is deliberate */
+/** *rather than sloppy: below 14px the type range is 10–14, and stretching it */
+/** *further would push captions to 9px, which is below the legible floor. Each */
+/** *small step is therefore separated by its *role* as well as its size — an */
+/** *overline is upper-case and tracked, a caption is muted, a control label is */
+/** *ink at the control's density — so size is one of three signals, not the */
+/** *only one. That is what lets the same step carry different jobs without the */
+/** *scale growing a step per job. */
 const FONT_DISPLAY: int = 32
 const FONT_HEADING: int = 22
-const FONT_TITLE: int = 17
+const FONT_TITLE: int = 18
 const FONT_BODY: int = 14
-const FONT_CONTROL: int = 12
-const FONT_CAPTION: int = 11
+const FONT_CONTROL: int = 13
+const FONT_CAPTION: int = 12
 const FONT_OVERLINE: int = 10
+
+/** *The leading a step gets, as a `LEAD_*` percentage. Type and leading move */
+/** *together: a display line is tight so a headline reads as one shape, body */
+/** *copy is normal so a paragraph is a block, and the quiet chrome is snug so a */
+/** *caption stays welded to what it captions. A caller that sets a `font` and */
+/** *leaves the line box to the host gets the host's own default, which is why */
+/** *every wrapped or stacked text in a recipe pairs its size with this. */
+fn lead_for(font: int) -> int {
+    if font >= FONT_HEADING {
+        return LEAD_TIGHT
+    }
+    if font <= FONT_CAPTION {
+        return LEAD_SNUG
+    }
+    return LEAD_NORMAL
+}
+
+/** *The line box for `font` at its scale's leading: the one number a stacked */
+/** *label needs to space itself, rather than a literal that drifts. */
+fn line_box(font: int) -> int {
+    return line_height(font, lead_for(font))
+}
 
 const PAGE_PAD: int = 32
 const SECTION: int = 24
+
+// --- space ----------------------------------------------------------------
+// The `Space` enum (in `zeus:enums`) is the caller-facing scale: Exxxs 4,
+// Exxs/Exs 8, Xs 12, Sm 16, Md 20, Lg 24, Xl 32. It has no step at 2 and none
+// at 6 — and those two are exactly what tight chrome needs: the gap inside a
+// badge between its pip and its label (2), and the gap between a heading and
+// its own description (6). Rather than sprinkle `2` and `6` through the
+// recipes, the two steps live here, named for what they mean.
+//
+// These are *only* the steps `Space` lacks. Re-aliasing 8 or 12 as `GAP` would
+// give one number two spellings, which is the drift this file exists to stop;
+// where a `Space` step exists, a component reads `Space.*` directly.
+/** *The tightest pair: a pip and its label, an icon and a caret. */
+const GAP_HAIR: int = 2
+/** *A step under `Space.Exxxs`: the seamless pairing of a glyph and its text. */
+const GAP_SNUG: int = 6
+
+/** *Padding inside a pill / chip / badge: 10 across, a little under that */
+/** *down, so the text sits optically centred rather than box-centred. */
+const PAD_PILL_X: int = 10
+const PAD_PILL_Y: int = 5
+/** *Padding inside a small key cap. */
+const PAD_KBD_X: int = 6
+
+// --- motion ---------------------------------------------------------------
+// Motion is a property of the *interaction*, not of the component. There are
+// only a handful of interactions in the whole kit, so there are only a handful
+// of motions; each one is named here for what it answers, and every recipe
+// reads one of these instead of reaching for a `Motion.*` token directly.
+//
+// Why name them: the same interaction must feel the same everywhere. A
+// checkbox's check and a radio's dot and a disclosure's chevron are all "a
+// control changed its own state", so they share `MOTION_STATE` — retune it once
+// and they stay in step. Written as raw `Motion.Snap`, three components happen
+// to agree today and drift apart the first time one is touched.
+//
+// The rule is the same as the other scales: a component that writes
+// `transition = Motion.X` is drift; the `design_lint` stanza fails on it.
+/** *A control changing its own state: a check, a dot, a chevron, a track. */
+/** *A physical spring, so an interrupted change keeps its speed. `Snap` is firm */
+/** *and quick with no visible overshoot — a control must not feel bouncy. */
+const MOTION_STATE: int = Motion.Snap
+/** *A pointer settling on something: a hover wash, a link underline. A short */
+/** *time, not a spring, because nothing is moving — only opacity. */
+const MOTION_HOVER: int = Motion.Fast
+/** *A surface arriving: a panel, an accordion body, a value easing to a new */
+/** *reading. Long and heavy, so it reads as weight rather than a pop. */
+const MOTION_ENTER: int = Motion.Glide
+/** *A surface leaving. Answers at once and lands in time — the eye has already */
+/** *moved on, so the exit must not linger. */
+const MOTION_EXIT: int = Motion.Fall
+
+/** *Milliseconds per full turn of an ambient loader. One number for every */
+/** *spinning thing, so a spinner in a button and a spinner on a page turn at the */
+/** *same rate; `Spinner` reads it rather than carrying its own default. */
+/** * */
+/** *There is deliberately no `SHIMMER_PERIOD` beside it. The skeleton's shimmer */
+/** *is a *paint* sweep the engine owns (`arena.SHIMMER_MS`), not something a */
+/** *component schedules, so a copy here would be a second source of truth for a */
+/** *number no recipe reads — the drift the `design_lint` dead-token check exists */
+/** *to catch. Ambient motion the engine drives stays in the engine. */
+const SPIN_PERIOD: int = 900
+
+// Entry motion, named by the *kind of surface* rather than by its flags.
+//
+// Every entering surface is one of three shapes, and the shapes are what a
+// reader needs to know: a popup fades and pops (it came from a control, so it
+// grows out of that spot), a sheet fades, pops and rises (it came from the
+// edge, so it travels), and a disclosure fades and reveals (it unfolds in
+// place, so it must not move). Written as raw flag sums these are ten
+// copies of three decisions, which is how they drift apart.
+//
+// Exit needs no token: the engine derives it from the entry motion, so an
+// exit is always the entry reversed. That symmetry is the reason there is no
+// `MOTION_*_OUT` here.
+/** *A popup that came from a control: fade, and pop out from just under size. */
+const ENTER_SURFACE: int = Enter.Fade + Enter.Pop
+/** *A sheet or dialog that came from an edge: fade, pop, and rise. */
+const ENTER_SHEET: int = Enter.Fade + Enter.Pop + Enter.Rise
+/** *A body that unfolds in place (accordion, disclosure): fade and reveal, */
+/** *with no travel — the row itself did not move, so the copy must not. */
+const ENTER_REVEAL: int = Enter.Fade + Enter.Reveal
+/** *An edge-anchored notice (a toast): fade and travel in from the edge it */
+/** *lives on, with no pop — nothing was clicked for it to grow out of. Which */
+/** *edge is the caller's `place`, so the travel direction is passed in. */
+fn enter_edge(place: int) -> int {
+    if place == 1 {
+        return Enter.Fade + Enter.Drop
+    }
+    return Enter.Fade + Enter.Rise
+}
+
+// --- stroke ---------------------------------------------------------------
+// Two widths, and no third. A hairline is a border, a divider, a rule, a
+// progress track's residual line: anything that is a *line*. RING_W is the
+// only 2px stroke, and it means exactly one thing — a ring/dot marker whose
+// weight has to survive being drawn over a 1px grid (a step dot, a radio
+// border). Anything thicker is a fill, not a stroke.
+const HAIRLINE: int = 1
+const RING_W: int = 2
 
 // --- focus ring -----------------------------------------------------------
 /** *Focus ring stroke width in dp. */
@@ -74,12 +232,20 @@ fn control_pad_x(size: int) -> int {
     return base + density_delta() / 2
 }
 
+/** *Control type per `Size`, read off the one scale: Sm is caption, Md is body, */
+/** *Lg is title. The old table hardcoded 13 / 14 / 15 — values that were on no */
+/** *scale at all, so a Small button's label was bigger than a caption and a */
+/** *Large one matched nothing. Deriving them keeps a control's type on the same */
+/** *ladder as the text it sits beside. */
 fn control_font(size: int) -> int {
-    if size == Size.Sm { 13 } else if size == Size.Lg { 15 } else { FONT_BODY }
+    if size == Size.Sm { FONT_CAPTION } else if size == Size.Lg { FONT_TITLE } else { FONT_BODY }
 }
 
+/** *Icon per `Size`, from `IconSize`. The old table hardcoded `18` for Large, */
+/** *which was neither `Lg` nor `Xl`; a control's glyph now shares the icon */
+/** *scale with every other icon in the system. */
 fn control_icon(size: int) -> int {
-    if size == Size.Sm { IconSize.Sm } else if size == Size.Lg { 18 } else { IconSize.Md }
+    if size == Size.Sm { IconSize.Sm } else if size == Size.Lg { IconSize.Lg } else { IconSize.Md }
 }
 
 fn control_gap(size: int) -> int {
@@ -132,7 +298,6 @@ const SPLIT_MIN: int = 160
 // --- control metrics ------------------------------------------------------
 const BAR: int = 52
 const DOT: int = 8
-const HAIRLINE: int = 1
 /** *Default width of a `Select` field. */
 const SELECT_W: int = 200
 /** *The one shadow in the system, for layers that float over content (menus, */
@@ -178,6 +343,20 @@ const CHART_TOP: int = 8
 /** *Bottom strip for the x labels (45° labels need diagonal room plus the */
 /** *air gap between the baseline and the label corners). */
 const CHART_XLAB: int = 38
+/** *A doughnut's hole, as a percent of its outer radius. The ring is the mark, */
+/** *so the hole is sized to make the ring read as a band rather than a disc — */
+/** *62% leaves a band thick enough to hit on touch and thin enough that the */
+/** *arc length still encodes the value honestly. */
+const DONUT_HOLE: int = 62
+/** *Degrees between the start and end of an annulus segment's sweep, so a */
+/** *segment is drawn as short chords rather than one long arc: 6° is under a */
+/** *pixel of sag at the `DONUT_R` sizes, and keeps every host's path parser on */
+/** *the straight-line path it already handles. */
+const DONUT_STEP: int = 6
+/** *Radius in viewBox units for the doughnut's own 0..24 box, matching the */
+/** *icon convention (`Icon` draws in a 24 box), so a doughnut scales with the */
+/** *same maths an icon does. */
+const DONUT_R: int = 10
 
 // --- calendar -------------------------------------------------------------
 const CAL_CELL: int = 36

@@ -1,12 +1,12 @@
 DRAW 13
 fill 0 0 480 360 16185337 0
-text 32 32 1382429 17 Behind the dialog
+text 32 32 1382429 18 Behind the dialog
 fill_a 0 0 480 360 0 127
 shadow 20 98 440 164 0 6 16 20 0 8
 shadow 20 98 440 164 0 6 14 2 0 1
 fill 20 98 440 164 16777215 6
 stroke 20 98 440 164 14738408 6 1 255
-text 45 126 1382429 17 Share the link?
+text 45 126 1382429 18 Share the link?
 svg 413 129 16 16 3685702
 text 45 167 3685702 14 Anyone with the link can view this project.
 text 283 210 1382429 14 Cancel

@@ -354,7 +354,7 @@ fn Slider(value: Signal<int>, p: SliderProps) -> Node {
         bind = pos,
         // Fills a column; `grow` takes the free width in a row,
         // where a bare 100% would be the (empty) content width.
-        style = Style(width = pct(100), grow = 1, height = px(20), radius = 1, cursor = "pointer"),
+        style = Style(width = pct(100), grow = 1, height = px(SLIDER_THUMB + Space.Exxxs), radius = RAD_NONE, cursor = "pointer"),
         restyle = p.style,
         role = "slider",
         label = p.label,
@@ -737,7 +737,7 @@ struct FormFieldProps {
 fn FormField(label: string, p: FormFieldProps) -> Node {
     let has_help = p.description.len > 0
     return Box(style = Style(direction = Direction.Column, gap = Space.Exs), restyle = p.style) {
-        Box(style = Style(direction = Direction.Row, gap = 2, align = Align.Center)) {
+        Box(style = Style(direction = Direction.Row, gap = GAP_HAIR, align = Align.Center)) {
             Label(label)
             if p.required {
                 Text("*", style = Style(font = FONT_BODY, color = danger()), label = "required")
@@ -866,7 +866,7 @@ fn Checkbox(label: string, on: Signal<bool>, p: CheckboxProps) -> Node {
                     display = shown(!mixed()),
                     opacity = if on.get() { 100 } else { 0 },
                     scale = if on.get() { 100 } else { 60 },
-                    transition = Motion.Snap,
+                    transition = MOTION_STATE,
                 ),
             )
             if has_mix {
@@ -1025,9 +1025,9 @@ fn IndicatorTray(
     return Row(0) {
         let tray = Box(style = Style(
             direction = Direction.Row,
-            gap = 2,
+            gap = GAP_HAIR,
             align = Align.Center,
-            padding = if underline { 0 } else { 4 },
+            padding = if underline { 0 } else { Space.Exxxs },
             radius = RAD_CONTROL,
             background = if underline { "" } else { raised() },
             color = if underline { ink() } else { plate() },
@@ -1069,7 +1069,7 @@ fn SelectRow(value: Signal<int>, active: Signal<int>, index: int, label: string)
             direction = Direction.Row,
             gap = Space.Exxxs,
             align = Align.Center,
-            paddingY = 6,
+            paddingY = GAP_SNUG,
             paddingX = Space.Exs,
             radius = RAD_SM,
             background = row_fill(active.get() == index),
@@ -1259,11 +1259,11 @@ fn Select(value: Signal<int>, labels: []string, p: SelectProps) -> Node {
         }
         Box(
             style = floating_panel(MENU_MIN_W, width = w),
-            anchor = Anchor(to = trigger, place = Place.PlaceBelow, gap = 6),
+            anchor = Anchor(to = trigger, place = Place.PlaceBelow, gap = GAP_SNUG),
             autofocus = active.get() >= 0,
             visible = active.get() >= 0,
             keys = keys,
-            enter = Enter.Fade + Enter.Pop,
+            enter = ENTER_SURFACE,
         ) {
             Each(labels, fn(i, lab) {
                 return SelectRow(value, active, i, lab)
@@ -1329,7 +1329,7 @@ fn Radio(label: string, value: Signal<int>, index: int, p: RadioProps) -> Node {
                 background = accent(),
                 opacity = if active() { 100 } else { 0 },
                 scale = if active() { 100 } else { 40 },
-                transition = Motion.Snap,
+                transition = MOTION_STATE,
             ))
         }
         Text(label, style = Style(font = control_font(p.size), color = ink()))
@@ -1499,7 +1499,7 @@ fn DisclosureHead(
             gap = Space.Sm,
             align = Align.Center,
             minHeight = 48,
-            paddingY = 14,
+            paddingY = Space.Xs,
             paddingX = Space.Sm,
             cursor = "pointer",
         ),
@@ -1519,7 +1519,7 @@ fn DisclosureHead(
             IC_CHEV_DOWN,
             16,
             mute(),
-            style = Style(rotate = if open.get() { 180 } else { 0 }, transition = Motion.Snap),
+            style = Style(rotate = if open.get() { 180 } else { 0 }, transition = MOTION_STATE),
         )
     }
 }
@@ -1534,13 +1534,13 @@ fn DisclosureBody(open: Signal<bool>, p: DisclosureBodyProps) -> Node {
     return Box(
         style = Style(
             direction = Direction.Column,
-            paddingTop = 2,
+            paddingTop = GAP_HAIR,
             paddingRight = Space.Sm,
-            paddingBottom = 18,
+            paddingBottom = Space.Sm,
             paddingLeft = Space.Sm,
         ),
         visible = open.get(),
-        enter = Enter.Fade + Enter.Reveal,
+        enter = ENTER_REVEAL,
     ) {
         p.children()
     }
@@ -1883,7 +1883,7 @@ struct ButtonGroupProps {
 fn ButtonGroup(labels: []string, p: ButtonGroupProps) -> Node {
     let n = labels.len
     return Row(0) {
-        Box(style = Style(direction = Direction.Row), role = "group", label = p.label) {
+        Box(style = Style(direction = Direction.Row, align = Align.Center), role = "group", label = p.label) {
             Each(labels, fn(i, lab) {
                 return GroupSegment(
                     lab,
@@ -2066,7 +2066,7 @@ fn NumberInput(value: Signal<int>, p: NumberInputProps) -> Node {
 
     // view
     return Box(
-        style = field_chrome(p.size, invalid = p.invalid, padX = 4, gap = 2),
+        style = field_chrome(p.size, invalid = p.invalid, padX = Space.Exxxs, gap = GAP_HAIR),
         restyle = p.style,
         on_click = fn() { focus(field) },
         focusable = false,
@@ -2490,7 +2490,7 @@ fn RangeSlider(lo: Signal<int>, hi: Signal<int>, p: RangeSliderProps) -> Node {
                 left = t / 2,
                 width = px(if tw.get() > t { tw.get() - t } else { 0 }),
                 height = px(SLIDER_TRACK),
-                radius = 1,
+                radius = RAD_NONE,
                 background = raised(),
             ),
             role = "presentation",
@@ -2502,7 +2502,7 @@ fn RangeSlider(lo: Signal<int>, hi: Signal<int>, p: RangeSliderProps) -> Node {
                 left = t / 2 + shown(lo, lo_at),
                 width = px(shown(hi, hi_at) - shown(lo, lo_at)),
                 height = px(SLIDER_TRACK),
-                radius = 1,
+                radius = RAD_NONE,
                 background = accent(),
             ),
             role = "presentation",
@@ -2561,7 +2561,7 @@ fn RangeThumb(
             width = px(SLIDER_THUMB),
             height = px(SLIDER_THUMB),
             radius = RAD_FULL,
-            borderWidth = 2,
+            borderWidth = RING_W,
             borderColor = accent(),
             background = plate(),
         ),
@@ -2604,7 +2604,7 @@ fn Banner(message: Signal<string>, p: BannerProps) -> Node {
             direction = Direction.Row,
             gap = Space.Xs,
             align = Align.Center,
-            paddingY = 10,
+            paddingY = Space.Xs,
             paddingX = Space.Sm,
             background = tint_bg(p.tint),
             borderWidth = HAIRLINE,
@@ -2726,7 +2726,7 @@ fn DescriptionList(items: []DescItem, p: DescriptionListProps) -> Node {
                     wrap = true,
                     gap = Space.Exxxs,
                     align = Align.Start,
-                    paddingY = 10,
+                    paddingY = Space.Xs,
                     paddingX = 0,
                 )) {
                     Text(
@@ -2874,18 +2874,18 @@ fn StepItem(
             }
             if vertical && !last {
                 Box(style = Style(
-                    width = px(2),
+                    width = px(RING_W),
                     grow = 1,
-                    minHeight = 16,
-                    radius = 1,
+                    minHeight = Space.Sm,
+                    radius = RAD_NONE,
                     background = if done() { accent() } else { rule() },
                 ))
             }
         }
         Box(style = Style(
             direction = Direction.Column,
-            gap = 2,
-            paddingBottom = if vertical && !last { 16 } else { 0 },
+            gap = GAP_HAIR,
+            paddingBottom = if vertical && !last { Space.Sm } else { 0 },
         )) {
             Text(
                 label,
@@ -2901,10 +2901,10 @@ fn StepItem(
         }
         if !vertical && !last {
             Box(style = Style(
-                width = px(48),
-                height = px(2),
+                width = px(Space.Xxl),
+                height = px(RING_W),
                 shrink = 0,
-                radius = 1,
+                radius = RAD_NONE,
                 background = if done() { accent() } else { rule() },
             ))
         }
@@ -3113,7 +3113,7 @@ fn MultiSelect(selected: Signal<[]string>, options: []string, p: MultiSelectProp
             style = floating_panel(MENU_MIN_W),
             anchor = Anchor(to = field, place = Place.PlaceBelow, gap = Space.Exxxs),
             visible = open.get(),
-            enter = Enter.Fade + Enter.Pop,
+            enter = ENTER_SURFACE,
         ) {
             Each(matches.get(), fn(i, s) {
                 return Box(
@@ -3384,7 +3384,7 @@ fn Rating(value: Signal<int>, p: RatingProps) -> Node {
         key_bind("end", "rate.max", fn() { put(cap) }),
     }
     return Box(
-        style = Style(direction = Direction.Row, gap = 2, align = Align.Center),
+        style = Style(direction = Direction.Row, gap = GAP_HAIR, align = Align.Center),
         restyle = p.style,
         role = "slider",
         label = "{{p.label}} {{value.get()}}",
@@ -3600,7 +3600,7 @@ fn ListBox(value: Signal<int>, labels: []string, p: ListBoxProps) -> Node {
     let n = labels.len
     let size = p.size
     return Box(
-        style = Style(direction = Direction.Column, gap = 2),
+        style = Style(direction = Direction.Column, gap = GAP_HAIR),
         restyle = p.style,
         role = "listbox",
         label = p.label,
@@ -3660,8 +3660,8 @@ fn Timeline(items: []TimelineItem) -> Node {
                 }
                 Box(style = Style(
                     direction = Direction.Column,
-                    gap = 2,
-                    paddingBottom = if i < n - 1 { 16 } else { 0 },
+                    gap = GAP_HAIR,
+                    paddingBottom = if i < n - 1 { Space.Sm } else { 0 },
                 )) {
                     Box(style = Style(
                         direction = Direction.Row,
@@ -3690,7 +3690,7 @@ fn TrendIndicator(delta: Signal<string>, trend: int) -> Node {
     return Box(
         style = Style(
             direction = Direction.Row,
-            gap = 2,
+            gap = GAP_HAIR,
             align = Align.Center,
             display = shown(delta.get().len > 0),
         ),
@@ -3711,7 +3711,7 @@ fn KpiCard(label: Signal<string>, value: Signal<string>, kind: int, p: StatProps
     return Card() {
         Text(label, style = Style(font = FONT_CONTROL, color = mute()))
         Row(Space.Xs) {
-            Text(value, style = Style(font = 26, color = tint_of(kind)))
+            Text(value, style = Style(font = FONT_HEADING, color = tint_of(kind)))
             if result.is_some(p.spark) {
                 Sparkline(p.spark.val, 64, 18, trend_tint(p.trend))
             }
@@ -3873,7 +3873,7 @@ fn TableOfContents(current: Signal<int>, labels: []string, p: TocProps) -> Node 
         })
     }
     return Box(
-        style = Style(direction = Direction.Column, gap = 2),
+        style = Style(direction = Direction.Column, gap = GAP_HAIR),
         restyle = p.style,
         role = "navigation",
         label = "Contents",

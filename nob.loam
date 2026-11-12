@@ -2378,7 +2378,7 @@ fn ig_arena_lint() {
     push(files, "molecules")
     push(allow, "SwitchTrack ThemeSwitch Switch Slider Input Button")
     push(files, "organisms")
-    push(allow, "LineChart Comp BarChart AreaChart LineChartOf BarChartOf AreaChartOf")
+    push(allow, "LineChart Comp BarChart AreaChart LineChartOf BarChartOf AreaChartOf DonutChart DonutChartOf donut_slice")
     push(files, "colors")
     push(allow, "")
     let ll = tmpf("arena_lint_lib.log")
@@ -2398,6 +2398,67 @@ fn ig_arena_lint() {
         return
     }
     ok("arena lint (examples, www and library components use no ui_push / slot / arena / raw_*; components import no zeuscore)")
+}
+
+/** *The design-system rule (`packages/zeus-components/README.md`): a component's
+ * chrome comes from the four scales in `spacing.loam` — space, type, radius,
+ * stroke — and never from a raw number. This is the same shape as the arena
+ * lint: a grep for the offending spelling, an allow-list for the styles that
+ * are genuinely geometry rather than chrome, and a failure that names the line.
+ *
+ * What counts as drift: a literal on `gap` / `rowGap` / `columnGap`, any
+ * padding side, any margin side, `radius` (and its per-corner keys), `font`, or
+ * `borderWidth` / `borderTop` / … . A zero is allowed — `padding = 0`,
+ * `gap = 0`, `radius = 0` are resets, and a reset is a statement, not a size.
+ * A caller's own `style` prop (`radius = 4` in a doc comment) is fine: the grep
+ * skips comment lines, the way the arena lint already does. */
+fn ig_design_lint() {
+    mark("design lint")
+    let lib = "packages/zeus-components/src"
+    let log = tmpf("design_lint.log")
+    // A raw number (not zero) on a chrome key. `px(...)`/`pct(...)` delimiters
+    // and named tokens never match because the pattern wants `= <digits>`.
+    let re = "(^|[,(][[:space:]]*)(gap|rowGap|columnGap|padding|paddingX|paddingY|paddingTop|paddingRight|paddingBottom|paddingLeft|margin|marginX|marginY|marginTop|marginRight|marginBottom|marginLeft|radius|radiusTopLeft|radiusTopRight|radiusBottomRight|radiusBottomLeft|font|borderWidth|borderTop|borderRight|borderBottom|borderLeft|borderBetween)[[:space:]]*=[[:space:]]*[1-9][0-9]*([,)]|$)"
+    sh("grep -nE {{shq(re)}} {{lib}}/atoms.loam {{lib}}/molecules.loam {{lib}}/organisms.loam | grep -vE ':[0-9]+:[[:space:]]*(//|/[*])' > {{shq(log)}}")
+    if is_nonempty(log) {
+        bad("design lint (a raw number on a chrome key; use the token in spacing.loam)", log)
+        return
+    }
+    // Motion is a property of the *interaction*, not of the component: a recipe
+    // that names `Motion.X` or sums `Enter.*` flags is choosing a curve where it
+    // should be naming the interaction. The interaction tokens live in
+    // `spacing.loam` (`MOTION_STATE`, `ENTER_SURFACE`, `enter_edge`, …); a
+    // component reads one of those. The Toast's place-dependent entry is a real
+    // third shape, so it got a real token (`enter_edge`) rather than an
+    // exception here: an escape hatch in a rule is how a rule stops being one.
+    let mlog = tmpf("design_lint_motion.log")
+    let mre = "transition[[:space:]]*=[[:space:]]*(Motion|EASE)[.]|enter[[:space:]]*=[[:space:]]*Enter[.]"
+    sh("grep -nE {{shq(mre)}} {{lib}}/atoms.loam {{lib}}/molecules.loam {{lib}}/organisms.loam | grep -vE ':[0-9]+:[[:space:]]*(//|/[*])' > {{shq(mlog)}}")
+    if is_nonempty(mlog) {
+        bad("design lint (a component names a raw Motion / Enter; use the MOTION_* / ENTER_* token)", mlog)
+        return
+    }
+    // The reverse direction: a token exists but nothing reads it — the state
+    // `LEAD_*` sat in for a year while every stacked label guessed its own
+    // leading. A read anywhere counts, `spacing.loam` included: `lead_for`
+    // reads the four `LEAD_*` on its own line, and that is a real reader.
+    let unread = tmpf("design_lint_unread.log")
+    sys.write_file(unread, "")
+    let toks = []string {
+        "GAP_HAIR", "GAP_SNUG", "PAD_PILL_X", "PAD_PILL_Y", "PAD_KBD_X", "RING_W",
+        "LEAD_TIGHT", "LEAD_SNUG", "LEAD_NORMAL", "LEAD_RELAXED",
+        "MOTION_STATE", "MOTION_HOVER", "MOTION_ENTER", "MOTION_EXIT",
+        "ENTER_SURFACE", "ENTER_SHEET", "ENTER_REVEAL", "SPIN_PERIOD",
+    }
+    for i in 0..toks.len {
+        let t = toks[i]
+        sh("grep -qE '(^|[^A-Za-z0-9_]){{t}}([^A-Za-z0-9_]|$)' {{lib}}/atoms.loam {{lib}}/molecules.loam {{lib}}/organisms.loam {{lib}}/spacing.loam || echo '{{t}} is declared but nothing reads it' >> {{shq(unread)}}")
+    }
+    if is_nonempty(unread) {
+        bad("design lint (a scale token is dead)", unread)
+        return
+    }
+    ok("design lint (every chrome metric comes from the space / type / radius / stroke scales)")
 }
 
 /** *The public-surface freeze (`packages/zeus/docs/api-freeze.md`): every name */
@@ -2799,6 +2860,8 @@ fn stanza_dispatch(name: string) -> bool {
         ig_one_surface()
     } else if name == "arena_lint" {
         ig_arena_lint()
+    } else if name == "design_lint" {
+        ig_design_lint()
     } else if name == "api_freeze" {
         ig_api_freeze()
     } else if name == "modules" {
@@ -2860,6 +2923,7 @@ fn stanza_names() -> []string {
     push(v, "cost")
     push(v, "one_surface")
     push(v, "arena_lint")
+    push(v, "design_lint")
     push(v, "api_freeze")
     push(v, "modules")
     push(v, "selfhost_seed")
@@ -2930,7 +2994,7 @@ fn pool_stanzas(names: []string, limit_s: int) -> int {
 /** *app. The wasm module's entry points, the server/client split, and the */
 /** *language server all sit next to the compiler. */
 fn host_stanzas() -> []string {
-    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "api_freeze", "modules", "fresh_cache", "android_project", "ownership_asan", "loader_cases", "wasm_float" }
+    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "design_lint", "api_freeze", "modules", "fresh_cache", "android_project", "ownership_asan", "loader_cases", "wasm_float" }
 }
 
 /** *How long one stanza may run before its pool kills it. `selfhost_seed` */

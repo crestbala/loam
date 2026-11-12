@@ -38,5 +38,80 @@ fn main() {
     must(zeus.AvatarSize.Lg == 40, "avatar lg px")
     must(zeus.IconSize.Xxl == 32, "icon xxl px")
     must(zeus.Elevation.Modal == 4, "modal is engine level 4")
+
+    // --- the four scales (essentialism: one table per axis, nothing else) ---
+    // Space: only the two steps `Space` omits live here. Re-aliasing a `Space`
+    // step would give one number two spellings — the drift this rule stops.
+    must(spacing.GAP_HAIR == 2, "gap hair")
+    must(spacing.GAP_SNUG == 6, "gap snug")
+    // The two extra steps slot into the `Space` scale, strictly between its
+    // neighbours, so a reader can trust the order.
+    must(Space.Exxxs <= spacing.GAP_SNUG && spacing.GAP_SNUG < Space.Exs, "snug sits under Exs")
+    must(Space.None < spacing.GAP_HAIR && spacing.GAP_HAIR < Space.Exxxs, "hair sits over none")
+    must(spacing.GAP_HAIR < spacing.GAP_SNUG, "hair is the tightest")
+    // The stroke scale is two widths and no third.
+    must(spacing.HAIRLINE == 1 && spacing.RING_W == 2, "hairline and ring")
+    must(spacing.HAIRLINE < spacing.RING_W, "a ring is heavier than a hairline")
+    must(spacing.PAD_PILL_Y < spacing.PAD_PILL_X, "a pill is wider than it is tall")
+
+    // Type: ascending, and every step gets a documented leading.
+    must(spacing.FONT_OVERLINE < spacing.FONT_CAPTION && spacing.FONT_CAPTION < spacing.FONT_CONTROL &&
+         spacing.FONT_CONTROL < spacing.FONT_BODY && spacing.FONT_BODY < spacing.FONT_TITLE &&
+         spacing.FONT_TITLE < spacing.FONT_HEADING && spacing.FONT_HEADING < spacing.FONT_DISPLAY,
+         "type scale ascends")
+    // Every shadow (24, 20, 16, 14, 12) gains at least one visible pixel. The
+    // first cut of this scale ran 10 / 11 / 12 and 14 / 17: steps a pixel
+    // apart, which read as one size, so the scale carried no hierarchy. This
+    // assertion is what keeps a future edit from collapsing it again.
+    must(spacing.FONT_OVERLINE <= spacing.FONT_CAPTION - 2, "overline is a real step under caption")
+    must(spacing.FONT_CAPTION <= spacing.FONT_CONTROL - 1, "caption is under control")
+    must(spacing.FONT_CONTROL <= spacing.FONT_BODY - 1, "control is under body")
+    must(spacing.FONT_BODY <= spacing.FONT_TITLE - 2, "body is a real step under title")
+    must(spacing.FONT_TITLE <= spacing.FONT_HEADING - 2, "title is a real step under heading")
+    must(spacing.FONT_HEADING <= spacing.FONT_DISPLAY - 4, "heading is a real step under display")
+    // A control's type and icon come from the scales, never from a literal.
+    must(spacing.control_font(zeus.Size.Sm) == spacing.FONT_CAPTION, "sm control type is a scale step")
+    must(spacing.control_font(zeus.Size.Md) == spacing.FONT_BODY, "md control type is body")
+    must(spacing.control_font(zeus.Size.Lg) == spacing.FONT_TITLE, "lg control type is title")
+    must(spacing.control_icon(zeus.Size.Sm) == zeus.IconSize.Sm, "sm icon is the icon scale")
+    must(spacing.control_icon(zeus.Size.Md) == zeus.IconSize.Md, "md icon is the icon scale")
+    must(spacing.control_icon(zeus.Size.Lg) == zeus.IconSize.Lg, "lg icon is the icon scale")
+    must(spacing.lead_for(spacing.FONT_DISPLAY) == spacing.LEAD_TIGHT, "display is tight")
+    must(spacing.lead_for(spacing.FONT_HEADING) == spacing.LEAD_TIGHT, "heading is tight")
+    must(spacing.lead_for(spacing.FONT_BODY) == spacing.LEAD_NORMAL, "body is normal")
+    must(spacing.lead_for(spacing.FONT_CAPTION) == spacing.LEAD_SNUG, "caption is snug")
+    must(spacing.lead_for(spacing.FONT_OVERLINE) == spacing.LEAD_SNUG, "overline is snug")
+    // A line box is the font scaled by its leading — never smaller than the font.
+    must(spacing.line_box(spacing.FONT_BODY) >= spacing.FONT_BODY, "body line box holds the glyphs")
+    must(spacing.line_box(spacing.FONT_HEADING) == spacing.FONT_HEADING * spacing.LEAD_TIGHT / 100,
+         "heading line box is its leading")
+
+    // --- motion: a property of the interaction, recorded and closed ---
+    // The kit's own constant, not the engine's: motion is a library-scale
+    // concern, here as no image or tray is.
+    must(spacing.MOTION_STATE == zeus.Motion.Snap, "a control's own change is the firm spring")
+    must(spacing.MOTION_HOVER == zeus.Motion.Fast, "a hover settles in time")
+    must(spacing.MOTION_ENTER == zeus.Motion.Glide, "a surface arrives heavy")
+    must(spacing.MOTION_EXIT == zeus.Motion.Fall, "a surface leaves at once")
+    // The four intents are distinguishable: one curve must not stand in for
+    // another, or the vocabulary is decoration.
+    must(spacing.MOTION_STATE != spacing.MOTION_HOVER &&
+         spacing.MOTION_HOVER != spacing.MOTION_ENTER &&
+         spacing.MOTION_ENTER != spacing.MOTION_EXIT, "the motion intents are distinct")
+    // Entry shapes are built from the engine's flags, so they compose the same
+    // way a caller's own `Enter.*` sum would.
+    must(spacing.ENTER_SURFACE == zeus.Enter.Fade + zeus.Enter.Pop, "a surface fades and pops")
+    must(spacing.ENTER_SHEET == zeus.Enter.Fade + zeus.Enter.Pop + zeus.Enter.Rise,
+         "a sheet fades, pops and rises")
+    must(spacing.ENTER_REVEAL == zeus.Enter.Fade + zeus.Enter.Reveal, "a reveal fades and reveals")
+    // A sheet travels, a surface does not, a reveal does neither: the three
+    // shapes must not collapse into one.
+    must(spacing.ENTER_SHEET != spacing.ENTER_SURFACE, "a sheet is not a surface")
+    must(spacing.ENTER_REVEAL != spacing.ENTER_SURFACE, "a reveal is not a surface")
+    // `enter_edge` picks a direction, and it moves on both edges.
+    must(spacing.enter_edge(1) == zeus.Enter.Fade + zeus.Enter.Drop, "a top toast drops")
+    must(spacing.enter_edge(0) == zeus.Enter.Fade + zeus.Enter.Rise, "a bottom toast rises")
+    // One spin rate for every loader.
+    must(spacing.SPIN_PERIOD > 0, "the spin period is a real time")
     fmt.println("control tokens ok")
 }

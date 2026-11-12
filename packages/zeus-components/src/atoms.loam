@@ -309,17 +309,19 @@ fn Chip(label: Signal<string>, kind: int, p: ChipProps) -> Node {
     // state. The X carries its own hit box, so the trailing gutter shrinks.
     let removable = result.is_some(p.on_remove)
 
-    // view. The label takes the caller's `color` / `font` when given.
+    // view. The label takes the caller's `color` / `font` when given. The pill
+    // gutter is `PAD_PILL_*` — one pair shared by Chip, Badge, and Kbd, so the
+    // three small chrome shapes read as one family rather than three sizes.
     return Box(
         style = Style(
             height = px(chip_h()),
             direction = Direction.Row,
-            gap = Space.Exxs,
+            gap = GAP_HAIR,
             align = Align.Center,
-            paddingTop = 5,
-            paddingRight = if removable { 4 } else { 10 },
-            paddingBottom = 5,
-            paddingLeft = 10,
+            paddingTop = PAD_PILL_Y,
+            paddingRight = if removable { Space.Exxxs } else { PAD_PILL_X },
+            paddingBottom = PAD_PILL_Y,
+            paddingLeft = PAD_PILL_X,
             radius = RAD_CONTROL,
             borderWidth = HAIRLINE,
             borderColor = rule(),
@@ -329,7 +331,7 @@ fn Chip(label: Signal<string>, kind: int, p: ChipProps) -> Node {
         keys = p.keys,
     ) {
         if p.dot {
-            Pip(tint_of(kind), DOT - 2)
+            Pip(tint_of(kind), DOT - GAP_HAIR)
         }
         Text(
             label,
@@ -443,10 +445,10 @@ fn Badge(label: Signal<string>, kind: int, p: BadgeProps) -> Node {
         style = Style(
             height = px(badge_h(p.size)),
             direction = Direction.Row,
-            gap = Space.Exxs,
+            gap = GAP_HAIR,
             align = Align.Center,
             justify = Align.Center,
-            paddingX = 10,
+            paddingX = PAD_PILL_X,
             radius = RAD_CONTROL,
             borderWidth = badge_border_width(kind),
             borderColor = opt_color(badge_border_color(kind)),
@@ -456,7 +458,7 @@ fn Badge(label: Signal<string>, kind: int, p: BadgeProps) -> Node {
         keys = p.keys,
     ) {
         if p.dot {
-            Pip(badge_color(kind), DOT - 2)
+            Pip(badge_color(kind), DOT - GAP_HAIR)
         }
         Text(
             label,
@@ -477,7 +479,7 @@ fn BadgeCount(count: Signal<int>, kind: int, max: int = 99) -> Node {
             align = Align.Center,
             justify = Align.Center,
             minWidth = badge_h(Size.Sm),
-            paddingX = 5,
+            paddingX = Space.Exxxs,
             radius = RAD_CONTROL,
             background = opt_color(badge_background(kind)),
         ),
@@ -491,7 +493,7 @@ fn BadgeCount(count: Signal<int>, kind: int, max: int = 99) -> Node {
                 }
                 return "{{v}}"
             },
-            style = Style(font = 11, color = badge_color(kind)),
+            style = Style(font = FONT_CAPTION, color = badge_color(kind)),
         )
     }
 }
@@ -503,13 +505,13 @@ fn Kbd(key: Signal<string>) {
         direction = Direction.Row,
         align = Align.Center,
         justify = Align.Center,
-        paddingX = 6,
+        paddingX = PAD_KBD_X,
         radius = RAD_MD,
         borderWidth = HAIRLINE,
         borderColor = rule(),
         background = raised(),
     )) {
-        Text(key, style = Style(font = 10, color = mute()))
+        Text(key, style = Style(font = FONT_OVERLINE, color = mute()))
     }
 }
 
@@ -547,7 +549,7 @@ fn Progress(value: Signal<int>, p: ProgressProps) -> Node {
 /** *a view frame, and an early return would leave the frame open. */
 fn ProgressLabeled(value: Signal<int>, p: ProgressProps) -> Node {
     let sweep = p.indeterminate
-    return Box(style = Style(direction = Direction.Column, gap = 6)) {
+    return Box(style = Style(direction = Direction.Column, gap = GAP_SNUG)) {
         Box(style = Style(direction = Direction.Row, align = Align.Center)) {
             Text(p.label, style = Style(grow = 1, font = FONT_CONTROL, color = ink()))
             Text(
@@ -567,7 +569,7 @@ fn ProgressTrack(value: Signal<int>, p: ProgressProps) -> Node {
     return Component(
         raw_progress(),
         bind = if p.indeterminate { signal(-1) } else { value },
-        style = Style(width = pct(100), grow = 1, height = px(progress_h(p.size)), radius = 1),
+        style = Style(width = pct(100), grow = 1, height = px(progress_h(p.size)), radius = RAD_SM),
         restyle = p.style,
         label = p.label,
         role = "progressbar",
@@ -676,7 +678,7 @@ fn Avatar(initials: string, size: int, p: AvatarProps) -> Node {
                     right = 0,
                     bottom = 0,
                     radius = avatar_dot(size) / 2,
-                    borderWidth = 2,
+                    borderWidth = RING_W,
                     borderColor = plate(),
                     background = tint_of(p.status),
                 ),
@@ -702,12 +704,12 @@ fn AvatarGroup(labels: []string, size: int = AvatarSize.Md) -> Node {
 /** *wears the ring, since faces share one fill and would otherwise merge. */
 fn avatar_overlap(i: int, size: int) -> Style {
     if i == 0 {
-        return Style(zIndex = 1, borderWidth = 2, borderColor = plate())
+        return Style(zIndex = 1, borderWidth = RING_W, borderColor = plate())
     }
     return Style(
         marginLeft = -(size / 4),
         zIndex = i + 1,
-        borderWidth = 2,
+        borderWidth = RING_W,
         borderColor = plate(),
     )
 }
@@ -794,7 +796,7 @@ fn Stat(label: Signal<string>, value: Signal<string>, kind: int, p: StatProps) -
     return Card(style = Style(grow = 1)) {
         Text(label, style = Style(font = FONT_CONTROL, color = mute()))
         Row(Space.Xs) {
-            Text(value, style = Style(font = 26, color = tint_of(kind)))
+            Text(value, style = Style(font = FONT_HEADING, color = tint_of(kind)))
             if result.is_some(p.spark) {
                 Grow()
                 Sparkline(p.spark.val, 64, 24, trend_tint(p.trend))
@@ -802,7 +804,7 @@ fn Stat(label: Signal<string>, value: Signal<string>, kind: int, p: StatProps) -
         }
         if p.delta.get().len > 0 {
             Box(
-                style = Style(direction = Direction.Row, gap = 2, align = Align.Center),
+                style = Style(direction = Direction.Row, gap = GAP_HAIR, align = Align.Center),
                 role = "status",
             ) {
                 if p.trend == Trend.Up {
@@ -820,7 +822,7 @@ fn Stat(label: Signal<string>, value: Signal<string>, kind: int, p: StatProps) -
 fn StatCount(label: string, sig: Signal<int>, kind: int) -> Node {
     let c = Card() {
         Text(label, style = Style(font = FONT_CONTROL, color = mute()))
-        Text("{{sig.get()}}", style = Style(font = 26, color = tint_of(kind)))
+        Text("{{sig.get()}}", style = Style(font = FONT_HEADING, color = tint_of(kind)))
     }
     return grow(c, 1)
 }
@@ -991,8 +993,9 @@ struct SpinnerProps {
     size: int = 16,
     /** *Ring color; defaults to `dim()`. */
     color: string = "",
-    /** *Milliseconds per full turn. */
-    period: int = 900,
+    /** *Milliseconds per full turn. `SPIN_PERIOD` is the one rate every */
+    /** *loader turns at; override only for an app-specific case. */
+    period: int = SPIN_PERIOD,
     /** *Accessible label (role `progressbar`). */
     label: string = "Loading",
     style: Option<fn() -> Style> = none,
@@ -1010,7 +1013,7 @@ fn Spinner(p: SpinnerProps) -> Node {
         label = p.label,
         style = p.style,
     )
-    return spin(n, px_or_default(p.period, 900))
+    return spin(n, px_or_default(p.period, SPIN_PERIOD))
 }
 
 struct EmptyProps {
@@ -1682,10 +1685,161 @@ fn chart_y(maxv: int, plot_h: int, top: int, v: int) -> int {
     return top + plot_h - int(i64(v) * i64(plot_h) / i64(maxv))
 }
 
+/** *A doughnut slice set: `names` labels each slice and `vals` is its weight. */
+/** *The shape is deliberately *not* `ChartData` — a doughnut has one value per */
+/** *slice and no shared x axis, so reusing the category × series grid would */
+/** *mean a caller padding a rectangle for data that is a list. The chart */
+/** *builders that do share an axis keep `ChartData`; this is the one shape that */
+/** *does not, and it stays the only one. */
+struct DonutData {
+    names: []string,
+    vals: []int,
+}
+
+/** *A doughnut's shape key: the slice count and whether it is drawable (one */
+/** *label and one value per slice, at least one slice, no negative weights). A */
+/** *change here rebuilds; a change in the *values* only repaints. */
+fn donut_shape(x: DonutData) -> string {
+    let ok = x.vals.len > 0 && x.names.len == x.vals.len && donut_total(x.vals) > 0
+    return "{{x.vals.len}}:{{ok}}"
+}
+
+/** *Sum of slice weights, floored at 1 so every division below is safe. */
+fn donut_total(vals: []int) -> int {
+    let mut t = 0
+    for i in 0..vals.len {
+        if vals[i] > 0 {
+            t = t + vals[i]
+        }
+    }
+    if t < 1 {
+        return 1
+    }
+    return t
+}
+
+/** *Degrees a slice occupies: its share of the whole. A zero-weight slice is */
+/** *exactly 0° — it neither draws nor steals an angle from its neighbours. */
+fn donut_sweep(vals: []int, i: int) -> int {
+    let v = vals[i]
+    if v <= 0 {
+        return 0
+    }
+    return v * 360 / donut_total(vals)
+}
+
+/** *The angle a slice starts at: the sum of the sweeps before it. Starting at */
+/** *0 (12 o'clock) and turning clockwise means the first slice reads as the */
+/** *largest by default, and every later slice continues where the last ended. */
+fn donut_start(vals: []int, i: int) -> int {
+    let mut a = 0
+    for k in 0..i {
+        a = a + donut_sweep(vals, k)
+    }
+    return a
+}
+
+/** *Point at `deg` on a circle of radius `r` around the box centre (12, 12), */
+/** *in thousandths of a viewBox unit. `x` carries a 12000 base so `milli` can */
+/** *print it at one-decimal precision. `rot` is 90 for a cosine. */
+fn donut_pt(r: int, deg: int, cx: int, cy: int) -> []int {
+    let s = r * sin1000(deg)
+    let c = r * sin1000(deg + 90)
+    return []int { cx * 1000 + s, cy * 1000 - c }
+}
+
+/** *An annulus segment from `a0` to `a1` degrees, at outer radius `r` and inner */
+/** *radius `ri`, as an SVG path in the doughnut's 24-unit box. The segment is a */
+/** *closed ring slice: out along the outer edge, in along the inner edge, and */
+/** *shut. It is walked as short chords (`DONUT_STEP` degrees) because that is */
+/** *the one arc form every host parser already handles — the same reason */
+/** *`ring_markup` is a polyline rather than an `A` command. */
+fn donut_path(vals: []int, i: int, ri: int) -> string {
+    let a0 = donut_start(vals, i)
+    let a1 = a0 + donut_sweep(vals, i)
+    if a1 <= a0 {
+        return ""
+    }
+    let r = DONUT_R
+    // Outer edge, clockwise from a0. Every point goes through `milli`, the
+    // first included: a slice can start on a fraction of a unit (a third of
+    // the circle is 120°, not a whole number), and truncating that point would
+    // shift the whole segment against its neighbour and open a hairline seam.
+    let mut b = []int {}
+    let p0 = donut_pt(r, a0, 12, 12)
+    b = bytes_s(b, "M")
+    b = bytes_s(b, milli(p0[0]))
+    b = bytes_s(b, " ")
+    b = bytes_s(b, milli(p0[1]))
+    let mut a = a0 + DONUT_STEP
+    while a < a1 {
+        let p = donut_pt(r, a, 12, 12)
+        b = bytes_s(b, "L")
+        b = bytes_s(b, milli(p[0]))
+        b = bytes_s(b, " ")
+        b = bytes_s(b, milli(p[1]))
+        a = a + DONUT_STEP
+    }
+    let pe = donut_pt(r, a1, 12, 12)
+    b = bytes_s(b, "L")
+    b = bytes_s(b, milli(pe[0]))
+    b = bytes_s(b, " ")
+    b = bytes_s(b, milli(pe[1]))
+    // Inner edge, back counter-clockwise.
+    let q1 = donut_pt(ri, a1, 12, 12)
+    b = bytes_s(b, "L")
+    b = bytes_s(b, milli(q1[0]))
+    b = bytes_s(b, " ")
+    b = bytes_s(b, milli(q1[1]))
+    a = a1 - DONUT_STEP
+    while a > a0 {
+        let q = donut_pt(ri, a, 12, 12)
+        b = bytes_s(b, "L")
+        b = bytes_s(b, milli(q[0]))
+        b = bytes_s(b, " ")
+        b = bytes_s(b, milli(q[1]))
+        a = a - DONUT_STEP
+    }
+    let q0 = donut_pt(ri, a0, 12, 12)
+    b = bytes_s(b, "L")
+    b = bytes_s(b, milli(q0[0]))
+    b = bytes_s(b, " ")
+    b = bytes_s(b, milli(q0[1]))
+    b = bytes_s(b, "Z")
+    return string_from_bytes(b)
+}
+
+/** *One slice's SVG: a filled annulus in the series colour for `i`. */
+fn donut_slice_markup(vals: []int, names: []string, i: int, ri: int) -> string {
+    let d = donut_path(vals, i, ri)
+    if d.len == 0 {
+        return ""
+    }
+    let color = chart_stroke_light(i)
+    return "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='#{{hex6(color)}}' d='{{d}}'/></svg>"
+}
+
+/** *A `#rrggbb` string for a hex token (`#0f6cb2` → `0f6cb2`), because the */
+/** *slice markup embeds the colour literally: an SVG handed to a host cannot */
+/** *carry a role token, which only the paint pass resolves. */
+fn hex6(color: string) -> string {
+    if color.len > 1 && color[0] == 35 {
+        let mut b = []int {}
+        let mut i = 1
+        while i < color.len {
+            push(b, color[i])
+            i = i + 1
+        }
+        return string_from_bytes(b)
+    }
+    return color
+}
+
 /** *A `LineChart` value that is not drawn: no dot, the line breaks around */
 /** *it, the y domain ignores it, and the tooltip shows a dash. For a series */
 /** *that has no value yet at that label (an indicator still warming up). */
 const CHART_GAP: int = -2147483647
+
 
 /** *Extras for `LineChart`. The defaults draw what the chart always drew. */
 struct LineChartProps {
@@ -2126,8 +2280,8 @@ fn chart_tooltip(
             gap = Space.Exxxs,
             position = pos_absolute(),
             zIndex = 8,
-            paddingY = 6,
-            paddingX = 10,
+            paddingY = GAP_SNUG,
+            paddingX = PAD_PILL_X,
             top = 0,
             radius = RAD_LG,
             borderWidth = HAIRLINE,
@@ -2191,7 +2345,7 @@ fn chart_tooltip(
                 Box(style = Style(
                     width = px(8),
                     height = px(8),
-                    radius = 2,
+                    radius = RAD_SM,
                     background = chart_color(jj),
                 ))
                 Text(
@@ -2321,7 +2475,7 @@ fn chart_legend(d: Signal<ChartData>) {
                 Box(style = Style(
                     width = px(8),
                     height = px(8),
-                    radius = 2,
+                    radius = RAD_SM,
                     background = chart_color(j),
                 ))
                 Text(name, style = Style(font = FONT_CAPTION, color = mute()))
@@ -2331,8 +2485,15 @@ fn chart_legend(d: Signal<ChartData>) {
 }
 
 /** *Hover cursor: a single hairline through the hovered mark (no wash band). */
-/** *`act` = category + 1; the line shows and slides with it. Build it before */
-/** *the marks, so the line runs behind the dots and bars rather than over them. */
+/** *`act` = category + 1; the line shows and slides with it. */
+/** * */
+/** *Draw order depends on what the marks are. A **bar** leaves the gaps between */
+/** *its columns empty, so the cursor can go in first and run behind the bars. An */
+/** ***area** fill closes its path down to the plot floor, so a cursor drawn */
+/** *before it is erased below the series line — the hover line then reads as a */
+/** *stub above the data instead of a rule through the plot. An area chart */
+/** *therefore draws the cursor after its fills and before its dots; a line chart */
+/** *draws it first, so the strokes stay on top. */
 fn chart_cursor(act: Signal<int>, n: int, gw: Signal<int>, plot_h: int, pt: int) {
     let line = Box(
         style = Style(
@@ -2341,7 +2502,7 @@ fn chart_cursor(act: Signal<int>, n: int, gw: Signal<int>, plot_h: int, pt: int)
             opacity = 55,
             position = pos_absolute(),
             top = CHART_TOP,
-            radius = 0,
+            radius = RAD_NONE,
             background = hard(),
         ),
         label = "cursor",
@@ -2475,7 +2636,7 @@ fn chart_bars(d: Signal<ChartData>, n: int, s: int, gw: Signal<int>, h: int) {
                         position = pos_absolute(),
                         top = base_y - bh,
                         left = x0 + j * bar_w,
-                        radius = 3,
+                        radius = RAD_SM,
                         display = shown(v > 0),
                         background = chart_color(j),
                     )
@@ -2574,7 +2735,7 @@ fn chart_lines(d: Signal<ChartData>, n: int, s: int, gw: Signal<int>, h: int, p:
                             position = pos_absolute(),
                             top = y - 3,
                             left = x - 3,
-                            radius = 3,
+                            radius = RAD_FULL,
                             display = shown(v != CHART_GAP),
                             background = chart_color(jj),
                         )
@@ -2613,7 +2774,11 @@ fn chart_areas(d: Signal<ChartData>, n: int, s: int, gw: Signal<int>, h: int) {
     let plot = Box(style = || { return Style(width = px(chart_gw(gw)), height = px(h)) })
     slot(plot, || {
         chart_axes(gw, h, domain)
-        chart_cursor(act, n, gw, plot_h, 1)
+        // The cursor goes in *after* the area fills. An area path closes down to
+        // the plot floor, so a fill drawn over the cursor erases the lower half
+        // of the line and the hover line reads as a stub above the series
+        // instead of a rule through the whole plot. Bars leave the gaps between
+        // them empty, so a bar chart can draw its cursor first; an area cannot.
         for j in 0..s {
             let jj = j
             let fill_d = fn() -> string {
@@ -2697,7 +2862,7 @@ fn chart_areas(d: Signal<ChartData>, n: int, s: int, gw: Signal<int>, h: int) {
                         position = pos_absolute(),
                         top = y - 3,
                         left = x - 3,
-                        radius = 3,
+                        radius = RAD_FULL,
                         background = chart_color(jj),
                     )
                 })
@@ -2707,6 +2872,9 @@ fn chart_areas(d: Signal<ChartData>, n: int, s: int, gw: Signal<int>, h: int) {
         for i in 0..n {
             chart_xlab(d, i, gw, plot_h, 1, n)
         }
+        // After the marks, before the labels: the rule crosses the fills and
+        // sits under the x-label strip. The dots are above it either way.
+        chart_cursor(act, n, gw, plot_h, 1)
         chart_tooltips(d, s, n, h, gw, act, 1, ys, 3)
     })
     chart_legend(d)
@@ -2934,7 +3102,7 @@ struct CardHeaderProps {
 /** *yourself for a header with an action. */
 fn CardHeader(title: Signal<string>, description: Signal<string>, p: CardHeaderProps) -> Node {
     return Box(style = Style(direction = Direction.Row, gap = Space.Exs, align = Align.Start)) {
-        Box(style = Style(direction = Direction.Column, gap = 2, grow = 1), role = "heading") {
+        Box(style = Style(direction = Direction.Column, gap = GAP_HAIR, grow = 1), role = "heading") {
             if title.get().len > 0 {
                 Text(title, style = Style(font = FONT_TITLE, color = ink()))
             }
@@ -3118,7 +3286,7 @@ fn Tag(label: Signal<string>, p: TagProps) -> Node {
 /** *Status dot + label, no chrome: "● Online" in a table cell or a header. */
 fn DotBadge(label: Signal<string>, kind: int) -> Node {
     return Box(
-        style = Style(direction = Direction.Row, gap = 6, align = Align.Center),
+        style = Style(direction = Direction.Row, gap = GAP_SNUG, align = Align.Center),
         role = "status",
         label = label.get(),
     ) {
@@ -3144,7 +3312,7 @@ fn Link(label: Signal<string>, on_click: fn(), p: LinkProps) -> Node {
         Box(
             style = Style(
                 direction = Direction.Row,
-                gap = 2,
+                gap = GAP_HAIR,
                 align = Align.Center,
                 cursor = "pointer",
             ),
@@ -3161,7 +3329,7 @@ fn Link(label: Signal<string>, on_click: fn(), p: LinkProps) -> Node {
                     height = px(HAIRLINE),
                     background = accent(),
                     opacity = if hot.get() { 100 } else { 0 },
-                    transition = Motion.Fast,
+                    transition = MOTION_HOVER,
                 ))
             }
             if p.external {
@@ -3176,9 +3344,9 @@ fn Code(text: Signal<string>) -> Node {
     return Row(0) {
         Box(style = Style(
             direction = Direction.Row,
-            paddingX = Space.Exxxs,
-            paddingY = 1,
-            radius = 4,
+            paddingX = PAD_KBD_X,
+            paddingY = HAIRLINE,
+            radius = RAD_MD,
             background = raised(),
         )) {
             Text(text, style = Style(font = FONT_CONTROL, color = ink()))
@@ -3194,9 +3362,9 @@ struct BlockquoteProps {
 }
 
 fn Blockquote(p: BlockquoteProps) -> Node {
-    return Box(style = Style(direction = Direction.Row, gap = Space.Xs)) {
-        Box(style = Style(width = px(3), shrink = 0, radius = 2, background = hard()))
-        Box(style = Style(direction = Direction.Column, gap = 6, grow = 1)) {
+    return Box(style = Style(direction = Direction.Row, gap = Space.Xs, align = Align.Start)) {
+        Box(style = Style(width = px(3), shrink = 0, radius = RAD_SM, background = hard()))
+        Box(style = Style(direction = Direction.Column, gap = GAP_SNUG, grow = 1)) {
             p.children()
             if p.cite.len > 0 {
                 Text("— {{p.cite}}", style = Style(font = FONT_CAPTION, color = mute()))
@@ -3233,7 +3401,7 @@ fn KbdCombo(spec: string, p: KbdComboProps) -> Node {
                     align = Align.Center,
                 )) {
                     if i > 0 {
-                        Text("+", style = Style(font = 10, color = mute()))
+                        Text("+", style = Style(font = FONT_OVERLINE, color = mute()))
                     }
                     Kbd(key_name(part, false))
                 }
@@ -3456,7 +3624,7 @@ fn SkeletonText(lines: int = 3) -> Node {
             pulse(Box(style = Style(
                 width = pct(if i == lines - 1 && lines > 1 { 60 } else { 100 }),
                 height = px(12),
-                radius = 4,
+                radius = RAD_SM,
                 background = bone(),
             )))
         }
@@ -3489,13 +3657,13 @@ fn SkeletonCard() -> Node {
                 pulse(Box(style = Style(
                     width = pct(50),
                     height = px(12),
-                    radius = 4,
+                    radius = RAD_SM,
                     background = bone(),
                 )))
                 pulse(Box(style = Style(
                     width = pct(30),
                     height = px(10),
-                    radius = 4,
+                    radius = RAD_SM,
                     background = bone(),
                 )))
             }
@@ -3671,7 +3839,7 @@ struct GaugeProps {
 /** *A `ProgressRing` with a caption: one reading (a score, a capacity). */
 fn Gauge(value: Signal<int>, p: GaugeProps) -> Node {
     return Box(
-        style = Style(direction = Direction.Column, gap = 6, align = Align.Center),
+        style = Style(direction = Direction.Column, gap = GAP_SNUG, align = Align.Center),
         restyle = p.style,
     ) {
         ProgressRing(value, size = p.size, label = true)
@@ -3698,7 +3866,7 @@ struct UsageBarProps {
 /** *Labelled meter on the 6px `METER_TRACK`. Accent until `threshold`, then danger. */
 fn UsageBar(value: Signal<int>, p: UsageBarProps) -> Node {
     return Box(
-        style = Style(direction = Direction.Column, gap = 6, width = pct(100)),
+        style = Style(direction = Direction.Column, gap = GAP_SNUG, width = pct(100)),
         restyle = p.style,
         role = "progressbar",
         label = fn() -> string { return "{{p.label.get()}} {{clamp_pct(value.get())}}%" },
@@ -3718,13 +3886,13 @@ fn UsageBar(value: Signal<int>, p: UsageBarProps) -> Node {
         Box(style = Style(
             width = pct(100),
             height = px(METER_TRACK),
-            radius = 1,
+            radius = RAD_NONE,
             background = raised(),
         )) {
             Box(style = Style(
                 width = pct(clamp_pct(value.get())),
                 height = pct(100),
-                radius = 1,
+                radius = RAD_NONE,
                 background = if clamp_pct(value.get()) >= p.threshold {
                     danger()
                 } else {

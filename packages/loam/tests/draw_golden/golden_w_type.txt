@@ -3,32 +3,32 @@ fill 0 0 560 740 16185337 0
 text 32 32 5528165 10 Overline
 text 32 70 1382429 32 Display
 text 32 130 1382429 22 Heading
-text 32 180 1382429 17 Title
-text_wrap 32 225 496 Body copy that is long enough to wrap onto a second line at this width, which the golden records.
-text 32 285 5528165 11 Note
-text 32 324 5528165 10 Section
-text 32 342 1382429 22 Header
-text 32 372 3685702 14 A section header with a description.
-text 32 414 5528165 10 Section
-text 32 432 1382429 22 Title
-text 32 482 1382429 14 Label
-fill 32 524 496 1 14738408 0
-text 32 549 1513239 14 Read the docs
-fill_a 32 567 104 1 1513239 0
-svg 138 552 12 12 1513239
-fill 166 550 71 18 15725044 4
-text 170 551 1382429 12 make test
-fill 253 549 32 20 15725044 4
-stroke 253 549 32 20 14738408 4 1 255
-text 260 552 3685702 10 Esc
-fill 301 549 56 20 15725044 4
-stroke 301 549 56 20 14738408 4 1 255
-text 308 552 3685702 10 ⌘⇧P
-fill 32 593 496 1 14738408 0
-fill 32 624 8 8 1513239 4
-svg 56 620 16 16 1382429
-svg 88 618 20 20 0
-text 510 620 5528165 11 end
-fill 32 662 3 0 10397104 2
-text 47 662 3685702 14 The engine weaves algebraic patterns.
-text 47 686 3685702 11 — Ada Lovelace
+text 32 180 1382429 18 Title
+text_wrap 32 226 496 Body copy that is long enough to wrap onto a second line at this width, which the golden records.
+text 32 286 5528165 12 Note
+text 32 326 5528165 10 Section
+text 32 344 1382429 22 Header
+text 32 374 3685702 14 A section header with a description.
+text 32 416 5528165 10 Section
+text 32 434 1382429 22 Title
+text 32 484 1382429 14 Label
+fill 32 526 496 1 14738408 0
+text 32 551 1513239 14 Read the docs
+fill_a 32 569 104 1 1513239 0
+svg 138 554 12 12 1513239
+fill 166 551 75 19 15725044 4
+text 172 552 1382429 13 make test
+fill 257 551 32 20 15725044 4
+stroke 257 551 32 20 14738408 4 1 255
+text 264 554 3685702 10 Esc
+fill 305 551 56 20 15725044 4
+stroke 305 551 56 20 14738408 4 1 255
+text 312 554 3685702 10 ⌘⇧P
+fill 32 595 496 1 14738408 0
+fill 32 626 8 8 1513239 4
+svg 56 622 16 16 1382429
+svg 88 620 20 20 0
+text 507 622 5528165 12 end
+fill 32 664 3 0 10397104 2
+text 47 664 3685702 14 The engine weaves algebraic patterns.
+text 47 688 3685702 12 — Ada Lovelace

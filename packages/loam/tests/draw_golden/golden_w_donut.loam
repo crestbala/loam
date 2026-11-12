@@ -1,0 +1,19 @@
+// DRAW-list golden: a doughnut with three slices, its centre total and its
+// share legend. Pins the annulus geometry (outer and inner edges), the centre
+// reading, and the legend text. Keep this file free of prints: stdout is the
+// golden.
+
+import "zeus"
+import "zui"
+
+fn main() {
+    zeus.snapshot(360, 300, fn() -> Node {
+        zui.Page() {
+            zui.DonutChart(
+                []string { "Direct", "Search", "Social" },
+                []int { 60, 30, 10 },
+                200,
+            )
+        }
+    })
+}

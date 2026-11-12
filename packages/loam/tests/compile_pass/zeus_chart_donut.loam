@@ -1,0 +1,75 @@
+// Doughnut chart: one value per slice, a hole, a centre total, and a legend
+// that carries each slice's share. The slice maths is the part worth pinning:
+// sweeps must sum to 360, a zero slice takes no angle, and the ring is hollow
+// (the segment path walks in to the inner radius rather than to the centre).
+
+import "std:fmt"
+import "std:sys"
+import "zeus"
+import "zui:spacing"
+import "zui"
+import "zeus:zeuscore/scene"
+
+fn expect(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn main() {
+    // --- the maths, headless and independent of any tree ---
+    let vals = []int { 50, 25, 25 }
+    expect(zui.donut_total(vals) == 100, "total sums the weights")
+    expect(zui.donut_sweep(vals, 0) == 180, "half the share is half the circle")
+    expect(zui.donut_sweep(vals, 1) == 90, "a quarter is a quarter")
+    expect(zui.donut_start(vals, 1) == 180, "second slice starts where the first ended")
+    expect(zui.donut_start(vals, 2) == 270, "third slice continues the sweep")
+
+    // A zero-weight slice occupies no angle and does not shift its neighbours.
+    let zvals = []int { 100, 0, 0 }
+    expect(zui.donut_sweep(zvals, 1) == 0, "a zero slice is no angle")
+    expect(zui.donut_sweep(zvals, 0) == 360, "a lone slice is the whole circle")
+    // Zero slices still leave a path string empty (nothing to draw).
+    expect(zui.donut_path(zvals, 1, 6).len == 0, "a zero slice draws nothing")
+
+    // The ring is hollow: the path returns along the inner radius, so it names
+    // more than one radius. A pie (hole 0) would collapse the inner edge to a
+    // point; the doughnut must not.
+    let ring = zui.donut_path(vals, 0, 6)
+    expect(ring.len > 0, "a slice has a path")
+    expect(ring[ring.len - 1] == 90, "the slice path is closed (Z)")
+    // A single swept point on the inner radius: for r = 6 the inner points are
+    // within 6 units of centre, so the path carries a coordinate under ~6.
+    expect(ring.len > 40, "the annulus path walks both edges")
+
+    // --- the component, in a real tree ---
+    let names = []string { "Direct", "Search", "Social" }
+    let svals = []int { 60, 30, 10 }
+    zeus.snapshot(320, 320, fn() -> Node {
+        zui.Page() {
+            zui.DonutChart(names, svals, 200)
+        }
+    })
+    zeus.engine_layout(320, 320)
+    zeus.engine_paint()
+    // The centre carries the total, and the legend carries each share.
+    expect(zeus.text_visible("100"), "centre shows the total")
+    expect(zeus.text_visible("Direct 60%"), "legend carries the share")
+    expect(zeus.text_visible("Search 30%"), "second share")
+    expect(zeus.text_visible("Social 10%"), "third share")
+    // The markup must lower to real filled geometry, not paint nothing. Every
+    // host draws SVG through `path` ops, so a slice that parses to zero shapes
+    // would leave a silent hole in the ring — the one failure a text assertion
+    // above cannot catch.
+    scene.present()
+    let mut fills = 0
+    for i in 0..scene.frame_n {
+        if scene.frame_ops[i * 11] == 16 {
+            fills = fills + 1
+        }
+    }
+    expect(fills == 3, "three slice paths lowered to filled geometry")
+    fmt.println("donut ok")
+}

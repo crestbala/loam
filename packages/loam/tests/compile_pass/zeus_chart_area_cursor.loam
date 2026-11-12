@@ -1,0 +1,78 @@
+// Area-chart hover cursor: the vertical rule must run the *full* plot height.
+//
+// An area fill closes its path down to the plot floor, so a cursor drawn before
+// the fill has its lower half painted over and reads as a stub above the series
+// line. This pins both halves of the fix: the cursor node is as tall as the
+// plot, and its paint op comes *after* the area fill so nothing covers it.
+
+import "std:fmt"
+import "std:sys"
+import "zeus"
+import "zui:spacing"
+import "zui"
+
+fn expect(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn main() {
+    let labs = []string { "Mon", "Tue", "Wed", "Thu" }
+    let names = []string { "Visits" }
+    let vals = []int { 11, 33, 22, 44 }
+    zeus.snapshot(400, 260, fn() -> Node {
+        zui.Page() {
+            zui.AreaChart(labs, names, vals, 360, 180)
+        }
+    })
+    // Settle the first refit (estimate -> measured width) before reading boxes.
+    zeus.engine_layout(400, 260)
+    // Hover the second column so `act` is set and the cursor shows.
+    zeus.engine_hover(150, 60)
+    zeus.engine_layout(400, 260)
+    zeus.engine_paint()
+
+    let cur = zeus.engine_find_text("cursor")
+    expect(cur > 0, "cursor node found")
+    expect(zeus.node_visible(cur) == 1, "cursor shown while hovering")
+
+    // The plot is `h - CHART_TOP - CHART_XLAB` tall: with h = 180 that is
+    // 180 - 8 - 38 = 134. The cursor must be exactly that, not a fraction of it.
+    let plot_h = 180 - spacing.CHART_TOP - spacing.CHART_XLAB
+    expect(zeus.node_height(cur) == plot_h, "cursor is the full plot height")
+
+    // Find the cursor's paint op and the last area-fill op (kind 5 is the
+    // engine's svg layer, which is how an area fill reaches the host).
+    let n = zeus.draw_count()
+    let mut cursor_op = -1
+    let mut last_area_op = -1
+    let mut i = 0
+    while i < n {
+        let k = zeus.draw_op(i)
+        if k == 0 || k == 1 {
+            // A 1px-wide, plot-tall fill at the cursor's x is the rule itself.
+            if zeus.draw_w(i) == 1 && zeus.draw_h(i) == plot_h && zeus.draw_x(i) == zeus.node_x(cur) {
+                cursor_op = i
+            }
+        }
+        if k == 5 {
+            last_area_op = i
+        }
+        i = i + 1
+    }
+    expect(cursor_op >= 0, "cursor painted as a full-height 1px rule")
+    expect(last_area_op >= 0, "area fill painted")
+    expect(cursor_op > last_area_op, "cursor is painted after the area fill, so it is not covered")
+    // The rule spans exactly the cursor node's box: same top, same height. A
+    // rule that stops short of either edge is the bug this guards. (Draw-list
+    // coordinates are absolute, so they are compared against the node's own
+    // laid-out y rather than the plot-relative CHART_TOP.)
+    expect(zeus.draw_y(cursor_op) == zeus.node_y(cur), "cursor starts at its box top")
+    expect(zeus.draw_h(cursor_op) == plot_h, "cursor runs the whole plot height")
+    expect(zeus.draw_y(cursor_op) + zeus.draw_h(cursor_op) ==
+           zeus.node_y(cur) + zeus.node_height(cur), "cursor reaches its box floor")
+    fmt.println("area cursor ok")
+}

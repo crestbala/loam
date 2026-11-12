@@ -196,7 +196,7 @@ fn Combobox(text: Signal<string>, options: []string, p: ComboboxProps) -> Node {
             style = floating_panel(0, width = w),
             anchor = Anchor(to = field, place = Place.PlaceBelow, gap = Space.Exxxs),
             visible = open(),
-            enter = Enter.Fade + Enter.Pop,
+            enter = ENTER_SURFACE,
         ) {
             Each(matches.get(), fn(i, s) {
                 return ComboRow(text, active, input, i, s)
@@ -394,7 +394,7 @@ fn Popover(p: PopoverProps) -> Node {
             anchor = Anchor(to = host, place = p.place, gap = p.gap),
             autofocus = open.get(),
             visible = open.get(),
-            enter = Enter.Fade + Enter.Pop,
+            enter = ENTER_SURFACE,
             keys = keys,
         ) {
             p.children()
@@ -462,7 +462,7 @@ fn Menu(p: MenuProps) -> Node {
             anchor = Anchor(to = host, place = p.place, gap = p.gap),
             visible = open(),
             role = "menu",
-            enter = Enter.Fade + Enter.Pop,
+            enter = ENTER_SURFACE,
             keys = keys,
         ) {
             if p.label.len > 0 {
@@ -567,8 +567,8 @@ fn MenuItem(p: MenuItemProps) -> Node {
             direction = Direction.Row,
             gap = Space.Xs,
             align = Align.Center,
-            paddingY = 7,
-            paddingX = 10,
+            paddingY = GAP_SNUG,
+            paddingX = PAD_PILL_X,
             radius = RAD_SM,
             background = row_fill(active.get() == idx),
             cursor = "pointer",
@@ -588,7 +588,7 @@ fn MenuItem(p: MenuItemProps) -> Node {
         rovingGrab = true,
     ) {
         if p.icon.len > 0 {
-            Icon(p.icon, 16, dim())
+            Icon(p.icon, IconSize.Md, dim())
         }
         Text(p.label, style = Style(grow = 1, font = FONT_BODY, color = row_ink, ellipsis = true))
     }
@@ -596,14 +596,14 @@ fn MenuItem(p: MenuItemProps) -> Node {
 
 /** *A non-interactive group heading inside a `Menu`. */
 fn MenuLabel(text: Signal<string>) -> Node {
-    return Box(style = Style(paddingY = 6, paddingX = 10)) {
+    return Box(style = Style(paddingY = GAP_SNUG, paddingX = PAD_PILL_X)) {
         Text(text, style = Style(font = FONT_CAPTION, color = dim()))
     }
 }
 
 /** *A hairline between menu groups. */
 fn MenuSeparator() -> Node {
-    return Box(style = Style(paddingY = 3)) {
+    return Box(style = Style(paddingY = Space.Exxxs / 2 + HAIRLINE)) {
         Separator()
     }
 }
@@ -681,7 +681,7 @@ fn Drawer(open: Signal<bool>, p: DrawerProps) -> Node {
                 } else {
                     0
                 },
-                transition = if open.get() { Motion.Glide } else { Motion.Fall },
+                transition = if open.get() { MOTION_ENTER } else { MOTION_EXIT },
             ),
             restyle = p.style,
             role = "dialog",
@@ -794,7 +794,7 @@ fn Tooltip(p: TooltipProps) -> Node {
             visible = shown.get(),
             role = "tooltip",
             label = p.text.get(),
-            enter = Enter.Fade + Enter.Pop,
+            enter = ENTER_SURFACE,
         ) {
             Text(p.text, style = Style(font = FONT_CAPTION, color = on_ink()))
             if p.arrow && tooltip_arrow_ok(p.place) {
@@ -881,7 +881,7 @@ fn HoverCard(p: HoverCardProps) -> Node {
             restyle = p.style,
             anchor = Anchor(to = host, place = p.place, gap = p.gap),
             visible = shown.get(),
-            enter = Enter.Fade + Enter.Pop,
+            enter = ENTER_SURFACE,
         ) {
             p.children()
         }
@@ -930,7 +930,10 @@ fn Toast(open: Signal<bool>, p: ToastProps) -> Node {
             ),
             restyle = p.style,
             on_click = fn() { open.set(false) },
-            enter = Enter.Fade + (if p.place == 1 { Enter.Drop } else { Enter.Rise }),
+            // A toast enters from the *edge it is anchored to*, not from a
+            // control: no pop (nothing was clicked to grow out of), and the
+            // travel direction follows `place` — `enter_edge` names that shape.
+            enter = enter_edge(p.place),
         ) {
             p.children()
         }
@@ -983,7 +986,7 @@ fn DialogShell(open: Signal<bool>, close_x: bool, title: string, children: fn())
             ),
             role = "dialog",
             on_click = fn() { return },
-            enter = Enter.Fade + Enter.Pop + Enter.Rise,
+            enter = ENTER_SHEET,
             focusable = true,
             trap = open.get(),
             keys = keys,
@@ -1378,6 +1381,128 @@ fn AreaChartOf(data: Signal<ChartData>, w: int, h: int) -> Node {
         })
     })
 }
+/** *Doughnut chart: slices of one whole, a hole, and (optionally) the total in */
+/** *the middle. Slice labels are `names`, sizes are `vals`. */
+/** * */
+/** *It is a *ring*, not a pie: the hole is `DONUT_HOLE` percent of the radius, */
+/** *so the mark reads as a band and the centre can carry one number — which is */
+/** *the whole point of the form. There is no x axis, so there is no hover */
+/** *cursor and no per-column tooltip: a slice's own legend entry carries its */
+/** *name and share, which is the information a tooltip would repeat. */
+/** * */
+/** *Slices are separate SVG layers, so a value change repaints one path and */
+/** *rebuilds nothing (`MatchBy` on the slice count). An empty or ragged set */
+/** *draws an empty column, the same rule the axis charts follow. */
+fn DonutChart(names: []string, vals: []int, size: int) -> Node {
+    return DonutChartOf(signal(DonutData { names: names, vals: vals }), size)
+}
+
+/** *`DonutChart` over live data: a write to `data` re-derives every slice path */
+/** *through effects; only a change in the slice count rebuilds. */
+fn DonutChartOf(data: Signal<DonutData>, size: int) -> Node {
+    let host = Box(style = Style(direction = Direction.Column, gap = Space.Exs))
+    let node_id = host.id
+    return slot(node_handle(node_id), || {
+        MatchBy(data, donut_shape, fn(d: Signal<DonutData>) -> Node {
+            return donut_body(d, size)
+        })
+    })
+}
+
+/** *The built doughnut: the ring, the centre reading, the legend. Split out so */
+/** *`DonutChartOf` returns once, like the axis charts do. */
+fn donut_body(d: Signal<DonutData>, size: int) -> Node {
+    let ri = DONUT_R * DONUT_HOLE / 100
+    return Column(Space.Exs) {
+        Box(style = Style(
+            direction = Direction.Row,
+            align = Align.Center,
+            justify = Align.Center,
+            width = px(size),
+            height = px(size),
+        )) {
+            // The slices, one SVG layer each. `size` is also the box, and a
+            // 24-unit viewBox scales into it, so the ring fills the square.
+            Each(d.get().vals, fn(i, _v) {
+                return donut_slice(d, i, size, ri)
+            })
+            // The centre: the total, in heading type. `pct(-1)` is content
+            // width inside the centred row, or the label would stretch across
+            // the whole square and centre by accident.
+            Text(
+                fn() -> string {
+                    return "{{donut_total(d.get().vals)}}"
+                },
+                style = Style(width = pct(-1), font = FONT_HEADING, color = ink()),
+            )
+        }
+        donut_legend(d)
+    }
+}
+
+/** *One slice: an SVG node whose markup tracks slice `i`. `text` is reactive, */
+/** *so a value change repaints this path alone. */
+fn donut_slice(d: Signal<DonutData>, i: int, size: int, ri: int) -> Node {
+    return Component(
+        raw_svg(""),
+        text = fn() -> string {
+            let x = d.get()
+            return donut_slice_markup(x.vals, x.names, i, ri)
+        },
+        style = Style(
+            width = px(size),
+            height = px(size),
+            position = pos_absolute(),
+            top = 0,
+            left = 0,
+        ),
+        role = "img",
+        label = fn() -> string {
+            let x = d.get()
+            if i < x.names.len {
+                let pct = donut_sweep(x.vals, i) * 100 / 360
+                return "{{x.names[i]}} {{pct}}%"
+            }
+            return ""
+        },
+    )
+}
+
+/** *The slice legend: colour chip, name, and share. The share is what a pie */
+/** *needs and an axis chart does not, so it belongs here rather than in the */
+/** *shared `chart_legend`. */
+fn donut_legend(d: Signal<DonutData>) -> Node {
+    return Box(style = Style(
+        direction = Direction.Row,
+        wrap = true,
+        gap = Space.Sm,
+        justify = Align.Center,
+    )) {
+        Each(d.get().names, fn(i, name) {
+            return Row(Space.Exxs) {
+                Box(style = Style(
+                    width = px(8),
+                    height = px(8),
+                    radius = RAD_FULL,
+                    background = chart_color(i),
+                ))
+                Text(
+                    fn() -> string {
+                        let x = d.get()
+                        if i < x.vals.len {
+                            let pct = donut_sweep(x.vals, i) * 100 / 360
+                            return "{{name}} {{pct}}%"
+                        }
+                        return name
+                    },
+                    style = Style(font = FONT_CAPTION, color = mute()),
+                )
+            }
+        })
+    }
+}
+
+
 
 /** *One chart arm: the plot for the shape `d` holds, or nothing when the data */
 /** *is empty or ragged. Dispatchers, so no builder returns early. */
@@ -1492,7 +1617,7 @@ fn CalCell(y: Signal<int>, m: Signal<int>, d: Signal<int>, open: Signal<bool>, i
             direction = Direction.Row,
             align = Align.Center,
             justify = Align.Center,
-            paddingX = 2,
+            paddingX = GAP_HAIR,
             radius = RAD_LG,
             cursor = "pointer",
             background = if picked() { accent() } else { plate() },
@@ -1513,7 +1638,7 @@ fn CalCell(y: Signal<int>, m: Signal<int>, d: Signal<int>, open: Signal<bool>, i
 /** *One 7×6 grid for whichever month `m` names: 42 fixed cells whose content */
 /** *tracks `y`/`m`/`d` through prop thunks. Built once, no per-month subtrees. */
 fn CalGrid(y: Signal<int>, m: Signal<int>, d: Signal<int>, open: Signal<bool>) -> Node {
-    return Grid(config = GridConfig(columns = 7, gap = 3)) {
+    return Grid(config = GridConfig(columns = 7, gap = GAP_HAIR)) {
         for i in 0..42 {
             CalCell(y, m, d, open, i)
         }
@@ -1671,7 +1796,7 @@ fn DatePicker(y: Signal<int>, m: Signal<int>, d: Signal<int>, p: DatePickerProps
             on_click = fn() { return },
             keys = keys,
             visible = open.get(),
-            enter = Enter.Fade + Enter.Pop,
+            enter = ENTER_SURFACE,
         ) {
             Row(4) {
                 CalStep(IC_CHEV_LEFT, "Previous month", prev_month)
@@ -1737,7 +1862,7 @@ fn SplitButton(label: string, p: SplitButtonProps) -> Node {
     let bordered = button_border_width(p.look) > 0
     let seam = if bordered { -HAIRLINE } else { 1 }
     return Row(0) {
-        Box(style = Style(direction = Direction.Row), role = "group") {
+        Box(style = Style(direction = Direction.Row, align = Align.Center), role = "group") {
             GroupSegment(label, 0, 2, p.look, p.size, fn() => emit(p.on_click), true, "")
             Box(style = Style(marginLeft = seam)) {
                 Menu(
@@ -1856,7 +1981,7 @@ fn ConfirmDialog(open: Signal<bool>, p: ConfirmDialogProps) -> Node {
         if p.body.len > 0 {
             Text(p.body, style = Style(wrap = true, font = FONT_BODY, color = mute()))
         }
-        Box(style = Style(direction = Direction.Row, gap = Space.Exs, justify = Align.End)) {
+        Box(style = Style(direction = Direction.Row, gap = Space.Exs, align = Align.Center, justify = Align.End)) {
             Button(p.cancel, look = Look.Outline, on_click = fn() {
                 open.set(false)
                 emit(p.on_cancel)
@@ -1895,7 +2020,7 @@ fn PromptDialog(open: Signal<bool>, value: Signal<string>, p: PromptDialogProps)
             Text(p.body, style = Style(wrap = true, font = FONT_BODY, color = mute()))
         }
         TextInput(value, p.placeholder, keys = []KeyBind { key_bind("enter", "prompt.ok", ok) })
-        Box(style = Style(direction = Direction.Row, gap = Space.Exs, justify = Align.End)) {
+        Box(style = Style(direction = Direction.Row, gap = Space.Exs, align = Align.Center, justify = Align.End)) {
             Button(p.cancel, look = Look.Outline, on_click = fn() { open.set(false) })
             Button(p.confirm, look = Look.Solid, on_click = ok)
         }
@@ -1914,9 +2039,9 @@ struct SheetProps {
 /** *optional title. Outside click and Escape close it. */
 fn Sheet(open: Signal<bool>, p: SheetProps) -> Node {
     return Drawer(open, side = Side.SideBottom, size = p.size) {
-        Box(style = Style(direction = Direction.Row, justify = Align.Center)) {
+        Box(style = Style(direction = Direction.Row, align = Align.Center, justify = Align.Center)) {
             Box(
-                style = Style(width = px(36), height = px(4), radius = 2, background = hard()),
+                style = Style(width = px(36), height = px(Space.Exxxs), radius = RAD_FULL, background = hard()),
                 role = "presentation",
             )
         }
@@ -2498,7 +2623,7 @@ fn Notification(title: Signal<string>, body: Signal<string>, tint: int, on_dismi
         label = title,
     ) {
         Icon(tint_icon(tint), IconSize.Md, tint_ink(tint))
-        Box(style = Style(direction = Direction.Column, gap = 2, grow = 1)) {
+        Box(style = Style(direction = Direction.Column, gap = GAP_HAIR, grow = 1)) {
             Text(title, style = Style(font = FONT_BODY, color = tint_ink(tint)))
             Text(body, style = Style(wrap = true, font = FONT_CONTROL, color = ink()))
         }
@@ -2613,7 +2738,7 @@ fn CommandRow(
             lead = !fmt.eq(items[prev].section, sec)
         }
     }
-    return Box(style = Style(direction = Direction.Column, gap = 2)) {
+    return Box(style = Style(direction = Direction.Column, gap = GAP_HAIR)) {
         if lead {
             Text(
                 sec,
@@ -2630,7 +2755,7 @@ fn CommandRow(
                 direction = Direction.Row,
                 align = Align.Center,
                 paddingY = Space.Exs,
-                paddingX = 10,
+                paddingX = PAD_PILL_X,
                 radius = RAD_SM,
                 cursor = "pointer",
                 background = if active.get() == row { raised() } else { "" },
@@ -2712,7 +2837,7 @@ fn CommandPalette(open: Signal<bool>, items: []CommandItem, p: CommandPalettePro
             role = "dialog",
             label = "Commands",
             on_click = fn() { return },
-            enter = Enter.Fade + Enter.Pop + Enter.Rise,
+            enter = ENTER_SHEET,
             trap = open.get(),
         ) {
             Box(style = field_chrome(Size.Md)) {
@@ -2927,7 +3052,7 @@ fn Carousel(sources: Signal<[]string>, p: CarouselProps) -> Node {
                         width = pct(100),
                         height = px(frame_h()),
                         shiftX = -slide(),
-                        transition = Motion.Glide,
+                        transition = MOTION_ENTER,
                     ),
                 ) {
                     // By position, not keyed by source: the same file may be
