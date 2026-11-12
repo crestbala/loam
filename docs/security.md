@@ -196,10 +196,10 @@ changes (pending)" in [self-hosting-loam.md](self-hosting-loam.md)).
       Loam for long-running servers. Then any per-request allocation is
       bounded by the request.
 - [ ] **S9. Trap containment for servers**, with no unwinding (self-hosting
-      §2.5): the T4 process-per-worker model (self-hosting §5.1) already
-      confines a trap to one worker, whose parent restarts it. Document this
-      as the answer to "a panic kills the server" instead of adding recovery
-      to the language.
+      §2.5): the T4 process-per-worker model ([threads.md](threads.md))
+      already confines a trap to one worker, whose parent restarts it.
+      Document this as the answer to "a panic kills the server" instead of
+      adding recovery to the language.
 - [ ] **S10. Reproducible seed.** A `nob` check that regenerates the
       committed seed C from the Loam sources with the previous seed and
       fails on any byte difference (this is the fixed point, run against the

@@ -143,7 +143,7 @@ Order, smallest risk and most logic first:
 - [ ] **R3. Async and threads.** The future table and the channel queues in
       Loam, keeping S0's typed cells; the mutex, condition variable and
       thread start stay core. This lands with T1 (ThreadSanitizer,
-      self-hosting §5.1).
+      [threads.md](threads.md)).
 - [ ] **R4. Zeus platform.** The `zeus_plat.c` logic, the signal store first
       (keeping S0's typed cells), then frame, trace, traps, media.
 - [ ] **R5. Net.** The socket state machine in Loam over socket and poll
