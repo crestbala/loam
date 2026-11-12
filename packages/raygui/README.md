@@ -42,6 +42,6 @@ per frame.
 
 ## Headless
 
-`RAYGUI_HEADLESS=1` (or `ZEUS_HEADLESS` / `LOAM_HEADLESS`, which `make test`
+`RAYGUI_HEADLESS=1` (or `ZEUS_HEADLESS` / `LOAM_HEADLESS`, which `./nob.sh test`
 sets) opens no window, makes the frame calls inert, and ends the loop after
 `RAYGUI_FRAMES` frames (default 3).

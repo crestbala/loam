@@ -14,7 +14,7 @@
 # Zeus app: `./run.sh counter` is the Zeus stack; the language file is
 # `./run.sh language/counter`. `zeus/counter` is an alias for the stack.
 #
-# GUI examples open a real window and servers block until Ctrl-C. `make test`
+# GUI examples open a real window and servers block until Ctrl-C. `./nob.sh test`
 # exports ZEUS_HEADLESS=1/MAYA_HEADLESS=1 to render one frame and exit; `run.sh`
 # clears those so a value left exported in your shell cannot silently build a
 # window-less binary that exits before anything appears. To render one frame on
@@ -61,7 +61,7 @@ list() {
 ensure_loam() {
   if [ ! -x "$LOAM" ]; then
     echo "run.sh: building the compiler"
-    make -C "$HERE" -j4
+    (cd "$HERE" && ./nob.sh)
   fi
 }
 

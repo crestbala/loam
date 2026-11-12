@@ -375,7 +375,7 @@ ZEUS_HEADLESS=1 MAYA_HEADLESS=1 ./bin/loamc test examples/zeus/dracula/server/ma
 ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/dracula/tests/routes.loam -o /tmp/dracula-routes && /tmp/dracula-routes
 
 # the language std, which now includes math and date
-make test            # or: ./bin/nob test inlang
+./nob.sh test        # or: ./bin/nob test inlang
 ```
 
 - Every Phase 0 module, as specified in section 3.

@@ -42,7 +42,7 @@ outside the self-hosting work.
 | Platform | Supported                                          | Notes                                                    |
 | -------- | -------------------------------------------------- | -------------------------------------------------------- |
 | macOS    | Apple clang (`cc` from the Command Line Tools)     | the default everywhere in the repo                       |
-| Linux    | gcc or clang, glibc                                | generated C (the seed included) is `-std=gnu99`; `loam-lsp` and `loam-fmt` are `-std=c11 -D_GNU_SOURCE` |
+| Linux    | gcc or clang, glibc                                | generated C (the seed and `loam-lsp` included) is `-std=gnu99`; `loam-fmt` is `-std=c11 -D_GNU_SOURCE` |
 | Windows  | clang or gcc targeting `*-windows-gnu` (MinGW-w64), e.g. `zig cc`, llvm-mingw, MSYS2 | MSVC `cl.exe` is not supported: the generated C uses GNU extensions (statement expressions, `__attribute__`) |
 
 **How the compiler is found.** `nob.sh` builds the seed with `$CC`, else

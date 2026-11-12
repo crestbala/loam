@@ -745,3 +745,9 @@ fn numeric_builtin_cname(b: int, t: int) -> string {
     }
     return "loam_{{numeric_builtin_base(b)}}_{{sfx}}"
 }
+
+/** *Forget every type but the scalars (see `ast.reset`). */
+fn reset() {
+    types_init()
+    copy_walking = []int {}
+}

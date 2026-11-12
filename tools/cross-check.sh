@@ -6,9 +6,9 @@
 #
 # Default targets: x86_64/aarch64 Linux (glibc) and x86_64/aarch64 Windows
 # (MinGW-w64 headers). For each one this builds nob.loam's generated C, then
-# compiles and links the generated C of every non-GUI compile_pass fixture,
-# and for Linux also the seed compiler (packages/loam/src). It checks that the
-# code builds and links; it does not run it (that needs the platform itself).
+# compiles and links the generated C of every non-GUI compile_pass fixture.
+# (The seed, bootstrap/loamc.c, is built natively by CI on Linux and Windows.)
+# It checks that the code builds and links; it does not run it (that needs the platform itself).
 # A fixture links what the driver would add: `runtime/net.c` when its C calls
 # into std:net, and every `#![c_source(path, flags...)]` / `#![c_link(...)]`
 # of the fixture and of the packages it imports. Fixtures that import a GUI
@@ -67,14 +67,6 @@ for t in $targets; do
         e=$(cc_one "$t" "$OUT/$b.c" "$OUT/$b-$t" "$f")
         [ -n "$e" ] && { echo "$t $b: $e"; bad=$((bad+1)); }
     done
-    case $t in *linux*)
-        for s in $(ls packages/loam/src/*.c packages/loam/src/sema/*.c | grep -v -e '/lsp\.c$' -e '/fmt\.c$'); do
-            e=$(zig cc -target "$t" -std=c11 -D_GNU_SOURCE -O1 -w -c "$s" -o "$OUT/seed.o" \
-                -DLOAM_RT_PATH='"x"' -DLOAM_RUNTIME_DIR='"x"' -DLOAM_STD_DIR='"x"' -DLOAM_ZEUS_DIR='"x"' \
-                -DLOAM_RAYGUI_DIR='"x"' -DLOAM_PATH='"x"' 2>&1 | grep -E "error" | head -2)
-            [ -n "$e" ] && { echo "$t seed $s: $e"; bad=$((bad+1)); }
-        done ;;
-    esac
     echo "cross-check $t: nob + $n fixtures, $bad failed"
     [ -n "$nogap" ] && echo "  known gap, skipped (std:net has no Windows port):$nogap"
     [ "$bad" -eq 0 ] || fail=1

@@ -14,7 +14,7 @@ fn main() {
 ```
 
 ```
-make
+./nob.sh
 ./bin/loamc hello.loam -o hello
 ./hello
 ```
@@ -29,8 +29,8 @@ New to the repository? `./install.sh` (core) or `./install.sh android` (adds the
 Android stack) installs everything below that Homebrew (macOS) or your distro's
 package manager (Linux: apt / dnf / pacman) can. See [Setup](#setup).
 
-- A C11 compiler (`cc`) and `make` (Apple Command Line Tools, or build-essential
-  / base-devel on Linux)
+- A C compiler (`cc`; Apple Command Line Tools, or build-essential / base-devel
+  on Linux)
 - macOS for the native desktop GUI (Cocoa); Linux uses the X11 host
   (`packages/zeus/hosts/desktop/linux.c`, needs `libx11-dev`). Maya is macOS-only
 - [raylib](https://www.raylib.com) (`brew install raylib`) for the `raygui`
@@ -43,7 +43,8 @@ package manager (Linux: apt / dnf / pacman) can. See [Setup](#setup).
 - Android SDK, NDK, Gradle 8.2+, a JDK, and `adb` for `--target=android`
   (installer: `./install.sh android` or `examples/zeus/counter/android/install.sh`)
 
-The compiler itself is C11 + libc. CLI programs link with the host `cc`. GUI
+The compiler is written in Loam; its committed C (`bootstrap/loamc.c`) is the
+seed `cc` builds first. CLI programs link with the host `cc`. GUI
 and 3D hosts are listed under [Platforms](#platforms).
 
 ## Setup
@@ -59,7 +60,7 @@ Both are idempotent. The Android step also links the shared `.sdk-env` into
 every zeus example that has an `android/` host. Full Xcode (App Store) is a
 manual install if you want `./run.sh … ios`.
 
-On Linux, `./install.sh` checks `cc` / `make`, then prints the distro command
+On Linux, `./install.sh` checks `cc`, then prints the distro command
 for a `wasm32` clang (`clang lld`), the X11 GUI headers (`libx11-dev`), and
 Node; it does not install anything itself. The `android` mode targets macOS —
 on Linux install the SDK/NDK and Gradle yourself and set `ANDROID_HOME` /
@@ -70,10 +71,11 @@ on Linux install the SDK/NDK and Gradle yourself and set `ANDROID_HOME` /
 From the repo root:
 
 ```
-make
+./nob.sh
 ```
 
-That produces `bin/loamc` and `bin/loam-lsp`. Then:
+That produces `bin/loamc`, and the tools it builds: `bin/nob`, `bin/loam-lsp`,
+`bin/loam-fmt`, `bin/zeli`. Then:
 
 ```
 ./bin/loamc app.loam -o app          # native binary
@@ -86,7 +88,7 @@ That produces `bin/loamc` and `bin/loam-lsp`. Then:
 ./bin/loamc --target=android examples/zeus/counter/android/app.loam
 ```
 
-`make test` compiles and runs the language tests, golden programs, and
+`./nob.sh test` compiles and runs the language tests, golden programs, and
 examples (GUI, Maya, and raygui in headless mode; the raygui example is
 skipped when `pkg-config raylib` is absent). Set `LOAM_TIME=1` to print
 check / codegen / cc timings.
@@ -94,16 +96,16 @@ check / codegen / cc timings.
 The build and the test plan live in [`nob.loam`](nob.loam), a Loam program. The
 `nob.sh` is only a bootstrap: `cc` builds the committed seed
 (`bootstrap/loamc.c`, the compiler's own generated C), the seed builds
-`bin/loamc` from `packages/loam/compiler`, and then it forwards to `nob`. `make test` is
+`bin/loamc` from `packages/loam/compiler`, and then it forwards to `nob`. `./nob.sh test` is
 `nob test`, which runs the language suites and the host checks that sit next to
 the compiler (wasm entry points, server/client split, LSP):
 
 ```
-make test                # each result streams as it finishes
-make test NOB_ARGS=-j8   # run up to eight checks at once
-./bin/nob test -j8       # the same without make
+./nob.sh test            # each result streams as it finishes
+./nob.sh test -j8        # run up to eight checks at once
+./bin/nob test -j8       # the same, once bin/nob is built
 ./bin/nob integration    # the zeli routes/build/pkg/fmt/serve suite (slow, on demand)
-./bin/nob build          # what `make` does
+./bin/nob build          # what `./nob.sh` does after the bootstrap
 ```
 
 `nob test` prints every check the moment it finishes and ends with a
@@ -239,7 +241,7 @@ Equivalent without `run.sh`:
 ```
 
 Golden programs under `packages/loam/tests/golden/` (hello, fib, fizzbuzz,
-…) are compiled by `nob test` (`make test`). They are fixtures, not demos.
+…) are compiled by `nob test` (`./nob.sh test`). They are fixtures, not demos.
 
 ### Zeus (`examples/zeus/`)
 
@@ -297,7 +299,7 @@ loam/                  the language
   std/                 language libraries (Loam), incl. zeuscore/httpcore/mayacore
   runtime/             loam_rt (language) + host shims
   tests/               compile_pass / compile_fail / golden / draw_golden / inlang / bench
-nob.loam               the build and test tool (run as `bin/nob`; `make` forwards)
+nob.loam               the build and test tool (run as `bin/nob`; `nob.sh` forwards)
 zeus/                  the framework
   hosts/               desktop/ Cocoa, ios/ UIKit, android/ JNI, web/ Canvas2D
   docs/                spec.md = zeus backends and paint model
@@ -316,5 +318,5 @@ bin/loamc              compiler
 bin/loam-lsp           diagnostics, hover, go-to-def, completion, semantic tokens
 ```
 
-Cursor / VS Code: [packages/tooling/editors/vscode/README.md](packages/tooling/editors/vscode/README.md) (`make && make install-editor`).
+Cursor / VS Code: [packages/tooling/editors/vscode/README.md](packages/tooling/editors/vscode/README.md) (`./nob.sh install-editor`).
 Zed: [packages/tooling/editors/zed/README.md](packages/tooling/editors/zed/README.md).

@@ -120,7 +120,7 @@ until that bind is opened.
 | App activity is blank / frozen | RPC used to run on the UI thread. Rebuild (`./run.sh`). Keep `../backend/run.sh` on `:8080`. |
 | `emulator: command not found` | Use `./emu.sh`, or `source .sdk-env` then `$ANDROID_HOME/emulator/emulator`. |
 | App opens but RPC fails | Backend not on `:8080`. `run.sh` starts it; or `../backend/run.sh`. Confirm you used `10.0.2.2`, not `127.0.0.1`. |
-| `loam` missing | `make` at the repo root. `run.sh` does this if `bin/loamc` is absent. |
+| `loam` missing | `./nob.sh` at the repo root. `run.sh` does this if `bin/loamc` is absent. |
 
 Android Studio is an alternative to Homebrew: install Platform 34 + NDK +
 platform-tools, then `export ANDROID_HOME="$HOME/Library/Android/sdk"`.

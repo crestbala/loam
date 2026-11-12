@@ -93,7 +93,7 @@ deploy_site() {
     check_site
     cd "$root"
     say "building the site"
-    make
+    ./nob.sh
     ./bin/zeli build www --targets web --release
     say "publishing to Vercel"
     # A build wipes this folder, so it has to be linked again each time.

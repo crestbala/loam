@@ -347,7 +347,7 @@ fn expr_is_cap_fn(n: int) -> bool {
     return false
 }
 
-// `flags`, as src/ast.h.
+// `flags`, as C's ast.h.
 const ASTF_INDEX_SAFE: int = 1
 const ASTF_NEEDS_DROP: int = 2
 const ASTF_MOVED: int = 4
@@ -1772,7 +1772,7 @@ fn is_printable(t: int) -> bool {
     return k == TK.Int || k == TK.Float || k == TK.Bool || k == TK.String
 }
 
-// --- node constructors (src/ast.c) ------------------------------------------------------
+// --- node constructors (C's ast.c) ------------------------------------------------------
 
 fn add(n: NodeBuild) -> int {
     return ast.add(n)
@@ -5694,4 +5694,42 @@ fn typecheck_modules() -> int {
     instantiate_nested()
     scopes_clear()
     return Gerr
+}
+
+/** *Forget the last session: its modules and everything checked from them */
+/** *(see `ast.reset`). `typecheck_modules` resets the rest itself. */
+fn reset() {
+    MODS = []Module {}
+    Gcur = 0
+    Gerr = 0
+    IMPORTS_BY_PROGRAM = intmap.new([]int {})
+    IMPORTS_BUILT_AT = intmap.new(-1)
+    scopes_clear()
+    cur_ret = NO_TYPE
+    loop_depth = 0
+    switch_depth = 0
+    cur_async = false
+    cur_mod_name = ""
+    cur_tparams = []string {}
+    cur_clos = NONE
+    clos_scope = -1
+    clos_stack = []int {}
+    clos_scope_stack = []int {}
+    next_clos_id = 1
+    clos_infer = 0
+    clos_infer_ty = NO_TYPE
+    MONOS = []Mono {}
+    STRUCT_INSTS = []int {}
+    GVARS = []GVar {}
+    STALE = []StaleCap {}
+    MODULE_BY_ALIAS = []Map<int> {}
+    DECL_TABLES = []Map<int> {}
+    DECL_BUILT = []int {}
+    UNQUALIFIED_LOOKUPS = []Map<int> {}
+    cur_gfn = NONE
+    BOX_MASKS = []BoxMask {}
+    GEN_CALLS = []GenCall {}
+    inline_path = []int {}
+    DECL_MOD = []int {}
+    CNAMES = map.map_new(0)
 }

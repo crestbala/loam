@@ -23,7 +23,7 @@ GOT=$HERE/.tmp/raster_scene.ppm
 SRC=$HERE/raster_scene.loam
 
 if [ ! -x "$LOAM" ]; then
-  echo "golden: build the compiler first: make -C \"$ROOT\" bin/loamc" >&2
+  echo "golden: build the compiler first: cd \"$ROOT\" && ./nob.sh" >&2
   exit 1
 fi
 

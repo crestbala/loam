@@ -1,7 +1,7 @@
 #!/bin/sh
 # macOS Cocoa UI. Starts the gRPC-Web backend on :8080 if it is not up.
 set -e
-# Ignore a headless export left over from `make test`; we want a real window.
+# Ignore a headless export left over from `nob test`; we want a real window.
 unset ZEUS_HEADLESS LOAM_HEADLESS MAYA_HEADLESS
 HERE=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 d=$HERE
@@ -18,19 +18,19 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 while [ "$d" != / ]; do
-  if [ -f "$d/Makefile" ] && [ -d "$d/packages/loam/src" ]; then
+  if [ -f "$d/nob.sh" ] && [ -d "$d/packages/loam/compiler" ]; then
     REPO=$d
     break
   fi
   d=$(CDPATH= cd -- "$d/.." && pwd)
 done
 if [ -z "$REPO" ]; then
-  echo "run.sh: could not find the loam repo (Makefile + packages/loam/src/)" >&2
+  echo "run.sh: could not find the loam repo (nob.sh + packages/loam/compiler/)" >&2
   exit 1
 fi
 if [ ! -x "$REPO/bin/loamc" ]; then
   echo "run.sh: building loam"
-  make -C "$REPO" -j4
+  (cd "$REPO" && ./nob.sh)
 fi
 
 if ! nc -z 127.0.0.1 8080 >/dev/null 2>&1; then

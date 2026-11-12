@@ -136,7 +136,7 @@ the freeze list is checked in CI.
   `tests/compile_pass/zeus_layout_visits.loam` (5k nodes: today 1 visit per
   node, budget 2).
 - `docs/api-freeze.md`, checked by the `api_freeze` stanza in `nob.loam`
-  (run by `make test`).
+  (run by `./nob.sh test`).
 
 ### Phase 1: split the node record (pure data move)
 

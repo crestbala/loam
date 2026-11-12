@@ -2,7 +2,7 @@
 // actually paints. `zeus build` only proves the targets link; this proves the
 // nav reaches each page and the retained root shell survives navigation.
 //
-// Run via `make test`, or directly:
+// Run via `./nob.sh test`, or directly:
 //
 //     ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/myapp/tests/routes.loam -o /tmp/r && /tmp/r
 

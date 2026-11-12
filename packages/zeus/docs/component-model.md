@@ -1015,7 +1015,7 @@ The rule can be checked mechanically: a lint that fails when a file under
 `examples/`, mentions `ui_push`, `ui_pop`, `slot(`, `arena.`, `intern_`,
 `prop_int`, `set_prop_` or `raw_`.
 
-*Landed:* `ig_arena_lint` in `nob.loam` is a `make test` host check.
+*Landed:* `ig_arena_lint` in `nob.loam` is a `./nob.sh test` host check.
 `examples/zeus` and `www` may not use any of these names (comment lines and
 `build/` are skipped). In `zeus-components/src/{atoms,molecules,organisms,colors}`,
 a hit fails unless its enclosing top-level fn is on that file's element-layer
@@ -1149,7 +1149,7 @@ Probed on this branch with `bin/loamc` rebuilt at `d37c026d`. Phases 1 to 7 have
 
 ## 8. Migration
 
-Each step keeps `make test` and the DRAW goldens byte-identical, as the
+Each step keeps `./nob.sh test` and the DRAW goldens byte-identical, as the
 extraction in `zeus-components/README.md` did.
 
 1. **Compiler fixes C1, C2, C7, C8, C9.** Pure enablers, nothing in Zeus changes. *Landed.*

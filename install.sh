@@ -1,7 +1,7 @@
 #!/bin/sh
 # One-time setup for building Loam and running its examples.
 #
-#   ./install.sh            core: cc, make, LLVM (wasm32 clang), Node
+#   ./install.sh            core: cc, LLVM (wasm32 clang), Node
 #   ./install.sh android    core + Android SDK/NDK/Gradle + emulator AVD (several GB)
 #
 # Idempotent — safe to re-run. Works on macOS (Homebrew) and Linux
@@ -18,7 +18,7 @@ die() { echo "install: $*" >&2; exit 1; }
 
 case "$OS" in
   Darwin|Linux) ;;
-  *) die "$OS is not a supported host. Install a C11 cc + make, a wasm32 clang (LLVM), Node, and (for the GUI) libX11 yourself; 'make' then works the same." ;;
+  *) die "$OS is not a supported host. Install a C compiler (cc), a wasm32 clang (LLVM), Node, and (for the GUI) libX11 yourself; './nob.sh' then works the same." ;;
 esac
 
 if [ "$MODE" != core ] && [ "$MODE" != android ]; then
@@ -26,7 +26,7 @@ if [ "$MODE" != core ] && [ "$MODE" != android ]; then
 fi
 
 if [ "$MODE" = android ] && [ "$OS" = Linux ]; then
-  die "the android installer targets macOS. On Linux install the Android SDK/NDK, Gradle and a JDK with your package manager, then set ANDROID_HOME/ANDROID_NDK_HOME and run 'make' normally."
+  die "the android installer targets macOS. On Linux install the Android SDK/NDK, Gradle and a JDK with your package manager, then set ANDROID_HOME/ANDROID_NDK_HOME and run './nob.sh' normally."
 fi
 
 # --- Linux: core toolchain ----------------------------------------------------
@@ -37,7 +37,6 @@ fi
 if [ "$OS" = Linux ]; then
   command -v cc >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1 || command -v clang >/dev/null 2>&1 \
     || die "no C compiler (cc / gcc / clang). Install build-essential (Debian/Ubuntu), 'Development Tools' (Fedora), or 'base-devel' (Arch), then re-run."
-  command -v make >/dev/null 2>&1 || die "make is missing. Install your distro's build-essential / base-devel group, then re-run."
   say "C11 toolchain ok ($(command -v cc >/dev/null 2>&1 && echo cc || command -v gcc 2>/dev/null || command -v clang))"
 
   # LLVM ships a clang with the wasm32 target that a distro gcc lacks.
@@ -76,7 +75,7 @@ if [ "$OS" = Linux ]; then
   fi
 
   say "done. Next steps:"
-  say "  make && make test            # build loam, run the full gate"
+  say "  ./nob.sh test                # build loam, run the full gate"
   say "  ./bin/loamc app.loam --run   # a CLI program"
   say "  ./bin/loamc --cost app.loam  # where the compile time goes"
   say "  ./run.sh gallery web         # wasm UI (Vite) at http://127.0.0.1:5174"
@@ -87,12 +86,11 @@ fi
 
 # --- macOS --------------------------------------------------------------------
 
-# 1. Apple Command Line Tools — cc, make, and the native-target clang.
+# 1. Apple Command Line Tools — cc and the native-target clang.
 if ! xcode-select -p >/dev/null 2>&1; then
   die "Xcode Command Line Tools are missing. Run 'xcode-select --install' (GUI), wait for it to finish, then re-run this script."
 fi
 command -v cc >/dev/null 2>&1 || die "no cc after Command Line Tools — re-run 'xcode-select --install'"
-command -v make >/dev/null 2>&1 || die "no make after Command Line Tools — re-run 'xcode-select --install'"
 say "Apple Command Line Tools ok"
 
 # 2. Homebrew.
@@ -145,7 +143,7 @@ if [ "$MODE" = android ]; then
 fi
 
 say "done. Next steps:"
-say "  make && make test            # build loam, run the full gate"
+say "  ./nob.sh test                # build loam, run the full gate"
 say "  ./bin/loamc --cost app.loam  # where the compile time goes"
 say "  ./run.sh gallery web         # wasm UI (Vite) at http://127.0.0.1:5174"
 say "  ./run.sh gallery macos       # Cocoa window"

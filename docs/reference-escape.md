@@ -4,13 +4,13 @@ Loam has Rust-shaped ownership but no lifetime parameters, and it keeps it
 that way ([downsides.md](downsides.md)). What lifetimes guarantee, "a
 reference never outlives what it points to", must still hold. Today it does
 not: borrowck tracks moves and shared vs exclusive borrows, but the only
-escape check is `return &ident` in `src/sema/typecheck.c` (`AST_RETURN`).
+escape check was `return &ident` in typecheck (`AST_RETURN`).
 
 The fix is **second-class references**: a reference may be a parameter, a
 local, or a return value tied to its arguments. It may not be stored
 anywhere that outlives its source. There is no new syntax.
 
-Architecture: [loam.md](loam.md). Borrow checker: `src/sema/borrowck.c`.
+Architecture: [loam.md](loam.md). Borrow checker: `packages/loam/compiler/borrowck.loam`.
 
 ## Probes (all compile and run today)
 

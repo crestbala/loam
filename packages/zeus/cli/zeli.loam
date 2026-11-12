@@ -1,6 +1,6 @@
 // zeli — the Loam/Zeus CLI, written in Loam.
 //
-// Built as `bin/zeli` by `make`, and the only implementation of these commands
+// Built as `bin/zeli` by `./nob.sh`, and the only implementation of these commands
 // there is: it was ported from a TypeScript one that has since been removed, so
 // running a CLI command no longer needs a second language or a second runtime.
 //
@@ -197,7 +197,7 @@ fn formatter_path() -> string {
 fn fmt(dir: string) -> int {
     let tool = formatter_path()
     if sys.exists(tool) == 0 {
-        fmt.println("zeli: missing", tool, "— run `make` first")
+        fmt.println("zeli: missing", tool, "— run `./nob.sh` first")
         return 1
     }
     let files = loam_sources(dir)
@@ -2317,7 +2317,7 @@ fn ensure_backend(appdir: string) -> int {
 /** *which is also where a missing SDK reports itself, in its own words. */
 fn serve(appdir: string, target: string, port: int, build_only: bool) -> int {
     if sys.exists(loam_path()) == 0 {
-        die("zeli: missing {{loam_path()}} — run `make` in {{repo_root()}} first")
+        die("zeli: missing {{loam_path()}} — run `./nob.sh` in {{repo_root()}} first")
     }
     if !known_target(target) {
         die("zeli: unknown target '{{target}}' (want {{target_list()}})")
@@ -3437,7 +3437,7 @@ fn serve_device(
 /** *`reuse` skips the build and runs what is already in `build/<target>`. */
 fn preview(appdir: string, target: string, port: int, reuse: bool) -> int {
     if sys.exists(loam_path()) == 0 {
-        die("zeli: missing {{loam_path()}} — run `make` in {{repo_root()}} first")
+        die("zeli: missing {{loam_path()}} — run `./nob.sh` in {{repo_root()}} first")
     }
     let entry = find_entry(appdir)
     let stem = drop_suffix(base_name(entry), ".loam")
@@ -4543,7 +4543,7 @@ fn fresh_target_dir(appdir: string, target: string) -> string {
 /** *is removed first: a new build does not keep the previous command's files. */
 fn build(appdir: string, targets: []string, base: string, full: bool) -> int {
     if sys.exists(loam_path()) == 0 {
-        die("zeli: missing {{loam_path()}} — run `make` in {{repo_root()}} first")
+        die("zeli: missing {{loam_path()}} — run `./nob.sh` in {{repo_root()}} first")
     }
     if sys.exists(join(appdir, "routes")) == 1 {
         if generate(appdir) == "" {

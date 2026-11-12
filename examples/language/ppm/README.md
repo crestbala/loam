@@ -15,7 +15,7 @@ gist](https://gist.github.com/rexim/ef86bf70918034a5a57881456c0a0ccf):
 
 ## Run
 
-From the repository root, after `make`:
+From the repository root, after `./nob.sh`:
 
 ```
 ./bin/loamc examples/language/ppm/checker.loam --run    # ~2s, 960x540 x 60
@@ -153,7 +153,7 @@ saturation ends (`exp` clamps instead of overflowing, `tanh(±20) == ±1`).
 `frames_tests.loam` covers frame naming, the float → byte clamp (NaN included),
 and the environment reader.
 
-These are not in `make test`, which globs `examples/language/*.loam` and would
+These are not in `./nob.sh test`, which globs `examples/language/*.loam` and would
 otherwise spend a minute rendering every time the suite runs.
 
 ## Memory

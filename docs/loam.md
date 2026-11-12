@@ -52,13 +52,13 @@ Pipeline, in order:
 
 | Stage | Where | What it does |
 |---|---|---|
-| Load | `src/compile.c` | Resolve `import "std:bar"` → `std/bar.loam`, relative `"path.loam"` from the importer. Cycles are errors. |
-| Lex / parse | `src/lexer.c`, `src/parser.c` | Tokens → AST. |
-| Typecheck | `src/sema/typecheck.c` | Names, types, auto-borrow, generics (monomorphized, including nested calls and defaults), `mod.fn` / `mod.global`, method rewrite `n.w(32)` → `zeus.w(n, 32)`. |
-| Borrowck | `src/sema/borrowck.c` | Exclusive vs shared, moves, place paths (`p.a` vs `p.b`). Borrows end when the holder is not read again before being overwritten, along any path (NLL-style). Reference escape: no return into the frame, no read after the source's scope, a returned reference keeps its arguments borrowed ([References](#references)). Enforces `#[must_check]`. |
-| Boundscheck | `src/sema/boundscheck.c` | Proven in-range indexes skip the runtime trap: a literal in `0..N` for `[N]T`, and `for i in 0..C.len { … C[i] … }` (loop var matched by resolution). Overflow traps likewise drop on a foldable literal op literal (`src/ir.c`). |
-| IR | `src/ir.c` | CFG, drops, closures as heap env + fn pointer (`loam_fn`: fn, env, env_size). |
-| C | `src/codegen_c.c` | C99, then `cc`. |
+| Load | `compiler/loader.loam` | Resolve `import "std:bar"` → `std/bar.loam`, relative `"path.loam"` from the importer. Cycles are errors. |
+| Lex / parse | `compiler/lexer.loam`, `compiler/parser.loam` | Tokens → AST. |
+| Typecheck | `compiler/typecheck.loam` | Names, types, auto-borrow, generics (monomorphized, including nested calls and defaults), `mod.fn` / `mod.global`, method rewrite `n.w(32)` → `zeus.w(n, 32)`. |
+| Borrowck | `compiler/borrowck.loam` | Exclusive vs shared, moves, place paths (`p.a` vs `p.b`). Borrows end when the holder is not read again before being overwritten, along any path (NLL-style). Reference escape: no return into the frame, no read after the source's scope, a returned reference keeps its arguments borrowed ([References](#references)). Enforces `#[must_check]`. |
+| Boundscheck | `compiler/boundscheck.loam` | Proven in-range indexes skip the runtime trap: a literal in `0..N` for `[N]T`, and `for i in 0..C.len { … C[i] … }` (loop var matched by resolution). Overflow traps likewise drop on a foldable literal op literal (`compiler/ir.loam`). |
+| IR | `compiler/ir.loam` | CFG, drops, closures as heap env + fn pointer (`loam_fn`: fn, env, env_size). |
+| C | `compiler/codegen.loam` | C99, then `cc`. |
 
 Ownership state (from the spec):
 
@@ -111,7 +111,7 @@ loam/
     std/          language libraries (Loam)
     runtime/      loam_rt (language) + host shims (not library protocol C)
     tests/        compile_pass / compile_fail / golden / draw_golden / inlang / bench
-  nob.loam        the build and test tool (`bin/nob`; `make` forwards to it)
+  nob.loam        the build and test tool (`bin/nob`; `nob.sh` forwards to it)
   zeus/           the framework: hosts/ (Cocoa, iOS, Android, Canvas2D), docs/
   tooling/
     tree-sitter-loam/  grammar
@@ -171,13 +171,13 @@ precompiled package caches wait until a site exists.
 Build the compiler once from the repo root:
 
 ```
-make
+./nob.sh
 ```
 
-`make` is only a bootstrap: `cc` builds the committed seed
+`nob.sh` is only a bootstrap: `cc` builds the committed seed
 (`bootstrap/loamc.c`), the seed builds `bin/loamc`, and then it runs
 [`nob.loam`](../nob.loam) (`nob build`), which owns the incremental build. The
-same program runs the suite (`./bin/nob test`, or `make test`).
+same program runs the suite (`./bin/nob test`, or `./nob.sh test`).
 
 ### 1. Hello
 
@@ -591,7 +591,7 @@ A trap aborts the run (there is no unwinding yet — `Boundary` is a later phase
 so the suite stops at the first failure; the name printed before the panic and
 the `(in test …)` tag on the message identify which test failed.
 
-The repository's own suite is [`nob.loam`](../nob.loam). `nob test` (or `make
+The repository's own suite is [`nob.loam`](../nob.loam). `nob test` (or `./nob.sh
 test`) builds the compiler and runs the language suites — `compile_pass`,
 `compile_fail`, the golden programs and DRAW goldens, `inlang`, and the
 `argv`/`fs`/`watch` probes — plus the host checks that sit next to the compiler
@@ -687,5 +687,5 @@ Corpus you can compile as examples:
 - Failures the checker must reject: `packages/loam/tests/compile_fail/*.loam`
 
 ```
-make && make test        # or: ./bin/nob build && ./bin/nob test
+./nob.sh test            # or: ./bin/nob build && ./bin/nob test
 ```

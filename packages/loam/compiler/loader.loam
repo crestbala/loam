@@ -1158,6 +1158,11 @@ fn implicit_imports(root: int, alias: string) {
 
 let mut PARSER: Parser = parser.parser_new("")
 
+/** *An editor buffer to read in place of the file at `OVERRIDE_PATH` (the */
+/** *language server checks unsaved text); "" for none. */
+let mut OVERRIDE_PATH: string = ""
+let mut OVERRIDE_SRC: string = ""
+
 /** *Load `path` as module `alias`, then everything it imports. False on an */
 /** *error (reported in `ast.DIAGS`). */
 fn load_module(path: string, alias: string) -> bool {
@@ -1179,12 +1184,16 @@ fn load_module(path: string, alias: string) -> bool {
     push(LOADING, true)
     push(dump.PATHS, path)
     map_put(&mut MOD_BY_PATH, path, idx)
-    let r = sys.read(path)
-    if r.tag == ResultTag.Err {
-        error_at(file_loc(idx), "could not read '{{path}}'")
-        return false
+    let mut src = OVERRIDE_SRC
+    if OVERRIDE_PATH.len == 0 || path != OVERRIDE_PATH {
+        let r = sys.read(path)
+        if r.tag == ResultTag.Err {
+            error_at(file_loc(idx), "could not read '{{path}}'")
+            return false
+        }
+        src = r.val
     }
-    parser.parser_load(&mut PARSER, r.val, idx)
+    parser.parser_load(&mut PARSER, src, idx)
     let root = parser.parse_program(&mut PARSER)
     typecheck.MODS[idx].root = root
     if PARSER.had_error {
@@ -1231,4 +1240,14 @@ fn load(path: string) -> bool {
     typecheck.STD_DIR = std_dir()
     discover(path)
     return load_module(path, stem_of(path))
+}
+
+/** *Forget the last load, for a process that loads again (see `ast.reset`). */
+/** *The `realpath` cache goes too: files may have moved since. */
+fn reset() {
+    WARNINGS = []string {}
+    REALPATHS = map_new("")
+    REALPATH_ASKED = map_new(0)
+    LOADING = []bool {}
+    MOD_BY_PATH = map_new(-1)
 }

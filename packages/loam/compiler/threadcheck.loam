@@ -421,3 +421,12 @@ fn threadcheck_modules(module_names: []string, roots: []int) -> int {
     }
     return ast.DIAGS.len - errors_before
 }
+
+/** *Forget the last run's state (see `ast.reset`). */
+fn reset() {
+    MODULE_GLOBALS = intmap.new(0)
+    WALKED = intmap.new(0)
+    SPAWN_FILE = ""
+    HAS_SPAWN = false
+    SPAWN_LINE = 0
+}

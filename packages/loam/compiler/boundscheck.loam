@@ -213,3 +213,8 @@ fn boundscheck_modules(roots: []int) {
         walk(roots[i])
     }
 }
+
+/** *Forget the last run's loop proofs (see `ast.reset`). */
+fn reset() {
+    PROOFS = []LoopProof {}
+}

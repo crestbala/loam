@@ -1,20 +1,20 @@
 #!/bin/sh
 # Linux X11 UI for the zeus gallery. Run on Linux (needs cc and libx11-dev).
 set -e
-# Ignore a headless export left over from `make test`; we want a real window.
+# Ignore a headless export left over from `nob test`; we want a real window.
 unset ZEUS_HEADLESS LOAM_HEADLESS MAYA_HEADLESS
 HERE=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 d=$HERE
 REPO=
 while [ "$d" != / ]; do
-  if [ -f "$d/Makefile" ] && [ -d "$d/packages/loam/src" ]; then
+  if [ -f "$d/nob.sh" ] && [ -d "$d/packages/loam/compiler" ]; then
     REPO=$d
     break
   fi
   d=$(CDPATH= cd -- "$d/.." && pwd)
 done
 if [ -z "$REPO" ]; then
-  echo "run.sh: could not find the loam repo (Makefile + packages/loam/src/)" >&2
+  echo "run.sh: could not find the loam repo (nob.sh + packages/loam/compiler/)" >&2
   exit 1
 fi
 if [ "$(uname -s)" != Linux ]; then
@@ -23,7 +23,7 @@ if [ "$(uname -s)" != Linux ]; then
 fi
 if [ ! -x "$REPO/bin/loamc" ]; then
   echo "run.sh: building loam"
-  make -C "$REPO" -j4
+  (cd "$REPO" && ./nob.sh)
 fi
 echo "linux: X11 desktop"
 cd "$HERE/.."

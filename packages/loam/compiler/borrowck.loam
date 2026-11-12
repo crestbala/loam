@@ -2257,3 +2257,26 @@ fn borrowck_modules() -> int {
     }
     return ERRN
 }
+
+/** *Forget the last run's state (see `ast.reset`). */
+fn reset() {
+    BINDINGS = []Binding {}
+    ACTIVE = []int {}
+    N_GLOBALS = 0
+    GLOBAL_NAMES = map.map_new(-1)
+    GLOBAL_NAMES_MOD = -1
+    BORROWS = []Borrow {}
+    NEXT_BORROW_ID = 1
+    DEPTH = 0
+    ERRN = 0
+    COPY_MEMO = []int {}
+    FRAMES = []Frame {}
+    GLOBAL_DECLS = intmap.new(0)
+    GLOBAL_WRITES = []GlobalWrites {}
+    WRITES_INDEX = intmap.new(0)
+    IF_ROOTS = intmap.new(0)
+    IF_ROOT_VALUES = []Root {}
+    ROOT_NAMES = []string { "" }
+    SNAP_POOL = []BindingSnap {}
+    SNAP_TOP = 0
+}
