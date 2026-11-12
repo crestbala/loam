@@ -41,10 +41,11 @@ Counted on 2026-11-11 (`wc -l`, comments included):
   release (atomic for strings), vec buffers and copy-on-write, element and
   env drop hooks, the panic and trap path, and checked integer ops where C
   builtins do the work. These are the primitives safe Loam is built *from*.
-  Writing them in Loam would need raw pointers and `unsafe`, which the
-  language does not have and will not get (self-hosting §2.7,
-  "Essentialism"). Keeping them small, in one file, fuzzed
-  ([security.md](security.md) S2) and sanitizer-tested is the safer choice.
+  Writing them in Loam needs raw memory access, which safe Loam does not
+  have. Until an `unsafe` that passes the rules in §4 exists, they stay C:
+  small, in one file, fuzzed ([security.md](security.md) S2) and
+  sanitizer-tested. With such an `unsafe`, they may move to Loam too, as
+  the last step.
 - **OS and GUI calls.** `read`, `write`, `open`, `posix_spawn`, `poll`,
   sockets, `pthread`, the Win32 equivalents, Cocoa / UIKit (Objective-C), JNI,
   X11, and wasm imports. Each becomes a thin binding: one `#[c]` fn per call
@@ -92,9 +93,27 @@ safely today:
   binding.
 - **FFI listing ([security.md](security.md) S3)**, so the trusted-C count is
   one command.
-- No `unsafe`, no raw pointers, no inline C. If a piece cannot be written
-  without them, it belongs in the core, and the core gets a line-count
-  budget.
+- No inline C. A piece that cannot be written in safe Loam belongs in the
+  core, and the core gets a line-count budget.
+- **`unsafe`, allowed only if it fits essentialism and minimalism.** Loam
+  may gain an `unsafe` keyword when it removes more trusted C than the
+  language surface it adds. The rules:
+  - **Minimal.** One keyword marking a fn or a block, and the fewest raw
+    operations the core needs: read and write a value at an address, offset
+    an address, and convert between an address and a handle. No pointer
+    types in safe code, no unchecked indexing, no inline C.
+  - **Essential.** It lands with the first core piece that needs it, which
+    must delete C and lower the trusted-code count (C plus `unsafe` lines)
+    in the same step. No speculative operations.
+  - **Contained.** Safe callers cannot tell it is there: an `unsafe` fn is
+    private to its module, as a `#[c]` fn is, and its module exposes only
+    safe wrappers. The compiler and its tools stay entirely safe Loam
+    (self-hosting §2.7).
+  - **Visible.** `loamc check --ffi` ([security.md](security.md) S3) lists
+    every `unsafe` fn and block with the `#[c]` bindings, and the R0
+    counter counts its lines as trusted code.
+  - **Checked as C is.** Every `unsafe` module is fuzzed (S2) and
+    ASan/UBSan-clean, and matches the C it replaces in speed (gate 2 below).
 
 ## 5. Order and gates
 
@@ -137,7 +156,12 @@ Order, smallest risk and most logic first:
       vendored code remain. The core is fuzzed and sanitizer-clean (S2, T1),
       within its budget, and documented line by line in
       [boundary.md](boundary.md).
+- [ ] **R8. The core in `unsafe` Loam, optional.** Only if an `unsafe` that
+      meets the rules of §4 is worth it: core pieces move one at a time,
+      each deleting its C, and each through the same gates as R1–R6, with
+      the trusted-code count (C plus `unsafe` lines) going down. If no piece
+      earns it, the core stays C and Loam has no `unsafe`.
 
-Not in scope: rewriting vendored libraries, adding raw pointers or `unsafe`
-to the language, or moving the C compiler `cc` itself. Loam still emits C,
-and `cc` stays the backend.
+Not in scope: rewriting vendored libraries, raw pointers or `unsafe`
+beyond the rules of §4, or moving the C compiler `cc` itself. Loam still
+emits C, and `cc` stays the backend.
