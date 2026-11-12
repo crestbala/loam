@@ -1,0 +1,20 @@
+import "std:fmt"
+import "std:json"
+
+fn main() {
+    // A fixed, moderately nested document: parse + reserialize.
+    let doc = "{\"name\": \"loam\", \"version\": 1, \"tags\": [\"safe\", \"fast\", \"green\"], \"meta\": {\"runs\": 7, \"ok\": true, \"nested\": {\"a\": [1, 2, 3]}}}"
+    let mut n: i64 = i64(0)
+    let mut total: i64 = i64(0)
+    for i in 0..20000 {
+        let d = json.parse(doc)
+        if d.ok == 0 {
+            fmt.println("FAIL parse", d.err)
+            return
+        }
+        n = wrapping_add(n, i64(json.child_count(d.nodes, d.root)))
+        let back = json.stringify(d.nodes, d.root)
+        total = wrapping_add(total, i64(back.len))
+    }
+    fmt.println(total, n)
+}

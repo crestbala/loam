@@ -1,0 +1,10 @@
+import "std:buf"
+import "std:fmt"
+
+fn main() {
+    let mut b = []u8 {}
+    for i in 0..100000 {
+        buf.push_str(&mut b, "hello, loam ")
+    }
+    fmt.println(b.len)
+}

@@ -1,16 +1,16 @@
 # Loam language
 
 Loam is a memory-safe systems language: Odin-like syntax, Rust-like ownership.
-`loam` is written in C11, typechecks a program, lowers it to IR, emits C99,
-and invokes `cc`. C is the **platform binding target**, not the language's
-semantics.
+`loamc` typechecks a program, lowers it to IR, and generates machine code
+directly — no C-emission stage. C is the **ABI and FFI target**, not the
+language's semantics and not an intermediate language.
 
-**One Loam file in, one C file out.** `loamc` compiles, tests, and runs a whole
-`.loam` program as a unit; the source is never required to be split into many
-files, and no backend other than `cc` is used. The generated C may be large
-(a Zeus app is ~2.9 MB), which is fine — the compile path stays small and the
-same shape is what a **self-hosting** `loamc` (the compiler written in Loam,
-building and testing itself from whole Loam sources) will keep.
+**One Loam program in, one native binary out.** `loamc` compiles, tests, and
+runs a whole `.loam` program as a unit; the source is never required to be
+split into many files. Calls into and out of C (and any language speaking
+the C ABI) keep working exactly as before: same calling convention, same
+type mapping, same `#[c]` bindings — only the middle step changes from
+"emit C, then compile it" to "emit machine code directly".
 
 C vs Loam: [boundary.md](boundary.md).
 Self-improvement phases: [downsides.md](downsides.md).
@@ -30,22 +30,22 @@ flowchart LR
     H["http.loam"]
     M["maya.loam"]
   end
-  subgraph loam [loam]
+  subgraph loam [loamc]
     L[lexer]
     P[parser]
     T[typecheck]
     K[borrowck]
     N[boundscheck]
     I[IR]
-    C[codegen C99]
+    G[codegen: IR → machine code]
   end
   A --> L
   B --> L
   F --> L
   Y --> L
-  L --> P --> T --> K --> N --> I --> C
-  C --> CC["cc"]
-  CC --> BIN["native binary"]
+  L --> P --> T --> K --> N --> I --> G
+  G --> BIN["native binary"]
+  G -. C ABI .-> EXT["C / other langs (FFI)"]
 ```
 
 Pipeline, in order:
@@ -58,7 +58,7 @@ Pipeline, in order:
 | Borrowck | `compiler/borrowck.loam` | Exclusive vs shared, moves, place paths (`p.a` vs `p.b`). Borrows end when the holder is not read again before being overwritten, along any path (NLL-style). Reference escape: no return into the frame, no read after the source's scope, a returned reference keeps its arguments borrowed ([References](#references)). Enforces `#[must_check]`. |
 | Boundscheck | `compiler/boundscheck.loam` | Proven in-range indexes skip the runtime trap: a literal in `0..N` for `[N]T`, and `for i in 0..C.len { … C[i] … }` (loop var matched by resolution). Overflow traps likewise drop on a foldable literal op literal (`compiler/ir.loam`). |
 | IR | `compiler/ir.loam` | CFG, drops, closures as heap env + fn pointer (`loam_fn`: fn, env, env_size). |
-| C | `compiler/codegen.loam` | C99, then `cc`. |
+| Codegen | `compiler/codegen.loam` | Lowers IR directly to machine code (native object), then links. No C-emission stage. The emitted code follows the platform C ABI, so `#[c]` bindings and host trampolines keep their exact signatures. |
 
 Ownership state (from the spec):
 
@@ -202,11 +202,11 @@ fn main() {
 Useful flags:
 
 ```
-./bin/loamc app.loam -o app          # binary
-./bin/loamc app.loam --emit-c -o a.c # C99
+./bin/loamc app.loam -o app          # native binary (direct machine code)
+./bin/loamc app.loam --emit-obj -o a.o  # native object (inspect/link step)
 ./bin/loamc app.loam --emit-ir -o a.ir
 ./bin/loamc app.loam --run           # compile and run
-./bin/loamc app.loam --target wasm -o app.wasm  # Canvas2D .wasm (clang wasm32)
+./bin/loamc app.loam --target wasm -o app.wasm  # Canvas2D .wasm (wasm backend)
 ./bin/loamc --target=ios --run examples/zeus/dashboard/dashboard.loam  # Simulator
 ./bin/loamc --target=android examples/zeus/counter/android/app.loam  # Gradle project
 ```
@@ -228,19 +228,20 @@ all engine logic; the C file is only the NEON kernel and mmap trampolines.
 
 ### Compile time
 
-`loam` itself is fast (tens of milliseconds to typecheck and emit C). Linking
-a Zeus app is where the seconds go: generated C is hundreds of kilobytes, and
-on macOS a GUI build also compiles Cocoa.
+`loam` itself is fast (tens of milliseconds to typecheck and generate machine
+code). Linking a Zeus app is where the seconds go: codegen output is hundreds
+of kilobytes, and on macOS a GUI build also compiles Cocoa.
 
 What `loam` does about that:
 
-- Runtime files (`zeus_plat.c`, `zeus_key.c`, `packages/zeus/hosts/desktop/mac.m`) compile once into
-  `packages/loam/runtime/.obj/` and are reused until those sources change.
-- `ZEUS_HEADLESS=1` (tests) skips Cocoa and uses `-O0` on generated C.
-- GUI builds use `-O1` on generated C, not `-O2` (same overflow checks,
-  much less optimizer work).
+- Runtime objects (`zeus_plat`, `zeus_key`, `packages/zeus/hosts/desktop/mac`)
+  compile once into `packages/loam/runtime/.obj/` and are reused until those
+  sources change.
+- `ZEUS_HEADLESS=1` (tests) skips Cocoa and codegen uses its fastest setting.
+- GUI builds use the faster optimization level, not the slowest — same
+  overflow checks, much less optimizer work.
 
-Set `LOAM_TIME=1` to print `check` / `codegen` / `cc` timings on stderr. Set `LOAM_PROGRESS=<file>`
+Set `LOAM_TIME=1` to print `check` / `codegen` / `link` timings on stderr. Set `LOAM_PROGRESS=<file>`
 to have each step appended to that file as it starts, for a tool drawing progress; this
 is what the `zeli` build panel reads.
 
@@ -604,16 +605,16 @@ it is the slow and most environment-sensitive part. Both take `-j N` (default
 
 ### 7. Debug info
 
-Generated C carries `#line` directives pointing at the `.loam` source, so the C
-compiler's own warnings and errors name Loam lines. With `LOAM_DEBUG=1`, `loam`
-also compiles the native target with `-g`, so lldb / gdb, profilers, and
+Codegen emits native debug info pointing at the `.loam` source, so linkers,
+debuggers, and profilers name Loam lines. With `LOAM_DEBUG=1`, `loam`
+also links the native target with debug symbols, so lldb / gdb, profilers, and
 sanitizers report Loam `file:line` for stack frames and non-panic crashes:
 
 ```
 LOAM_DEBUG=1 ./bin/loamc app.loam -o app
 ```
 
-`-g` is off by default, because it inflates binaries.
+Debug symbols are off by default, because they inflate binaries.
 
 ### 8. Text, Unicode, and fonts
 

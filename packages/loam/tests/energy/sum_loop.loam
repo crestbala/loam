@@ -1,0 +1,12 @@
+import "std:fmt"
+
+fn main() {
+    // LCG-style accumulation: each iteration depends on the last through a
+    // multiply-add chain, so `cc` cannot fold the loop to a closed form the
+    // way it can a plain triangular sum. This measures per-iteration cost.
+    let mut s: i64 = i64(0)
+    for i in 0..1000000000 {
+        s = wrapping_add(wrapping_mul(s, i64(6364136223846793005)), wrapping_add(i64(i), i64(1442695040888963407)))
+    }
+    fmt.println(s)
+}

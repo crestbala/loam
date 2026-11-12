@@ -1,9 +1,10 @@
 # Self-hosting `loamc`: what is missing
 
-**Goal**: `loamc` written in Loam, built by the current C `loamc` (stage 0), then
-able to build itself (stage 1 → stage 2, byte-identical C output). The
-architecture in [loam.md](loam.md) stays the same: one Loam program in, one C
-file out, `cc` links it. Self-hosting means the compiler is Loam. The runtime
+**Goal**: `loamc` written in Loam, built by the current native `loamc`
+(stage 0 — direct machine-code backend, no C-emission step), then
+able to build itself (stage 1 → stage 2, byte-identical object output). The
+architecture in [loam.md](loam.md) stays the same: one Loam program in, one
+native binary out, conforming to the platform C ABI. Self-hosting means the compiler is Loam. The runtime
 (`runtime/loam_rt.h`, host shims) stays C *for the fixed point*; moving it and
 the packages' runtime C to Loam is the next goal, planned in
 [runtime-in-loam.md](runtime-in-loam.md) (§6). Afterwards the
@@ -289,7 +290,7 @@ Needed:
 
 ### 1.7 C FFI: import C source and headers
 
-Loam already emits C and uses bodyless functions as extern hooks into the
+Loam generates machine code directly and uses bodyless functions as extern hooks into the
 runtime. A usable language also needs a way to consume existing C libraries
 directly.
 
@@ -328,7 +329,7 @@ Needed:
       simple halt or watchdog reset.
 - [ ] **Toolchain support**. Cross-compilation with `arm-none-eabi-gcc`,
       `avr-gcc`, RISC-V toolchains, or the Arduino/PlatformIO ecosystem.
-      `loamc --target=embedded` (or similar) emits C that those toolchains
+      `loamc --target=embedded` (or similar) emits native objects that those toolchains
       can link. Linker scripts and startup files are supplied by the user
       or a small board package.
 - [ ] **Hardware access via C FFI** (§1.7). GPIO, I2C, SPI, UART, PWM, ADC,

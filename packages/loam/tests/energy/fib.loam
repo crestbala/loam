@@ -1,0 +1,12 @@
+import "std:fmt"
+
+fn main() {
+    let mut a: i64 = i64(0)
+    let mut b: i64 = i64(1)
+    for i in 0..100000000 {
+        let t = wrapping_add(a, b)
+        a = b
+        b = t
+    }
+    fmt.println(b)
+}
