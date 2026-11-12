@@ -17,14 +17,14 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 while [ "$d" != / ]; do
-  if [ -f "$d/Makefile" ] && [ -d "$d/packages/loam/src" ]; then
+  if [ -f "$d/nob.sh" ] && [ -d "$d/packages/loam/compiler" ]; then
     REPO=$d
     break
   fi
   d=$(CDPATH= cd -- "$d/.." && pwd)
 done
 if [ -z "$REPO" ]; then
-  echo "run.sh: could not find the loam repo (Makefile + packages/loam/src/)" >&2
+  echo "run.sh: could not find the loam repo (nob.sh + packages/loam/compiler/)" >&2
   exit 1
 fi
 if [ -f "$HERE/.sdk-env" ]; then
@@ -56,7 +56,7 @@ fi
 
 if [ ! -x "$REPO/bin/loamc" ]; then
   echo "run.sh: building loam"
-  make -C "$REPO" -j4
+  (cd "$REPO" && ./nob.sh)
 fi
 
 # No device or emulator connected? Boot the shared 'loam' AVD so a fresh

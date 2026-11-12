@@ -14,7 +14,7 @@ APP=$(cd "$(dirname "$0")/.." && pwd)
 ROOT=$(cd "$APP/../../.." && pwd)
 cd "$ROOT"
 LOAMC=./bin/loamc
-[ -x "$LOAMC" ] || { echo "missing $LOAMC: run make in $ROOT first"; exit 1; }
+[ -x "$LOAMC" ] || { echo "missing $LOAMC: run ./nob.sh in $ROOT first"; exit 1; }
 
 export ZEUS_HEADLESS=1 MAYA_HEADLESS=1
 OUT=$(mktemp -d "${TMPDIR:-/tmp}/vidy-tests.XXXXXX")

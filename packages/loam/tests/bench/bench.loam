@@ -1,4 +1,4 @@
-// Phase 10 benchmark app: a fixed, moderately large retained tree. `make bench`
+// Phase 10 benchmark app: a fixed, moderately large retained tree. `./nob.sh bench`
 // builds it with the 32-bit default and with `--int64-compat`, then records
 // arena size, layout time, binary size, and wasm size.
 import "std:async"

@@ -46,3 +46,8 @@ fn print_diags() {
         fmt.ewrite(e)
     }
 }
+
+/** *Forget the module paths (see `ast.reset`). */
+fn reset() {
+    PATHS = []string {}
+}

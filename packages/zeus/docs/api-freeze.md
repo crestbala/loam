@@ -2,7 +2,7 @@
 
 Status: frozen for the refactor (Phase 0 of `refactor-plan.md`). Each line
 below is a name an app can reach today. The `api_freeze` lint in `nob.loam`
-(run by `make test`) fails if one disappears. Adding names is fine; removing
+(run by `./nob.sh test`) fails if one disappears. Adding names is fine; removing
 or renaming one means changing this file on purpose, in review.
 
 Entry forms the lint checks:

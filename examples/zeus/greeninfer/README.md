@@ -53,7 +53,7 @@ The compiler auto-links the seam: loam compiles and links
 (`driver.c`). From the repo root:
 
 ```
-make                          # loam (once)
+./nob.sh                      # loam (once)
 ./run.sh greeninfer           # compile + open the Cocoa window
 ```
 
@@ -83,7 +83,7 @@ LOAM_LINK_EXTRA="examples/zeus/greeninfer/runtime/greeninfer_runtime.c" \
 ./greeninfer-macos
 ```
 
-`make test` also compiles and headless-runs the desktop app itself.
+`./nob.sh test` also compiles and headless-runs the desktop app itself.
 
 ## Phase plan
 

@@ -1,0 +1,1360 @@
+// loamfmt — `loam-fmt`, the Loam formatter. A port of the C tool fmt.c,
+// which it replaced byte for byte.
+//
+// One style, no options, in the manner of Prettier and gofmt: the output
+// depends on the code, not on how it was laid out.
+//
+//     loam-fmt <file>        formatted source to stdout
+//     loam-fmt -w <file>...  formatted source written back in place
+//     loam-fmt --check <f>.. exit 1 and name each file that is not formatted
+//     loam-fmt               read stdin, write stdout
+//
+// It works on tokens, not on the AST: the parser drops comments, and a
+// formatter that loses them is worse than none. So it has its own small
+// lexer, which keeps comments. The tokens are grouped by their brackets and
+// printed against a 100-column line:
+//
+//   - A `(` / `[` group stays on one line when it fits. When it does not,
+//     each item goes on its own line, one level in, with a trailing comma
+//     (not in a `fn` parameter list, which takes none), and the closer comes
+//     back to the opening line's indent.
+//   - A call whose last argument is a block (`fn() { ... }`) keeps that
+//     block on the call's line when the arguments before it fit.
+//   - A `{` written across lines is a block: one statement per line, at most
+//     one blank line between them. A `{ ... }` written on one line stays on
+//     one line when it fits; an `if` / `else` chain fits or breaks as a whole.
+//   - A long `&&` / `||` chain breaks after the operator: the parser ends a
+//     statement at an operator that starts a line.
+//   - One space around binary operators, `=`, `->`, `=>`, and after `,` and
+//     `:`. None inside `()` / `[]`, around `.`, `::`, `..`, after a unary
+//     operator, or inside generics and closure pipes. `{ x }` keeps a space
+//     inside each brace.
+//   - Strings and comments are copied verbatim. 4-space indent, one
+//     trailing newline.
+//
+// Before anything is written the output is lexed again and compared with the
+// input: the tokens must be the same, save commas before `)` / `}`. A
+// mismatch is a formatter bug, and the file is left alone.
+import "std:buf"
+import "std:fmt"
+import "std:str"
+import "std:sys"
+
+const WIDTH: int = 100
+const INDENT: int = 4
+const INF: int = 1000000
+
+// Token kinds.
+const K_WORD: int = 0
+const K_NUM: int = 1
+const K_STR: int = 2
+const K_OP: int = 3
+const K_OPEN: int = 4
+const K_CLOSE: int = 5
+const K_LCOM: int = 6
+const K_BCOM: int = 7
+
+struct FTok {
+    k: int,
+    /** *Byte span in the source it was lexed from. */
+    start: int,
+    len: int,
+    /** *Newlines between the previous token and this one. */
+    nl: int,
+    /** *Any whitespace before it in the source. */
+    sp: bool,
+    /** *The matching bracket, or -1. */
+    mate: int,
+    /** *`-` `*` `&` `!` `~` as a prefix. */
+    unary: bool,
+    /** *`<` `>` `>>` as generic angles. */
+    gen: bool,
+    /** *Closure `|`: 1 opens params, 2 closes them, 3 is `||`. */
+    pipe: int,
+    /** *Display columns; `INF` if it spans lines. */
+    width: int,
+    /** *Bracket depth it sits at. */
+    depth: int,
+    /** *A word that is a keyword. */
+    kw: bool,
+}
+
+/** *A lexed source: its tokens, or the reason it could not be lexed. */
+struct Lexed {
+    src: string,
+    toks: []FTok,
+    err: string,
+}
+
+fn die(msg: string, arg: string) {
+    if arg.len > 0 {
+        fmt.ewrite("loam-fmt: {{msg}}: {{arg}}\n")
+    } else {
+        fmt.ewrite("loam-fmt: {{msg}}\n")
+    }
+    sys.exit(2)
+}
+
+/** *The byte at `i`, or 0 past the end (C's NUL). */
+fn at(s: string, i: int) -> int {
+    if i >= 0 && i < s.len {
+        return s[i]
+    }
+    return 0
+}
+
+fn is_space(c: int) -> bool {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == 11 || c == 12
+}
+
+fn is_digit(c: int) -> bool {
+    return c >= '0' && c <= '9'
+}
+
+fn is_xdigit(c: int) -> bool {
+    return is_digit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+}
+
+fn is_alpha(c: int) -> bool {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+fn is_upper(c: int) -> bool {
+    return c >= 'A' && c <= 'Z'
+}
+
+fn text_width(s: string, a: int, b: int) -> int {
+    let mut w = 0
+    for i in a..b {
+        if s[i] == '\n' {
+            return INF
+        }
+        if (s[i] & 192) != 128 {
+            w += 1
+        }
+    }
+    return w
+}
+
+/** *Display width of a token. One byte is one column, or none for a stray */
+/** *UTF-8 continuation byte (no token is a lone newline); longer ones are */
+/** *measured. */
+fn tok_width(src: string, start: int, len: int) -> int {
+    if len == 1 {
+        return if (src[start] & 192) == 128 { 0 } else { 1 }
+    }
+    return text_width(src, start, start + len)
+}
+
+fn add_tok(ts: &mut []FTok, src: string, k: int, start: int, len: int, nl: int, sp: bool) {
+    push(ts, FTok {
+        k: k,
+        start: start,
+        len: len,
+        nl: nl,
+        sp: sp,
+        mate: -1,
+        unary: false,
+        gen: false,
+        pipe: 0,
+        width: tok_width(src, start, len),
+        depth: 0,
+        kw: k == K_WORD && word_is_kw(src, start, len),
+    })
+}
+
+/** *The two-byte operators, each as `first * 256 + second`. The three-byte */
+/** *ones (`<<=`, `>>=`) are tried first, so `>>=` is not read as `>>` then */
+/** *`=`. */
+let OPS2: []int = []int {
+    ':' * 256 + ':', '-' * 256 + '>', '=' * 256 + '>', '=' * 256 + '=', '!' * 256 + '=',
+    '<' * 256 + '=', '>' * 256 + '=', '&' * 256 + '&', '|' * 256 + '|', '+' * 256 + '=',
+    '-' * 256 + '=', '*' * 256 + '=', '/' * 256 + '=', '%' * 256 + '=', '&' * 256 + '=',
+    '|' * 256 + '=', '^' * 256 + '=', '+' * 256 + '+', '-' * 256 + '-', '<' * 256 + '<',
+    '>' * 256 + '>', '.' * 256 + '.',
+}
+
+/** *Length of the operator at `p`, whose first byte is `c`: 3, 2, or 1. */
+fn op_len(src: string, p: int, c: int) -> int {
+    let d = at(src, p + 1)
+    if (c == '<' || c == '>') && d == c && at(src, p + 2) == '=' {
+        return 3
+    }
+    let pair = c * 256 + d
+    for i in 0..OPS2.len {
+        if OPS2[i] == pair {
+            return 2
+        }
+    }
+    return 1
+}
+
+/** *The word at `s` is `w` (its length already matched). */
+fn word_at(src: string, s: int, w: string) -> bool {
+    return src[s] == w[0] && str.has_at(src, w, s)
+}
+
+/** *Whether the word `src[s, s+len)` is a keyword, */
+/** *picked by length first: this runs once per word. */
+fn word_is_kw(src: string, s: int, len: int) -> bool {
+    switch len {
+        case 2:
+            return word_at(src, s, "fn") || word_at(src, s, "if") || word_at(src, s, "in") || word_at(src, s, "as")
+        case 3:
+            return word_at(src, s, "let") || word_at(src, s, "mut") || word_at(src, s, "for") || word_at(src, s, "pub") ||
+                word_at(src, s, "use")
+        case 4:
+            return word_at(src, s, "else") || word_at(src, s, "case") || word_at(src, s, "enum") || word_at(src, s, "loop") ||
+                word_at(src, s, "type")
+        case 5:
+            return word_at(src, s, "while") || word_at(src, s, "const") || word_at(src, s, "break")
+        case 6:
+            return word_at(src, s, "return") || word_at(src, s, "switch") || word_at(src, s, "struct") ||
+                word_at(src, s, "import")
+        case 7:
+            return word_at(src, s, "default")
+        case 8:
+            return word_at(src, s, "continue")
+        default:
+            return false
+    }
+    return false
+}
+
+/** *A byte of a word: a letter, digit, `_`, or any non-ASCII byte. */
+fn is_word_byte(c: int) -> bool {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c >= 128
+}
+
+/** *Scan `src` into tokens and match the brackets. `src` holds no NUL: the */
+/** *callers cut it at the first one (`c_text`), as C reads a file. */
+fn lex(src: string) -> Lexed {
+    let mut ts = []FTok {}
+    let n = src.len
+    let mut p = 0
+    let mut nl = 0
+    let mut sp = false
+    while p < n {
+        let c = src[p]
+        if c == '\n' {
+            nl += 1
+            sp = true
+            p += 1
+            continue
+        }
+        if is_space(c) {
+            sp = true
+            p += 1
+            continue
+        }
+        let s = p
+        let mut k = K_OP
+        if c == '/' && at(src, p + 1) == '/' {
+            while p < n && src[p] != '\n' {
+                p += 1
+            }
+            let mut e = p
+            while e > s && (src[e - 1] == ' ' || src[e - 1] == '\t' || src[e - 1] == '\r') {
+                e -= 1
+            }
+            add_tok(&mut ts, src, K_LCOM, s, e - s, nl, sp)
+            nl = 0
+            sp = false
+            continue
+        }
+        if c == '/' && at(src, p + 1) == '*' {
+            p += 2
+            while p < n && !(src[p] == '*' && at(src, p + 1) == '/') {
+                p += 1
+            }
+            if p >= n {
+                return Lexed { src: src, toks: ts, err: "unterminated block comment" }
+            }
+            p += 2
+            k = K_BCOM
+        } else if c == '"' {
+            p += 1
+            while p < n && src[p] != '"' {
+                p += if src[p] == '\\' && at(src, p + 1) != 0 { 2 } else { 1 }
+            }
+            if p >= n {
+                return Lexed { src: src, toks: ts, err: "unterminated string" }
+            }
+            p += 1
+            k = K_STR
+        } else if c == '\'' {
+            // A character literal: one byte or one escape, on one line.
+            p += 1
+            while p < n && src[p] != '\'' && src[p] != '\n' {
+                p += if src[p] == '\\' && at(src, p + 1) != 0 && at(src, p + 1) != '\n' { 2 } else { 1 }
+            }
+            if at(src, p) != '\'' {
+                return Lexed { src: src, toks: ts, err: "unterminated character literal" }
+            }
+            p += 1
+            k = K_NUM
+        } else if is_digit(c) {
+            if c == '0' && (at(src, p + 1) == 'x' || at(src, p + 1) == 'X') {
+                p += 2
+                while is_xdigit(at(src, p)) || at(src, p) == '_' {
+                    p += 1
+                }
+            } else {
+                while p < n && (is_digit(src[p]) || src[p] == '_') {
+                    p += 1
+                }
+                if at(src, p) == '.' && is_digit(at(src, p + 1)) {
+                    p += 1
+                    while is_digit(at(src, p)) {
+                        p += 1
+                    }
+                }
+                if at(src, p) == 'e' || at(src, p) == 'E' {
+                    let mut q = p + 1
+                    if at(src, q) == '+' || at(src, q) == '-' {
+                        q += 1
+                    }
+                    if is_digit(at(src, q)) {
+                        p = q
+                        while is_digit(at(src, p)) {
+                            p += 1
+                        }
+                    }
+                }
+            }
+            k = K_NUM
+        } else if is_alpha(c) || c == '_' || c >= 128 {
+            while p < n && is_word_byte(src[p]) {
+                p += 1
+            }
+            k = K_WORD
+        } else if c == '(' || c == '[' || c == '{' {
+            p += 1
+            k = K_OPEN
+        } else if c == ')' || c == ']' || c == '}' {
+            p += 1
+            k = K_CLOSE
+        } else {
+            p += op_len(src, p, c)
+            k = K_OP
+        }
+        add_tok(&mut ts, src, k, s, p - s, nl, sp)
+        nl = 0
+        sp = false
+    }
+    // Match brackets.
+    let mut stack = []int {}
+    for i in 0..ts.len {
+        ts[i].depth = stack.len
+        if ts[i].k == K_OPEN {
+            push(stack, i)
+        } else if ts[i].k == K_CLOSE {
+            if stack.len == 0 {
+                return Lexed { src: src, toks: ts, err: "unbalanced closing bracket" }
+            }
+            let o = pop(stack)
+            let oc = src[ts[o].start]
+            let want = if oc == '(' { ')' } else if oc == '[' { ']' } else { '}' }
+            if src[ts[i].start] != want {
+                return Lexed { src: src, toks: ts, err: "mismatched brackets" }
+            }
+            ts[o].mate = i
+            ts[i].mate = o
+            ts[i].depth = stack.len
+        }
+    }
+    if stack.len > 0 {
+        return Lexed { src: src, toks: ts, err: "unclosed bracket" }
+    }
+    return Lexed { src: src, toks: ts, err: "" }
+}
+
+// --- classification -------------------------------------------------------------
+
+/** *The source being formatted and its tokens. */
+let mut SRC: string = ""
+let mut T: []FTok = []FTok {}
+
+fn is(i: int, s: string) -> bool {
+    return T[i].len == s.len && SRC[T[i].start] == s[0] && str.has_at(SRC, s, T[i].start)
+}
+
+/** *Token `i` is the one byte `c`. */
+fn is1(i: int, c: int) -> bool {
+    return T[i].len == 1 && SRC[T[i].start] == c
+}
+
+/** *The first byte of token `i`. */
+fn ch(i: int) -> int {
+    return SRC[T[i].start]
+}
+
+fn is_kw(i: int) -> bool {
+    return T[i].kw
+}
+
+/** *Ends an operand: what precedes a binary (not a unary) operator. */
+fn ends_operand(i: int) -> bool {
+    let k = T[i].k
+    if k == K_WORD {
+        return !is_kw(i)
+    }
+    if k == K_NUM || k == K_STR || k == K_CLOSE {
+        return true
+    }
+    if k == K_OP && ((T[i].gen && !is1(i, '<')) || is1(i, '?')) {
+        return true
+    }
+    return false
+}
+
+fn prev_code(i: int) -> int {
+    let mut k = i - 1
+    while k >= 0 {
+        if T[k].k != K_LCOM && T[k].k != K_BCOM {
+            return k
+        }
+        k -= 1
+    }
+    return -1
+}
+
+let PRIMS: []string = []string {
+    "int", "float", "bool", "string", "void", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64",
+    "f32", "f64", "fn",
+}
+
+fn looks_like_type(i: int) -> bool {
+    if T[i].k == K_OPEN && ch(i) == '[' {
+        return true
+    }
+    if T[i].k == K_OP && (is1(i, '&') || is1(i, '*')) {
+        return true
+    }
+    if T[i].k != K_WORD {
+        return false
+    }
+    if is_upper(ch(i)) {
+        return true
+    }
+    for k in 0..PRIMS.len {
+        if is(i, PRIMS[k]) {
+            return true
+        }
+    }
+    return false
+}
+
+fn classify() {
+    let mut gdepth = 0
+    let nt = T.len
+    let mut i = 0
+    while i < nt {
+        let pi = prev_code(i)
+        if T[i].k == K_OPEN && ch(i) == '{' {
+            gdepth = 0
+        }
+        if T[i].k != K_OP {
+            i += 1
+            continue
+        }
+        if is1(i, '=') || is1(i, ';') {
+            gdepth = 0
+        }
+        if is1(i, '-') || is1(i, '*') || is1(i, '&') || is1(i, '!') || is1(i, '~') {
+            // An operator that starts a line never continues an expression.
+            if pi < 0 || T[i].nl > 0 || !ends_operand(pi) {
+                T[i].unary = true
+            }
+        } else if is1(i, '<') {
+            if !T[i].sp && pi >= 0 && T[pi].k == K_WORD && !is_kw(pi) && i + 1 < nt && !T[i + 1].sp &&
+                looks_like_type(i + 1) {
+                T[i].gen = true
+                gdepth += 1
+            }
+        } else if is1(i, '>') && gdepth > 0 && !T[i].sp {
+            T[i].gen = true
+            gdepth -= 1
+        } else if is(i, ">>") && gdepth > 1 && !T[i].sp {
+            T[i].gen = true
+            gdepth -= 2
+        } else if is(i, "||") && (pi < 0 || !ends_operand(pi)) {
+            T[i].pipe = 3
+        } else if is1(i, '|') && (pi < 0 || !ends_operand(pi)) {
+            T[i].pipe = 1
+            for j in i + 1..nt {
+                if T[j].depth < T[i].depth {
+                    break
+                }
+                if T[j].depth == T[i].depth && T[j].k == K_OP && is1(j, '|') {
+                    T[j].pipe = 2
+                    i = j
+                    break
+                }
+            }
+        }
+        i += 1
+    }
+}
+
+/** *One space between tokens `a` and `b` when they share a line? */
+fn space(a: int, b: int) -> bool {
+    let pk = T[a].k
+    let nk = T[b].k
+    if nk == K_LCOM || nk == K_BCOM || pk == K_BCOM {
+        return true
+    }
+    if nk == K_CLOSE {
+        return ch(b) == '}' && !(pk == K_OPEN && ch(a) == '{')
+    }
+    if pk == K_OPEN {
+        return ch(a) == '{'
+    }
+    if nk == K_OP && (is1(b, ',') || is1(b, ';') || is1(b, '.') || is1(b, '?') || is(b, "::") || is1(b, ':') || is(b, "..")) {
+        return false
+    }
+    if pk == K_OP && (is1(a, '.') || is(a, "::") || is(a, "..") || is1(a, '#')) {
+        return false
+    }
+    if T[a].unary {
+        return false
+    }
+    if T[a].gen {
+        if is1(a, '<') {
+            return false
+        }
+        if nk == K_OPEN && ch(b) == '(' {
+            return false
+        }
+        if T[b].gen {
+            return false
+        }
+        return true
+    }
+    if T[b].gen {
+        return false
+    }
+    if T[a].pipe == 1 || T[b].pipe == 2 {
+        return false
+    }
+    if nk == K_OPEN && ch(b) == '(' {
+        if pk == K_WORD && (!is_kw(a) || is(a, "fn")) {
+            return false
+        }
+        if pk == K_CLOSE && ch(a) != '}' {
+            return false
+        }
+        if pk == K_OP && is1(a, '?') {
+            return false
+        }
+        return true
+    }
+    if nk == K_OPEN && ch(b) == '[' {
+        if pk == K_WORD && !is_kw(a) {
+            return false
+        }
+        if pk == K_CLOSE && ch(a) != '}' {
+            return false
+        }
+        return true
+    }
+    // `[]int`, `[4]u8`, `[]fn() -> T`: a type after its brackets.
+    if pk == K_CLOSE && ch(a) == ']' && nk == K_WORD && (!is_kw(b) || is(b, "fn")) {
+        let mut q = prev_code(T[a].mate)
+        while q >= 0 && T[q].k == K_CLOSE && ch(q) == ']' {
+            q = prev_code(T[q].mate)
+        }
+        if q < 0 || !ends_operand(q) {
+            return false
+        }
+    }
+    return true
+}
+
+// --- printing -------------------------------------------------------------------
+
+let mut OUT: []u8 = []u8 {}
+/** *Column of the next byte. */
+let mut COL: int = 0
+/** *Last token written, -1 at the start of a line. */
+let mut LAST: int = -1
+/** *Per `{`: print as a block (forced, or written across lines). */
+let mut BLOCK: []bool = []bool {}
+/** *Items of the groups being broken, as C's fixed 4096-slot stack counts */
+/** *them: past it the nesting is too deep. */
+let mut USED: int = 0
+
+fn is_open(i: int, c: int) -> bool {
+    return T[i].k == K_OPEN && ch(i) == c
+}
+
+fn newline(ind: int) {
+    while OUT.len > 0 && OUT[OUT.len - 1] == u8(' ') {
+        pop(OUT)
+    }
+    push(OUT, u8('\n'))
+    for k in 0..ind {
+        push(OUT, u8(' '))
+    }
+    COL = ind
+    LAST = -1
+}
+
+fn put(i: int) {
+    if LAST >= 0 && space(LAST, i) {
+        push(OUT, u8(' '))
+        COL += 1
+    }
+    let s = T[i].start
+    let e = s + T[i].len
+    for q in s..e {
+        push(OUT, u8(SRC[q]))
+    }
+    if T[i].width >= INF {
+        let mut nlp = e
+        while nlp > s && SRC[nlp - 1] != '\n' {
+            nlp -= 1
+        }
+        COL = text_width(SRC, nlp, e)
+    } else {
+        COL += T[i].width
+    }
+    LAST = i
+}
+
+fn put_text(s: string) {
+    buf.push_str(&mut OUT, s)
+    COL += s.len
+}
+
+/** *A `{` that prints as a block: written across lines, or forced. */
+fn is_block(i: int) -> bool {
+    return is_open(i, '{') && BLOCK[i]
+}
+
+/** *Width of `[a, b)` on one line, `INF` if something in it must break. */
+fn flat_w(a: int, b: int) -> int {
+    let mut w = 0
+    for i in a..b {
+        if T[i].k == K_LCOM || T[i].width >= INF {
+            return INF
+        }
+        if is_block(i) && T[i].mate > i + 1 {
+            return INF
+        }
+        if T[i].k == K_OP && is1(i, ',') && i + 1 < b && T[i + 1].k == K_CLOSE {
+            continue
+        }
+        if i > a && space(i - 1, i) {
+            w += 1
+        }
+        w += T[i].width
+        if w >= INF {
+            return INF
+        }
+    }
+    return w
+}
+
+/** *Width from `k` up to the next place a line can break: through the next */
+/** *opener, or to `b`. `all` says the run reached `b`. */
+struct RestW {
+    w: int,
+    all: bool,
+}
+
+fn rest_w(k: int, b: int) -> RestW {
+    let mut w = 0
+    for i in k..b {
+        if T[i].k == K_LCOM {
+            break
+        }
+        if i > 0 && space(i - 1, i) {
+            w += 1
+        }
+        w += if T[i].width >= INF { 0 } else { T[i].width }
+        if T[i].k == K_OPEN {
+            return RestW { w: w, all: false }
+        }
+    }
+    return RestW { w: w, all: true }
+}
+
+/** *One line. A trailing comma (`g(1, 2,)`) only belongs to a broken list, */
+/** *and only `{ }` and call lists shed it: the same ones `list_comma` allows. */
+fn emit_flat(a: int, b: int) {
+    for i in a..b {
+        if T[i].k == K_OP && is1(i, ',') && i + 1 < b && T[i + 1].k == K_CLOSE &&
+            (is_open(T[i + 1].mate, '{') || is_call(T[i + 1].mate)) {
+            continue
+        }
+        put(i)
+    }
+}
+
+/** *One item of a group: tokens `[s, e)`, the comma after it (or -1). */
+struct Item {
+    s: int,
+    e: int,
+    comma: int,
+}
+
+/** *The items of group `(i, mate)`, split at commas at its own level; at */
+/** *most `max`. */
+fn split_items(i: int, max: int) -> []Item {
+    let j = T[i].mate
+    let mut items = []Item {}
+    let mut s = i + 1
+    let mut depth = 0
+    let mut k = i + 1
+    while k < j {
+        if T[k].k == K_OPEN {
+            k = T[k].mate + 1
+            continue
+        }
+        if T[k].gen {
+            depth += if is1(k, '<') { 1 } else if is(k, ">>") { -2 } else { -1 }
+        }
+        if T[k].pipe == 1 {
+            depth += 1
+        }
+        if T[k].pipe == 2 {
+            depth -= 1
+        }
+        if depth <= 0 && T[k].k == K_OP && is1(k, ',') {
+            if items.len < max {
+                push(items, Item { s: s, e: k, comma: k })
+            }
+            s = k + 1
+            depth = 0
+        }
+        k += 1
+    }
+    if s < j && items.len < max {
+        push(items, Item { s: s, e: j, comma: -1 })
+    }
+    return items
+}
+
+/** *A `fn` parameter list, which takes no trailing comma. */
+fn is_params(i: int) -> bool {
+    let mut p = prev_code(i)
+    if p < 0 {
+        return false
+    }
+    if T[p].k == K_WORD && is(p, "fn") {
+        return true
+    }
+    if T[p].k == K_OP && T[p].gen {
+        // `fn name<T>(`: walk back over the generics.
+        let mut q = p
+        while q >= 0 && !(T[q].k == K_OP && T[q].gen && is1(q, '<')) {
+            q -= 1
+        }
+        p = prev_code(q)
+    }
+    if p < 0 || T[p].k != K_WORD {
+        return false
+    }
+    let q = prev_code(p)
+    return q >= 0 && T[q].k == K_WORD && is(q, "fn")
+}
+
+/** *A call's argument list: `(` right after the callee. Any other `(` groups */
+/** *an expression or makes a tuple, where a trailing comma changes meaning. */
+fn is_call(i: int) -> bool {
+    if !is_open(i, '(') {
+        return false
+    }
+    let p = prev_code(i)
+    return p >= 0 && ends_operand(p) && !T[i].sp
+}
+
+/** *A line comment among the items of a group, not inside one of them. */
+fn has_comment(a: int, b: int) -> bool {
+    let mut k = a
+    while k < b {
+        if T[k].k == K_OPEN {
+            k = T[k].mate
+        } else if T[k].k == K_LCOM {
+            return true
+        }
+        k += 1
+    }
+    return false
+}
+
+/** *Print a group that does not fit on the line. */
+fn emit_broken(i: int, ind: int) {
+    let j = T[i].mate
+    if USED + 512 > 4096 {
+        die("groups nested too deeply", "")
+    }
+    let mut items = split_items(i, 512)
+    let n = items.len
+    USED += n
+    let brace = is_open(i, '{')
+
+    // A one-statement `{ ... }` that does not fit becomes a block.
+    if brace && n <= 1 {
+        USED -= n
+        BLOCK[i] = true
+        emit_block(i, ind)
+        return
+    }
+    // The last argument ends in a block or a literal (`fn() { ... }`,
+    // `RPoint { ... }`), or is the only one and ends in a call
+    // (`Box(style = Style(...))`): keep its opening on this line when the
+    // arguments before it fit, and let it break on its own.
+    if !brace && n >= 1 && !has_comment(i + 1, j) {
+        let l = items[n - 1]
+        let endc = l.e - 1
+        let hug = T[endc].k == K_CLOSE && T[endc].mate >= l.s && (ch(endc) == '}' || n == 1)
+        let mut head = 1
+        let mut ok = hug
+        let mut k = 0
+        while ok && k + 1 < n {
+            let w = flat_w(items[k].s, items[k].e)
+            if w >= INF {
+                ok = false
+            }
+            head += w + 2
+            k += 1
+        }
+        if ok {
+            let first = rest_w(l.s, l.e)
+            ok = COL + 1 + head + first.w <= WIDTH
+        }
+        if ok {
+            put(i)
+            for k2 in 0..n - 1 {
+                emit_flat(items[k2].s, items[k2].e)
+                put(items[k2].comma)
+            }
+            emit_range(l.s, l.e, ind, 1)
+            put(j)
+            USED -= n
+            return
+        }
+    }
+    // A grouping `( expr )`: keep it on the line and let the expression break
+    // inside.
+    if is_open(i, '(') && !is_call(i) && !is_params(i) && n == 1 && !has_comment(i + 1, j) {
+        put(i)
+        emit_range(items[0].s, items[0].e, ind, 1)
+        put(j)
+        USED -= n
+        return
+    }
+    let trailing = brace || (is_call(i) && !is_params(i))
+    put(i)
+    for k in 0..n {
+        let it = items[k]
+        let mut s = it.s
+        // Comments written on their own lines before the item.
+        while s < it.e && T[s].k == K_LCOM {
+            if T[s].nl > 0 || k == 0 {
+                newline(ind + INDENT)
+            }
+            put(s)
+            s += 1
+        }
+        if s < it.e {
+            newline(ind + INDENT)
+            emit_range(s, it.e, ind + INDENT, 1)
+        }
+        if it.comma >= 0 {
+            put(it.comma)
+        } else if trailing && s < it.e {
+            put_text(",")
+        }
+        // A comment after the comma, on the same line, stays with it.
+        if it.comma >= 0 && k + 1 < n && T[items[k + 1].s].k == K_LCOM && T[items[k + 1].s].nl == 0 {
+            put(items[k + 1].s)
+            items[k + 1].s += 1
+        }
+    }
+    newline(ind)
+    put(j)
+    USED -= n
+}
+
+/** *Last `}` of an `if` / `else` chain whose first block opens at `i`. */
+fn chain_end(i: int) -> int {
+    let nt = T.len
+    let mut k = T[i].mate
+    while k + 1 < nt && T[k + 1].k == K_WORD && is(k + 1, "else") {
+        let mut m = k + 2
+        while m < nt && !is_open(m, '{') && T[m].k != K_CLOSE {
+            if T[m].k == K_OPEN {
+                m = T[m].mate
+            }
+            m += 1
+        }
+        if m >= nt || !is_open(m, '{') {
+            break
+        }
+        k = T[m].mate
+    }
+    return k
+}
+
+/** *Rank of an operator a long line may break after, loosest first: `||`, */
+/** *`&&`, a pattern's `|`, then `+` / `-`, then a list row's `,`. 0 for */
+/** *anything else. */
+fn chain_rank(k: int) -> int {
+    if T[k].k != K_OP || T[k].pipe != 0 || T[k].unary {
+        return 0
+    }
+    if is(k, "||") {
+        return 1
+    }
+    if is(k, "&&") {
+        return 2
+    }
+    if is1(k, '|') {
+        return 3
+    }
+    if is1(k, '+') || is1(k, '-') {
+        return 4
+    }
+    // A row of a list written across lines (`[]int {` ... `}`).
+    if is1(k, ',') {
+        return 5
+    }
+    return 0
+}
+
+/** *Break a long chain after each of its loosest operators: `a &&` / */
+/** *`b &&` / `c`. True if it did. */
+fn emit_chain(a: int, b: int, ind: int, tail: int) -> bool {
+    // Only the part before the first `{` is the chain: an `if` / `else` body
+    // breaks on its own before the condition does.
+    let mut end = b
+    let mut k = a
+    while k < b {
+        if T[k].k == K_LCOM || is_open(k, '{') {
+            end = k
+            break
+        }
+        if T[k].k == K_OPEN {
+            k = T[k].mate
+        }
+        k += 1
+    }
+    // An operator that already ends the range is where it was cut: a piece of
+    // a chain is not split again.
+    let mut rank = 0
+    k = a
+    while k + 1 < end {
+        if T[k].k == K_OPEN {
+            k = T[k].mate + 1
+            continue
+        }
+        let r = chain_rank(k)
+        if r != 0 && (rank == 0 || r < rank) {
+            rank = r
+        }
+        k += 1
+    }
+    if rank == 0 {
+        return false
+    }
+    let w = flat_w(a, end)
+    let more = if end < b { 2 } else { tail }
+    if w < INF && COL + 1 + w + more <= WIDTH {
+        return false
+    }
+    let mut s = a
+    let mut first = true
+    k = a
+    while k <= end {
+        let mut cut = if k == end { 1 } else { 0 }
+        if cut == 0 && T[k].k == K_OPEN {
+            k = T[k].mate + 1
+            continue
+        }
+        if cut == 0 && chain_rank(k) == rank {
+            cut = 2
+        }
+        if cut == 0 {
+            k += 1
+            continue
+        }
+        let e = if cut == 2 { k + 1 } else { k }
+        if e > s {
+            // `&&` / `||`: one operand a line. A pattern's `|` and a sum fill
+            // each line as far as it goes.
+            if !first {
+                let pw = flat_w(s, e)
+                let room = if e == end { if end < b { 2 } else { tail } } else { 0 }
+                let fill = rank >= 3 && pw < INF && COL + 1 + pw + room <= WIDTH
+                // A list row wraps to the list's own indent: each line of it is
+                // a row again next time.
+                if !fill {
+                    newline(if rank == 5 { ind } else { ind + INDENT })
+                }
+            }
+            emit_range(s, e, if first || rank == 5 { ind } else { ind + INDENT }, if e == b { tail } else { 0 })
+            first = false
+        }
+        s = e
+        k += 1
+    }
+    if end < b {
+        emit_range(end, b, ind, tail)
+    }
+    return true
+}
+
+/** *Print tokens `[a, b)` from the current column. `ind` is the indent of */
+/** *the line they started on; `tail` is what must still fit after them. */
+fn emit_range(a: int, b: int, ind: int, tail: int) {
+    if emit_chain(a, b, ind, tail) {
+        return
+    }
+    let mut i = a
+    while i < b {
+        if T[i].k == K_LCOM {
+            put(i)
+            i += 1
+            if i < b {
+                newline(ind + INDENT)
+            }
+            continue
+        }
+        if T[i].k != K_OPEN {
+            put(i)
+            i += 1
+            continue
+        }
+        let j = T[i].mate
+        if is_block(i) {
+            emit_block(i, ind)
+            i = j + 1
+            continue
+        }
+        let lead = if LAST >= 0 && space(LAST, i) { 1 } else { 0 }
+        // An `if` / `else` chain fits or breaks as a whole.
+        if is_open(i, '{') {
+            let ce = chain_end(i)
+            if ce > j && ce < b {
+                let r = rest_w(ce + 1, b)
+                let rest = r.w + if r.all { tail } else { 0 }
+                let w = flat_w(i, ce + 1)
+                if w < INF && COL + lead + w + rest <= WIDTH {
+                    emit_flat(i, ce + 1)
+                } else {
+                    for k in i..ce + 1 {
+                        if is_open(k, '{') && T[k].depth == T[i].depth {
+                            BLOCK[k] = true
+                        }
+                    }
+                    emit_range(i, ce + 1, ind, 0)
+                }
+                i = ce + 1
+                continue
+            }
+        }
+        let r = rest_w(j + 1, b)
+        let rest = r.w + if r.all { tail } else { 0 }
+        let w = flat_w(i, j + 1)
+        // `[...]` is an index or a type, never a list: it stays on its line.
+        if is_open(i, '[') || (w < INF && COL + lead + w + rest <= WIDTH) {
+            emit_flat(i, j + 1)
+        } else {
+            emit_broken(i, ind)
+        }
+        i = j + 1
+    }
+}
+
+/** *Does the token at `k` (a line start inside a block) continue the */
+/** *statement before it rather than begin one? */
+fn continues(k: int, a: int) -> bool {
+    if k <= a {
+        return false
+    }
+    let p = k - 1
+    if T[p].k == K_LCOM || T[p].k == K_BCOM {
+        return false
+    }
+    if T[k].k == K_OP && (is1(k, '.') || is1(k, '?')) {
+        return true
+    }
+    if T[k].k == K_WORD && is(k, "else") {
+        return true
+    }
+    if T[p].k == K_OP && !is1(p, ',') && !is1(p, ';') && !is1(p, ':') && !is1(p, '?') && !is(p, "++") &&
+        !is(p, "--") && !T[p].gen && T[p].pipe != 2 {
+        return true
+    }
+    return false
+}
+
+fn is_case_label(k: int) -> bool {
+    return T[k].k == K_WORD && (is(k, "case") || is(k, "default"))
+}
+
+/** *Statements of `[a, b)`, one per line at `ind`. `top` is the file level. */
+/** *In a switch body, `case` / `default` sit at `ind` and the statements */
+/** *under each sit one level in. */
+fn emit_stmts(a: int, b: int, ind: int, top: bool) {
+    let mut s = a
+    let mut first = true
+    let mut in_case = false
+    while s < b {
+        let mut e = s + 1
+        while e < b {
+            if T[e - 1].k == K_OPEN {
+                e = T[e - 1].mate + 1
+            }
+            if e >= b {
+                break
+            }
+            if T[e].nl > 0 && !continues(e, a) {
+                break
+            }
+            e += 1
+        }
+        if e > b {
+            e = b
+        }
+        if first && !top && T[s].k == K_LCOM && T[s].nl == 0 {
+            // `{ // note`: a comment on the opening line stays there.
+            put(s)
+        } else {
+            let mut at_ind = ind
+            if is_case_label(s) {
+                in_case = true
+            } else if in_case {
+                at_ind = ind + INDENT
+            }
+            if !first && T[s].nl >= 2 {
+                push(OUT, u8('\n'))
+            }
+            if !(first && top) {
+                newline(at_ind)
+            }
+            emit_range(s, e, at_ind, 0)
+        }
+        first = false
+        s = e
+    }
+}
+
+fn emit_block(i: int, ind: int) {
+    let j = T[i].mate
+    put(i)
+    if j == i + 1 {
+        put(j)
+        return
+    }
+    emit_stmts(i + 1, j, ind + INDENT, false)
+    newline(ind)
+    put(j)
+}
+
+// --- driver ---------------------------------------------------------------------
+
+fn tok_is(x: &Lexed, i: int, s: string) -> bool {
+    return x.toks[i].len == s.len && x.src[x.toks[i].start] == s[0] && str.has_at(x.src, s, x.toks[i].start)
+}
+
+/** *A comma right before `}` or a call's `)`: the one a broken list adds or */
+/** *a flat one drops. Grouping parens and `[...]` never take one. */
+fn list_comma(x: &Lexed, i: int) -> bool {
+    if x.toks[i].len != 1 || x.src[x.toks[i].start] != ',' || i + 1 >= x.toks.len || x.toks[i + 1].k != K_CLOSE {
+        return false
+    }
+    let c = x.src[x.toks[i + 1].start]
+    if c == '}' {
+        return true
+    }
+    if c != ')' {
+        return false
+    }
+    // A call's `(`: right after a name, `)`, `]`, or `>`.
+    let o = x.toks[i + 1].mate
+    if o <= 0 || x.toks[o].sp {
+        return false
+    }
+    let p = o - 1
+    let pk = x.toks[p].k
+    if pk == K_WORD {
+        return !x.toks[p].kw
+    }
+    return pk == K_CLOSE || (pk == K_OP && tok_is(x, p, ">"))
+}
+
+/** *Tokens equal, ignoring trailing list commas. */
+fn same_tokens(x: &Lexed, y: &Lexed) -> bool {
+    let mut i = 0
+    let mut j = 0
+    while true {
+        while i < x.toks.len && list_comma(x, i) {
+            i += 1
+        }
+        while j < y.toks.len && list_comma(y, j) {
+            j += 1
+        }
+        if i >= x.toks.len || j >= y.toks.len {
+            return i >= x.toks.len && j >= y.toks.len
+        }
+        let a = x.toks[i]
+        let b = y.toks[j]
+        if a.k != b.k || a.len != b.len {
+            return false
+        }
+        for q in 0..a.len {
+            if x.src[a.start + q] != y.src[b.start + q] {
+                return false
+            }
+        }
+        i += 1
+        j += 1
+    }
+    return false
+}
+
+/** *A formatted source, or why it could not be formatted. */
+struct Formatted {
+    ok: bool,
+    text: string,
+    err: string,
+}
+
+fn format_source(src: string) -> Formatted {
+    let lx = lex(src)
+    if lx.err.len > 0 {
+        return Formatted { ok: false, text: "", err: lx.err }
+    }
+    SRC = lx.src
+    T = lx.toks
+    let nt = T.len
+    BLOCK = []bool {}
+    for i in 0..nt + 1 {
+        push(BLOCK, false)
+    }
+    for i in 0..nt {
+        if !is_open(i, '{') {
+            continue
+        }
+        for k in i + 1..T[i].mate + 1 {
+            if T[k].nl > 0 {
+                BLOCK[i] = true
+                break
+            }
+        }
+    }
+    classify()
+    OUT = []u8 {}
+    COL = 0
+    LAST = -1
+    USED = 0
+    if nt > 0 {
+        emit_stmts(0, nt, 0, true)
+        while OUT.len > 0 && OUT[OUT.len - 1] == u8(' ') {
+            pop(OUT)
+        }
+        push(OUT, u8('\n'))
+    }
+    let out = buf.to_string(&OUT)
+    let back = lex(out)
+    if back.err.len > 0 || !same_tokens(&lx, &back) {
+        return Formatted { ok: false, text: "", err: "internal error: output does not match the input's tokens (file left as is)" }
+    }
+    return Formatted { ok: true, text: out, err: "" }
+}
+
+/** *All of stdin. */
+fn read_all_stdin() -> string {
+    let mut b = []u8 {}
+    while true {
+        let chunk = sys.read_stdin(65536)
+        buf.push_str(&mut b, chunk)
+        if chunk.len < 65536 {
+            break
+        }
+    }
+    return buf.to_string(&b)
+}
+
+/** *The file at `path`; exits when it cannot be read. */
+fn read_source(path: string) -> string {
+    let r = sys.read(path)
+    if r.tag == ResultTag.Err {
+        die("cannot open", path)
+    }
+    return r.val
+}
+
+/** *Text up to its first NUL, as C compares and prints it. */
+fn c_text(s: string) -> string {
+    let z = str.index_of_byte(s, 0)
+    if z >= 0 {
+        return str.slice(s, 0, z)
+    }
+    return s
+}
+
+fn main() {
+    let mut write_back = false
+    let mut check = false
+    let mut nfiles = 0
+    let argc = sys.argc()
+    for i in 1..argc {
+        let a = sys.arg(i)
+        if a == "-w" {
+            write_back = true
+        } else if a == "--check" {
+            check = true
+        } else if a.len > 1 && a[0] == '-' {
+            die("unknown option", a)
+        } else {
+            nfiles += 1
+        }
+    }
+    if (write_back || check) && nfiles == 0 {
+        die("no file given", "")
+    }
+    if nfiles == 0 {
+        let f = format_source(c_text(read_all_stdin()))
+        if !f.ok {
+            die(f.err, "<stdin>")
+        }
+        fmt.write(f.text)
+        return
+    }
+    let mut status = 0
+    for i in 1..argc {
+        let path = sys.arg(i)
+        if path.len > 1 && path[0] == '-' {
+            continue
+        }
+        let src = c_text(read_source(path))
+        let f = format_source(src)
+        if !f.ok {
+            fmt.ewrite("loam-fmt: {{path}}: {{f.err}}\n")
+            status = 2
+            continue
+        }
+        if check {
+            if src != f.text {
+                fmt.println(path)
+                if status == 0 {
+                    status = 1
+                }
+            }
+        } else if write_back {
+            if src != f.text {
+                if sys.write_file(path, f.text) != 0 {
+                    die("cannot write", path)
+                }
+            }
+        } else {
+            fmt.write(f.text)
+        }
+    }
+    sys.exit(status)
+}

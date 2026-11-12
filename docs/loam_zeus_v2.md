@@ -417,7 +417,7 @@ doesn't leak back in.
 
 Expected effects, to be **measured, not assumed**: node arena roughly halved,
 draw-list bytes per op roughly halved, wasm binary smaller, NEON kernels 2× lanes.
-Land a benchmark in `make test` in the same phase so the claim is checkable.
+Land a benchmark in `./nob.sh test` in the same phase so the claim is checkable.
 
 ## 3.8 Below 32 bits: which `Node` fields, and when
 
@@ -1060,7 +1060,7 @@ Consequences worth noting:
   needs a real search-path notion (`LOAM_PATH`, or a workspace manifest at the
   root) instead of "`std/` next to the compiler." Do this properly once; it's the
   same machinery `import "pkg:name"` (§1.8) needs.
-- The compiler's `make test` no longer depends on Zeus. Zeus gets its own test
+- The compiler's `./nob.sh test` no longer depends on Zeus. Zeus gets its own test
   suite. That separation is the point.
 - `zeus/text/` sits inside Zeus for now. If a non-UI consumer needs it later,
   promote it to a top-level `text/`.
@@ -1177,13 +1177,13 @@ source, so the C compiler's diagnostics name Loam lines and, with `-g`
 (`LOAM_DEBUG=1`), so do debuggers, profilers, and sanitizers. `#[test]` fns are
 collected and run by `loam test`, which calls `std:test`'s `begin`/`ok`/
 `summary`; the assertions (`test.assert`, `test.assert_eq_*`) are ordinary Loam
-in `std/test.loam` built on the `panic(msg)` primitive. `make test` runs
+in `std/test.loam` built on the `panic(msg)` primitive. `./nob.sh test` runs
 `packages/loam/tests/inlang/*.loam` and expects an all-pass exit.
 
 `#line` directives in generated C; `#[test]` fns and `loam test`.
 **Exit:** a trap in `app.loam` reports a `.loam` line in lldb (the panic message
 names it directly, and the `#line`-mapped debug line table references
-`app.loam` under `-g`); `make test` runs in-language tests. **Green.**
+`app.loam` under `-g`); `./nob.sh test` runs in-language tests. **Green.**
 
 ### Phase 13 — Text in-tree
 
@@ -1336,7 +1336,7 @@ One gotcha: `zeus_plat.c:322` gates on `ZEUS_HEADLESS` —
 if (getenv("ZEUS_HEADLESS") || !plat_run) return 1;
 ```
 
-so if that's exported (e.g. left over from `make test`) the binary starts, does nothing, and exits 0. `unset ZEUS_HEADLESS LOAM_HEADLESS MAYA_HEADLESS` first. `zeli build` already strips them at build time, but the check is at *runtime*.
+so if that's exported (e.g. left over from `./nob.sh test`) the binary starts, does nothing, and exits 0. `unset ZEUS_HEADLESS LOAM_HEADLESS MAYA_HEADLESS` first. `zeli build` already strips them at build time, but the check is at *runtime*.
 
 ## Wasm
 

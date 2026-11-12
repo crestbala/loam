@@ -10,19 +10,19 @@ HERE=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 d=$HERE
 REPO=
 while [ "$d" != / ]; do
-  if [ -f "$d/Makefile" ] && [ -d "$d/packages/loam/src" ]; then
+  if [ -f "$d/nob.sh" ] && [ -d "$d/packages/loam/compiler" ]; then
     REPO=$d
     break
   fi
   d=$(CDPATH= cd -- "$d/.." && pwd)
 done
 if [ -z "$REPO" ]; then
-  echo "kit.sh: could not find the loam repo (Makefile + packages/loam/src/)" >&2
+  echo "kit.sh: could not find the loam repo (nob.sh + packages/loam/compiler/)" >&2
   exit 1
 fi
 if [ ! -x "$REPO/bin/loamc" ]; then
   echo "kit.sh: building loam"
-  make -C "$REPO" -j4
+  (cd "$REPO" && ./nob.sh)
 fi
 OUT=${1:-$HERE/../build/linux-kit}
 RT=$REPO/packages/loam/runtime

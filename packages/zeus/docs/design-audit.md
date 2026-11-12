@@ -384,7 +384,7 @@ answers depending on how you arrived.
 | 4 | Components, in batches | **in progress — batches 1–14** | `feat: paint-only motion + feedback primitives` / `feat: Accordion` / `feat: overlay family` / `feat: elevation + stroked borders` / `feat: Menu` / `feat: Collapsible + Drawer` / `fix: anchored floaters in a scroller` / `feat: Select + Combobox` / `feat: exit motion + reveal` / `fix: web host paint/a11y/wheel` / `fix: anchored placement, EASE béziers, layout-driving animate` / `feat: Tabs/RadioGroup arrows + roving tabindex` / `feat: Dialog focus trap + Esc` / `feat: 44dp touch hit target` / `perf: skip hover-fade math on touch` |
 | 5 | Gallery + docs (`spec.md`, a `www/` design-system page) | not started | — |
 
-`make test` at the end of phase 3: **361 passed, 0 failed** (the six network
+`./nob.sh test` at the end of phase 3: **361 passed, 0 failed** (the six network
 suites — `http_auth`, `http_h1_live`, `http_h2_live`, `net_listen`,
 `zeus_async_rpc`, `zeus_stream` — need outbound sockets and fail in a sandboxed
 run, as they did before this phase). All four hosts build — Cocoa, wasm, iOS

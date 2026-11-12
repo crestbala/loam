@@ -9,7 +9,7 @@ This file is the **next series of phases**: make the same Zeus app easier
 to write and run on every host. Language
 architecture: [loam.md](loam.md). C seam: [boundary.md](boundary.md).
 
-Status: tick a phase only when its exit criteria run green in `make test`
+Status: tick a phase only when its exit criteria run green in `./nob.sh test`
 (headless) unless a box says otherwise. One phase at a time.
 
 ---
@@ -44,7 +44,7 @@ one thread; native GUI is macOS.
 
 ## Phases
 
-Definition of done = the exit line, verified by `make test` unless noted.
+Definition of done = the exit line, verified by `./nob.sh test` unless noted.
 
 ### Phase 1 — One host entry
 
@@ -165,7 +165,7 @@ contradicts its comment, arity-3 tables, a `Navbar` that always ships Dark.
       `Route.build`, `zeus.App`) take `fn(...) -> Node`. A section that used to
       emit several siblings flattens into a `Column(spacing.SECTION)` so the
       section rhythm survives.
-- **Exit:** gallery DRAW goldens byte-identical at scale 1.0; `make test`
+- **Exit:** gallery DRAW goldens byte-identical at scale 1.0; `./nob.sh test`
   green. **Green.**
 
 ### Phase 8 — Engine leftovers
@@ -187,7 +187,7 @@ contradicts its comment, arity-3 tables, a `Navbar` that always ships Dark.
 - [x] Linux GUI host: `packages/zeus/hosts/desktop/linux.c` (X11 fill + text).
       Linked when `loam --target=native` is not headless on Linux (`-lX11`).
       iOS device signing stays out of scope.
-- **Exit:** headless tests green. **Green** (`make test`). Rich text remains
+- **Exit:** headless tests green. **Green** (`./nob.sh test`). Rich text remains
   its own project.
 
 ### Phase 9 — Component system (Skin + slots)
@@ -214,7 +214,7 @@ tokens, and raw Box fields. No one overlay restyled a control.
       enter fade is ease-out. Rest `press_amt` / `hover_amt` are 0 so DRAW
       goldens stay pixel-identical at scale 100.
 - **Exit:** `zeus_skin.loam` + existing component tests + DRAW goldens
-  green in `make test`. Gallery Foundations shows a Customize row. **Green.**
+  green in `./nob.sh test`. Gallery Foundations shows a Customize row. **Green.**
 
 ---
 

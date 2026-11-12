@@ -30,7 +30,7 @@ MODE=both
 [ "$1" = "--headless" ] && MODE=headless
 
 if [ ! -x "$LOAM" ]; then
-  echo "mem-baseline: build the compiler first: make -C \"$ROOT\" bin/loamc" >&2
+  echo "mem-baseline: build the compiler first: cd \"$ROOT\" && ./nob.sh" >&2
   exit 1
 fi
 

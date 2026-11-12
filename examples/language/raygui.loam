@@ -144,7 +144,7 @@ fn main() {
 
     raygui.close()
 
-    // The RAM test: one line per sample class, scriptable from `make test` or
+    // The RAM test: one line per sample class, scriptable from `./nob.sh test` or
     // a shell loop. `growth` is max - min over the whole run.
     fmt.println("raygui frames", frames)
     fmt.println("raygui ram_kb first", ram_first, "min", ram_min, "max", ram_max)

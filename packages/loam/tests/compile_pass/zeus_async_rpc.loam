@@ -3,7 +3,7 @@
 // trip (`http.call_async`) completes while the pump keeps running frames.
 //
 // The RPC server is this same binary re-executed with LOAM_ASYNC_SRV=1 (the
-// make test runner executes binaries from the repo root, so the child path
+// nob test runner executes binaries from the repo root, so the child path
 // below matches the tmp output path). The child binds an ephemeral port,
 // writes "127.0.0.1:<port>" to a file, serves one Echo.Ping, and exits.
 

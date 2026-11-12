@@ -65,7 +65,7 @@ enum Kind {
     Error = 43,
 }
 
-// `flags`, as src/ast.h.
+// `flags`, as C's ast.h.
 const F_AWAIT: int = 32
 const F_WRAPPED_LIT: int = 128
 
@@ -139,7 +139,7 @@ struct NodeBuild {
     kids: []int,
     kids2: []int,
     strs: []string,
-    // What typecheck sets (src/ast.h's fields of the same names).
+    // What typecheck sets (C's ast.h fields of the same names).
     /** *The node's type, an index into `types.TYPES`, or -1. */
     ty: int,
     place_mut: int,
@@ -179,7 +179,7 @@ struct Node {
     a: int,
     b: int,
     c: int,
-    // What typecheck sets (src/ast.h's fields of the same names).
+    // What typecheck sets (C's ast.h fields of the same names).
     /** *The node's type, an index into `types.TYPES`, or -1. */
     ty: int,
     /** *The declaration a name or field resolved to, or `NONE`. */
@@ -237,7 +237,7 @@ struct NodeExtra {
     cap_types: []int,
 }
 
-// `marks` bits: the typecheck booleans of src/ast.h.
+// `marks` bits: the typecheck booleans of C's ast.h.
 const M_PRINTLN: int = 1
 const M_BOX_NEW: int = 2
 const M_VEC_PUSH: int = 4
@@ -577,4 +577,14 @@ fn append_inits(lit: int, names: []string, values: []int) {
         push(LIT_NAMES, names[k])
         push(NODES[lit].kids, values[k])
     }
+}
+
+/** *Empty the arena and the diagnostics, for a long-lived process (the */
+/** *language server) that checks a program again. */
+fn reset() {
+    NODES = []Node {}
+    INFO = []NodeInfo {}
+    EXTRA = []NodeExtra { empty_extra() }
+    LIT_NAMES = []string {}
+    DIAGS = []Diag {}
 }

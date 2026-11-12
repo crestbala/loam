@@ -20,6 +20,10 @@ import "std:conv"
 import "lexer.loam"
 import "ast.loam"
 
+/** *Set by the language server: a trailing `recv.` is what the user is */
+/** *typing, not a syntax error (see `parse_postfix`). */
+let mut EDITING: bool = false
+
 struct Parser {
     lx: Lexer,
     cur: Token,
@@ -1165,6 +1169,12 @@ fn parse_postfix(p: &mut Parser, first: int) -> int {
         }
         if eat(p, Tok.Dot) {
             if !eat(p, Tok.Ident) {
+                // While typing `recv.` the next token is often `}` or the end:
+                // in an editor that is no error, so the rest still checks.
+                if EDITING && (check(p, Tok.Eof) || check(p, Tok.Rbrace) || check(p, Tok.Rparen) ||
+                    check(p, Tok.Comma) || check(p, Tok.Rbracket) || check(p, Tok.Semicolon)) {
+                    break
+                }
                 error(p, "expected field name")
                 break
             }

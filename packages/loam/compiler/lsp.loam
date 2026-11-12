@@ -1,0 +1,2146 @@
+// lsp — loam-lsp: the Language Server Protocol over stdin and stdout, on the
+// Loam front end (a port of the C compiler's lsp.c, which it replaced).
+//
+// Full document sync, plus incremental `contentChanges` when a client sends
+// them. didOpen / didChange recheck the editor buffer (never a stale file on
+// disk) and publish diagnostics (the right file URI, the token span). Hover,
+// go-to-definition, completion (modules, methods, locals, keywords) and
+// semantic tokens read the last check's typed arena.
+//
+// One program is checked at a time: the front end keeps its state in module
+// globals, and `check_buffer` resets every one of them before it loads.
+import "std:buf"
+import "std:fmt"
+import "std:result"
+import "std:str"
+import "std:sys"
+import "ast.loam"
+import "types.loam"
+import "lexer.loam"
+import "parser.loam"
+import "loader.loam"
+import "typecheck.loam"
+import "threadcheck.loam"
+import "borrowck.loam"
+import "boundscheck.loam"
+import "dump.loam"
+
+const NONE: int = -1
+const NO_TYPE: int = -1
+
+// --- the session ------------------------------------------------------------------
+
+/** *The document the arena holds, its path and its text; `HAVE` once it was */
+/** *checked. `HAS_URI` is C's non-NULL `Guri`. */
+let mut CUR_URI: string = ""
+let mut CUR_PATH: string = ""
+let mut CUR_TEXT: string = ""
+let mut HAS_URI: bool = false
+let mut HAVE: bool = false
+
+/** *Empty every front-end table, so a check starts from nothing. */
+fn session_clear() {
+    ast.reset()
+    dump.reset()
+    loader.reset()
+    typecheck.reset()
+    types.reset()
+    threadcheck.reset()
+    borrowck.reset()
+    boundscheck.reset()
+}
+
+/** *Load `path` with `src` as its text (imports from disk), typecheck, and run */
+/** *the later passes after a clean typecheck. The diagnostics are in */
+/** *`ast.DIAGS`. */
+fn session_check(path: string, src: string) {
+    session_clear()
+    loader.OVERRIDE_PATH = path
+    loader.OVERRIDE_SRC = src
+    let loaded = loader.load(path)
+    loader.OVERRIDE_PATH = ""
+    loader.OVERRIDE_SRC = ""
+    if !loaded || typecheck.MODS.len == 0 {
+        return
+    }
+    types.types_init()
+    if typecheck.typecheck_modules() > 0 {
+        return
+    }
+    let mut module_names = []string {}
+    let mut module_roots = []int {}
+    for m in 0..typecheck.MODS.len {
+        push(module_names, typecheck.MODS[m].name)
+        push(module_roots, typecheck.MODS[m].root)
+    }
+    threadcheck.threadcheck_modules(module_names, module_roots)
+    borrowck.borrowck_modules()
+    boundscheck.boundscheck_modules(module_roots)
+}
+
+// --- JSON-RPC framing --------------------------------------------------------------
+
+/** *One message: headers, a blank line, then `Content-Length` bytes. Not */
+/** *`ok` at end of input or on a short body. */
+fn read_message() -> JStr {
+    let mut len = -1
+    while true {
+        let line = sys.read_line()
+        if line.len == 0 {
+            return jnone()
+        }
+        if line[0] == '\n' || (line[0] == '\r' && line.len > 1 && line[1] == '\n') {
+            break
+        }
+        if line.len >= 15 && str.eq_fold(str.slice(line, 0, 15), "Content-Length:") {
+            len = atoi(line, 15)
+        }
+    }
+    if len < 0 {
+        return jnone()
+    }
+    let body = sys.read_stdin(len)
+    if body.len < len {
+        return jnone()
+    }
+    return JStr { ok: true, s: body }
+}
+
+fn send_raw(json: string) {
+    fmt.write("Content-Length: {{json.len}}\r\n\r\n{{json}}")
+}
+
+// --- JSON, as much as the protocol needs -------------------------------------------
+
+fn is_space(c: int) -> bool {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == 11 || c == 12
+}
+
+fn is_digit(c: int) -> bool {
+    return c >= '0' && c <= '9'
+}
+
+/** *The byte at `i`, or 0 past the end (C's NUL). */
+fn at(s: string, i: int) -> int {
+    if i >= 0 && i < s.len {
+        return s[i]
+    }
+    return 0
+}
+
+/** *C's `atoi` at `from`: spaces, a sign, digits. */
+fn atoi(s: string, from: int) -> int {
+    let mut i = from
+    while is_space(at(s, i)) {
+        i += 1
+    }
+    let mut neg = false
+    if at(s, i) == '-' || at(s, i) == '+' {
+        neg = at(s, i) == '-'
+        i += 1
+    }
+    let mut v = i64(0)
+    while is_digit(at(s, i)) {
+        if v < i64(1000000000000) {
+            v = v * i64(10) + i64(at(s, i) - '0')
+        }
+        i += 1
+    }
+    if neg {
+        v = i64(0) - v
+    }
+    if v > i64(2147483647) || v < i64(-2147483648) {
+        return 0
+    }
+    return int(v)
+}
+
+/** *Where the value of the first `"key":` at or after `from` starts, or -1. */
+fn find_key(json: string, from: int, key: string) -> int {
+    if from < 0 {
+        return -1
+    }
+    let pat = "\"{{key}}\""
+    let mut p = from
+    while true {
+        p = str.index_from(json, pat, p)
+        if p < 0 {
+            return -1
+        }
+        let mut q = p + pat.len
+        while is_space(at(json, q)) {
+            q += 1
+        }
+        if at(json, q) == ':' {
+            q += 1
+            while is_space(at(json, q)) {
+                q += 1
+            }
+            return q
+        }
+        p += 1
+    }
+    return -1
+}
+
+/** *A parsed JSON string: `ok` is C's non-NULL. */
+struct JStr {
+    ok: bool,
+    s: string,
+}
+
+fn jnone() -> JStr {
+    return JStr { ok: false, s: "" }
+}
+
+/** *The string value at `p` (`\uXXXX` reads as `?`), unescaped. */
+fn parse_json_string(json: string, p: int) -> JStr {
+    if p < 0 || at(json, p) != '"' {
+        return jnone()
+    }
+    let mut out = []u8 {}
+    let mut i = p + 1
+    let n = json.len
+    while i < n && json[i] != '"' && json[i] != 0 {
+        let mut c = json[i]
+        i += 1
+        if c == '\\' && i < n && json[i] != 0 {
+            let e = json[i]
+            i += 1
+            if e == 'n' {
+                c = '\n'
+            } else if e == 't' {
+                c = '\t'
+            } else if e == 'r' {
+                c = '\r'
+            } else if e == 'u' && at(json, i) != 0 && at(json, i + 1) != 0 && at(json, i + 2) != 0 && at(json, i + 3) != 0 {
+                i += 4
+                c = '?'
+            } else {
+                c = e
+            }
+        }
+        push(out, u8(c))
+    }
+    return JStr { ok: true, s: buf.to_string(&out) }
+}
+
+fn parse_json_int(json: string, p: int) -> int {
+    if p < 0 {
+        return 0
+    }
+    return atoi(json, p)
+}
+
+fn hex_digit(v: int) -> int {
+    if v < 10 {
+        return '0' + v
+    }
+    return 'a' + v - 10
+}
+
+/** *`s` as the inside of a JSON string. */
+fn json_escape(s: string) -> string {
+    let mut o = []u8 {}
+    for i in 0..s.len {
+        let c = s[i]
+        if c == '"' {
+            buf.push_str(&mut o, "\\\"")
+        } else if c == '\\' {
+            buf.push_str(&mut o, "\\\\")
+        } else if c == '\n' {
+            buf.push_str(&mut o, "\\n")
+        } else if c == '\r' {
+            buf.push_str(&mut o, "\\r")
+        } else if c == '\t' {
+            buf.push_str(&mut o, "\\t")
+        } else if c < 32 {
+            buf.push_str(&mut o, "\\u00")
+            push(o, u8(hex_digit(c / 16)))
+            push(o, u8(hex_digit(c % 16)))
+        } else {
+            push(o, u8(c))
+        }
+    }
+    return buf.to_string(&o)
+}
+
+fn hexval(c: int) -> int {
+    if c >= '0' && c <= '9' {
+        return c - '0'
+    }
+    if c >= 'a' && c <= 'f' {
+        return c - 'a' + 10
+    }
+    if c >= 'A' && c <= 'F' {
+        return c - 'A' + 10
+    }
+    return -1
+}
+
+/** *A `file://` URI as a path (`%XX` decoded). */
+fn uri_to_path(uri0: string) -> string {
+    let mut uri = uri0
+    if str.starts_with(uri, "file://") {
+        uri = str.slice_from(uri, 7)
+    }
+    if str.starts_with(uri, "localhost") {
+        uri = str.slice_from(uri, 9)
+    }
+    let n = uri.len
+    let mut out = []u8 {}
+    let mut i = 0
+    while i < n {
+        if uri[i] == '%' && i + 2 < n {
+            let hi = hexval(uri[i + 1])
+            let lo = hexval(uri[i + 2])
+            if hi >= 0 && lo >= 0 {
+                push(out, u8(hi * 16 + lo))
+                i += 3
+                continue
+            }
+        }
+        push(out, u8(uri[i]))
+        i += 1
+    }
+    return buf.to_string(&out)
+}
+
+fn path_to_uri(path: string) -> string {
+    if path.len == 0 {
+        return "file://"
+    }
+    if str.starts_with(path, "file://") {
+        return path
+    }
+    return "file://{{path}}"
+}
+
+/** *The request id as it was written (a quoted string keeps its quotes), or */
+/** *"null" when there is none. */
+fn extract_id(json: string) -> string {
+    let p = find_key(json, 0, "id")
+    if p < 0 {
+        return "null"
+    }
+    if at(json, p) == '"' {
+        let mut e = p + 1
+        while at(json, e) != 0 && json[e] != '"' {
+            if json[e] == '\\' && at(json, e + 1) != 0 {
+                e += 2
+            } else {
+                e += 1
+            }
+        }
+        if at(json, e) == '"' {
+            e += 1
+        }
+        return str.slice(json, p, e)
+    }
+    let mut e = p
+    if at(json, e) == '-' {
+        e += 1
+    }
+    while is_digit(at(json, e)) {
+        e += 1
+    }
+    if e == p {
+        return "null"
+    }
+    return str.slice(json, p, e)
+}
+
+fn extract_uri(msg: string) -> JStr {
+    let td = find_key(msg, 0, "textDocument")
+    let mut uri = jnone()
+    if td >= 0 {
+        uri = parse_json_string(msg, find_key(msg, td, "uri"))
+    }
+    if !uri.ok {
+        uri = parse_json_string(msg, find_key(msg, 0, "uri"))
+    }
+    return uri
+}
+
+/** *The request's `position`, 0-based. */
+struct Pos {
+    line: int,
+    col: int,
+}
+
+fn extract_pos(msg: string) -> Pos {
+    let mut base = find_key(msg, 0, "position")
+    if base < 0 {
+        base = 0
+    }
+    return Pos {
+        line: parse_json_int(msg, find_key(msg, base, "line")),
+        col: parse_json_int(msg, find_key(msg, base, "character")),
+    }
+}
+
+// --- locations -------------------------------------------------------------------
+
+/** *An LSP range, 0-based. */
+struct Range {
+    sl: int,
+    sc: int,
+    el: int,
+    ec: int,
+}
+
+fn clamp0(v: int) -> int {
+    if v < 0 {
+        return 0
+    }
+    return v
+}
+
+fn loc_lsp(loc: Loc) -> Range {
+    let line = if loc.line > 0 { loc.line } else { 1 }
+    let col = if loc.col > 0 { loc.col } else { 1 }
+    let end_line = if loc.end_line > 0 { loc.end_line } else { line }
+    let end_col = if loc.end_col > 0 { loc.end_col } else { col + 1 }
+    return Range { sl: clamp0(line - 1), sc: clamp0(col - 1), el: clamp0(end_line - 1), ec: clamp0(end_col - 1) }
+}
+
+fn cmp_pos(l0: int, c0: int, l1: int, c1: int) -> int {
+    if l0 != l1 {
+        return l0 - l1
+    }
+    return c0 - c1
+}
+
+fn loc_covers(loc: Loc, line0: int, char0: int) -> bool {
+    if loc.line <= 0 {
+        return false
+    }
+    let r = loc_lsp(loc)
+    if r.sl == r.el && r.sc == r.ec {
+        return line0 == r.sl && char0 == r.sc
+    }
+    return cmp_pos(r.sl, r.sc, line0, char0) <= 0 && cmp_pos(line0, char0, r.el, r.ec) < 0
+}
+
+/** *The path of module `m` (a `Loc.file`), or "" when there is none. */
+fn mod_path(m: int) -> string {
+    if m >= 0 && m < typecheck.MODS.len {
+        return typecheck.MODS[m].path
+    }
+    return ""
+}
+
+// --- the node under the cursor -----------------------------------------------------
+
+/** *What a position names: a node, or parameter `param` of fn `fn_`; `fn_` */
+/** *is also the fn around the node. */
+struct Pick {
+    node: int,
+    fn_: int,
+    param: int,
+}
+
+fn no_pick() -> Pick {
+    return Pick { node: NONE, fn_: NONE, param: -1 }
+}
+
+fn pick_hit(p: &Pick) -> bool {
+    return p.node != NONE || p.param >= 0
+}
+
+fn kind(n: int) -> int {
+    return ast.NODES[n].kind
+}
+
+fn is_fn_like(n: int) -> bool {
+    return n != NONE && (kind(n) == Kind.Fn || kind(n) == Kind.Closure)
+}
+
+/** *Pick in child `c`, when there is one. */
+fn pick_in(c: int, line: int, col: int, inner: &mut Pick, here: int) {
+    if c != NONE {
+        pick_node(c, line, col, inner, here)
+    }
+}
+
+fn pick_kids(kids: []int, line: int, col: int, inner: &mut Pick, here: int) {
+    for i in 0..kids.len {
+        pick_node(kids[i], line, col, inner, here)
+    }
+}
+
+/** *The innermost node of `n`'s tree that covers the position, the later */
+/** *child winning; a fn's parameter names count when nothing inside does. */
+fn pick_node(n: int, line: int, col: int, best: &mut Pick, enclosing: int) {
+    let mut inner = no_pick()
+    inner.fn_ = if is_fn_like(n) { n } else { enclosing }
+    let mut here = inner.fn_
+    let k = kind(n)
+    let a = ast.NODES[n].a
+    let b = ast.NODES[n].b
+    let kids = ast.NODES[n].kids
+    switch k {
+        case Kind.Program:
+            for i in 0..kids.len {
+                if kind(kids[i]) == Kind.Import {
+                    pick_node(kids[i], line, col, &mut inner, here)
+                }
+            }
+            for i in 0..kids.len {
+                let kk = kind(kids[i])
+                if kk != Kind.Import && kk != Kind.CDir {
+                    pick_node(kids[i], line, col, &mut inner, here)
+                }
+            }
+            break
+        case Kind.Fn, Kind.Closure:
+            here = n
+            for i in 0..kids.len {
+                pick_in(ast.NODES[kids[i]].a, line, col, &mut inner, here)
+            }
+            pick_in(a, line, col, &mut inner, here)
+            pick_in(b, line, col, &mut inner, here)
+            if !pick_hit(&inner) {
+                for i in 0..kids.len {
+                    if loc_covers(ast.INFO[kids[i]].loc, line, col) {
+                        inner.node = NONE
+                        inner.fn_ = n
+                        inner.param = i
+                        break
+                    }
+                }
+            }
+            break
+        case Kind.Struct:
+            for i in 0..kids.len {
+                pick_in(ast.NODES[kids[i]].a, line, col, &mut inner, here)
+            }
+            break
+        case Kind.Var:
+            pick_in(a, line, col, &mut inner, here)
+            pick_in(b, line, col, &mut inner, here)
+            break
+        case Kind.Block, Kind.Tuple:
+            pick_kids(kids, line, col, &mut inner, here)
+            break
+        case Kind.If:
+            pick_in(a, line, col, &mut inner, here)
+            pick_in(b, line, col, &mut inner, here)
+            pick_in(ast.NODES[n].c, line, col, &mut inner, here)
+            break
+        case Kind.For:
+            pick_in(a, line, col, &mut inner, here)
+            pick_in(b, line, col, &mut inner, here)
+            break
+        case Kind.Return, Kind.ExprStmt, Kind.Unary:
+            pick_in(a, line, col, &mut inner, here)
+            break
+        case Kind.Assign, Kind.Binary:
+            pick_in(a, line, col, &mut inner, here)
+            pick_in(b, line, col, &mut inner, here)
+            break
+        case Kind.Call:
+            pick_in(a, line, col, &mut inner, here)
+            pick_kids(kids, line, col, &mut inner, here)
+            break
+        case Kind.Index:
+            pick_in(a, line, col, &mut inner, here)
+            pick_in(b, line, col, &mut inner, here)
+            break
+        case Kind.Field, Kind.Deref, Kind.Addr:
+            pick_in(a, line, col, &mut inner, here)
+            break
+        case Kind.StructLit:
+            pick_kids(kids, line, col, &mut inner, here)
+            break
+        case Kind.ArrayLit:
+            pick_in(a, line, col, &mut inner, here)
+            pick_kids(kids, line, col, &mut inner, here)
+            break
+        case Kind.Type:
+            pick_in(a, line, col, &mut inner, here)
+            pick_kids(kids, line, col, &mut inner, here)
+            pick_kids(ast.EXTRA[ast.ex(n)].kids2, line, col, &mut inner, here)
+            break
+        default:
+    }
+    if pick_hit(&inner) {
+        best.node = inner.node
+        best.fn_ = inner.fn_
+        best.param = inner.param
+        return
+    }
+    if loc_covers(ast.INFO[n].loc, line, col) {
+        best.node = n
+        best.fn_ = here
+        best.param = -1
+    }
+}
+
+fn mod_by_path(path: string) -> int {
+    for i in 0..typecheck.MODS.len {
+        if typecheck.MODS[i].path == path {
+            return i
+        }
+    }
+    return -1
+}
+
+fn mod_by_alias(alias: string) -> int {
+    for i in 0..typecheck.MODS.len {
+        if typecheck.MODS[i].name == alias {
+            return i
+        }
+    }
+    return -1
+}
+
+/** *The module a request's URI names; else the checked document's; else the */
+/** *first. -1 with no session. */
+fn mod_for_uri(uri: JStr) -> int {
+    let mut m = -1
+    if uri.ok {
+        m = mod_by_path(uri_to_path(uri.s))
+    }
+    if m >= 0 {
+        return m
+    }
+    if HAS_URI {
+        m = mod_by_path(CUR_PATH)
+    }
+    if m < 0 && typecheck.MODS.len > 0 {
+        m = 0
+    }
+    return m
+}
+
+fn pick_at(uri: JStr, line: int, col: int) -> Pick {
+    let mut best = no_pick()
+    if !HAVE {
+        return best
+    }
+    let m = mod_for_uri(uri)
+    if m < 0 || typecheck.MODS[m].root == NONE {
+        return best
+    }
+    pick_node(typecheck.MODS[m].root, line, col, &mut best, NONE)
+    return best
+}
+
+// --- hover -------------------------------------------------------------------------
+
+fn type_text(t: int) -> string {
+    if t == NO_TYPE {
+        return ""
+    }
+    return types.type_name(t)
+}
+
+fn name(n: int) -> string {
+    return ast.INFO[n].name
+}
+
+fn has_name(n: int) -> bool {
+    return ast.INFO[n].has_name
+}
+
+fn is_module_ident(n: int) -> bool {
+    return n != NONE && kind(n) == Kind.Ident && ast.NODES[n].res != NONE && kind(ast.NODES[n].res) == Kind.Program
+}
+
+/** *The type of fn `f`'s parameter `i`, or `NO_TYPE`. */
+fn param_type(f: int, i: int) -> int {
+    let t = ast.NODES[f].ty
+    if t != NO_TYPE && types.TYPES[t].kind == TK.Proc && i < types.TYPES[t].params.len {
+        return types.TYPES[t].params[i]
+    }
+    return NO_TYPE
+}
+
+fn or_q(s: string) -> string {
+    if s.len == 0 {
+        return "?"
+    }
+    return s
+}
+
+/** *The first line of a hover: what the picked thing is. */
+fn hover_head(pk: Pick) -> string {
+    if pk.param >= 0 && pk.fn_ != NONE && pk.param < ast.NODES[pk.fn_].kids.len {
+        let prm = ast.NODES[pk.fn_].kids[pk.param]
+        let pn = if has_name(prm) { name(prm) } else { "?" }
+        return "{{pn}}: {{or_q(type_text(param_type(pk.fn_, pk.param)))}}"
+    }
+    let n = pk.node
+    if n == NONE {
+        return ""
+    }
+    let ty = type_text(ast.NODES[n].ty)
+    let k = kind(n)
+    let x = ast.ex(n)
+    if k == Kind.Ident && has_name(n) {
+        if is_module_ident(n) {
+            return "module {{name(n)}}"
+        }
+        return "{{name(n)}}: {{or_q(ty)}}"
+    }
+    if k == Kind.Import {
+        let alias = if has_name(n) { name(n) } else { "?" }
+        return "module {{alias}}\n{{ast.EXTRA[x].text}}"
+    }
+    if k == Kind.Field && has_name(n) {
+        return "{{name(n)}}: {{or_q(ty)}}"
+    }
+    if k == Kind.Fn && has_name(n) {
+        let t = if ty.len > 0 { ty } else { "fn" }
+        return "{{name(n)}}: {{t}}"
+    }
+    if k == Kind.Closure {
+        let t = if ty.len > 0 { ty } else { "fn()" }
+        return "closure {{t}}"
+    }
+    if k == Kind.Var && has_name(n) {
+        return "{{name(n)}}: {{or_q(ty)}}"
+    }
+    if k == Kind.Struct && has_name(n) {
+        return "struct {{name(n)}}"
+    }
+    if k == Kind.Type && has_name(n) {
+        return name(n)
+    }
+    return ty
+}
+
+/** *The doc comment of node `n`, or "". */
+fn doc_of(n: int) -> string {
+    let x = ast.ex(n)
+    if ast.EXTRA[x].has_doc {
+        return ast.EXTRA[x].doc
+    }
+    return ""
+}
+
+/** *A module's doc comment: its `Program`'s text. */
+fn mod_doc(root: int) -> string {
+    return ast.EXTRA[ast.ex(root)].text
+}
+
+fn peel_type(t0: int) -> int {
+    let mut t = t0
+    while t != NO_TYPE && (types.TYPES[t].kind == TK.Ptr || types.TYPES[t].kind == TK.Box) {
+        t = types.TYPES[t].elem
+    }
+    return t
+}
+
+/** *Top-level declarations of module `m` (no imports or directives). */
+fn decls_of_mod(m: int) -> []int {
+    let mut out = []int {}
+    let root = typecheck.MODS[m].root
+    if root == NONE {
+        return out
+    }
+    let kids = ast.NODES[root].kids
+    for i in 0..kids.len {
+        let kk = kind(kids[i])
+        if kk != Kind.Import && kk != Kind.CDir {
+            push(out, kids[i])
+        }
+    }
+    return out
+}
+
+fn struct_field_doc(stname: string, field: string) -> string {
+    for mi in 0..typecheck.MODS.len {
+        let ds = decls_of_mod(mi)
+        for i in 0..ds.len {
+            let d = ds[i]
+            if kind(d) != Kind.Struct || !has_name(d) || name(d) != stname {
+                continue
+            }
+            let fs = ast.NODES[d].kids
+            for f in 0..fs.len {
+                if has_name(fs[f]) && name(fs[f]) == field {
+                    return doc_of(fs[f])
+                }
+            }
+        }
+    }
+    return ""
+}
+
+fn lookup_doc(pk: Pick) -> string {
+    let n = pk.node
+    if n == NONE {
+        return ""
+    }
+    // A node with a doc comment answers with it, even an empty one.
+    if ast.EXTRA[ast.ex(n)].has_doc {
+        return doc_of(n)
+    }
+    let k = kind(n)
+    let res = ast.NODES[n].res
+    if k == Kind.Ident && res != NONE {
+        if kind(res) == Kind.Program {
+            return mod_doc(res)
+        }
+        return doc_of(res)
+    }
+    if k == Kind.Field {
+        if res != NONE && ast.EXTRA[ast.ex(res)].has_doc {
+            return doc_of(res)
+        }
+        let target = ast.NODES[n].a
+        let base = if target != NONE { peel_type(ast.NODES[target].ty) } else { NO_TYPE }
+        if base != NO_TYPE && types.TYPES[base].kind == TK.Struct && types.TYPES[base].has_name {
+            return struct_field_doc(types.TYPES[base].name, name(n))
+        }
+    }
+    if k == Kind.Import {
+        let m = mod_by_alias(name(n))
+        if m >= 0 && typecheck.MODS[m].root != NONE {
+            return mod_doc(typecheck.MODS[m].root)
+        }
+    }
+    return ""
+}
+
+fn hover_body(pk: Pick) -> string {
+    let head = hover_head(pk)
+    let doc = lookup_doc(pk)
+    if doc.len == 0 {
+        return head
+    }
+    if head.len > 0 {
+        return "{{head}}\n\n{{doc}}"
+    }
+    return doc
+}
+
+// --- definitions -------------------------------------------------------------------
+
+/** *A definition's place: its module path and span. */
+struct DefLoc {
+    found: bool,
+    path: string,
+    loc: Loc,
+}
+
+fn no_def() -> DefLoc {
+    return DefLoc { found: false, path: "", loc: Loc { file: -1, line: 0, col: 0, end_line: 0, end_col: 0 } }
+}
+
+fn def_at(loc: Loc) -> DefLoc {
+    return DefLoc { found: loc.line > 0, path: mod_path(loc.file), loc: loc }
+}
+
+/** *Line 1 of module `m`, as wide as its name. */
+fn module_def(m: int) -> DefLoc {
+    let nm = typecheck.MODS[m].name
+    let w = if nm.len > 0 { nm.len } else { 1 }
+    return DefLoc { found: true, path: typecheck.MODS[m].path, loc: Loc { file: m, line: 1, col: 1, end_line: 1, end_col: w + 1 } }
+}
+
+fn module_file_def(alias: string) -> DefLoc {
+    let m = mod_by_alias(alias)
+    if m < 0 {
+        return no_def()
+    }
+    let mut d = module_def(m)
+    d.loc.end_col = 2
+    return d
+}
+
+/** *Where identifier `n`'s definition is: typecheck keeps its line and */
+/** *column, and the declaration it resolved to holds the span (a parameter's */
+/** *is in its fn's parameter list). */
+fn ident_def(n: int) -> DefLoc {
+    let res = ast.NODES[n].res
+    let dl = ast.INFO[n].def_line
+    let dc = ast.INFO[n].def_col
+    if dl > 0 {
+        if res != NONE && kind(res) == Kind.Program {
+            for m in 0..typecheck.MODS.len {
+                if typecheck.MODS[m].root == res {
+                    return module_def(m)
+                }
+            }
+        }
+        if res != NONE {
+            let rl = ast.INFO[res].loc
+            if rl.line == dl && rl.col == dc {
+                return def_at(rl)
+            }
+            let kids = ast.NODES[res].kids
+            if is_fn_like(res) {
+                for i in 0..kids.len {
+                    let pl = ast.INFO[kids[i]].loc
+                    if pl.line == dl && pl.col == dc {
+                        return def_at(pl)
+                    }
+                }
+            }
+        }
+        return def_at(Loc { file: ast.INFO[n].loc.file, line: dl, col: dc, end_line: 0, end_col: 0 })
+    }
+    if res != NONE {
+        return def_at(ast.INFO[res].loc)
+    }
+    return module_file_def(name(n))
+}
+
+fn def_loc_of(pk: Pick) -> DefLoc {
+    if pk.param >= 0 && pk.fn_ != NONE && pk.param < ast.NODES[pk.fn_].kids.len {
+        return def_at(ast.INFO[ast.NODES[pk.fn_].kids[pk.param]].loc)
+    }
+    let n = pk.node
+    if n == NONE {
+        return no_def()
+    }
+    let k = kind(n)
+    if k == Kind.Import {
+        return module_file_def(name(n))
+    }
+    if k == Kind.Ident {
+        return ident_def(n)
+    }
+    if k == Kind.Field && ast.NODES[n].res != NONE {
+        let d = def_at(ast.INFO[ast.NODES[n].res].loc)
+        return DefLoc { found: true, path: d.path, loc: d.loc }
+    }
+    if k == Kind.Fn || k == Kind.Var || k == Kind.Struct || k == Kind.Closure {
+        let d = def_at(ast.INFO[n].loc)
+        return DefLoc { found: true, path: d.path, loc: d.loc }
+    }
+    return no_def()
+}
+
+// --- diagnostics -------------------------------------------------------------------
+
+fn range_json(r: Range) -> string {
+    return "{\"start\":{\"line\":{{r.sl}},\"character\":{{r.sc}}},\"end\":{\"line\":{{r.el}},\"character\":{{r.ec}}}}"
+}
+
+/** *Publish the diagnostics whose file is `path` (or have no file, when */
+/** *`opened`) for `uri`. `clear` sends an empty list. */
+fn send_diagnostics(uri: string, path: string, opened: bool, clear: bool) {
+    let mut b = []u8 {}
+    buf.push_str(&mut b, "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":\"")
+    buf.push_str(&mut b, json_escape(uri))
+    buf.push_str(&mut b, "\",\"diagnostics\":[")
+    let mut first = true
+    if !clear {
+        for i in 0..ast.DIAGS.len {
+            let d = ast.DIAGS[i]
+            let file = mod_path(d.loc.file)
+            let ok = if file.len == 0 { opened } else { file == path }
+            if !ok {
+                continue
+            }
+            if !first {
+                push(b, u8(','))
+            }
+            first = false
+            buf.push_str(&mut b, "{\"range\":")
+            buf.push_str(&mut b, range_json(loc_lsp(d.loc)))
+            buf.push_str(&mut b, ",\"severity\":1,\"source\":\"loam\",\"message\":\"")
+            buf.push_str(&mut b, json_escape(d.msg))
+            buf.push_str(&mut b, "\"}")
+        }
+    }
+    buf.push_str(&mut b, "]}}")
+    send_raw(buf.to_string(&b))
+}
+
+/** *The checked document's diagnostics, then every other module's. */
+fn publish_all() {
+    if HAS_URI {
+        send_diagnostics(CUR_URI, CUR_PATH, true, false)
+    }
+    for i in 0..typecheck.MODS.len {
+        let p = typecheck.MODS[i].path
+        if HAS_URI && p == CUR_PATH {
+            continue
+        }
+        send_diagnostics(path_to_uri(p), p, false, false)
+    }
+}
+
+fn check_buffer(uri: string, path: string, src: string) {
+    CUR_URI = uri
+    CUR_PATH = path
+    CUR_TEXT = src
+    HAS_URI = true
+    session_check(path, src)
+    HAVE = true
+    publish_all()
+}
+
+// --- text positions ----------------------------------------------------------------
+
+/** *Byte offset of 0-based `line0` / `col0` (bytes) in `src`, clamped to the */
+/** *line's end. */
+fn pos_to_off(src: string, line0: int, col0: int) -> int {
+    let mut p = 0
+    let mut line = 0
+    let n = src.len
+    while p < n && src[p] != 0 && line < line0 {
+        if src[p] == '\n' {
+            line += 1
+        }
+        p += 1
+    }
+    let mut col = 0
+    while p < n && src[p] != 0 && src[p] != '\n' && col < col0 {
+        p += 1
+        col += 1
+    }
+    return p
+}
+
+fn off_to_pos(src: string, off: int) -> Pos {
+    let mut l = 0
+    let mut c = 0
+    let mut i = 0
+    while i < off && i < src.len && src[i] != 0 {
+        if src[i] == '\n' {
+            l += 1
+            c = 0
+        } else {
+            c += 1
+        }
+        i += 1
+    }
+    return Pos { line: l, col: c }
+}
+
+/** *`src` with 0-based range [sl,sc)…[el,ec) replaced by `ins`. */
+fn replace_range(src: string, sl: int, sc: int, el: int, ec: int, ins: string) -> string {
+    let a = pos_to_off(src, sl, sc)
+    let mut b = pos_to_off(src, el, ec)
+    if b < a {
+        b = a
+    }
+    return "{{str.slice(src, 0, a)}}{{ins}}{{str.slice_from(src, b)}}"
+}
+
+fn is_ident_char(c: int) -> bool {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || is_digit(c) || c == '_'
+}
+
+fn send_null_result(id: string) {
+    send_raw("{\"jsonrpc\":\"2.0\",\"id\":{{id}},\"result\":null}")
+}
+
+// --- completion --------------------------------------------------------------------
+
+struct Completion {
+    label: string,
+    detail: string,
+    doc: string,
+    kind: int,
+}
+
+const MAX_COMPLETIONS: int = 512
+
+fn add_comp_d(c: &mut []Completion, lab: string, detail: string, k: int, prefix: string, doc: string) {
+    if lab.len == 0 || c.len >= MAX_COMPLETIONS {
+        return
+    }
+    if prefix.len > 0 && !str.starts_with(lab, prefix) {
+        return
+    }
+    for i in 0..c.len {
+        if c[i].label == lab {
+            return
+        }
+    }
+    push(c, Completion { label: lab, detail: detail, doc: doc, kind: k })
+}
+
+fn add_comp(c: &mut []Completion, lab: string, detail: string, k: int, prefix: string) {
+    add_comp_d(c, lab, detail, k, prefix, "")
+}
+
+fn recv_ok(recv: int, param: int) -> bool {
+    if recv == NO_TYPE || param == NO_TYPE {
+        return false
+    }
+    if types.type_eq(recv, param) {
+        return true
+    }
+    if types.TYPES[param].kind == TK.Ptr && types.type_eq(recv, types.TYPES[param].elem) {
+        return true
+    }
+    if types.TYPES[recv].kind == TK.Ptr && types.type_eq(types.TYPES[recv].elem, param) {
+        return true
+    }
+    let a = peel_type(recv)
+    let b = peel_type(param)
+    return a != NO_TYPE && b != NO_TYPE && types.type_eq(a, b)
+}
+
+/** *Module `m`'s fns, globals, structs and enums; with a receiver type, only */
+/** *the fns whose first parameter takes it (method calls). */
+fn add_mod_members(c: &mut []Completion, m: int, prefix: string, recv: int) {
+    if m < 0 {
+        return
+    }
+    let ds = decls_of_mod(m)
+    for i in 0..ds.len {
+        let d = ds[i]
+        let k = kind(d)
+        if k == Kind.Fn && has_name(d) {
+            let ft = ast.NODES[d].ty
+            if recv != NO_TYPE {
+                if ft == NO_TYPE || types.TYPES[ft].kind != TK.Proc || types.TYPES[ft].params.len < 1 {
+                    continue
+                }
+                if !recv_ok(recv, types.TYPES[ft].params[0]) {
+                    continue
+                }
+                add_comp_d(c, name(d), types.type_name(ft), 2, prefix, doc_of(d))
+            } else {
+                let det = if ft != NO_TYPE { types.type_name(ft) } else { "fn" }
+                add_comp_d(c, name(d), det, 3, prefix, doc_of(d))
+            }
+        } else if recv == NO_TYPE && k == Kind.Var && has_name(d) {
+            add_comp_d(c, name(d), type_text(ast.NODES[d].ty), 6, prefix, doc_of(d))
+        } else if recv == NO_TYPE && k == Kind.Struct && has_name(d) {
+            add_comp_d(c, name(d), "struct", 22, prefix, doc_of(d))
+        } else if recv == NO_TYPE && k == Kind.Enum && has_name(d) {
+            add_comp_d(c, name(d), "enum", 13, prefix, doc_of(d))
+        }
+    }
+}
+
+fn find_enum_decl(en: string) -> int {
+    for m in 0..typecheck.MODS.len {
+        let ds = decls_of_mod(m)
+        for i in 0..ds.len {
+            if kind(ds[i]) == Kind.Enum && has_name(ds[i]) && name(ds[i]) == en {
+                return ds[i]
+            }
+        }
+    }
+    return NONE
+}
+
+fn add_enum_variants(c: &mut []Completion, en: int, prefix: string) {
+    if en == NONE {
+        return
+    }
+    let vs = ast.NODES[en].kids
+    for i in 0..vs.len {
+        add_comp(c, name(vs[i]), name(en), 20, prefix)
+    }
+}
+
+fn add_struct_fields(c: &mut []Completion, t0: int, prefix: string) {
+    let t = peel_type(t0)
+    if t == NO_TYPE || types.TYPES[t].kind != TK.Struct {
+        return
+    }
+    let names = types.TYPES[t].field_names
+    let tys = types.TYPES[t].field_types
+    for i in 0..names.len {
+        let ft = if i < tys.len { type_text(tys[i]) } else { "" }
+        add_comp(c, names[i], ft, 5, prefix)
+    }
+}
+
+/** *Every `let` in `n`'s statements that starts at or before the cursor. */
+fn add_vars_in(n: int, c: &mut []Completion, prefix: string, line: int, col: int) {
+    if n == NONE {
+        return
+    }
+    let k = kind(n)
+    if k == Kind.Var && has_name(n) {
+        let r = loc_lsp(ast.INFO[n].loc)
+        if cmp_pos(r.sl, r.sc, line, col) <= 0 {
+            add_comp(c, name(n), type_text(ast.NODES[n].ty), 6, prefix)
+        }
+    }
+    switch k {
+        case Kind.Fn, Kind.Closure:
+            add_vars_in(ast.NODES[n].b, c, prefix, line, col)
+            break
+        case Kind.Block, Kind.Call:
+            let kids = ast.NODES[n].kids
+            for i in 0..kids.len {
+                add_vars_in(kids[i], c, prefix, line, col)
+            }
+            break
+        case Kind.If:
+            add_vars_in(ast.NODES[n].b, c, prefix, line, col)
+            add_vars_in(ast.NODES[n].c, c, prefix, line, col)
+            break
+        case Kind.For, Kind.Assign:
+            add_vars_in(ast.NODES[n].b, c, prefix, line, col)
+            break
+        case Kind.ExprStmt:
+            add_vars_in(ast.NODES[n].a, c, prefix, line, col)
+            break
+        default:
+    }
+}
+
+/** *Module `m`'s text: the editor buffer for the checked document, the file */
+/** *for the rest. */
+fn src_of(m: int) -> JStr {
+    if m < 0 {
+        return jnone()
+    }
+    let p = typecheck.MODS[m].path
+    if HAS_URI && p == CUR_PATH {
+        return JStr { ok: true, s: CUR_TEXT }
+    }
+    let r = sys.read(p)
+    if r.tag == ResultTag.Err {
+        return jnone()
+    }
+    return JStr { ok: true, s: r.val }
+}
+
+/** *Whether `name` is a module here: resolved to one, loaded under that */
+/** *name, or imported by module `cur` under it. */
+fn ident_is_module(n: int, cur: int) -> bool {
+    if is_module_ident(n) {
+        return true
+    }
+    if n == NONE || kind(n) != Kind.Ident || !has_name(n) {
+        return false
+    }
+    if mod_by_alias(name(n)) >= 0 {
+        return true
+    }
+    if cur >= 0 && typecheck.MODS[cur].root != NONE {
+        let kids = ast.NODES[typecheck.MODS[cur].root].kids
+        for i in 0..kids.len {
+            if kind(kids[i]) == Kind.Import && has_name(kids[i]) && name(kids[i]) == name(n) {
+                return true
+            }
+        }
+    }
+    return false
+}
+
+fn send_completions(id: string, c: &[]Completion) {
+    let mut b = []u8 {}
+    buf.push_str(&mut b, "{\"jsonrpc\":\"2.0\",\"id\":{{id}},\"result\":{\"isIncomplete\":false,\"items\":[")
+    for i in 0..c.len {
+        if i > 0 {
+            push(b, u8(','))
+        }
+        buf.push_str(&mut b, "{\"label\":\"")
+        buf.push_str(&mut b, json_escape(c[i].label))
+        buf.push_str(&mut b, "\",\"kind\":{{c[i].kind}},\"detail\":\"")
+        buf.push_str(&mut b, json_escape(c[i].detail))
+        if c[i].doc.len > 0 {
+            buf.push_str(&mut b, "\",\"documentation\":{\"kind\":\"markdown\",\"value\":\"")
+            buf.push_str(&mut b, json_escape(c[i].doc))
+            buf.push_str(&mut b, "\"}}")
+        } else {
+            buf.push_str(&mut b, "\"}")
+        }
+    }
+    buf.push_str(&mut b, "]}}")
+    send_raw(buf.to_string(&b))
+}
+
+let KEYWORDS: []string = []string {
+    "fn", "async", "await", "let", "const", "mut", "struct", "enum", "import", "if", "else", "for",
+    "while", "in", "return", "break", "continue", "switch", "case", "default", "as",
+}
+let TYPE_NAMES: []string = []string {
+    "int", "float", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "bool", "string",
+}
+
+fn handle_completion(msg: string, id: string) {
+    let uri = extract_uri(msg)
+    let pos = extract_pos(msg)
+    let line = pos.line
+    let col = pos.col
+    let cur = mod_for_uri(uri)
+    let srcj = src_of(cur)
+    let mut c = []Completion {}
+    if !srcj.ok {
+        send_completions(id, &c)
+        return
+    }
+    let src = srcj.s
+    let off = pos_to_off(src, line, col)
+    let mut j = off
+    while j > 0 && is_ident_char(src[j - 1]) {
+        j -= 1
+    }
+    let prefix = str.slice(src, j, if off - j > 127 { j + 127 } else { off })
+    let after_dot = j > 0 && src[j - 1] == '.'
+    if in_import_str(src, off) {
+        let path = if uri.ok { uri_to_path(uri.s) } else { "" }
+        add_import_comps(&mut c, import_str_prefix(src, off), path)
+        send_completions(id, &c)
+        return
+    }
+    if after_dot {
+        let mut recv_off = j - 1
+        while recv_off > 0 && is_space(src[recv_off - 1]) {
+            recv_off -= 1
+        }
+        let rp = off_to_pos(src, if recv_off > 0 { recv_off - 1 } else { 0 })
+        let pk = pick_at(uri, rp.line, rp.col)
+        let mut recv = pk.node
+        if recv != NONE && kind(recv) == Kind.Field && ast.NODES[recv].a != NONE && loc_covers(ast.INFO[recv].loc, line, col) {
+            recv = ast.NODES[recv].a
+        }
+        if ident_is_module(recv, cur) {
+            add_mod_members(&mut c, mod_by_alias(name(recv)), prefix, NO_TYPE)
+        } else {
+            let mut en = ""
+            if recv != NONE && (kind(recv) == Kind.Ident || kind(recv) == Kind.Field) && has_name(recv) {
+                en = name(recv)
+            }
+            if en.len > 0 {
+                add_enum_variants(&mut c, find_enum_decl(en), prefix)
+            }
+            let ty = if recv != NONE { ast.NODES[recv].ty } else { NO_TYPE }
+            add_struct_fields(&mut c, ty, prefix)
+            if ty != NO_TYPE {
+                for i in 0..typecheck.MODS.len {
+                    add_mod_members(&mut c, i, prefix, ty)
+                }
+            }
+        }
+    } else {
+        if cur >= 0 && typecheck.MODS[cur].root != NONE {
+            let kids = ast.NODES[typecheck.MODS[cur].root].kids
+            for i in 0..kids.len {
+                if kind(kids[i]) == Kind.Import && has_name(kids[i]) {
+                    add_comp(&mut c, name(kids[i]), "module", 9, prefix)
+                }
+            }
+            add_mod_members(&mut c, cur, prefix, NO_TYPE)
+        }
+        let pk = pick_at(uri, line, if col > 0 { col - 1 } else { 0 })
+        if pk.fn_ != NONE {
+            let ps = ast.NODES[pk.fn_].kids
+            for i in 0..ps.len {
+                add_comp(&mut c, name(ps[i]), type_text(param_type(pk.fn_, i)), 6, prefix)
+            }
+            add_vars_in(ast.NODES[pk.fn_].b, &mut c, prefix, line, col)
+        }
+        add_comp(&mut c, "true", "bool", 21, prefix)
+        add_comp(&mut c, "false", "bool", 21, prefix)
+        for i in 0..KEYWORDS.len {
+            add_comp(&mut c, KEYWORDS[i], "keyword", 14, prefix)
+        }
+        for i in 0..TYPE_NAMES.len {
+            add_comp(&mut c, TYPE_NAMES[i], "type", 25, prefix)
+        }
+    }
+    send_completions(id, &c)
+}
+
+// --- import-path completion --------------------------------------------------------
+
+/** *The cursor is on an `import` line. */
+fn in_import_str(src: string, off: int) -> bool {
+    if off < 0 {
+        return false
+    }
+    let mut i = off
+    while i > 0 && src[i - 1] != '\n' {
+        i -= 1
+    }
+    while at(src, i) == ' ' || at(src, i) == '\t' {
+        i += 1
+    }
+    return str.has_at(src, "import", i)
+}
+
+/** *What is typed of the import path, from its quote to the cursor. */
+fn import_str_prefix(src: string, off: int) -> string {
+    let mut q = off
+    while q > 0 && src[q - 1] != '"' && src[q - 1] != '\n' {
+        q -= 1
+    }
+    if off - q > 127 {
+        return str.slice(src, q, q + 127)
+    }
+    return str.slice(src, q, off)
+}
+
+/** *The length of `name`'s source extension (`.loam`, `.loa`), or 0. */
+fn ext_len(nm: string) -> int {
+    for e in 0..loader.EXTS.len {
+        let x = loader.EXTS[e]
+        if nm.len > x.len && str.ends_with(nm, x) {
+            return x.len
+        }
+    }
+    return 0
+}
+
+/** *The std module names, from the std directory. */
+fn std_names() -> []string {
+    let mut out = []string {}
+    let ents = sys.list_dir(loader.std_dir())
+    for i in 0..ents.len {
+        let e = ext_len(ents[i])
+        if e == 0 {
+            continue
+        }
+        let stem = str.slice(ents[i], 0, ents[i].len - e)
+        if stem.len == 0 || stem.len >= 31 || out.len >= 32 {
+            continue
+        }
+        let mut dup = false
+        for k in 0..out.len {
+            if out[k] == stem {
+                dup = true
+            }
+        }
+        if !dup {
+            push(out, stem)
+        }
+    }
+    if out.len == 0 {
+        out = []string { "fmt", "async", "sys", "net", "str", "math", "kv" }
+    }
+    return out
+}
+
+/** *`pkg:rel` for each module under `base` (`<dir>/src`), a few levels deep. */
+fn add_pkg_mod_comps(c: &mut []Completion, prefix: string, pkg: string, base: string, rel: string, depth: int) {
+    if depth > 3 {
+        return
+    }
+    let full = if rel.len > 0 { "{{base}}/{{rel}}" } else { base }
+    if sys.is_dir(full) == 0 {
+        return
+    }
+    let ents = sys.list_dir(full)
+    for i in 0..ents.len {
+        let en = ents[i]
+        if en.len == 0 || en[0] == '.' {
+            continue
+        }
+        let e = ext_len(en)
+        if e > 0 {
+            let stem = str.slice(en, 0, en.len - e)
+            let lab = if rel.len > 0 { "{{pkg}}:{{rel}}/{{stem}}" } else { "{{pkg}}:{{stem}}" }
+            add_comp(c, lab, "module", 9, prefix)
+            continue
+        }
+        let child = if rel.len > 0 { "{{rel}}/{{en}}" } else { en }
+        add_pkg_mod_comps(c, prefix, pkg, base, child, depth + 1)
+    }
+}
+
+/** *Import completion: `std:name` for the language library, then each */
+/** *package name and its `package:module`s (workspace, vendor, LOAM_PATH). */
+fn add_import_comps(c: &mut []Completion, prefix: string, anchor: string) {
+    let names = std_names()
+    for i in 0..names.len {
+        add_comp(c, "std:{{names[i]}}", "module", 9, prefix)
+    }
+    loader.discover(anchor)
+    for i in 0..loader.PKGS.len {
+        let pn = loader.PKGS[i].name
+        if pn.len == 0 {
+            continue
+        }
+        add_comp(c, pn, "package", 9, prefix)
+        let dir = loader.PKGS[i].dir
+        if dir.len == 0 {
+            continue
+        }
+        let mut base = "{{dir}}/src"
+        if sys.is_dir(base) == 0 {
+            base = "{{dir}}/std"
+        }
+        if sys.is_dir(base) != 0 {
+            add_pkg_mod_comps(c, prefix, pn, base, "", 0)
+        }
+    }
+}
+
+// --- hover and definition requests -------------------------------------------------
+
+fn handle_hover(msg: string, id: string) {
+    let pos = extract_pos(msg)
+    let pk = pick_at(extract_uri(msg), pos.line, pos.col)
+    let text = hover_body(pk)
+    if text.len == 0 {
+        send_null_result(id)
+        return
+    }
+    send_raw("{\"jsonrpc\":\"2.0\",\"id\":{{id}},\"result\":{\"contents\":{\"kind\":\"markdown\",\"value\":\"{{json_escape(text)}}\"}}}")
+}
+
+fn handle_definition(msg: string, id: string) {
+    let pos = extract_pos(msg)
+    let pk = pick_at(extract_uri(msg), pos.line, pos.col)
+    let d = def_loc_of(pk)
+    if !d.found || d.loc.line <= 0 {
+        send_null_result(id)
+        return
+    }
+    let file = d.path
+    let mut duri = ""
+    if HAS_URI && file.len > 0 && file == CUR_PATH {
+        duri = CUR_URI
+    } else {
+        duri = path_to_uri(if file.len > 0 { file } else { CUR_PATH })
+    }
+    send_raw("{\"jsonrpc\":\"2.0\",\"id\":{{id}},\"result\":{\"uri\":\"{{json_escape(duri)}}\",\"range\":{{range_json(loc_lsp(d.loc))}}}}")
+}
+
+// --- open documents ----------------------------------------------------------------
+//
+// One document is checked at a time, but clients keep many buffers open and
+// may open one again (a "redundant" didOpen after a restart). Every open buffer
+// is kept here; a request that names one checks it first, and a repeat
+// didOpen of the checked buffer with the same text does nothing.
+
+struct DocBuf {
+    uri: string,
+    path: string,
+    text: string,
+}
+
+let mut DOCS: []DocBuf = []DocBuf {}
+
+fn doc_find(uri: string) -> int {
+    for i in 0..DOCS.len {
+        if DOCS[i].uri == uri {
+            return i
+        }
+    }
+    return -1
+}
+
+fn doc_put(uri: string, path: string, text: string) {
+    let d = doc_find(uri)
+    if d < 0 {
+        push(DOCS, DocBuf { uri: uri, path: path, text: text })
+        return
+    }
+    DOCS[d].path = path
+    DOCS[d].text = text
+}
+
+fn doc_drop(uri: string) {
+    let d = doc_find(uri)
+    if d < 0 {
+        return
+    }
+    let mut keep = []DocBuf {}
+    for i in 0..DOCS.len {
+        if i != d {
+            push(keep, DOCS[i])
+        }
+    }
+    DOCS = keep
+}
+
+/** *Check the stored buffer for `uri` unless it is the checked one already. */
+fn doc_activate(uri: JStr) {
+    if !uri.ok || uri.s.len == 0 {
+        return
+    }
+    if HAVE && HAS_URI && CUR_URI == uri.s {
+        return
+    }
+    let d = doc_find(uri.s)
+    if d >= 0 {
+        check_buffer(DOCS[d].uri, DOCS[d].path, DOCS[d].text)
+    }
+}
+
+fn handle_doc(msg: string, method: string) {
+    let td = find_key(msg, 0, "textDocument")
+    let mut uri = jnone()
+    if td >= 0 {
+        uri = parse_json_string(msg, find_key(msg, td, "uri"))
+    }
+    if !uri.ok {
+        uri = parse_json_string(msg, find_key(msg, 0, "uri"))
+    }
+    let mut text = jnone()
+    if method == "textDocument/didChange" {
+        let mut ch = str.index_of(msg, "\"contentChanges\"")
+        if ch < 0 {
+            ch = str.index_of(msg, "contentChanges")
+        }
+        if ch >= 0 {
+            let range = find_key(msg, ch, "range")
+            let textp = find_key(msg, ch, "text")
+            text = parse_json_string(msg, textp)
+            // A `range` key before `text` is an incremental edit. One after it
+            // is almost surely the word "range" inside the source. The edit
+            // applies to this document's text: the checked one when it is
+            // checked, otherwise its stored buffer.
+            let mut base = jnone()
+            if range >= 0 && textp >= 0 && range < textp {
+                if HAS_URI && uri.ok && CUR_URI == uri.s {
+                    base = JStr { ok: true, s: CUR_TEXT }
+                }
+                if !base.ok && uri.ok {
+                    let k = doc_find(uri.s)
+                    if k >= 0 {
+                        base = JStr { ok: true, s: DOCS[k].text }
+                    }
+                }
+            }
+            if base.ok {
+                let start = find_key(msg, range, "start")
+                let end = find_key(msg, range, "end")
+                let sl = parse_json_int(msg, find_key(msg, if start >= 0 { start } else { range }, "line"))
+                let sc = parse_json_int(msg, find_key(msg, if start >= 0 { start } else { range }, "character"))
+                let el = parse_json_int(msg, find_key(msg, if end >= 0 { end } else { range }, "line"))
+                let ec = parse_json_int(msg, find_key(msg, if end >= 0 { end } else { range }, "character"))
+                text = JStr { ok: true, s: replace_range(base.s, sl, sc, el, ec, text.s) }
+            }
+        }
+    } else if method != "textDocument/didClose" {
+        if td >= 0 {
+            text = parse_json_string(msg, find_key(msg, td, "text"))
+        }
+        if !text.ok {
+            text = parse_json_string(msg, find_key(msg, 0, "text"))
+        }
+    }
+    if !uri.ok {
+        return
+    }
+    let path = uri_to_path(uri.s)
+    if method == "textDocument/didClose" {
+        doc_drop(uri.s)
+        // Clear this buffer's squiggles.
+        send_diagnostics(uri.s, path, true, true)
+        if HAS_URI && CUR_URI == uri.s {
+            session_clear()
+            HAVE = false
+            HAS_URI = false
+            CUR_URI = ""
+            CUR_PATH = ""
+            CUR_TEXT = ""
+        }
+        return
+    }
+    // didChange must use the editor buffer, never a stale file on disk.
+    if !text.ok && method == "textDocument/didChange" && HAS_URI && CUR_URI == uri.s {
+        text = JStr { ok: true, s: CUR_TEXT }
+    }
+    if !text.ok {
+        let known = doc_find(uri.s)
+        if known >= 0 && DOCS[known].text.len > 0 {
+            text = JStr { ok: true, s: DOCS[known].text }
+        } else {
+            let r = sys.read(path)
+            if r.tag == ResultTag.Ok {
+                text = JStr { ok: true, s: r.val }
+            }
+        }
+    }
+    if !text.ok {
+        return
+    }
+    doc_put(uri.s, path, text.s)
+    // The checked document is the one the client looks at. A didOpen of
+    // another buffer only stores it; the request that names it checks it.
+    if !HAS_URI || CUR_URI == uri.s {
+        let same = HAVE && CUR_TEXT == text.s
+        if !same {
+            check_buffer(uri.s, path, text.s)
+        }
+    }
+}
+
+// --- semantic tokens ---------------------------------------------------------------
+
+// Token types advertised in `initialize`, in its order.
+const ST_NAMESPACE: int = 0
+const ST_TYPE: int = 1
+const ST_ENUM: int = 2
+const ST_STRUCT: int = 3
+const ST_PARAMETER: int = 4
+const ST_VARIABLE: int = 5
+const ST_PROPERTY: int = 6
+const ST_ENUM_MEMBER: int = 7
+const ST_FUNCTION: int = 8
+const ST_KEYWORD: int = 9
+const ST_COMMENT: int = 10
+const ST_STRING: int = 11
+const ST_NUMBER: int = 12
+const ST_OPERATOR: int = 13
+const ST_MODIFIER: int = 14
+const ST_PUNCTUATION: int = 15
+
+/** *One highlighted run, 0-based, its length in UTF-16 units. */
+struct SemTok {
+    line: int,
+    col: int,
+    len: int,
+    ty: int,
+    mods: int,
+}
+
+/** *Where `walk_to` has counted up to: a byte offset and its position, the */
+/** *column in UTF-16 units. Runs are reported in source order, so each walk */
+/** *starts where the last one stopped. */
+struct Cursor {
+    off: int,
+    line: int,
+    col: int,
+}
+
+fn walk_to(src: string, cur: &mut Cursor, to: int) {
+    let mut q = cur.off
+    while q < to {
+        let c = src[q]
+        if c == '\n' {
+            cur.line += 1
+            cur.col = 0
+            q += 1
+        } else if c < 128 {
+            q += 1
+            cur.col += 1
+        } else if (c & 224) == 192 && q + 1 < to {
+            q += 2
+            cur.col += 1
+        } else if (c & 240) == 224 && q + 2 < to {
+            q += 3
+            cur.col += 1
+        } else if (c & 248) == 240 && q + 3 < to {
+            q += 4
+            cur.col += 2
+        } else {
+            q += 1
+            cur.col += 1
+        }
+    }
+    cur.off = q
+}
+
+/** *Push the bytes `[start, start+len)` as runs of type `ty`, one per line. */
+fn st_bytes(out: &mut []SemTok, src: string, cur: &mut Cursor, start: int, len: int, ty: int, mods: int) {
+    if len <= 0 {
+        return
+    }
+    walk_to(src, cur, start)
+    let mut line = cur.line
+    let mut col = cur.col
+    let mut run = 0
+    let mut rl = line
+    let mut rc = col
+    let mut u16 = 0
+    for i in 0..len {
+        let ch = src[start + i]
+        if ch == '\n' {
+            if run > 0 && u16 > 0 {
+                push(out, SemTok { line: rl, col: rc, len: u16, ty: ty, mods: mods })
+            }
+            line += 1
+            col = 0
+            run = 0
+            u16 = 0
+            rl = line
+            rc = 0
+            continue
+        }
+        if run == 0 {
+            rl = line
+            rc = col
+            u16 = 0
+        }
+        run += 1
+        if ch < 128 {
+            col += 1
+            u16 += 1
+        } else if (ch & 192) != 128 {
+            // A UTF-8 lead: one UTF-16 unit in the BMP, two above it.
+            if (ch & 248) == 240 {
+                col += 2
+                u16 += 2
+            } else {
+                col += 1
+                u16 += 1
+            }
+        }
+    }
+    if run > 0 && u16 > 0 {
+        push(out, SemTok { line: rl, col: rc, len: u16, ty: ty, mods: mods })
+    }
+}
+
+/** *The comments the lexer skipped between two tokens. */
+fn st_scan_gap(out: &mut []SemTok, src: string, cur: &mut Cursor, from: int, to: int) {
+    let mut p = from
+    while p < to {
+        if src[p] == '/' && p + 1 < to && src[p + 1] == '/' {
+            let start = p
+            while p < to && src[p] != '\n' {
+                p += 1
+            }
+            st_bytes(out, src, cur, start, p - start, ST_COMMENT, 0)
+            continue
+        }
+        if src[p] == '/' && p + 1 < to && src[p + 1] == '*' {
+            let start = p
+            p += 2
+            while p + 1 < to && !(src[p] == '*' && src[p + 1] == '/') {
+                p += 1
+            }
+            if p + 1 < to {
+                p += 2
+            } else {
+                p = to
+            }
+            st_bytes(out, src, cur, start, p - start, ST_COMMENT, 0)
+            continue
+        }
+        p += 1
+    }
+}
+
+let ST_TYPE_NAMES: []string = []string {
+    "int", "float", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "bool", "string", "Box",
+}
+
+fn st_is_punct(k: int) -> bool {
+    return k == Tok.Lparen || k == Tok.Rparen || k == Tok.Lbrace || k == Tok.Rbrace || k == Tok.Lbracket ||
+        k == Tok.Rbracket || k == Tok.Comma || k == Tok.Dot || k == Tok.Colon || k == Tok.Semicolon ||
+        k == Tok.ColonColon
+}
+
+fn st_is_keyword_tok(k: int) -> bool {
+    return k == Tok.Fn || k == Tok.Let || k == Tok.Const || k == Tok.Struct || k == Tok.Enum || k == Tok.Import ||
+        k == Tok.If || k == Tok.Else || k == Tok.For || k == Tok.While || k == Tok.In || k == Tok.Return ||
+        k == Tok.Break || k == Tok.Continue || k == Tok.Switch || k == Tok.Case || k == Tok.Default || k == Tok.As
+}
+
+fn st_prev_ends_value(k: int) -> bool {
+    return k == Tok.Ident || k == Tok.Number || k == Tok.Float || k == Tok.String || k == Tok.True ||
+        k == Tok.False || k == Tok.Rparen || k == Tok.Rbracket || k == Tok.Dot || k == Tok.ColonColon
+}
+
+/** *Highlighting state of one request: the source, its tokens and their */
+/** *text, and the names that are modules. */
+struct Highlight {
+    src: string,
+    toks: []Token,
+    words: []string,
+    mods: []string,
+}
+
+fn tok_at(h: &Highlight, i: int) -> int {
+    if i < 0 || i >= h.toks.len {
+        return Tok.Eof
+    }
+    return h.toks[i].kind
+}
+
+fn st_pascal(h: &Highlight, i: int) -> bool {
+    let w = h.words[i]
+    return h.toks[i].kind == Tok.Ident && w.len > 0 && w[0] >= 'A' && w[0] <= 'Z'
+}
+
+fn st_is_mod(h: &Highlight, i: int) -> bool {
+    let w = h.words[i]
+    for k in 0..h.mods.len {
+        if h.mods[k] == w {
+            return true
+        }
+    }
+    return false
+}
+
+fn st_add_mod(mods: &mut []string, s: string) {
+    if mods.len >= 48 || s.len == 0 || s.len >= 63 {
+        return
+    }
+    for i in 0..mods.len {
+        if mods[i] == s {
+            return
+        }
+    }
+    push(mods, s)
+}
+
+/** *The module name an import string's token gives: its last path piece, */
+/** *without the extension. */
+fn st_mod_from_import(mods: &mut []string, word: string) {
+    if word.len < 3 {
+        return
+    }
+    let s = str.slice(word, 1, word.len - 1)
+    let mut stem = 0
+    for i in 0..s.len {
+        if s[i] == '/' || s[i] == ':' {
+            stem = i + 1
+        }
+    }
+    let piece = str.slice_from(s, stem)
+    st_add_mod(mods, str.slice(piece, 0, piece.len - ext_len(piece)))
+}
+
+fn st_ident_kind(h: &Highlight, i: int, paren: int) -> int {
+    let w = h.words[i]
+    let prev = tok_at(h, i - 1)
+    let next = tok_at(h, i + 1)
+    let after_dot = prev == Tok.Dot || prev == Tok.ColonColon
+    // Contextual keywords: `async fn` and expression-leading `await`. After a
+    // value or a dot they are plain identifiers.
+    if w == "async" && next == Tok.Fn {
+        return ST_KEYWORD
+    }
+    if w == "await" && !st_prev_ends_value(prev) {
+        return ST_KEYWORD
+    }
+    // `#[test]`, `#[proto]`: the identifier between `[` and `]` after `#`.
+    if prev == Tok.Lbracket && next == Tok.Rbracket && tok_at(h, i - 2) == Tok.Hash {
+        return ST_KEYWORD
+    }
+    if prev == Tok.Fn {
+        return ST_FUNCTION
+    }
+    if prev == Tok.Enum {
+        return ST_ENUM
+    }
+    if prev == Tok.Struct {
+        return ST_STRUCT
+    }
+    if prev == Tok.Let || prev == Tok.Const || prev == Tok.Mut {
+        return ST_VARIABLE
+    }
+    if prev == Tok.Colon || prev == Tok.Arrow {
+        return ST_TYPE
+    }
+    for k in 0..ST_TYPE_NAMES.len {
+        if ST_TYPE_NAMES[k] == w {
+            return ST_TYPE
+        }
+    }
+    if after_dot {
+        if next == Tok.Lparen {
+            return ST_FUNCTION
+        }
+        if next == Tok.Dot {
+            return ST_ENUM
+        }
+        if st_pascal(h, i) {
+            return ST_ENUM_MEMBER
+        }
+        return ST_PROPERTY
+    }
+    if next == Tok.Colon {
+        return if paren > 0 { ST_PARAMETER } else { ST_PROPERTY }
+    }
+    if next == Tok.Eq && prev != Tok.Let && prev != Tok.Const && prev != Tok.Mut && paren > 0 {
+        return ST_PROPERTY
+    }
+    if next == Tok.Lt || next == Tok.Dot {
+        if st_is_mod(h, i) {
+            return ST_NAMESPACE
+        }
+        if st_pascal(h, i) {
+            return if next == Tok.Lt { ST_STRUCT } else { ST_ENUM }
+        }
+    }
+    if next == Tok.Lparen {
+        return ST_FUNCTION
+    }
+    if st_pascal(h, i) {
+        return ST_FUNCTION
+    }
+    return ST_VARIABLE
+}
+
+fn st_tok_kind(h: &Highlight, i: int, paren: int) -> int {
+    let k = h.toks[i].kind
+    if st_is_keyword_tok(k) {
+        return ST_KEYWORD
+    }
+    if k == Tok.Mut {
+        return ST_MODIFIER
+    }
+    if k == Tok.True || k == Tok.False {
+        return ST_ENUM_MEMBER
+    }
+    if k == Tok.Number || k == Tok.Float {
+        return ST_NUMBER
+    }
+    if k == Tok.String {
+        return ST_STRING
+    }
+    if k == Tok.Doc || k == Tok.ModDoc {
+        return ST_COMMENT
+    }
+    if k == Tok.Ident {
+        return st_ident_kind(h, i, paren)
+    }
+    return ST_OPERATOR
+}
+
+/** *The source as a NUL-terminated C string would see it: up to its first NUL. */
+fn c_text(src: string) -> string {
+    let z = str.index_of_byte(src, 0)
+    if z >= 0 {
+        return str.slice(src, 0, z)
+    }
+    return src
+}
+
+/** *The highlighted runs of `src`, in source order. */
+fn semantic_tokens(src0: string) -> []SemTok {
+    let src = c_text(src0)
+    let mut h = Highlight { src: src, toks: []Token {}, words: []string {}, mods: []string {} }
+    let names = std_names()
+    for i in 0..names.len {
+        st_add_mod(&mut h.mods, names[i])
+    }
+    let mut gaps = []SemTok {}
+    let mut toks = []SemTok {}
+    if src.len == 0 {
+        return toks
+    }
+    let mut gap_cur = Cursor { off: 0, line: 0, col: 0 }
+    let mut lx = lexer.lexer_new(src)
+    let mut prev_end = 0
+    let mut prevk = Tok.Eof
+    while true {
+        let t = lexer.next(&mut lx)
+        if t.kind == Tok.Eof {
+            st_scan_gap(&mut gaps, src, &mut gap_cur, prev_end, src.len)
+            break
+        }
+        st_scan_gap(&mut gaps, src, &mut gap_cur, prev_end, t.start)
+        let w = str.slice(src, t.start, t.start + t.len)
+        if prevk == Tok.Import && t.kind == Tok.String {
+            st_mod_from_import(&mut h.mods, w)
+        }
+        push(h.toks, t)
+        push(h.words, w)
+        prevk = t.kind
+        prev_end = t.start + t.len
+    }
+    let mut tok_cur = Cursor { off: 0, line: 0, col: 0 }
+    let mut paren = 0
+    for i in 0..h.toks.len {
+        let k = h.toks[i].kind
+        if k == Tok.Lparen {
+            paren += 1
+        }
+        if k == Tok.Rparen && paren > 0 {
+            paren -= 1
+        }
+        if k == Tok.Unknown {
+            continue
+        }
+        let ty = if st_is_punct(k) { ST_PUNCTUATION } else { st_tok_kind(&h, i, paren) }
+        // Legend bit 1: documentation, for item and module doc comments.
+        let mods = if k == Tok.Doc || k == Tok.ModDoc { 2 } else { 0 }
+        st_bytes(&mut toks, src, &mut tok_cur, h.toks[i].start, h.toks[i].len, ty, mods)
+    }
+    // Both lists are in source order and never overlap: merge them.
+    let mut out = []SemTok {}
+    let mut a = 0
+    let mut b = 0
+    while a < gaps.len || b < toks.len {
+        let take_gap = b >= toks.len || (a < gaps.len && cmp_pos(gaps[a].line, gaps[a].col, toks[b].line, toks[b].col) < 0)
+        if take_gap {
+            push(out, gaps[a])
+            a += 1
+        } else {
+            push(out, toks[b])
+            b += 1
+        }
+    }
+    return out
+}
+
+fn handle_semantic_tokens(msg: string, id: string) {
+    let srcj = src_of(mod_for_uri(extract_uri(msg)))
+    let src = if srcj.ok { srcj.s } else { "" }
+    let ts = semantic_tokens(src)
+    let mut b = []u8 {}
+    buf.push_str(&mut b, "{\"jsonrpc\":\"2.0\",\"id\":{{id}},\"result\":{\"data\":[")
+    let mut pl = 0
+    let mut pc = 0
+    for i in 0..ts.len {
+        let dl = ts[i].line - pl
+        let dc = if dl == 0 { ts[i].col - pc } else { ts[i].col }
+        if i > 0 {
+            push(b, u8(','))
+        }
+        buf.push_int(&mut b, dl)
+        push(b, u8(','))
+        buf.push_int(&mut b, dc)
+        push(b, u8(','))
+        buf.push_int(&mut b, ts[i].len)
+        push(b, u8(','))
+        buf.push_int(&mut b, ts[i].ty)
+        push(b, u8(','))
+        buf.push_int(&mut b, ts[i].mods)
+        pl = ts[i].line
+        pc = ts[i].col
+    }
+    buf.push_str(&mut b, "]}}")
+    send_raw(buf.to_string(&b))
+}
+
+// --- dispatch ----------------------------------------------------------------------
+
+const CAPABILITIES: string = "{\"capabilities\":{\"textDocumentSync\":1,\"hoverProvider\":true,\"definitionProvider\":true,\"completionProvider\":{\"triggerCharacters\":[\".\"]},\"semanticTokensProvider\":{\"legend\":{\"tokenTypes\":[\"namespace\",\"type\",\"enum\",\"struct\",\"parameter\",\"variable\",\"property\",\"enumMember\",\"function\",\"keyword\",\"comment\",\"string\",\"number\",\"operator\",\"modifier\",\"punctuation\"],\"tokenModifiers\":[\"declaration\",\"documentation\"]},\"full\":true,\"range\":false}},\"serverInfo\":{\"name\":\"loam-lsp\",\"version\":\"0.4\"}}"
+
+/** *Answer one message. False after `exit`. */
+fn handle(msg: string) -> bool {
+    let method = parse_json_string(msg, find_key(msg, 0, "method"))
+    if !method.ok {
+        return true
+    }
+    let m = method.s
+    let id = extract_id(msg)
+    if m == "initialize" {
+        send_raw("{\"jsonrpc\":\"2.0\",\"id\":{{id}},\"result\":{{CAPABILITIES}}}")
+    } else if m == "initialized" {
+        // Nothing to acknowledge.
+    } else if m == "shutdown" {
+        send_null_result(id)
+    } else if m == "exit" {
+        return false
+    } else if m == "textDocument/didOpen" || m == "textDocument/didChange" || m == "textDocument/didSave" ||
+        m == "textDocument/didClose" {
+        handle_doc(msg, m)
+    } else if m == "textDocument/hover" {
+        doc_activate(extract_uri(msg))
+        handle_hover(msg, id)
+    } else if m == "textDocument/definition" {
+        doc_activate(extract_uri(msg))
+        handle_definition(msg, id)
+    } else if m == "textDocument/completion" {
+        doc_activate(extract_uri(msg))
+        handle_completion(msg, id)
+    } else if m == "textDocument/semanticTokens/full" {
+        doc_activate(extract_uri(msg))
+        handle_semantic_tokens(msg, id)
+    } else if id != "null" && (m.len == 0 || m[0] != '$') {
+        send_raw("{\"jsonrpc\":\"2.0\",\"id\":{{id}},\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}")
+    }
+    return true
+}
+
+fn main() {
+    parser.EDITING = true
+    while true {
+        let msg = read_message()
+        if !msg.ok {
+            break
+        }
+        if !handle(msg.s) {
+            break
+        }
+    }
+}

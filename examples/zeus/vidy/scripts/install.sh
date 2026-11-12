@@ -57,7 +57,7 @@ if [ "$UNINSTALL" = 1 ]; then
 fi
 
 cd "$ROOT"
-[ -x ./bin/zeli ] || { echo "install.sh: missing bin/zeli: run make in $ROOT first"; exit 1; }
+[ -x ./bin/zeli ] || { echo "install.sh: missing bin/zeli: run ./nob.sh in $ROOT first"; exit 1; }
 ./bin/zeli build "$APP" --targets macos
 BUNDLE="$APP/build/macos/$NAME.app"
 ours "$BUNDLE" || { echo "install.sh: the build wrote no $BUNDLE"; exit 1; }

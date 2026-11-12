@@ -320,5 +320,5 @@ every route, re-lays out, and asserts the page's marker text painted *and* that
 the root shell outside the page slot survived — `zeus build` only proves the
 targets link, this proves navigation actually paints.
 
-`make test` runs both, plus `zeus build` (web + macOS artifacts) and a wasm smoke
+`./nob.sh test` runs both, plus `zeus build` (web + macOS artifacts) and a wasm smoke
 run, as `zeus example myapp (…)`.
