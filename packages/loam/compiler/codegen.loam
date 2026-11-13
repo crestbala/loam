@@ -694,6 +694,20 @@ fn int_bits(t: int) -> int {
 /** *after the copy; a bool is `true` / `false`. */
 fn interp(x: &Inst) {
     let n = x.nargs
+    // A lone bool is a literal (nothing allocated); a lone float its text.
+    let t0 = resolve(local_ty(arg_of(x, 0)))
+    if n == 1 && t0 != NO_TYPE && types.TYPES[t0].kind == TK.Bool {
+        w("{{lv(x.dst)}} = ({{lv(arg_of(x, 0))}}) ? ")
+        str_lit("true")
+        w(" : ")
+        str_lit("false")
+        w(";\n")
+        return
+    }
+    if n == 1 && t0 != NO_TYPE && types.TYPES[t0].kind == TK.Float {
+        w("{{lv(x.dst)}} = loam_str_of_float({{lv(arg_of(x, 0))}});\n")
+        return
+    }
     let mut ptrs = []string {}
     let mut lens = []string {}
     w("{ ")
