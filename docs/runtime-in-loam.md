@@ -190,7 +190,7 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       `wasm_inc`), hosts 4,871, vendored 346,122 (sqlite, monocypher, raygui
       and the generated tree-sitter parser).
 - [x] R0.2 The budget: `RUNTIME_LINE_BUDGET` in `nob.loam`, set at 9,939
-      and lowered by each step since (now **9,091**, after R1.3d).
+      and lowered by each step since (now **9,079**, after R1.3e).
       `nob trusted` and the unfiltered `nob test` fail if `runtime/` grows
       past it. Each step below lowers it to its new count in the same
       change.
@@ -331,8 +331,25 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       unchanged against R1.3c but loamc −64 bytes; full suite 635 passed,
       `selfhost_seed`, `ownership_asan`, `wasm_smoke`, `android_project`,
       `lsp` green. **Runtime: 9,127 → 9,091** (−36).
-- [ ] R1.3 `loam_rt.h` fmt / str / conv / buf verbs → `std` Loam fns, one
-      verb family per change, each benchmarked against its C twin.
+- [x] R1.3e The `fmt` verbs. Done 2026-11-14. `write_bool`, `writeln`
+      and their stderr twins `ewrite_bool` / `ewriteln` are Loam over
+      `write` / `ewrite`; `println` lowering still calls them by C name, so
+      DCE keeps them with `M_PRINTLN` (as the `decimal` writers). Two-stage
+      bootstrap: the old compiler, with HEAD's std and runtime as its home,
+      built stage 1, which built the compiler here. Output identical to HEAD
+      on stdout and stderr; `println` 6,665.5 vs 6,672.8 M cycles (same
+      instructions); binaries unchanged. Full suite 635 passed, all host
+      stanzas green. **Runtime: 9,091 → 9,079** (−12).
+- [x] R1.3 `loam_rt.h` fmt / str / conv / buf verbs → `std` Loam fns, one
+      verb family per change (R1.3a–e). Done 2026-11-14. What is left of
+      these families is either float text (R1.4: `ftoa`, `write_float`,
+      `str_of_float`, `f64_to_*`, `strtod`) or core byte movement and
+      comparison, each a bounds clamp or length test over `memcpy` /
+      `memcmp` / `write(2)`: `str_slice`, `buf.push_str` / `push_bytes` /
+      `to_string`, the three `decimal` digit hooks, `fmt.write` / `ewrite`
+      and `fmt.eq` (string `==`). A Loam body for those would copy byte by
+      byte; they move only if a checked byte-copy intrinsic lands, so the
+      compiler can lower a Loam loop to `memcpy`.
 - [ ] R1.4 Float formatting and parsing (`std:conv` float halves) → Loam,
       byte-identical to `%.17g` / `strtod` on the existing fixtures plus a
       differential test; the wasm-float block in `zeus_wasm_libc.c` goes

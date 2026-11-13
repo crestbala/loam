@@ -186,11 +186,6 @@ static inline void loam_fmt_write(loam_str s) {
     loam_write_bytes(s.ptr, (size_t)s.len);
 }
 
-static inline void loam_fmt_write_bool(bool v) {
-    if (v) loam_write_bytes("true", 4);
-    else loam_write_bytes("false", 5);
-}
-
 static inline loam_str loam_fmt_ftoa(char buf[64], double v) {
     int n = snprintf(buf, 64, "%.15g", v);
     if (n < 0) n = 0;
@@ -207,24 +202,17 @@ static inline void loam_fmt_write_float(double v) {
     loam_write_bytes(s.ptr, (size_t)s.len);
 }
 
-static inline void loam_fmt_writeln(void) { loam_write_bytes("\n", 1); }
-
 /* The stderr twins of the writers above, for `fmt.eprintln` / `fmt.ewrite`:
    diagnostics must not mix with output a program sends to stdout. */
 static inline void loam_fmt_ewrite(loam_str s) {
     if (!s.ptr || s.len <= 0) return;
     loam_ewrite_bytes(s.ptr, (size_t)s.len);
 }
-static inline void loam_fmt_ewrite_bool(bool v) {
-    if (v) loam_ewrite_bytes("true", 4);
-    else loam_ewrite_bytes("false", 5);
-}
 static inline void loam_fmt_ewrite_float(double v) {
     char buf[64];
     loam_str s = loam_fmt_ftoa(buf, v);
     loam_ewrite_bytes(s.ptr, (size_t)s.len);
 }
-static inline void loam_fmt_ewriteln(void) { loam_ewrite_bytes("\n", 1); }
 
 static inline bool loam_fmt_eq(loam_str a, loam_str b) {
     if (a.len != b.len) return false;
