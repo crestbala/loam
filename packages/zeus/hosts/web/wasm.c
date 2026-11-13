@@ -6,7 +6,6 @@
  * returns 0 when idle so the loader can stop, like Cocoa `engine_next_ms`.
  */
 #include "zeus_rt.h"
-#include "zeus_key.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>

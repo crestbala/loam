@@ -11,7 +11,6 @@
 #import <CoreVideo/CoreVideo.h>
 #import <VideoToolbox/VideoToolbox.h>
 #include "zeus_apple.h"
-#include "zeus_key.h"
 #include <string.h>
 #include <stdlib.h>
 

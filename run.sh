@@ -213,7 +213,7 @@ run_zeus_framework_app() {
     ios|android) exec "$LOAM" "--target=$target" --run "$entry" ;;
     build) exec "$HERE/bin/zeli" build "$appdir" ;;
     # The app's own gRPC backend (`server/main.loam`), not a `zeus` target: it
-    # is a second entry, so it is built and run directly. See examples/zeus/myapp.
+    # is a second entry, so it is built and run directly. See examples/zeus/dracula.
     backend)
       check_loam "$appdir/server/main.loam"
       exec "$LOAM" --run "$appdir/server/main.loam" ;;

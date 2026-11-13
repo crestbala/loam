@@ -2,11 +2,10 @@
  *
  * packages/zeus/src/zeus.loam owns the node arena, layout, paint, and hit-test. This file
  * is the other side of that seam: window title/size, text measure, present,
- * and the zeus_* entry points the Cocoa/iOS/web hosts already call. Keyboard chords live
- * in zeus_key.c; focus chain and Tab walk the Loam node tree.
+ * and the zeus_* entry points the Cocoa/iOS/web hosts already call. Keyboard chords,
+ * the focus chain and Tab are Loam (zeuscore/keymap.loam, zeus.loam).
  */
 #include "zeus_rt.h"
-#include "zeus_key.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1190,34 +1189,11 @@ int32_t loam_platform_plat_blit(loam_vec buf, int32_t w, int32_t h, int32_t gen,
     if (!buf.ptr || w <= 0 || h <= 0 || (int64_t)buf.len < need) return 0;
     return (int32_t)loam_zeus_plat_blit((const uint8_t *)buf.ptr, w, h, gen, scale);
 }
-int64_t loam_runtime_key_intern(loam_str name) {
-    char *s = dup_ys(name);
-    int id = zeus_key_context_id(s);
-    free(s);
-    return id;
-}
-int64_t loam_runtime_key_intern_action(loam_str action) {
-    char *s = dup_ys(action);
-    int id = zeus_key_context_from_action(s);
-    free(s);
-    return id;
-}
 static void intern_fn_reset(void);
 
-void loam_runtime_key_reset(void) {
-    zeus_key_reset_handlers();
-    intern_fn_reset();
-}
-void loam_runtime_map_key(loam_str spec, loam_str action, int64_t ctx) {
-    char *a = dup_ys(spec), *b = dup_ys(action);
-    zeus_key_map_ctx(a, b, (int)ctx);
-    free(a);
-    free(b);
-}
-
-int64_t loam_runtime_key_ev(int64_t key, int64_t mods) {
-    return zeus_handle_key_ev((int)key, (int)mods);
-}
+/* Handler thunks are rebuilt with each view; the keymap is Loam
+   (zeuscore/keymap.loam). */
+void loam_runtime_intern_fn_reset(void) { intern_fn_reset(); }
 
 #define ZEUS_EDIT_SLOTS 64
 #define ZEUS_EDIT_MAX 65536
@@ -2389,86 +2365,11 @@ int zeus_handle_key_up(int key, int mods) {
 }
 
 int zeus_handle_key_ev(int key, int mods) {
-    loam_zeus_engine_set_mods((int64_t)mods);
-    if (zeus_key_dispatch(key, mods)) return 1;
-    /* Plain Tab / Shift-Tab: the engine decides — step the focus ring, or
-       insert a tab when a multiline field is focused (single-line fields
-       step focus like the web). Keymaps win via dispatch above. */
-    if (key == ZEUS_K_TAB && !(mods & ~ZEUS_MOD_SHIFT))
-        return zeus_handle_key(key);
-    /* Cmd/Ctrl chords usually belong to the host (menus, reload). A focused
-       text field still needs Cmd/Ctrl+A to select all so Backspace can clear. */
-    if (mods & ~ZEUS_MOD_SHIFT) {
-        if (zeus_focus_captures_text())
-            return zeus_handle_key(key);
-        return 0;
-    }
-    return zeus_handle_key(key);
-}
-
-int zeus_focus_chain(int *nodes_out, int *ctxs, int max) {
-    loam_zeus_engine_fill_focus();
-    int n = (int)loam_zeus_engine_focus_depth();
-    if (n > max) n = max;
-    if (n <= 0) {
-        if (nodes_out) nodes_out[0] = 0;
-        if (ctxs) ctxs[0] = 0;
-        return 1;
-    }
-    for (int i = 0; i < n; i++) {
-        if (nodes_out) nodes_out[i] = (int)loam_zeus_engine_focus_node(i);
-        if (ctxs) ctxs[i] = (int)loam_zeus_engine_focus_ctx(i);
-    }
-    return n;
-}
-
-void zeus_key_apply(int sig, int mode, int64_t value, int64_t lo, int64_t hi) {
-    loam_zeus_engine_key_apply((int64_t)sig, (int64_t)mode, value, lo, hi);
+    return (int)loam_zeus_engine_key_ev(key, mods);
 }
 
 int zeus_focus_captures_text(void) {
     return (int)loam_zeus_engine_focus_captures_text();
-}
-
-int zeus_focus_step(int back) {
-    return (int)loam_zeus_engine_focus_step(back);
-}
-
-Node loam_zeusbase_on_action(Node node, loam_str action, Signal sig, int64_t mode, int64_t value) {
-    char *s = dup_ys(action);
-    zeus_key_on_action((int)node.id, s, (int)sig.id, (int)mode, value);
-    free(s);
-    return node;
-}
-
-Node loam_zeusbase_on_range(Node node, loam_str action, Signal sig, int64_t delta, int64_t lo,
-                       int64_t hi) {
-    char *s = dup_ys(action);
-    zeus_key_on_range((int)node.id, s, (int)sig.id, delta, lo, hi);
-    free(s);
-    return node;
-}
-
-void loam_zeusbase_on_action_global(loam_str action, Signal sig, int64_t mode, int64_t value) {
-    char *s = dup_ys(action);
-    zeus_key_on_action(0, s, (int)sig.id, (int)mode, value);
-    free(s);
-}
-
-void loam_zeusbase_map_key(loam_str spec, loam_str action, loam_str ctx) {
-    char *a = dup_ys(spec), *b = dup_ys(action), *c = dup_ys(ctx);
-    zeus_key_map(a, b, c);
-    free(a);
-    free(b);
-    free(c);
-}
-
-void loam_zeusbase_remap_key(loam_str spec, loam_str action, loam_str ctx) {
-    char *a = dup_ys(spec), *b = dup_ys(action), *c = dup_ys(ctx);
-    zeus_key_remap(a, b, c);
-    free(a);
-    free(b);
-    free(c);
 }
 
 /* --- recoverable traps (zeus.Boundary) ---

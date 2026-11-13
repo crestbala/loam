@@ -1,7 +1,0 @@
-// Shown while a route's loaders are pending.
-
-import "zeus"
-
-fn Loading() -> Node {
-    return zeus.Text("loading...")
-}

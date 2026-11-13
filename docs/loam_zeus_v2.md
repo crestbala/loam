@@ -1323,11 +1323,11 @@ Two ways:
 
 ```bash
 # build then run
-./bin/zeli build examples/zeus/myapp --targets macos
-./examples/zeus/myapp/build/macos/app
+./bin/zeli build examples/zeus/dracula --targets macos
+./examples/zeus/dracula/build/macos/app
 
 # or one step (what the other examples' run.sh use)
-./bin/loamc --target=native --run examples/zeus/myapp/app.loam
+./bin/loamc --target=native --run examples/zeus/dracula/app.loam
 ```
 
 One gotcha: `zeus_plat.c:322` gates on `ZEUS_HEADLESS` —
@@ -1341,9 +1341,9 @@ so if that's exported (e.g. left over from `./nob.sh test`) the binary starts, d
 ## Wasm
 
 ```bash
-./bin/zeli serve examples/zeus/myapp --port 5173
+./bin/zeli serve examples/zeus/dracula --port 5173
 ```
 
 It's running now at **http://127.0.0.1:5173** — verified serving:
 
-./bin/zeli routes examples/zeus/myapp
+./bin/zeli routes examples/zeus/dracula

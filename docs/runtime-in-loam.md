@@ -7,6 +7,21 @@ program links) is the C this plan moves. It starts after self-hosting is
 declared, and it is a security goal as much as a language one: see
 [security.md](security.md).
 
+**Target, set 2026-11-13: zero runtime.** `packages/loam/runtime/` is
+deleted. A program carries only the Loam it calls, because Loam goes
+through DCE where a pasted header cannot. The only C left is:
+
+- the OS and the GUI toolkits themselves (libc, Cocoa, JNI), called through
+  `#[c]` bindings with no shim file in between;
+- vendored libraries, which stay as they are;
+- the generated C that `cc` compiles.
+
+Where safe Loam cannot express something, the next choice is the smallest
+memory overhead, not more C: a table of typed handles instead of a raw
+pointer, or a few bytes per value instead of a hidden C struct. The checklist
+in §5 runs in order, and each step is ticked here, with its new line count,
+in the same change that lands it.
+
 **Goal**: every line of runtime C that is *logic* becomes Loam, so it is
 checked by the borrow checker and bounds checks like any program. C is left
 only where Loam cannot or should not go:
@@ -44,8 +59,9 @@ Counted on 2026-11-11 (`wc -l`, comments included):
   Writing them in Loam needs raw memory access, which safe Loam does not
   have. Until an `unsafe` that passes the rules in §4 exists, they stay C:
   small, in one file, fuzzed ([security.md](security.md) S2) and
-  sanitizer-tested. With such an `unsafe`, they may move to Loam too, as
-  the last step.
+  sanitizer-tested. Under the 2026-11-13 target they move too, as the last
+  step (R6): through that `unsafe`, or emitted by codegen. Staying C is no
+  longer the end state.
 - **OS and GUI calls.** `read`, `write`, `open`, `posix_spawn`, `poll`,
   sockets, `pthread`, the Win32 equivalents, Cocoa / UIKit (Objective-C), JNI,
   X11, and wasm imports. Each becomes a thin binding: one `#[c]` fn per call
@@ -131,36 +147,114 @@ it lands:
 3. **Less trusted C.** The count goes down, and the step records the new
    number here.
 
-Order, smallest risk and most logic first:
+Order, smallest risk and most logic first. Each box is one change, ticked
+here with the date and the new count when it lands.
 
-- [ ] **R0.** The trusted-C counter in `nob` (core, bindings and shims,
-      vendored; per file) and a budget for the core.
-- [ ] **R1. Pure logic.** `zeus_key.c`, `batch_run.c`, and the fmt / str /
-      conv / buf verbs left in `loam_rt.h`.
-- [ ] **R2. `sys`.** Files, dirs, paths, stdin, spawn bookkeeping and watch
-      over per-call bindings, on POSIX and Win32. The tests are the existing
-      `sys` fixtures plus the Windows CI job.
-- [ ] **R3. Async and threads.** The future table and the channel queues in
-      Loam, keeping S0's typed cells; the mutex, condition variable and
-      thread start stay core. This lands with T1 (ThreadSanitizer,
-      [threads.md](threads.md)).
-- [ ] **R4. Zeus platform.** The `zeus_plat.c` logic, the signal store first
-      (keeping S0's typed cells), then frame, trace, traps, media.
-- [ ] **R5. Net.** The socket state machine in Loam over socket and poll
-      bindings. TLS stays a binding: SecureTransport on macOS. Linux and
-      Windows need a TLS binding of their own, and `std:net` has no Windows
-      port yet (self-hosting, "Next changes (pending)", housekeeping).
-- [ ] **R6. Hosts.** The logic out of `linux.c`, `android.c`, `wasm.c`,
-      `ios.m`, then `mac.m` and `apple_draw.m`; toolkit calls stay native.
-- [ ] **R7. The core, reviewed.** Only the core, bindings, shims and
-      vendored code remain. The core is fuzzed and sanitizer-clean (S2, T1),
-      within its budget, and documented line by line in
-      [boundary.md](boundary.md).
-- [ ] **R8. The core in `unsafe` Loam, optional.** Only if an `unsafe` that
-      meets the rules of §4 is worth it: core pieces move one at a time,
-      each deleting its C, and each through the same gates as R1–R6, with
-      the trusted-code count (C plus `unsafe` lines) going down. If no piece
-      earns it, the core stays C and Loam has no `unsafe`.
+Starting count, 2026-11-13 (`wc -l`): `packages/loam/runtime/` is 9,812
+lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
+`zeus_wasm_libc.c` 796, `zeus_rt.h` 598, `maya_mac.m` 345, `zeus_key.c` 307,
+`raygui_plat.c` 282, `batch_run.c` 159, the rest headers), plus 118 lines of
+`wasm_inc` headers. Hosts are 4,871; vendored code is 294,490.
+
+**R0. Measure.**
+
+- [x] R0.1 `nob trusted`: lines of trusted C per file, grouped as runtime,
+      hosts and vendored, with a total per group. Done 2026-11-13. It counts
+      tracked files only (`git ls-files`); the seed and test fixtures are
+      not counted. First count: runtime 9,939 (the 14 files plus
+      `wasm_inc`), hosts 4,871, vendored 346,122 (sqlite, monocypher, raygui
+      and the generated tree-sitter parser).
+- [x] R0.2 The budget: `RUNTIME_LINE_BUDGET` in `nob.loam`, set at 9,939
+      and lowered by each step since (now **9,456**, after R1.1).
+      `nob trusted` and the unfiltered `nob test` fail if `runtime/` grows
+      past it. Each step below lowers it to its new count in the same
+      change.
+
+**R1. Pure logic, no new language feature.**
+
+- [x] R1.1 `zeus_key.c` + `zeus_key.h` → Loam (`zeuscore/keymap.loam`,
+      463 lines): interned names, chord parsing, the keymap, handlers and
+      dispatch. Done 2026-11-13. `engine_key_ev` is Loam end to end, and
+      `zeus_handle_key_ev` (what the hosts call) is a one-line trampoline
+      to it, bound in the host-mode app table. The five C-only focus
+      trampolines (`key_apply`, `fill_focus`, `focus_depth` / `node` /
+      `ctx`, `focus_step`) left the DCE roots and the app table; the
+      handler table reuses its slots, so a view rebuild allocates nothing,
+      as before. `mac.m` keeps the five key and modifier codes it uses.
+      Not benchmarked: the keymap runs once per key press, never per
+      frame. **Runtime: 9,939 → 9,456** (−483: the two files, plus the
+      trampolines in `zeus_plat.c` and `zeus_rt.h`).
+- [ ] R1.2 `batch_run.c` → generated Loam: the batched-test runner becomes
+      a `main` that `loamc` emits beside the batch, so no C file is linked.
+- [ ] R1.3 `loam_rt.h` fmt / str / conv / buf verbs → `std` Loam fns, one
+      verb family per change, each benchmarked against its C twin.
+- [ ] R1.4 Float formatting and parsing (`std:conv` float halves) → Loam,
+      byte-identical to `%.17g` / `strtod` on the existing fixtures plus a
+      differential test; the wasm-float block in `zeus_wasm_libc.c` goes
+      with it.
+
+**R2. `sys` over direct bindings.** Every kernel call is a `#[c]` binding
+straight to libc, so no C shim.
+
+- [ ] R2.1 `#[c]` usable from `std` itself, with libc symbols needing no
+      `#![c_source]`; wasm keeps its own import table.
+- [ ] R2.2 Files and dirs: `read_file`, `write_file`, `io_error`, directory
+      walks, paths.
+- [ ] R2.3 Process: `exec`, `spawn` / `wait` and the spawn table, `env`,
+      `exit`, `os`, `arch`, `cpu_count`.
+- [ ] R2.4 stdin: `read_stdin` / `read_line` buffering.
+- [ ] R2.5 `watch_*` bookkeeping over kqueue / inotify / Win32 bindings.
+- [ ] R2.6 Win32 paths through the same bindings; the Windows CI job is green.
+
+**R3. Async and threads** (lands with T1, [threads.md](threads.md)).
+
+- [ ] R3.1 The future table in Loam, keeping S0's typed cells.
+- [ ] R3.2 The channel queues in Loam; mutex, condition variable and thread
+      start are `#[c]` pthread bindings, which a thread worker may call.
+
+**R4. Zeus platform** (`zeus_plat.c`, `zeus_rt.h`).
+
+- [ ] R4.1 The signal byte store as a `[]u8` arena with S0's typed cells.
+- [ ] R4.2 Frame and trace logic.
+- [ ] R4.3 Recoverable traps (needs R6.2's trap path).
+- [ ] R4.4 Image sizes and media state.
+- [ ] R4.5 The `loam_zeus_engine_*` trampolines are gone: hosts call the
+      Loam exports.
+- [ ] R4.6 `maya_plat.c` and `raygui_plat.c`: the bridge logic moves to
+      `packages/maya` and `packages/raygui`; raylib calls become `#[c]`
+      bindings of those packages. `maya_mac.m` moves to the maya package as
+      a host file.
+
+**R5. Net** (`net.c`, `net_rt.h`).
+
+- [ ] R5.1 Socket and `poll` bindings; the connection state, buffering,
+      timeouts and non-blocking connect in Loam.
+- [ ] R5.2 TLS: SecureTransport as `#[c]` bindings on macOS, and a binding
+      for Linux and Windows.
+
+**R6. The core: zero runtime.** What remains of `loam_rt.h`: allocation,
+refcounts, owned strings, vec growth and copy-on-write, element and env drop
+hooks, panics and traps, checked integer ops.
+
+- [ ] R6.1 Checked integer ops emitted inline by codegen
+      (`__builtin_*_overflow` in the generated C), only where used.
+- [ ] R6.2 Panic and trap path: a Loam fn over `write` + `abort` bindings.
+- [ ] R6.3 Decide, with a measured prototype, how allocation, refcounts and
+      vec buffers leave C: the minimal `unsafe` of §4 in a `std:core`
+      module, or emitted by codegen per type, with no extra memory per value
+      over today's layout.
+- [ ] R6.4 Move them, one primitive per change, each fuzzed and
+      ASan/UBSan-clean (S2) and no slower than its C twin.
+- [ ] R6.5 `zeus_wasm_libc.c` reduced to nothing: what wasm still needs
+      (memory growth, `memcpy`) is Loam or a wasm import.
+- [ ] R6.6 `packages/loam/runtime/` deleted; `loader.loam` and `loamc.loam`
+      no longer name it; `nob trusted` reports zero runtime lines.
+
+**R7. Hosts** (`packages/zeus/hosts`, outside the runtime directory).
+
+- [ ] R7.1 Layout, event routing and state out of `linux.c`, `android.c`,
+      `wasm.c` and `ios.m`; toolkit calls stay native.
+- [ ] R7.2 Then `mac.m` and `apple_draw.m`.
 
 Not in scope: rewriting vendored libraries, raw pointers or `unsafe`
 beyond the rules of §4, or moving the C compiler `cc` itself. Loam still

@@ -182,7 +182,7 @@ enum Key {
     Right = 1001,
     Up = 1002,
     Down = 1003,
-    // The runtime's codes (`zeus_key.h`), which every host sends: the page
+    // The codes every host sends (`zeuscore/keymap.loam`): the page
     // keys hold 1004 / 1005, so Home and End sit above them.
     PageUp = 1004,
     PageDown = 1005,

@@ -539,9 +539,9 @@ uses the largest corner. (Phase 4 batch 29.)
 layout/page/loading/error/not-found, a nested `blog/` with `loader.loam`, a
 `[slug]` route with `paths()` + `meta`, and a `(marketing)` group), plus
 `components/`, `server/` (`#[proto]` contracts + a `#[server]` fn), `theme.loam`,
-`assets/`, `public/`, and `tests/`. It refuses a non-empty target. The output is
-checked in at `examples/zeus/myapp/` and built by the test gate, so the tree
-`zeli build` accepts is the tree it scaffolds.
+`assets/`, `public/`, and `tests/`. It refuses a non-empty target. The `zeli new`
+integration stanza scaffolds a fresh tree and compiles it, so the tree it
+writes is one the compiler accepts.
 
 ## Formatter
 
@@ -644,7 +644,7 @@ packages/zeus/hosts/android/android.c    JNI + Android Canvas present (paint onl
 packages/zeus/hosts/web/loader.js        Canvas2D host
 packages/zeus/hosts/web/wasm.c           WASM entry / JS imports
 runtime/zeus_plat.c        shared C seam
-runtime/zeus_key.c         keyboard
+src/zeuscore/keymap.loam   keyboard
 runtime/net.c              TCP trampolines (`packages/http/src/http` is Loam)
 examples/zeus/counter/frontend   wasm UI (`http.client("").call`)
 examples/zeus/counter/macos      Cocoa UI (`http.client(api.native_addr())`)

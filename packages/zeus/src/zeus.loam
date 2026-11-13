@@ -98,6 +98,7 @@ import "zeuscore/platform.loam"
 import "zeuscore/runtime.loam"
 import "zeuscore/memory.loam"
 import "zeuscore/arena.loam"
+import "zeuscore/keymap.loam"
 import "zeuscore/nodes.loam"
 import "zeuscore/layout.loam"
 import "zeuscore/metrics.loam"
@@ -335,47 +336,7 @@ fn app(title: string, width: int, height: int, build: fn() -> Node) {
 }
 
 fn engine_key_apply(signal_id: int, mode: int, value: int, lo: int, hi: int) {
-    arena.ensure()
-    if mode == 5 {
-        runtime.invoke_fn(value)
-        return
-    }
-    if signal_id <= 0 {
-        return
-    }
-    if signal_id >= arena.sigs.len {
-        return
-    }
-    let mut next = arena.sigs[signal_id]
-    if mode == 1 {
-        if next == 0 {
-            next = 1
-        } else {
-            next = 0
-        }
-    } else if mode == 2 {
-        next = value
-    } else if mode == 3 {
-        next = next + value
-    } else if mode == 4 {
-        let mut vlo = lo
-        let mut vhi = hi
-        if vhi < vlo {
-            let t = vlo
-            vlo = vhi
-            vhi = t
-        }
-        next = next + value
-        if next < vlo {
-            next = vlo
-        }
-        if next > vhi {
-            next = vhi
-        }
-    } else {
-        next = next + 1
-    }
-    arena.store_sig(signal_id, next)
+    keymap.apply(signal_id, mode, value, lo, hi)
 }
 
 /** *Run the host refresh hooks this frame needs (`arena.refresh_hosts`): the */
@@ -457,7 +418,8 @@ fn engine_layout(width: int, height: int) {
         arena.snapshot_focus()
         arena.snapshot_scroll()
         arena.reset_tree()
-        runtime.key_reset()
+        keymap.reset_handlers()
+        runtime.intern_fn_reset()
         track.reset()
         view_reads_size = 0
         view_building = 1
@@ -663,10 +625,29 @@ fn engine_set_mods(mods: int) {
     arena.ev_mods = mods
 }
 
+/** *A key with its modifiers, from a host: the keymap first, then the */
+/** *focused node. `1` if it was consumed. */
 fn engine_key_ev(key: int, mods: int) -> int {
     arena.ensure()
     arena.ev_mods = mods
-    return runtime.key_ev(key, mods)
+    if keymap.dispatch(key, mods) != 0 {
+        return 1
+    }
+    let shift_only = (mods | keymap.MOD_SHIFT) == keymap.MOD_SHIFT
+    // Plain Tab / Shift-Tab: the engine steps the focus ring, or inserts a
+    // tab when a multiline field is focused. Keymaps win via dispatch above.
+    if key == keymap.KEY_TAB && shift_only {
+        return engine_key(key)
+    }
+    // Cmd/Ctrl chords usually belong to the host (menus, reload). A focused
+    // text field still needs Cmd/Ctrl+A to select all so Backspace can clear.
+    if !shift_only {
+        if arena.focus_captures_text() != 0 {
+            return engine_key(key)
+        }
+        return 0
+    }
+    return engine_key(key)
 }
 
 /** *Key release, from hosts that deliver it. Runs the focused node's */
