@@ -8,7 +8,7 @@
 
 import "std:buf"
 import "std:map"
-import "std:intmap"
+import "std:map"
 import "std:result"
 import "std:sys"
 import "ast.loam"
@@ -76,13 +76,13 @@ fn decls_of(prog: int) -> []int {
 
 // imports_of per program node, and the kid count it was built at: name lookup
 // asks on every bare identifier, so the scan runs only when the tree grew.
-let mut IMPORTS_BY_PROGRAM: IntMap<[]int> = intmap.new([]int {})
-let mut IMPORTS_BUILT_AT: IntMap<int> = intmap.new(-1)
+let mut IMPORTS_BY_PROGRAM: Map<[]int> = map.new([]int {})
+let mut IMPORTS_BUILT_AT: Map<int> = map.new(-1)
 
 fn imports_of(prog: int) -> []int {
     let kid_count = ast.NODES[prog].kids.len
-    if intmap.get(&mut IMPORTS_BUILT_AT, prog) == kid_count {
-        return intmap.get(&mut IMPORTS_BY_PROGRAM, prog)
+    if map.get(&mut IMPORTS_BUILT_AT, map.key_int(prog)) == kid_count {
+        return map.get(&mut IMPORTS_BY_PROGRAM, map.key_int(prog))
     }
     let mut imports = []int {}
     for i in 0..kid_count {
@@ -91,8 +91,8 @@ fn imports_of(prog: int) -> []int {
             push(imports, kid)
         }
     }
-    intmap.put(&mut IMPORTS_BY_PROGRAM, prog, imports)
-    intmap.put(&mut IMPORTS_BUILT_AT, prog, kid_count)
+    map.put(&mut IMPORTS_BY_PROGRAM, map.key_int(prog), imports)
+    map.put(&mut IMPORTS_BUILT_AT, map.key_int(prog), kid_count)
     return imports
 }
 
@@ -634,12 +634,12 @@ fn find_mod(name: string) -> int {
     if Gcur < 0 || Gcur >= MODULE_BY_ALIAS.len {
         return find_mod_scan(name)
     }
-    let cached = map.map_get(&mut MODULE_BY_ALIAS[Gcur], name)
+    let cached = map.get(&mut MODULE_BY_ALIAS[Gcur], map.key_str(name))
     if cached != -2 {
         return cached
     }
     let module = find_mod_scan(name)
-    map.map_put(&mut MODULE_BY_ALIAS[Gcur], name, module)
+    map.put(&mut MODULE_BY_ALIAS[Gcur], map.key_str(name), module)
     return module
 }
 
@@ -671,7 +671,7 @@ let mut DECL_BUILT: []int = []int {}
 fn decl_table_build(m: int) {
     let decls = decls_of(MODS[m].root)
     for slot in 0..DECL_KIND_SLOTS {
-        DECL_TABLES[m * DECL_KIND_SLOTS + slot] = map.map_new(NONE)
+        DECL_TABLES[m * DECL_KIND_SLOTS + slot] = map.new(NONE)
     }
     for i in 0..decls.len {
         let slot = decl_kind_slot(kind(decls[i]))
@@ -679,8 +679,8 @@ fn decl_table_build(m: int) {
             continue
         }
         let decl_name = ast.INFO[decls[i]].name
-        if !map.map_has(&mut DECL_TABLES[m * DECL_KIND_SLOTS + slot], decl_name) {
-            map.map_put(&mut DECL_TABLES[m * DECL_KIND_SLOTS + slot], decl_name, decls[i])
+        if !map.has(&mut DECL_TABLES[m * DECL_KIND_SLOTS + slot], map.key_str(decl_name)) {
+            map.put(&mut DECL_TABLES[m * DECL_KIND_SLOTS + slot], map.key_str(decl_name), decls[i])
         }
     }
     DECL_BUILT[m] = ast.NODES[MODS[m].root].kids.len
@@ -697,7 +697,7 @@ fn find_decl(m: int, k: int, name: string) -> int {
     if DECL_BUILT[m] != ast.NODES[MODS[m].root].kids.len {
         decl_table_build(m)
     }
-    return map.map_get(&mut DECL_TABLES[m * DECL_KIND_SLOTS + slot], name)
+    return map.get(&mut DECL_TABLES[m * DECL_KIND_SLOTS + slot], map.key_str(name))
 }
 
 fn lookup_reset() {
@@ -706,14 +706,14 @@ fn lookup_reset() {
     MODULE_BY_ALIAS = []Map<int> {}
     for m in 0..MODS.len {
         for slot in 0..DECL_KIND_SLOTS {
-            push(DECL_TABLES, map.map_new(NONE))
+            push(DECL_TABLES, map.new(NONE))
         }
         push(DECL_BUILT, -1)
-        push(MODULE_BY_ALIAS, map.map_new(-2))
+        push(MODULE_BY_ALIAS, map.new(-2))
     }
     unqualified_lookups_clear()
-    IMPORTS_BY_PROGRAM = intmap.new([]int {})
-    IMPORTS_BUILT_AT = intmap.new(-1)
+    IMPORTS_BY_PROGRAM = map.new([]int {})
+    IMPORTS_BUILT_AT = map.new(-1)
 }
 
 /** *Point `mod.fn` / `mod.global` prefixes at the module file for hover/def. */
@@ -787,7 +787,7 @@ let mut UNQUALIFIED_LOOKUPS: []Map<int> = []Map<int> {}
 fn unqualified_lookups_clear() {
     UNQUALIFIED_LOOKUPS = []Map<int> {}
     for i in 0..MODS.len * DECL_KIND_SLOTS {
-        push(UNQUALIFIED_LOOKUPS, map.map_new(-2))
+        push(UNQUALIFIED_LOOKUPS, map.new(-2))
     }
 }
 
@@ -799,12 +799,12 @@ fn lookup_unqualified(name: string, k: int) -> int {
     if slot < 0 || Gcur < 0 || Gcur >= MODS.len || UNQUALIFIED_LOOKUPS.len != MODS.len * DECL_KIND_SLOTS {
         return lookup_unqualified_scan(name, k)
     }
-    let cached = map.map_get(&mut UNQUALIFIED_LOOKUPS[Gcur * DECL_KIND_SLOTS + slot], name)
+    let cached = map.get(&mut UNQUALIFIED_LOOKUPS[Gcur * DECL_KIND_SLOTS + slot], map.key_str(name))
     if cached != -2 {
         return cached
     }
     let decl = lookup_unqualified_scan(name, k)
-    map.map_put(&mut UNQUALIFIED_LOOKUPS[Gcur * DECL_KIND_SLOTS + slot], name, decl)
+    map.put(&mut UNQUALIFIED_LOOKUPS[Gcur * DECL_KIND_SLOTS + slot], map.key_str(name), decl)
     return decl
 }
 
@@ -3389,7 +3389,23 @@ fn check_call(n: int, expect: int) -> int {
             ast.NODES[cal].ty = fn_type_of(f)
             let recv = ast.NODES[cal].a
             ast.NODES[cal].a = NONE
-            let mut na = []int { recv }
+            // A method taking `&mut S` borrows its receiver: `m.put(k, v)`
+            // passes `&mut m`, the same borrow `match_arg` inserts for a plain
+            // call. Without it a generic `&mut`-receiver method never resolves
+            // through UFCS (`unify` sees `S` against `&mut S` and fails before
+            // `match_arg` runs).
+            let mut recv_arg = recv
+            let fty = fn_type_of(f)
+            if fty != NO_TYPE && tk(fty) == TK.Proc && types.TYPES[fty].params.len > 0 {
+                let p0 = types.TYPES[fty].params[0]
+                // `method_recv_matches` already allows a generic `S` against the
+                // concrete receiver; borrow only when the method takes `&mut`.
+                if tk(p0) == TK.Ptr && types.TYPES[p0].is_mut != 0 && recv != NONE &&
+                    ast.INFO[recv].place_mut != 0 && method_recv_matches(f, recv_ty) {
+                    recv_arg = wrap_addr(recv, 1)
+                }
+            }
+            let mut na = []int { recv_arg }
             let old = ast.NODES[n].kids
             for i in 0..old.len {
                 push(na, old[i])
@@ -5215,17 +5231,17 @@ fn check_duplicate_decls(m: int) {
     // Each name's first declaration, so a module costs one lookup per
     // declaration: comparing each name with every earlier one (as C does)
     // is quadratic in the module, and the compiler's own modules are big.
-    let mut first = map.map_with_cap(ds.len * 2, -1)
+    let mut first = map.with_cap(ds.len * 2, -1)
     for i in 0..ds.len {
         let a = decl_name(ds[i])
         if a.len == 0 {
             continue
         }
-        let j = map.map_get(&mut first, a)
+        let j = map.get(&mut first, map.key_str(a))
         if j >= 0 {
             err(ast.INFO[ds[i]].loc, "'{{a}}' is already defined in this module (first at line {{ast.INFO[ds[j]].loc.line}})")
         } else {
-            map.map_put(&mut first, a, i)
+            map.put(&mut first, map.key_str(a), i)
         }
     }
 }
@@ -5395,14 +5411,14 @@ fn check_selective_imports(m: int) {
 // --- C names ----------------------------------------------------------------------------
 
 /** *Every C symbol taken so far. */
-let mut CNAMES: Map<int> = map.map_new(0)
+let mut CNAMES: Map<int> = map.new(0)
 
 fn cname_has(s: string) -> bool {
-    return map.map_has(&mut CNAMES, s)
+    return map.has(&mut CNAMES, map.key_str(s))
 }
 
 fn cname_add(s: string) {
-    map.map_put(&mut CNAMES, s, 1)
+    map.put(&mut CNAMES, map.key_str(s), 1)
 }
 
 /** *`cname`, renamed `<cname>_2`, `_3`, ... when taken, then claimed. */
@@ -5559,7 +5575,7 @@ fn typecheck_modules() -> int {
     clos_scope = -1
     clos_stack = []int {}
     clos_scope_stack = []int {}
-    CNAMES = map.map_new(0)
+    CNAMES = map.new(0)
     for m in 0..MODS.len {
         let ds = decls_of(MODS[m].root)
         for i in 0..ds.len {
@@ -5706,8 +5722,8 @@ fn reset() {
     MODS = []Module {}
     Gcur = 0
     Gerr = 0
-    IMPORTS_BY_PROGRAM = intmap.new([]int {})
-    IMPORTS_BUILT_AT = intmap.new(-1)
+    IMPORTS_BY_PROGRAM = map.new([]int {})
+    IMPORTS_BUILT_AT = map.new(-1)
     scopes_clear()
     cur_ret = NO_TYPE
     loop_depth = 0
@@ -5735,5 +5751,5 @@ fn reset() {
     GEN_CALLS = []GenCall {}
     inline_path = []int {}
     DECL_MOD = []int {}
-    CNAMES = map.map_new(0)
+    CNAMES = map.new(0)
 }

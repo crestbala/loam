@@ -59,19 +59,19 @@ fn graph_new() -> Graph {
         names: []string {},
         sizes: []int {},
         calls: [][]int {},
-        ids: map.map_new(-1),
+        ids: map.new(-1),
     }
 }
 
 fn intern(g: &mut Graph, name: string) -> int {
-    if map.map_has(&mut g.ids, name) {
-        return map.map_at(&mut g.ids, name)
+    if map.has(&mut g.ids, map.key_str(name)) {
+        return map.at(&mut g.ids, map.key_str(name))
     }
     let id = g.names.len
     push(g.names, name)
     push(g.sizes, 0)
     push(g.calls, []int {})
-    map.map_put(&mut g.ids, name, id)
+    map.put(&mut g.ids, map.key_str(name), id)
     return id
 }
 
@@ -212,8 +212,8 @@ fn roots_of(g: &mut Graph, runtime: string) -> []int {
             }
             if has_at(runtime, a, "loam_") {
                 let name = str.slice(runtime, a, i)
-                if map.map_has(&mut g.ids, name) {
-                    push(out, map.map_at(&mut g.ids, name))
+                if map.has(&mut g.ids, map.key_str(name)) {
+                    push(out, map.at(&mut g.ids, map.key_str(name)))
                 }
             }
         } else {
@@ -407,7 +407,7 @@ fn plan(g: &Graph, roots: []int, entries: []int, min_size: int) -> Plan {
         }
     }
 
-    let mut by_sig: Map<int> = map.map_new(-1)
+    let mut by_sig: Map<int> = map.new(-1)
     let mut cs = []Chunk {}
     let shared = (entries.len * PRIMARY_PERCENT + 99) / 100
     for i in 0..n {
@@ -416,12 +416,12 @@ fn plan(g: &Graph, roots: []int, entries: []int, min_size: int) -> Plan {
         }
         let key = int_list_key(users[i])
         let mut c = -1
-        if map.map_has(&mut by_sig, key) {
-            c = map.map_at(&mut by_sig, key)
+        if map.has(&mut by_sig, map.key_str(key)) {
+            c = map.at(&mut by_sig, map.key_str(key))
         } else {
             c = cs.len
             push(cs, Chunk { name: "", fns: []int {}, routes: users[i], size: 0 })
-            map.map_put(&mut by_sig, key, c)
+            map.put(&mut by_sig, map.key_str(key), c)
         }
         push(cs[c].fns, i)
         cs[c].size = cs[c].size + g.sizes[i]
