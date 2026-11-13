@@ -1,0 +1,17 @@
+// The proof names one place: `p.long` bounds the loop, so `p.short[i]` (same
+// root, other field) is not proven and must trap.
+import "std:fmt"
+
+struct Pair {
+    long: []int,
+    short: []int,
+}
+
+fn main() {
+    let p = Pair { long: []int { 1, 2, 3, 4 }, short: []int { 7 } }
+    let mut total = 0
+    for i in 0..p.long.len {
+        total += p.short[i]
+    }
+    fmt.println(total)
+}

@@ -5,6 +5,11 @@
 //   - `a[LITERAL]` with `0 <= LITERAL < N` for `[N]T`.
 //   - `for i in 0..C.len { ... C[i] ... }`: the loop variable indexes the same
 //     container the range bounds, so `i` is in `[0, C.len)` on every iteration.
+//     `C` is a place (a local, then fields, through derefs; no index), and
+//     `C[i]` must name that same place. The body must not be able to shrink
+//     it: no whole or field assignment to its root, no `&mut` of it, no `pop`
+//     of it, and, when the root is a reference, no passing it on. A global
+//     root never counts, since any call may shrink it.
 //
 // Everything else keeps a run-time trap. The pass never fails the compile: a
 // miss is a redundant check, never a wrong answer.
@@ -56,28 +61,108 @@ fn root_ident_node(place: int) -> int {
 struct LoopProof {
     loop_node: int,
     container: int,
+    /** *The place `.len` is read from (`C` in `C.len`), or `ast.NONE`. */
+    bound: int,
 }
 
 let mut PROOFS: []LoopProof = []LoopProof {}
 
-/** *`index` is exactly the loop variable of a proof in force for the */
-/** *container `target` names. */
-fn is_proven_index(index: int, target: int) -> bool {
-    if index == ast.NONE || ast.NODES[index].kind != Kind.Ident || ast.NODES[index].res == ast.NONE {
+/** *`a` and `b` are the same place: the same resolved root, then the same */
+/** *fields and derefs. A path through an index is never the same place. */
+fn same_place(a: int, b: int) -> bool {
+    if a == ast.NONE || b == ast.NONE || ast.NODES[a].kind != ast.NODES[b].kind {
         return false
     }
-    let target_ident = root_ident_node(target)
-    if target_ident == ast.NONE || ast.NODES[target_ident].res == ast.NONE {
+    let place_kind = ast.NODES[a].kind
+    if place_kind == Kind.Ident {
+        return ast.NODES[a].res != ast.NONE && ast.NODES[a].res == ast.NODES[b].res
+    }
+    if place_kind == Kind.Field {
+        return ast.INFO[a].name == ast.INFO[b].name && same_place(ast.NODES[a].a, ast.NODES[b].a)
+    }
+    if place_kind == Kind.Deref {
+        return same_place(ast.NODES[a].a, ast.NODES[b].a)
+    }
+    return false
+}
+
+/** *`n` is a place without an index: an identifier, then fields and derefs. */
+fn is_plain_place(n: int) -> bool {
+    let mut at = n
+    while at != ast.NONE {
+        let place_kind = ast.NODES[at].kind
+        if place_kind == Kind.Ident {
+            return true
+        }
+        if place_kind != Kind.Field && place_kind != Kind.Deref {
+            return false
+        }
+        at = ast.NODES[at].a
+    }
+    return false
+}
+
+/** *`n` is a place rooted at the identifier resolving to `root_res`. */
+fn rooted_at(n: int, root_res: int) -> bool {
+    let root = root_ident_node(n)
+    return root != ast.NONE && ast.NODES[root].res == root_res
+}
+
+/** *Could anything in `n` shrink or replace what the root `root_res` holds? */
+/** *`by_ref`: the root is a reference, so passing it on lends it out. */
+fn may_shrink(n: int, root_res: int, by_ref: bool) -> bool {
+    if n == ast.NONE {
+        return false
+    }
+    let node_kind = ast.NODES[n].kind
+    if node_kind == Kind.Assign {
+        let target = ast.NODES[n].a
+        // An element write keeps the length; anything else may not.
+        if target != ast.NONE && ast.NODES[target].kind != Kind.Index && rooted_at(target, root_res) {
+            return true
+        }
+    }
+    if node_kind == Kind.Addr && ast.NODES[n].op != 0 && rooted_at(ast.NODES[n].a, root_res) {
+        return true
+    }
+    if node_kind == Kind.Call {
+        let args = ast.NODES[n].kids
+        let pops = (ast.INFO[n].marks & ast.M_VEC_POP) != 0
+        for i in 0..args.len {
+            let arg = args[i]
+            if arg == ast.NONE {
+                continue
+            }
+            let place = if ast.NODES[arg].kind == Kind.Addr { ast.NODES[arg].a } else { arg }
+            if (pops || by_ref) && is_plain_place(place) && rooted_at(place, root_res) {
+                return true
+            }
+        }
+    }
+    if may_shrink(ast.NODES[n].a, root_res, by_ref) || may_shrink(ast.NODES[n].b, root_res, by_ref) ||
+        may_shrink(ast.NODES[n].c, root_res, by_ref) {
+        return true
+    }
+    for i in 0..ast.NODES[n].kids.len {
+        if may_shrink(ast.NODES[n].kids[i], root_res, by_ref) {
+            return true
+        }
+    }
+    return false
+}
+
+/** *`index` is exactly the loop variable of a proof in force whose bounded */
+/** *place `target` names. */
+fn is_proven_index(index: int, target: int) -> bool {
+    if index == ast.NONE || ast.NODES[index].kind != Kind.Ident || ast.NODES[index].res == ast.NONE {
         return false
     }
     let mut i = PROOFS.len
     while i > 0 {
         i = i - 1
         let proof = PROOFS[i]
-        if proof.loop_node != ast.NONE && proof.container != ast.NONE &&
-            ast.NODES[proof.container].res != ast.NONE &&
-            ast.NODES[proof.container].res == ast.NODES[target_ident].res &&
-            ast.NODES[index].res == proof.loop_node {
+        if proof.loop_node != ast.NONE && proof.bound != ast.NONE && ast.NODES[index].res == proof.loop_node &&
+            same_place(proof.bound, target) {
             return true
         }
     }
@@ -123,16 +208,24 @@ fn walk(n: int) {
             // `for i in 0..C.len` proves every `C[i]` in the body in range.
             let iter = ast.NODES[n].a
             let mut container = ast.NONE
+            let mut bound = ast.NONE
             if iter != ast.NONE && ast.NODES[iter].kind == Kind.Binary && ast.NODES[iter].op == Tok.DotDot {
                 let low = ast.NODES[iter].a
                 if low != ast.NONE && ast.NODES[low].kind == Kind.Number && ast.INFO[low].num == 0 {
                     let bounded = len_container_ident(ast.NODES[iter].b)
-                    if bounded != ast.NONE && ast.NODES[bounded].res != ast.NONE {
-                        container = bounded
+                    let place = ast.NODES[ast.NODES[iter].b].a
+                    if bounded != ast.NONE && ast.NODES[bounded].res != ast.NONE && is_plain_place(place) &&
+                        (ast.INFO[ast.NODES[bounded].res].marks & ast.M_GLOBAL_VAR) == 0 {
+                        let root_type = ast.NODES[bounded].ty
+                        let by_ref = root_type != types.NO_TYPE && types.kind_of(root_type) == TK.Ptr
+                        if !may_shrink(ast.NODES[n].b, ast.NODES[bounded].res, by_ref) {
+                            container = bounded
+                            bound = place
+                        }
                     }
                 }
             }
-            push(PROOFS, LoopProof { loop_node: n, container: container })
+            push(PROOFS, LoopProof { loop_node: n, container: container, bound: bound })
             walk(ast.NODES[n].b)
             pop(PROOFS)
             break
