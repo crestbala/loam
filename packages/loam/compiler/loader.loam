@@ -211,16 +211,16 @@ fn path_under_flex(path: string, dir: string) -> bool {
 }
 
 /** *`sys.realpath`, once per directory. */
-let mut REALPATHS: Map<string> = map_new("")
-let mut REALPATH_ASKED: Map<int> = map_new(0)
+let mut REALPATHS: Map<string> = map.new("")
+let mut REALPATH_ASKED: Map<int> = map.new(0)
 
 fn realpath_cached(p: string) -> string {
-    if map_has(&mut REALPATH_ASKED, p) {
-        return map_get(&mut REALPATHS, p)
+    if map.has(&mut REALPATH_ASKED, map.key_str(p)) {
+        return map.get(&mut REALPATHS, map.key_str(p))
     }
     let r = sys.realpath(p)
-    map_put(&mut REALPATH_ASKED, p, 1)
-    map_put(&mut REALPATHS, p, r)
+    map.put(&mut REALPATH_ASKED, map.key_str(p), 1)
+    map.put(&mut REALPATHS, map.key_str(p), r)
     return r
 }
 
@@ -926,7 +926,7 @@ fn package_missing(name: string) -> string {
 
 /** *Per module (same index as `typecheck.MODS`): still loading its imports. */
 let mut LOADING: []bool = []bool {}
-let mut MOD_BY_PATH: Map<int> = map_new(-1)
+let mut MOD_BY_PATH: Map<int> = map.new(-1)
 const MAX_MODULES: int = 1024
 
 fn error_at(loc: Loc, msg: string) {
@@ -1182,7 +1182,7 @@ let mut OVERRIDE_SRC: string = ""
 /** *Load `path` as module `alias`, then everything it imports. False on an */
 /** *error (reported in `ast.DIAGS`). */
 fn load_module(path: string, alias: string) -> bool {
-    let seen = map_get(&mut MOD_BY_PATH, path)
+    let seen = map.get(&mut MOD_BY_PATH, map.key_str(path))
     if seen >= 0 {
         if LOADING[seen] {
             error_at(file_loc(seen), "import cycle involving '{{path}}'")
@@ -1199,7 +1199,7 @@ fn load_module(path: string, alias: string) -> bool {
     push(typecheck.MODS, Module { name: unique, path: path, rank: 0, root: NONE, is_std: is_std_path(path) })
     push(LOADING, true)
     push(dump.PATHS, path)
-    map_put(&mut MOD_BY_PATH, path, idx)
+    map.put(&mut MOD_BY_PATH, map.key_str(path), idx)
     let mut src = OVERRIDE_SRC
     if OVERRIDE_PATH.len == 0 || path != OVERRIDE_PATH {
         let r = sys.read(path)
@@ -1262,8 +1262,8 @@ fn load(path: string) -> bool {
 /** *The `realpath` cache goes too: files may have moved since. */
 fn reset() {
     WARNINGS = []string {}
-    REALPATHS = map_new("")
-    REALPATH_ASKED = map_new(0)
+    REALPATHS = map.new("")
+    REALPATH_ASKED = map.new(0)
     LOADING = []bool {}
-    MOD_BY_PATH = map_new(-1)
+    MOD_BY_PATH = map.new(-1)
 }

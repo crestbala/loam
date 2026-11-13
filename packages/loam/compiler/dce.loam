@@ -109,11 +109,11 @@ fn walk_params(f: int) {
 
 /** *Loam fns by their C name, for builtins implemented in Loam: a call the */
 /** *checker gave a C name (`"{{n}}"` is `loam_decimal_of_int`) keeps the fn. */
-let mut BY_CNAME: Map<int> = map_new(-1)
+let mut BY_CNAME: Map<int> = map.new(-1)
 
 /** *Keep the Loam fn whose C name is `cname`, if there is one. */
 fn mark_cname(cname: string) {
-    let f = map_get(&mut BY_CNAME, cname)
+    let f = map.get(&mut BY_CNAME, map.key_str(cname))
     if f >= 0 {
         mark_fn(f)
     }
@@ -265,7 +265,7 @@ fn run() {
         push(DONE, false)
     }
     TODO = []int {}
-    BY_CNAME = map_new(-1)
+    BY_CNAME = map.new(-1)
     let nmods = typecheck.MODS.len
     for m in 0..nmods {
         let root = typecheck.MODS[m].root
@@ -276,7 +276,7 @@ fn run() {
         for i in 0..decls.len {
             let d = decls[i]
             if kind(d) == Kind.Fn && ast.EXTRA[ast.ex(d)].has_sname {
-                map_put(&mut BY_CNAME, ast.EXTRA[ast.ex(d)].sname, d)
+                map.put(&mut BY_CNAME, map.key_str(ast.EXTRA[ast.ex(d)].sname), d)
             }
         }
     }
@@ -365,7 +365,7 @@ fn dropped(cname: string) -> bool {
     if !RAN {
         return false
     }
-    let f = map_get(&mut BY_CNAME, cname)
+    let f = map.get(&mut BY_CNAME, map.key_str(cname))
     return f >= 0 && !keep(f)
 }
 

@@ -145,16 +145,16 @@ let RESERVED: []string = []string {
     "union", "unsigned", "void", "volatile", "while",
 }
 
-let mut RESERVED_SET: Map<int> = map_new(0)
+let mut RESERVED_SET: Map<int> = map.new(0)
 
 /** *A Loam name as a C identifier: one C reserves gets a `loam_kw_` prefix. */
 fn cid(name: string) -> string {
     if RESERVED_SET.len == 0 {
         for i in 0..RESERVED.len {
-            map_put(&mut RESERVED_SET, RESERVED[i], 1)
+            map.put(&mut RESERVED_SET, map.key_str(RESERVED[i]), 1)
         }
     }
-    if map_has(&mut RESERVED_SET, name) {
+    if map.has(&mut RESERVED_SET, map.key_str(name)) {
         return "loam_kw_{{name}}"
     }
     return name
@@ -1065,10 +1065,10 @@ let mut SE_TYPES: []int = []int {}
 let mut SE_NAMES: []string = []string {}
 /** *0 pending, 1 emitting, 2 emitted. */
 let mut SE_STATE: []int = []int {}
-let mut SE_INDEX: Map<int> = map_new(-1)
+let mut SE_INDEX: Map<int> = map.new(-1)
 
 fn se_find(cn: string) -> int {
-    return map_get(&mut SE_INDEX, cn)
+    return map.get(&mut SE_INDEX, map.key_str(cn))
 }
 
 fn se_add(t: int) {
@@ -1079,7 +1079,7 @@ fn se_add(t: int) {
     push(SE_TYPES, t)
     push(SE_NAMES, cn)
     push(SE_STATE, 0)
-    map_put(&mut SE_INDEX, cn, SE_TYPES.len - 1)
+    map.put(&mut SE_INDEX, map.key_str(cn), SE_TYPES.len - 1)
 }
 
 fn struct_body(t: int) {
@@ -1371,18 +1371,18 @@ fn place(p: int) {
 
 /** *Structs with out-of-line `loam_keep__T` / `loam_rel__T` / */
 /** *`loam_steal__T` helpers, by C name; at most 4095, as C's table. */
-let mut OWN_HELPERS: Map<int> = map_new(0)
+let mut OWN_HELPERS: Map<int> = map.new(0)
 let mut OWN_HELPER_COUNT: int = 0
 const OWN_HELPER_LIMIT: int = 4095
 
 fn own_helper_add(cn: string) -> bool {
-    if map_has(&mut OWN_HELPERS, cn) {
+    if map.has(&mut OWN_HELPERS, map.key_str(cn)) {
         return true
     }
     if OWN_HELPER_COUNT >= OWN_HELPER_LIMIT {
         return false
     }
-    map_put(&mut OWN_HELPERS, cn, 1)
+    map.put(&mut OWN_HELPERS, map.key_str(cn), 1)
     OWN_HELPER_COUNT = OWN_HELPER_COUNT + 1
     return true
 }
@@ -1413,7 +1413,7 @@ fn own_helper_for(t: int) -> string {
         return ""
     }
     let cn = types.type_c_name(t)
-    if map_has(&mut OWN_HELPERS, cn) {
+    if map.has(&mut OWN_HELPERS, map.key_str(cn)) {
         return cn
     }
     return ""
@@ -2554,22 +2554,22 @@ fn term(b: int, is_main: bool) {
 }
 
 /** *The first IR fn with each C name. */
-let mut IR_FN_BY_NAME: Map<int> = map_new(-1)
+let mut IR_FN_BY_NAME: Map<int> = map.new(-1)
 let mut IR_FN_INDEXED: bool = false
 
 fn find_ir_fn(cname: string) -> int {
     if !IR_FN_INDEXED {
         IR_FN_INDEXED = true
         for f in 0..ir.FNS.len {
-            if ir.FNS[f].has_cname && !map_has(&mut IR_FN_BY_NAME, ir.FNS[f].cname) {
-                map_put(&mut IR_FN_BY_NAME, ir.FNS[f].cname, f)
+            if ir.FNS[f].has_cname && !map.has(&mut IR_FN_BY_NAME, map.key_str(ir.FNS[f].cname)) {
+                map.put(&mut IR_FN_BY_NAME, map.key_str(ir.FNS[f].cname), f)
             }
         }
     }
     if cname.len == 0 {
         return NONE
     }
-    return map_get(&mut IR_FN_BY_NAME, cname)
+    return map.get(&mut IR_FN_BY_NAME, map.key_str(cname))
 }
 
 fn is_init_fn(f: int) -> bool {
@@ -2831,7 +2831,7 @@ fn emit_fn(d: int, is_main: bool, linkage: string) {
 
 /** *Closures of the kept fn bodies and module-level inits. */
 let mut CLOS_NODES: []int = []int {}
-let mut CLOS_IDS: Map<int> = map_new(0)
+let mut CLOS_IDS: Map<int> = map.new(0)
 
 fn collect_list(nodes: &[]int) {
     for i in 0..nodes.len {
@@ -2847,7 +2847,7 @@ fn collect_clos(n: int) {
     switch x.kind {
         case Kind.Closure:
             push(CLOS_NODES, n)
-            map_put(&mut CLOS_IDS, "{{ast.EXTRA[ast.ex(n)].clos_id}}", 1)
+            map.put(&mut CLOS_IDS, map.key_str("{{ast.EXTRA[ast.ex(n)].clos_id}}"), 1)
             collect_clos(x.b)
             break
         case Kind.Program, Kind.Block, Kind.StructLit, Kind.ArrayLit, Kind.Tuple:
@@ -2955,10 +2955,10 @@ fn mono_clos_env(f: int, seen: &mut Map<int>) {
     // Only a shared env (`loam_env_<id>`) can already exist.
     if tag == "loam_env_{{fx.clos_id}}" {
         let key = "{{fx.clos_id}}"
-        if map_has(&mut CLOS_IDS, key) || map_has(seen, key) {
+        if map.has(&mut CLOS_IDS, map.key_str(key)) || map.has(seen, map.key_str(key)) {
             return
         }
-        map_put(seen, key, 1)
+        map.put(seen, map.key_str(key), 1)
     }
     w("struct {{tag}} {\n")
     for k in 0..fx.caps.len {
@@ -3047,17 +3047,17 @@ let mut LT_TYPES: []int = []int {}
 /** *Per template, each field's default node (`NONE` none), or empty when no */
 /** *emitted site used it. */
 let mut LT_DEFAULTS: [][]int = [][]int {}
-let mut LT_INDEX: Map<int> = map_new(-1)
+let mut LT_INDEX: Map<int> = map.new(-1)
 
 fn lit_tmpl_add(t: int, cn: string) -> int {
-    let j = map_get(&mut LT_INDEX, cn)
+    let j = map.get(&mut LT_INDEX, map.key_str(cn))
     if j >= 0 {
         return j
     }
     push(LT_NAMES, cn)
     push(LT_TYPES, t)
     push(LT_DEFAULTS, []int {})
-    map_put(&mut LT_INDEX, cn, LT_NAMES.len - 1)
+    map.put(&mut LT_INDEX, map.key_str(cn), LT_NAMES.len - 1)
     return LT_NAMES.len - 1
 }
 
@@ -3093,7 +3093,7 @@ fn lit_template_decls() {
                 }
                 let t = ir.INSTS[i].ty
                 let cn = types.type_c_name(t)
-                if map_get(&mut LT_INDEX, cn) >= 0 {
+                if map.get(&mut LT_INDEX, map.key_str(cn)) >= 0 {
                     continue
                 }
                 lit_tmpl_add(t, cn)
@@ -3142,7 +3142,7 @@ fn lit_template_defs() {
 /** *Prototypes, then bodies, of the ownership helpers of every emitted struct */
 /** *with two or more owning leaves. */
 fn own_helpers() {
-    OWN_HELPERS = map_new(0)
+    OWN_HELPERS = map.new(0)
     OWN_HELPER_COUNT = 0
     let mut want = []bool {}
     for i in 0..SE_TYPES.len {
@@ -3573,7 +3573,7 @@ fn emit_c() {
     for i in 0..CLOS_NODES.len {
         clos_sig(CLOS_NODES[i], true)
     }
-    let mut seen_envs: Map<int> = map_new(0)
+    let mut seen_envs: Map<int> = map.new(0)
     for f in 0..ir.FNS.len {
         if !is_mono_clos(f) {
             continue

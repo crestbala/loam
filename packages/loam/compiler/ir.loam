@@ -543,7 +543,7 @@ fn scope_find(name: string) -> int {
     }
     // The module's globals, bound below every local (`bind_module_globals`).
     if CUR_MOD >= 0 && CUR_MOD < MOD_GLOBAL_NAMES.len {
-        let g = map_get(&mut MOD_GLOBAL_NAMES[CUR_MOD], name)
+        let g = map.get(&mut MOD_GLOBAL_NAMES[CUR_MOD], map.key_str(name))
         if g != NONE {
             return GLOBAL_LOCAL[GVAR_OF_NODE[typecheck.GVARS[g].var]]
         }
@@ -789,7 +789,7 @@ fn index_globals() {
     MOD_GLOBAL_NAMES = []Map<int> {}
     for m in 0..typecheck.MODS.len {
         push(MOD_GVARS, []int {})
-        push(MOD_GLOBAL_NAMES, map_new(NONE))
+        push(MOD_GLOBAL_NAMES, map.new(NONE))
     }
     GLOBAL_LOCAL = []int {}
     for g in 0..typecheck.GVARS.len {
@@ -804,7 +804,7 @@ fn index_globals() {
         let m = typecheck.GVARS[g].mod
         if m >= 0 && m < MOD_GVARS.len && ast.INFO[gv].has_name {
             push(MOD_GVARS[m], g)
-            map_put(&mut MOD_GLOBAL_NAMES[m], ast.INFO[gv].name, g)
+            map.put(&mut MOD_GLOBAL_NAMES[m], map.key_str(ast.INFO[gv].name), g)
         }
     }
 }

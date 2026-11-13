@@ -976,16 +976,16 @@ fn base_name(p: string) -> string {
 /** *though its mtime is never refreshed: the compiler checks that file */
 /** *against the precompiled header. */
 fn shard_prune(dir: string, hpath: string, rsp: string) {
-    let mut keep: Map<int> = map_new(0)
-    map_put(&mut keep, base_name(hpath), 1)
-    map_put(&mut keep, "{{base_name(hpath)}}.pch", 1)
-    map_put(&mut keep, base_name(rsp), 1)
+    let mut keep: Map<int> = map.new(0)
+    map.put(&mut keep, map.key_str(base_name(hpath)), 1)
+    map.put(&mut keep, map.key_str("{{base_name(hpath)}}.pch"), 1)
+    map.put(&mut keep, map.key_str(base_name(rsp)), 1)
     for i in 0..SHARD_OBJS.len {
-        map_put(&mut keep, base_name(SHARD_OBJS[i]), 1)
+        map.put(&mut keep, map.key_str(base_name(SHARD_OBJS[i])), 1)
     }
     let names = sys.list_dir(dir)
     for i in 0..names.len {
-        if map_has(&mut keep, names[i]) {
+        if map.has(&mut keep, map.key_str(names[i])) {
             continue
         }
         let path = "{{dir}}/{{names[i]}}"
