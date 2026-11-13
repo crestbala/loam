@@ -1,0 +1,464 @@
+// ranges — sound integer intervals for expressions, so run-time checks that
+// cannot fire are not emitted (docs/runtime-in-loam.md, R1.3a).
+//
+// No dataflow, so no fixpoint: an expression's interval comes from its own
+// shape and its leaves. A leaf is known when it is
+//   - a literal;
+//   - an immutable local `let` (its initializer's interval holds for good);
+//   - a `for i in a..b` variable (`i` in `[a, b - 1]`; a loop variable is
+//     immutable);
+//   - a `.len` (never negative), a string byte (`0..255`), or a cast.
+// Anything else (a `let mut`, a global, a parameter, a call) is its type's
+// whole range. A global is never trusted: code that runs before module init
+// (`std:batch`) reads it as zero. An unsigned `x % k` is `[0, k - 1]`
+// whatever `x` is, and an unsigned `x / k` by a positive `k` never traps.
+//
+// From those intervals the pass marks, on the AST:
+//   - `ASTF_NO_OVERFLOW` on `+ - * / %` and unary `-` whose result fits its
+//     type (and, for `/ %`, whose divisor is never 0, nor -1 against the
+//     least value);
+//   - `ASTF_CONV_SAFE` on a cast whose source fits the target;
+//   - `ASTF_INDEX_SAFE` on an index into a fixed array (or a borrow of one)
+//     or a string literal
+//     whose interval is inside the length.
+// The pass never fails the compile: a miss keeps a check, never drops one it
+// cannot prove.
+
+import "ast.loam"
+import "types.loam"
+import "lexer.loam"
+import "typecheck.loam"
+
+/** *Past this magnitude an interval is unknown, so the bound arithmetic */
+/** *below (in `i64`) can never overflow. */
+const BOUND_LIMIT: i64 = i64(4611686018427387904)
+/** *A product is only formed from factors below this magnitude. */
+const FACTOR_LIMIT: i64 = i64(2147483648)
+/** *How deep an immutable `let` chain is followed. */
+const DEPTH_LIMIT: int = 8
+
+/** *An integer interval `[lo, hi]`, or unknown. */
+struct Range {
+    known: bool,
+    lo: i64,
+    hi: i64,
+}
+
+fn unknown() -> Range {
+    return Range { known: false, lo: i64(0), hi: i64(0) }
+}
+
+fn span(lo: i64, hi: i64) -> Range {
+    if lo > hi || lo < -BOUND_LIMIT || hi > BOUND_LIMIT {
+        return unknown()
+    }
+    return Range { known: true, lo: lo, hi: hi }
+}
+
+fn min_of(a: i64, b: i64) -> i64 {
+    return if a < b { a } else { b }
+}
+
+fn max_of(a: i64, b: i64) -> i64 {
+    return if a > b { a } else { b }
+}
+
+fn is_int(t: int) -> bool {
+    return t != types.NO_TYPE && types.TYPES[t].kind == TK.Int
+}
+
+/** *Every value of the integer type `t`, or unknown (not an integer, or */
+/** *`i64` / `u64`, whose bounds pass `BOUND_LIMIT`). */
+fn type_range(t: int) -> Range {
+    if !is_int(t) {
+        return unknown()
+    }
+    let bits = types.TYPES[t].bits
+    let unsigned = types.TYPES[t].is_unsigned != 0
+    if bits >= 64 || bits == 0 {
+        return unknown()
+    }
+    if unsigned {
+        if bits == 32 {
+            return span(i64(0), i64(4294967295))
+        }
+        if bits == 16 {
+            return span(i64(0), i64(65535))
+        }
+        return span(i64(0), i64(255))
+    }
+    if bits == 32 {
+        return span(i64(-2147483648), i64(2147483647))
+    }
+    if bits == 16 {
+        return span(i64(-32768), i64(32767))
+    }
+    return span(i64(-128), i64(127))
+}
+
+/** *`r` lies inside the type `t`. A known interval is within `BOUND_LIMIT`, */
+/** *so it fits any 64-bit type (an unsigned one when it is non-negative). */
+fn fits(r: Range, t: int) -> bool {
+    if !r.known || !is_int(t) {
+        return false
+    }
+    if types.TYPES[t].bits >= 64 {
+        return types.TYPES[t].is_unsigned == 0 || r.lo >= i64(0)
+    }
+    let whole = type_range(t)
+    return whole.known && r.lo >= whole.lo && r.hi <= whole.hi
+}
+
+/** *What a value of type `t` computed as `r` can be: `r` when it fits, else */
+/** *the type's range (a checked op that would leave it traps instead). */
+fn within_type(r: Range, t: int) -> Range {
+    if fits(r, t) {
+        return r
+    }
+    return type_range(t)
+}
+
+// --- the interval of an expression -----------------------------------------
+
+/** *The raw interval of `a op b`, before it is cut to the result type. */
+fn binary_range(op: int, a: Range, b: Range) -> Range {
+    if !a.known || !b.known {
+        return unknown()
+    }
+    if op == Tok.Plus {
+        return span(a.lo + b.lo, a.hi + b.hi)
+    }
+    if op == Tok.Minus {
+        return span(a.lo - b.hi, a.hi - b.lo)
+    }
+    if op == Tok.Star {
+        let big = FACTOR_LIMIT
+        if a.lo <= -big || a.hi >= big || b.lo <= -big || b.hi >= big {
+            return unknown()
+        }
+        let p1 = a.lo * b.lo
+        let p2 = a.lo * b.hi
+        let p3 = a.hi * b.lo
+        let p4 = a.hi * b.hi
+        return span(min_of(min_of(p1, p2), min_of(p3, p4)), max_of(max_of(p1, p2), max_of(p3, p4)))
+    }
+    if op == Tok.Slash {
+        // A literal divisor only: truncating division by `k > 0` is monotone
+        // non-decreasing, by `k < 0` non-increasing.
+        if b.lo != b.hi || b.lo == i64(0) {
+            return unknown()
+        }
+        let k = b.lo
+        if k > i64(0) {
+            return span(a.lo / k, a.hi / k)
+        }
+        return span(a.hi / k, a.lo / k)
+    }
+    if op == Tok.Percent {
+        // The result has the dividend's sign and is smaller than the divisor.
+        if b.lo == b.hi && b.lo == i64(0) {
+            return unknown()
+        }
+        let largest = max_of(if b.lo < i64(0) { -b.lo } else { b.lo }, if b.hi < i64(0) { -b.hi } else { b.hi }) - i64(1)
+        if a.lo >= i64(0) {
+            return span(i64(0), min_of(largest, a.hi))
+        }
+        if a.hi <= i64(0) {
+            return span(max_of(-largest, a.lo), i64(0))
+        }
+        return span(-largest, largest)
+    }
+    if op == Tok.Amp {
+        // A non-negative side bounds the result.
+        if a.lo >= i64(0) && b.lo >= i64(0) {
+            return span(i64(0), min_of(a.hi, b.hi))
+        }
+        if a.lo >= i64(0) {
+            return span(i64(0), a.hi)
+        }
+        if b.lo >= i64(0) {
+            return span(i64(0), b.hi)
+        }
+        return unknown()
+    }
+    return unknown()
+}
+
+/** *The interval of a `for` variable: `[a, b - 1]` for `for i in a..b`. */
+fn loop_var_range(loop_node: int, depth: int) -> Range {
+    let iter = ast.NODES[loop_node].a
+    if iter == ast.NONE || ast.NODES[iter].kind != Kind.Binary || ast.NODES[iter].op != Tok.DotDot {
+        return unknown()
+    }
+    let low = range_of(ast.NODES[iter].a, depth + 1)
+    let high = range_of(ast.NODES[iter].b, depth + 1)
+    if !low.known || !high.known {
+        return unknown()
+    }
+    // A loop that never runs gives its variable no value, so any interval
+    // holds; keep it non-empty.
+    return span(low.lo, max_of(low.lo, high.hi - i64(1)))
+}
+
+/** *The interval of an identifier: an immutable local's initializer, or a */
+/** *loop variable's range. */
+fn ident_range(n: int, depth: int) -> Range {
+    let t = ast.NODES[n].ty
+    let decl = ast.NODES[n].res
+    if decl == ast.NONE {
+        return type_range(t)
+    }
+    let decl_kind = ast.NODES[decl].kind
+    if decl_kind == Kind.For {
+        let r = loop_var_range(decl, depth)
+        return if r.known { within_type(r, t) } else { type_range(t) }
+    }
+    if decl_kind == Kind.Var && ast.NODES[decl].op == 0 && ast.NODES[decl].b != ast.NONE &&
+        (ast.INFO[decl].marks & ast.M_GLOBAL_VAR) == 0 {
+        let r = range_of(ast.NODES[decl].b, depth + 1)
+        return if r.known { within_type(r, t) } else { type_range(t) }
+    }
+    return type_range(t)
+}
+
+fn is_unsigned(t: int) -> bool {
+    return is_int(t) && types.TYPES[t].is_unsigned != 0
+}
+
+/** *The left side of `op`. For `%` an unsigned dividend with no interval */
+/** *(a `u64`, or a `let mut`) is still never negative, and that is all `%` */
+/** *needs: its result is then `[0, divisor - 1]`. The returned `hi` is only */
+/** *a stand-in, used solely by `%`, which keeps the smaller divisor bound. */
+fn left_range(op: int, n: int, depth: int) -> Range {
+    let r = range_of(n, depth)
+    if r.known || op != Tok.Percent || n == ast.NONE || !is_unsigned(ast.NODES[n].ty) {
+        return r
+    }
+    return Range { known: true, lo: i64(0), hi: BOUND_LIMIT }
+}
+
+/** *A sound interval for the integer expression `n`. */
+fn range_of(n: int, depth: int) -> Range {
+    if n == ast.NONE || depth > DEPTH_LIMIT {
+        return unknown()
+    }
+    let t = ast.NODES[n].ty
+    if !is_int(t) {
+        return unknown()
+    }
+    switch ast.NODES[n].kind {
+        case Kind.Number:
+            let v = ast.INFO[n].num
+            return within_type(span(v, v), t)
+        case Kind.Ident:
+            return ident_range(n, depth)
+        case Kind.Field:
+            let base = ast.NODES[n].a
+            if ast.INFO[n].name == "len" && base != ast.NONE && ast.NODES[base].ty != types.NO_TYPE {
+                let base_kind = types.kind_of(ast.NODES[base].ty)
+                let held = if base_kind == TK.Ptr { types.TYPES[ast.NODES[base].ty].elem } else { ast.NODES[base].ty }
+                if held != types.NO_TYPE && (types.kind_of(held) == TK.Vec || types.kind_of(held) == TK.String) {
+                    return within_type(span(i64(0), type_range(t).hi), t)
+                }
+            }
+            return type_range(t)
+        case Kind.Index:
+            let target = ast.NODES[n].a
+            if target != ast.NONE && ast.NODES[target].ty != types.NO_TYPE && types.kind_of(ast.NODES[target].ty) == TK.String {
+                return within_type(span(i64(0), i64(255)), t)
+            }
+            return type_range(t)
+        case Kind.Unary:
+            if ast.NODES[n].op == Tok.Minus {
+                let inner = range_of(ast.NODES[n].a, depth + 1)
+                if inner.known {
+                    return within_type(span(-inner.hi, -inner.lo), t)
+                }
+            }
+            return type_range(t)
+        case Kind.Binary:
+            let op = ast.NODES[n].op
+            let raw = binary_range(op, left_range(op, ast.NODES[n].a, depth + 1), range_of(ast.NODES[n].b, depth + 1))
+            return within_type(raw, t)
+        case Kind.Cast:
+            return within_type(range_of(ast.NODES[n].a, depth + 1), t)
+        default:
+            return type_range(t)
+    }
+}
+
+// --- marking -------------------------------------------------------------------
+
+/** *The run-time length of a string literal: its bytes up to the first NUL, */
+/** *as codegen emits it (`c_len`). */
+fn literal_bytes_len(text: string) -> int {
+    for i in 0..text.len {
+        if text[i] == 0 {
+            return i
+        }
+    }
+    return text.len
+}
+
+/** *A string literal's length when `n` is one, or an immutable local bound */
+/** *to one; else `-1`. (An interpolated string is a call, never a literal.) */
+fn literal_string_len(n: int) -> int {
+    if n == ast.NONE {
+        return -1
+    }
+    let mut literal = ast.NONE
+    if ast.NODES[n].kind == Kind.String {
+        literal = n
+    } else if ast.NODES[n].kind == Kind.Ident {
+        let decl = ast.NODES[n].res
+        if decl != ast.NONE && ast.NODES[decl].kind == Kind.Var && ast.NODES[decl].op == 0 &&
+            (ast.INFO[decl].marks & ast.M_GLOBAL_VAR) == 0 {
+            let init = ast.NODES[decl].b
+            if init != ast.NONE && ast.NODES[init].kind == Kind.String {
+                literal = init
+            }
+        }
+    }
+    if literal == ast.NONE || !ast.EXTRA[ast.ex(literal)].has_text {
+        return -1
+    }
+    return literal_bytes_len(ast.EXTRA[ast.ex(literal)].text)
+}
+
+/** *`a / b` or `a % b` cannot trap: `b` is never 0, and never -1 when `a` */
+/** *can be the least value of `t`. */
+fn division_cannot_trap(a: Range, b: Range, t: int) -> bool {
+    if !b.known || (b.lo <= i64(0) && b.hi >= i64(0)) {
+        return false
+    }
+    if b.lo <= i64(-1) && b.hi >= i64(-1) {
+        let whole = type_range(t)
+        return a.known && whole.known && a.lo > whole.lo
+    }
+    return true
+}
+
+fn mark(n: int) {
+    let t = ast.NODES[n].ty
+    let node_kind = ast.NODES[n].kind
+    if node_kind == Kind.Binary && is_int(t) {
+        let op = ast.NODES[n].op
+        if op == Tok.Plus || op == Tok.Minus || op == Tok.Star || op == Tok.Slash || op == Tok.Percent {
+            let a = left_range(op, ast.NODES[n].a, 0)
+            let b = range_of(ast.NODES[n].b, 0)
+            let raw = binary_range(op, a, b)
+            let divides = op == Tok.Slash || op == Tok.Percent
+            // Unsigned division by a positive divisor is never above the
+            // dividend, so it fits whatever the dividend is.
+            let unsigned_quotient = op == Tok.Slash && is_unsigned(t) && b.known && b.lo > i64(0)
+            if (fits(raw, t) || unsigned_quotient) && (!divides || division_cannot_trap(a, b, t)) {
+                ast.NODES[n].flags = ast.NODES[n].flags | typecheck.ASTF_NO_OVERFLOW
+            }
+        }
+    }
+    if node_kind == Kind.Unary && ast.NODES[n].op == Tok.Minus && is_int(t) {
+        let inner = range_of(ast.NODES[n].a, 0)
+        if inner.known && fits(span(-inner.hi, -inner.lo), t) {
+            ast.NODES[n].flags = ast.NODES[n].flags | typecheck.ASTF_NO_OVERFLOW
+        }
+    }
+    if node_kind == Kind.Cast && is_int(t) {
+        let source = ast.NODES[n].a
+        if source != ast.NONE && is_int(ast.NODES[source].ty) && fits(range_of(source, 0), t) {
+            ast.NODES[n].flags = ast.NODES[n].flags | typecheck.ASTF_CONV_SAFE
+        }
+    }
+    if node_kind == Kind.Index && (ast.NODES[n].flags & typecheck.ASTF_INDEX_SAFE) == 0 {
+        let target = ast.NODES[n].a
+        let index = range_of(ast.NODES[n].b, 0)
+        if target != ast.NONE && index.known && index.lo >= i64(0) {
+            let mut target_type = ast.NODES[target].ty
+            // A borrowed fixed array (`&[N]T`, `&mut [N]T`) has the same N.
+            if target_type != types.NO_TYPE && types.kind_of(target_type) == TK.Ptr {
+                target_type = types.TYPES[target_type].elem
+            }
+            let mut length = i64(-1)
+            if target_type != types.NO_TYPE && types.kind_of(target_type) == TK.Array {
+                length = types.TYPES[target_type].array_len
+            } else {
+                length = i64(literal_string_len(target))
+            }
+            if length > i64(0) && index.hi < length {
+                ast.NODES[n].flags = ast.NODES[n].flags | typecheck.ASTF_INDEX_SAFE
+            }
+        }
+    }
+}
+
+/** *Each child of `parent`. */
+fn walk_list(parent: int) {
+    for i in 0..ast.NODES[parent].kids.len {
+        walk(ast.NODES[parent].kids[i])
+    }
+}
+
+/** *Depth-first over the node kinds that hold expressions, as boundscheck */
+/** *walks them; a kind not listed is skipped, which only keeps checks. */
+fn walk(n: int) {
+    if n == ast.NONE {
+        return
+    }
+    mark(n)
+    switch ast.NODES[n].kind {
+        case Kind.Program:
+            for i in 0..ast.NODES[n].kids.len {
+                let decl = ast.NODES[n].kids[i]
+                let decl_kind = ast.NODES[decl].kind
+                if decl_kind != Kind.Import && decl_kind != Kind.CDir {
+                    walk(decl)
+                }
+            }
+            break
+        case Kind.Fn, Kind.Closure:
+            walk(ast.NODES[n].b)
+            break
+        case Kind.Block, Kind.StructLit, Kind.ArrayLit, Kind.Tuple:
+            walk_list(n)
+            break
+        case Kind.If:
+            walk(ast.NODES[n].a)
+            walk(ast.NODES[n].b)
+            walk(ast.NODES[n].c)
+            break
+        case Kind.For, Kind.While, Kind.Assign, Kind.Binary:
+            walk(ast.NODES[n].a)
+            walk(ast.NODES[n].b)
+            break
+        case Kind.Switch:
+            walk(ast.NODES[n].a)
+            walk_list(n)
+            break
+        case Kind.Case:
+            walk_list(n)
+            walk(ast.NODES[n].a)
+            break
+        case Kind.Return, Kind.ExprStmt, Kind.Unary, Kind.Try, Kind.Cast, Kind.Field, Kind.Deref, Kind.Addr:
+            walk(ast.NODES[n].a)
+            break
+        case Kind.Var:
+            walk(ast.NODES[n].b)
+            break
+        case Kind.Call:
+            walk(ast.NODES[n].a)
+            walk_list(n)
+            break
+        case Kind.Index:
+            walk(ast.NODES[n].a)
+            walk(ast.NODES[n].b)
+            break
+        default:
+            return
+    }
+}
+
+/** *Mark provably safe arithmetic, conversions and indexes in every module. */
+fn ranges_modules(roots: []int) {
+    for i in 0..roots.len {
+        walk(roots[i])
+    }
+}

@@ -1,0 +1,11 @@
+// A loop past a fixed array's length keeps its check.
+import "std:fmt"
+
+fn main() {
+    let table = [3]int { 1, 2, 3 }
+    let mut total = 0
+    for i in 0..4 {
+        total += table[i]
+    }
+    fmt.println(total)
+}

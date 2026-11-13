@@ -1,0 +1,11 @@
+// The move happens on every iteration: the second pass would read a buffer the
+// first one gave to a string.
+import "std:fmt"
+
+fn main() {
+    let bytes = zeroed_bytes(2)
+    for i in 0..2 {
+        let text = string_from_bytes(bytes)
+        fmt.println(text.len, i)
+    }
+}

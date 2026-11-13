@@ -1,0 +1,9 @@
+// An immutable `let` keeps its interval, so `largest + 1` is known to
+// overflow: the check must stay, and it must trap.
+import "std:fmt"
+
+fn main() {
+    let largest = 2147483647
+    let next = largest + 1
+    fmt.println(next)
+}

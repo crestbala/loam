@@ -13,7 +13,10 @@
 // sys.write_bytes("out.txt", &b)
 // ```
 //
-// Empty bodies are runtime hooks (`loam_buf_*` in loam_rt.h).
+// Empty bodies are runtime hooks (`loam_buf_*` in loam_rt.h); the integer
+// appends are `std:decimal`.
+
+import "std:decimal"
 
 /** *Append the bytes of `s`. */
 fn push_str(b: &mut []u8, s: string) {}
@@ -22,13 +25,19 @@ fn push_str(b: &mut []u8, s: string) {}
 fn push_bytes(b: &mut []u8, src: &[]u8) {}
 
 /** *Append `n` in decimal. */
-fn push_int(b: &mut []u8, n: int) {}
+fn push_int(b: &mut []u8, n: int) {
+    decimal.push_int(b, i64(n))
+}
 
 /** *Append an `i64` in decimal. */
-fn push_i64(b: &mut []u8, n: i64) {}
+fn push_i64(b: &mut []u8, n: i64) {
+    decimal.push_int(b, n)
+}
 
 /** *Append a `u64` in decimal, over its whole unsigned range. */
-fn push_u64(b: &mut []u8, n: u64) {}
+fn push_u64(b: &mut []u8, n: u64) {
+    decimal.push_u64(b, n)
+}
 
 /** *The bytes as a string. Copies; `b` stays usable. */
 fn to_string(b: &[]u8) -> string {}

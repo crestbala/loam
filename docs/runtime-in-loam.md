@@ -7,6 +7,30 @@ program links) is the C this plan moves. It starts after self-hosting is
 declared, and it is a security goal as much as a language one: see
 [security.md](security.md).
 
+**Primary force, set 2026-11-13: a runtime as minimal as Rust's.** This
+drives the whole migration; every other goal here serves it or gives way to
+it. Rust has no runtime to speak of: a few lines of start-up, the panic
+path, and calls to the system allocator. Everything else (`core`, `alloc`,
+`std`) is ordinary library code, compiled with the program, inlined and
+monomorphized where it is used, and dropped by the linker where it is not.
+Loam holds itself to the same:
+
+- **Nothing a program does not call.** No pasted header, no fixed set of
+  helpers in every binary. A program that never formats a float carries no
+  float formatting; one that never spawns a process carries no spawn table.
+- **Library, not runtime.** Logic lives in `std` as Loam, and goes through
+  the same checks, DCE and inlining as user code. A `std` fn only the
+  program calls is private to it (`static` in the generated C), so `cc`
+  inlines it as freely as it did the header's `static inline` C.
+- **What cannot be a library is the smallest core there is:** allocation
+  over the system allocator, refcounts, the panic path and checked
+  arithmetic, and those emitted by codegen only where used (R6).
+- **No cost for being Loam.** Each moved piece is as fast as the C it
+  replaces (gate 2), by giving the compiler the proofs and the code shape C
+  had (stack buffers, checks proven away, inlining), never by keeping C.
+- **Measured.** The trusted-C count (R0) and the bytes a minimal program
+  carries both go down at every step, and neither is allowed back up.
+
 **Target, set 2026-11-13: zero runtime.** `packages/loam/runtime/` is
 deleted. A program carries only the Loam it calls, because Loam goes
 through DCE where a pasted header cannot. The only C left is:
@@ -30,10 +54,10 @@ only where Loam cannot or should not go:
 - the calls into the OS and the GUI toolkits;
 - third-party libraries that are vendored as they are.
 
-This is a security goal first. Every line of C is trusted code that nothing
-checks ([security.md](security.md) gaps 2–3), so the measure of progress is
-**lines of trusted C**, counted by one `nob` command and recorded at each
-step.
+Security follows from the same work. Every line of C is trusted code that
+nothing checks ([security.md](security.md) gaps 2–3), so the measure of
+progress is **lines of trusted C**, counted by one `nob` command and
+recorded at each step, next to what a minimal program carries.
 
 ## 1. What is C today
 
@@ -144,8 +168,9 @@ it lands:
    compiler building itself do not regress. Binary size is checked too. Loam
    code goes through DCE, so unused runtime should drop out, where the pasted
    header cannot.
-3. **Less trusted C.** The count goes down, and the step records the new
-   number here.
+3. **Less trusted C, less carried.** The trusted-C count goes down, a
+   minimal program's binary does not grow, and the step records both
+   numbers here.
 
 Order, smallest risk and most logic first. Each box is one change, ticked
 here with the date and the new count when it lands.
@@ -165,7 +190,7 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       `wasm_inc`), hosts 4,871, vendored 346,122 (sqlite, monocypher, raygui
       and the generated tree-sitter parser).
 - [x] R0.2 The budget: `RUNTIME_LINE_BUDGET` in `nob.loam`, set at 9,939
-      and lowered by each step since (now **9,297**, after R1.2).
+      and lowered by each step since (now **9,270**, after R1.3a).
       `nob trusted` and the unfiltered `nob test` fail if `runtime/` grows
       past it. Each step below lowers it to its new count in the same
       change.
@@ -197,6 +222,45 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       `#![c_source]`. Speed: the suite's serve phase is 8–9 s against the
       C runner's 8 s, and the full suite still passes (617).
       **Runtime: 9,456 → 9,297** (−159).
+- [x] R1.3a Integers to decimal text (`std:decimal`, 107 lines). Done
+      2026-11-13. `fill` writes a value's digits least significant first
+      into a 20-byte array on the stack (every index proven in range by the
+      new `ranges` pass, so the loop keeps no check), then one of three
+      body-less `loam_rt.h` hooks hands the bytes on: `text_of_digits` (a
+      string), `push_digits` (the end of a `[]u8`) or `write_digits` (stdout
+      or stderr, so `println(n)` allocates nothing). `println` / `eprintln`
+      of an `int` lower to `decimal.write_int` / `write_u64` / `ewrite_int` /
+      `ewrite_u64` (plus `BY_CNAME` DCE and threadcheck roots),
+      `buf.push_int` / `push_i64` / `push_u64` and `fmt.write_int` call it,
+      and the C `str_of_int` / `u64`, `fmt_write_int` / `u64`,
+      `ewrite_int` / `u64`, `buf_push_*` and `fmt_utoa` are deleted
+      (`loam_fmt_itoa` stays for the `loam_key_*` family, a later step).
+      `string_from_bytes` adopts an unshared `[]u8` with its capacity, no
+      copy (borrowck consumes a local argument; the IR marks it `I_MOVED`).
+      Whole-unit builds emit kept non-root fns of `LOAM_STD_DIR` modules
+      `static`, so `cc` inlines them like the old `static inline` C;
+      package `src` modules keep external linkage for `zeus_plat` and hosts.
+      `&arr` on a fixed array decays to an element pointer. The new `ranges`
+      pass (464 lines) also proves unsigned `x % k` in `[0, k - 1]`,
+      unsigned `x / k` with `k > 0` never traps, borrowed `&[N]T` indices,
+      and `C[C.len - 1 - i]` inside `for i in 0..C.len`. Safety fix: `.len`
+      is an `i32`, so `loam_str_owned` and `loam_vec_grown_cap` now panic
+      past `INT32_MAX` (`LOAM_LEN_MAX`), and capacity clamps there.
+      `loam_panic` / `loam_panic_str` are `LOAM_COLD` (noinline, noreturn,
+      unused; no `cold`, which grew binaries). Speed against HEAD's C
+      (median M cycles): interpolation 182 vs 178 (+2%), `buf.push_int` 80
+      vs 78.5 (+2%; the per-digit loop bound check; pair tables, two digits
+      per step and width-bounded loops were all slower), `println` at
+      parity, self-emit 153 ms vs 154 ms. Fixtures: `golden/decimal_edges`
+      (expected generated by the old C, so also a differential check) plus
+      `ranges_*`, `boundscheck_reverse_*` and `string_from_bytes_*`.
+      Binaries (new vs HEAD): nob 599,184 vs 599,528 (−344), loamc
+      1,860,704 vs 1,927,632 (−66,928), greeninfer 1,044,688 vs 1,200,144
+      (−155,456), tiny int-printing program 34,272 vs 34,176 (+96: one
+      unwind entry for the out-of-line `loam_panic`). Full suite 634
+      passed; `selfhost_seed`, `ownership_asan`, `wasm_smoke`,
+      `android_project`, `cost` and `lsp` all green. `nob trusted`: 9,270.
+      **Runtime: 9,297 → 9,270** (−27).
 - [ ] R1.3 `loam_rt.h` fmt / str / conv / buf verbs → `std` Loam fns, one
       verb family per change, each benchmarked against its C twin.
 - [ ] R1.4 Float formatting and parsing (`std:conv` float halves) → Loam,

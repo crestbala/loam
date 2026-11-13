@@ -1,0 +1,38 @@
+// Integers as decimal text (`std:decimal`), at every edge, through each way
+// out: interpolation, `println`, `fmt.write_int` and `buf`. The expected
+// output came from the C formatter this replaced.
+import "std:fmt"
+import "std:buf"
+
+fn main() {
+    let ints = []int { 0, 1, -1, 9, 10, -10, 99, 100, 12345, -98765, 2147483647, -2147483647 - 1 }
+    for i in 0..ints.len {
+        let n = ints[i]
+        fmt.println("{{n}}", n)
+        fmt.write_int(n)
+        fmt.writeln()
+    }
+    let wides = []i64 { i64(0), i64(-1), i64(4294967296), i64(-4294967296), i64(9223372036854775807), i64(-9223372036854775807) - i64(1) }
+    for i in 0..wides.len {
+        let n = wides[i]
+        fmt.println("[{{n}}]", n)
+    }
+    let unsigned = []u64 { u64(0), u64(9), u64(4294967295), u64(18446744073709551615) }
+    for i in 0..unsigned.len {
+        let n = unsigned[i]
+        fmt.println("<{{n}}>", n)
+    }
+    let mut b = []u8 {}
+    buf.push_int(&mut b, -2147483647 - 1)
+    push(b, 32 as u8)
+    buf.push_i64(&mut b, i64(-9223372036854775807) - i64(1))
+    push(b, 32 as u8)
+    buf.push_u64(&mut b, u64(18446744073709551615))
+    push(b, 32 as u8)
+    buf.push_int(&mut b, 0)
+    fmt.println(buf.to_string(&b))
+    // Small values as `u8` and `i16` widen first.
+    let small: u8 = 255 as u8
+    let neg16: i16 = (0 - 32768) as i16
+    fmt.println("{{small}} {{neg16}}", small, neg16)
+}

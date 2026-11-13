@@ -35,6 +35,7 @@ import "typecheck.loam"
 import "threadcheck.loam"
 import "borrowck.loam"
 import "boundscheck.loam"
+import "ranges.loam"
 import "dce.loam"
 import "codegen.loam"
 import "loader.loam"
@@ -1751,6 +1752,10 @@ fn cost_report() {
     let mut total: i64 = i64(0)
     for f in 0..ir.FNS.len {
         let fx = &ir.FNS[f]
+        // Count what is emitted: a fn DCE dropped costs nothing.
+        if fx.has_cname && dce.dropped(fx.cname) {
+            continue
+        }
         let mut n: i64 = i64(0)
         for b in fx.blocks..fx.blocks + fx.nblocks {
             let first = ir.BLOCKS[b].first
@@ -1852,6 +1857,7 @@ fn check(path: string) -> bool {
     threadcheck.threadcheck_modules(module_names, module_roots)
     borrowck.borrowck_modules()
     boundscheck.boundscheck_modules(module_roots)
+    ranges.ranges_modules(module_roots)
     dump.print_diags()
     return ast.DIAGS.len == 0
 }

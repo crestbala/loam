@@ -82,8 +82,11 @@ struct Place {
 const I_MUT: int = 1
 const I_CHECKED: int = 2
 const I_BORROWED: int = 4
-// Call `loam_vec_push`: the element is handed over whole (no retain, no drop).
+// Call `loam_vec_push` or `loam_string_from_u8`: the argument is handed over
+// whole (no retain, no drop). Move of a shared `[]u8`: the source is emptied.
 const I_MOVED: int = 8
+// Unary `-` that `ranges` proved cannot overflow: emitted plain.
+const I_NO_TRAP: int = 16
 
 /** *One instruction. `dst`, `a`, `b` are locals (`NONE` when unused). */
 struct Inst {
@@ -1051,15 +1054,19 @@ fn lower_println(n: int) -> int {
         let arg = kids[k]
         let v = lower_expr(arg)
         let t = ir_subst(ast.NODES[arg].ty)
-        let mut w = if to_err { "loam_fmt_ewrite_int" } else { "loam_fmt_write_int" }
-        if tk(t) == TK.String {
-            w = w_str
-        } else if tk(t) == TK.Bool {
+        if tk(t) == TK.Int {
+            // An integer goes through `std:decimal`, straight to the stream:
+            // its digits are made on the stack, so nothing is allocated.
+            let wide_unsigned = types.TYPES[t].is_unsigned != 0 && types.TYPES[t].bits == 64
+            let writer = if wide_unsigned { "u64" } else { "int" }
+            emit_named_call(if to_err { "loam_decimal_ewrite_{{writer}}" } else { "loam_decimal_write_{{writer}}" }, []int { v }, types.ty_void(), loc)
+            continue
+        }
+        let mut w = w_str
+        if tk(t) == TK.Bool {
             w = if to_err { "loam_fmt_ewrite_bool" } else { "loam_fmt_write_bool" }
         } else if tk(t) == TK.Float {
             w = if to_err { "loam_fmt_ewrite_float" } else { "loam_fmt_write_float" }
-        } else if tk(t) == TK.Int && types.TYPES[t].is_unsigned != 0 && types.TYPES[t].bits == 64 {
-            w = if to_err { "loam_fmt_ewrite_u64" } else { "loam_fmt_write_u64" }
         }
         emit_named_call(w, []int { v }, types.ty_void(), loc)
     }
@@ -1305,6 +1312,17 @@ fn lower_call(n: int) -> int {
         SCRATCH[i].ty = ir_subst(nty)
         set_text(i, ast.EXTRA[x].cbuiltin)
         args_transfer(args)
+        // `string_from_bytes` over a `[]u8` takes its argument: a temporary
+        // (a moved local, a call's result) is read by nothing else, so it is
+        // handed over whole and the string may adopt its buffer.
+        if ast.EXTRA[x].cbuiltin == "loam_string_from_u8" && args.len == 1 && is_local(args[0]) &&
+            has_flag(args[0], L_DROP) {
+            let arg_local = &LOCALS[F_LOCALS + args[0]]
+            if !arg_local.has_name && (arg_local.flags & (L_PARAM | L_GLOBAL)) == 0 {
+                clear_flag(args[0], L_DROP)
+                SCRATCH[i].bits = SCRATCH[i].bits | I_MOVED
+            }
+        }
         return dst
     }
 
@@ -1625,6 +1643,11 @@ fn lower_read(n: int) -> int {
         SCRATCH[mv].dst = d
         SCRATCH[mv].a = src
         SCRATCH[mv].ty = ir_subst(nty)
+        // A shared `[]u8` moved (into `string_from_bytes`): the buffer goes
+        // over whole and the source is left empty, not retained.
+        if tk(nty) == TK.Vec && types.is_copy(nty) {
+            SCRATCH[mv].bits = SCRATCH[mv].bits | I_MOVED
+        }
         return d
     }
     return src
@@ -1874,6 +1897,10 @@ fn lower_expr(n: int) -> int {
             if checked {
                 SCRATCH[i].bits = I_CHECKED
                 fold_check(n, i, op)
+                // `ranges` proved the result fits and the divisor safe.
+                if (ast.NODES[n].flags & typecheck.ASTF_NO_OVERFLOW) != 0 {
+                    SCRATCH[i].bits = 0
+                }
             }
             return d
         case Kind.Unary:
@@ -1884,6 +1911,9 @@ fn lower_expr(n: int) -> int {
             SCRATCH[i].a = a
             SCRATCH[i].binop = ast.NODES[n].op
             SCRATCH[i].ty = ir_subst(nty)
+            if (ast.NODES[n].flags & typecheck.ASTF_NO_OVERFLOW) != 0 {
+                SCRATCH[i].bits = SCRATCH[i].bits | I_NO_TRAP
+            }
             return d
         case Kind.IncDec:
             return lower_incdec(n)
@@ -1895,6 +1925,10 @@ fn lower_expr(n: int) -> int {
             SCRATCH[i].a = a
             SCRATCH[i].ty = ir_subst(nty)
             SCRATCH[i].conv = ast.EXTRA[ast.ex(n)].conv
+            // `ranges` proved the source fits the target: a plain cast.
+            if SCRATCH[i].conv == 0 && (ast.NODES[n].flags & typecheck.ASTF_CONV_SAFE) != 0 {
+                SCRATCH[i].conv = 1
+            }
             return d
         case Kind.Call:
             return lower_call(n)
@@ -2471,6 +2505,13 @@ fn lower_var(n: int) {
         SCRATCH[i].dst = id
         SCRATCH[i].a = v
         SCRATCH[i].ty = ir_subst(ast.NODES[n].ty)
+        // A fresh `[]T` (a call's result, a literal) is read by nothing else:
+        // the binding takes its buffer whole, so it stays unshared.
+        let vt = ir_subst(ast.NODES[n].ty)
+        if vt != types.NO_TYPE && tk(vt) == TK.Vec && types.is_copy(vt) && is_local(v) &&
+            (push_elem_is_temporary(init, v) || (init != NONE && kind(init) == Kind.ArrayLit && !LOCALS[F_LOCALS + v].has_name)) {
+            SCRATCH[i].bits = SCRATCH[i].bits | I_MOVED
+        }
     }
 }
 

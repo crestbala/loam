@@ -1,0 +1,46 @@
+// `C[C.len - 1 - i]` inside `for i in 0..C.len` walks `C` backwards with no
+// check left (boundscheck). Growing `C` in the body keeps it in range; the
+// values must be exactly what the checked walk gives.
+import "std:fmt"
+import "std:sys"
+
+fn check(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn reversed(xs: &[]int) -> []int {
+    let mut out = []int {}
+    for i in 0..xs.len {
+        push(out, xs[xs.len - 1 - i])
+    }
+    return out
+}
+
+fn reverse_in_place(xs: &mut []u8) {
+    for i in 0..xs.len {
+        xs[xs.len - 1 - i] = (xs[xs.len - 1 - i] + 1) as u8
+    }
+}
+
+fn main() {
+    let four = []int { 1, 2, 3, 4 }
+    let none = []int {}
+    let r = reversed(&four)
+    check(r.len == 4 && r[0] == 4 && r[3] == 1, "a backward read")
+    check(reversed(&none).len == 0, "an empty walk")
+    let mut bytes = []u8 { 10, 20, 30 }
+    reverse_in_place(&mut bytes)
+    check(bytes[0] == 11 && bytes[2] == 31, "a backward write")
+    // The body grows `grown`: `.len` is re-read, so the index stays inside.
+    let mut grown = []int { 5, 6 }
+    let mut seen = 0
+    for i in 0..grown.len {
+        seen += grown[grown.len - 1 - i]
+        push(grown, 0)
+    }
+    check(seen == 12 && grown.len == 4, "a growing body reads the new end")
+    fmt.println("ok")
+}

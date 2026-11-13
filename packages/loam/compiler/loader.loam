@@ -1116,8 +1116,12 @@ fn import_node(alias: string, spec: string, loc: Loc) -> int {
 }
 
 /** *Outside `http`, an implicit import for `#[proto]` (http) and `#[json]` */
-/** *(std:json) structs. */
+/** *(std:json) structs. The entry module also imports `std:decimal`, which */
+/** *`"{{n}}"` and `println(n)` compile to, so no program has to. */
 fn implicit_imports(root: int, alias: string) {
+    if typecheck.MODS.len == 1 && !imports_spec(root, "std:decimal") {
+        push(ast.NODES[root].kids, import_node("decimal", "std:decimal", ast.INFO[root].loc))
+    }
     if alias == "http" {
         return
     }
@@ -1154,6 +1158,18 @@ fn implicit_imports(root: int, alias: string) {
         let im = import_node("json", "std:json", loc)
         push(ast.NODES[root].kids, im)
     }
+}
+
+/** *`root` already imports `spec`. */
+fn imports_spec(root: int, spec: string) -> bool {
+    let kids = ast.NODES[root].kids
+    for k in 0..kids.len {
+        let d = kids[k]
+        if ast.NODES[d].kind == Kind.Import && ast.EXTRA[ast.ex(d)].has_text && ast.EXTRA[ast.ex(d)].text == spec {
+            return true
+        }
+    }
+    return false
 }
 
 let mut PARSER: Parser = parser.parser_new("")

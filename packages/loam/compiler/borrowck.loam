@@ -1779,6 +1779,37 @@ fn check_closure(n: int) -> bool {
     return failed
 }
 
+/** *`string_from_bytes` over a `[]u8`: the string takes the buffer, so the */
+/** *argument is consumed even though a `[]u8` is otherwise shared, not moved. */
+fn consumes_bytes(call: int) -> bool {
+    let x = ast.ex(call)
+    return ast.EXTRA[x].has_cbuiltin && ast.EXTRA[x].cbuiltin == "loam_string_from_u8"
+}
+
+/** *Check the argument of a consuming `string_from_bytes`: a local `[]u8` is */
+/** *moved into the string, so a later use is an error. A global, a field or an */
+/** *index stays a shared read (the runtime then copies). `true` on error. */
+fn consume_bytes_arg(arg: int) -> bool {
+    if check_expr(arg, false) {
+        return true
+    }
+    if arg == ast.NONE || ast.NODES[arg].kind != Kind.Ident {
+        return false
+    }
+    let name = ast.INFO[arg].name
+    let binding = find_b(name)
+    if binding < 0 || BINDINGS[binding].kind == BindKind.Global || BINDINGS[binding].is_module_alias {
+        return false
+    }
+    if borrow_covers(name) {
+        report(ast.INFO[arg].loc, "cannot move '{{name}}' into string_from_bytes while borrowed")
+        return true
+    }
+    BINDINGS[binding].own = Own.Moved
+    ast.NODES[arg].flags = ast.NODES[arg].flags | ASTF_MOVED
+    return false
+}
+
 fn check_call(n: int) -> bool {
     let call_mark = head_id()
     let args = ast.NODES[n].kids
@@ -1799,6 +1830,12 @@ fn check_call(n: int) -> bool {
             }
             if (marks & ast.M_BOX_NEW) != 0 && not_copy(ast.NODES[arg].ty) {
                 move_arg = true
+            }
+            if consumes_bytes(n) {
+                if consume_bytes_arg(arg) {
+                    return true
+                }
+                continue
             }
             if check_expr(arg, move_arg) {
                 return true

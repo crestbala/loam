@@ -1,0 +1,37 @@
+// A borrowed fixed array has its fixed length, so `ranges` proves indexes
+// into `&[N]T` as it does into `[N]T`; an unsigned `x % k` is `0..k - 1`
+// even for a `u64`.
+import "std:fmt"
+import "std:sys"
+
+fn check(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn fill_tail(out: &mut [8]u8, v: u64) {
+    let mut rest = v
+    for k in 0..8 {
+        out[7 - k] = (u64(48) + rest % u64(10)) as u8
+        rest = rest / u64(10)
+    }
+}
+
+fn sum(a: &[4]int) -> int {
+    let mut total = 0
+    for k in 0..4 {
+        total += a[3 - k]
+    }
+    return total
+}
+
+fn main() {
+    let mut out = [8]u8 { 0, 0, 0, 0, 0, 0, 0, 0 }
+    fill_tail(&mut out, u64(18446744073709551615))
+    check(out[0] == 48 && out[1] == 57 && out[7] == 53, "u64 digits through a borrowed array")
+    let four = [4]int { 1, 2, 3, 4 }
+    check(sum(&four) == 10, "a borrowed array read backwards")
+    fmt.println("ok")
+}

@@ -1,0 +1,15 @@
+// An index past a borrowed fixed array keeps its trap.
+import "std:fmt"
+
+fn at(a: &[4]int, n: int) -> int {
+    let mut total = 0
+    for k in 0..n {
+        total += a[k]
+    }
+    return total
+}
+
+fn main() {
+    let four = [4]int { 1, 2, 3, 4 }
+    fmt.println(at(&four, 5))
+}
