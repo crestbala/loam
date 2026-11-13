@@ -190,7 +190,7 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       `wasm_inc`), hosts 4,871, vendored 346,122 (sqlite, monocypher, raygui
       and the generated tree-sitter parser).
 - [x] R0.2 The budget: `RUNTIME_LINE_BUDGET` in `nob.loam`, set at 9,939
-      and lowered by each step since (now **9,127**, after R1.3b).
+      and lowered by each step since (now **9,091**, after R1.3d).
       `nob trusted` and the unfiltered `nob test` fail if `runtime/` grows
       past it. Each step below lowers it to its new count in the same
       change.
@@ -316,6 +316,21 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       expanded in place) while every binary shrinks. Full suite 635
       passed; `selfhost_seed`, `ownership_asan`, `wasm_smoke`,
       `android_project` and `lsp` green.
+- [x] R1.3d The `str` verbs. Done 2026-11-14. Every interpolation is
+      one `loam_interp` (R1.3c) unless it is a lone string (itself) or a
+      lone integer (`decimal.of_int`); codegen writes a lone bool as the
+      static literal `true` / `false` (nothing allocated, as before) and a
+      lone float as `str_of_float` (R1.4 moves float text). So
+      `loam_str_concat` and `loam_str_of_string` had no caller left and
+      `loam_str_of_bool` none after this; all three are deleted, with the
+      checker's concat fold. `loam_str_slice` stays as core: three lines
+      clamping the bounds over `loam_str_copy`, the allocation primitive;
+      a Loam version would need a new copy hook (no gain) or a byte-by-byte
+      `[]u8` (slower, over-allocated). Output identical to HEAD for lone and
+      mixed bool / float / string / int parts, no leaks. Binaries
+      unchanged against R1.3c but loamc −64 bytes; full suite 635 passed,
+      `selfhost_seed`, `ownership_asan`, `wasm_smoke`, `android_project`,
+      `lsp` green. **Runtime: 9,127 → 9,091** (−36).
 - [ ] R1.3 `loam_rt.h` fmt / str / conv / buf verbs → `std` Loam fns, one
       verb family per change, each benchmarked against its C twin.
 - [ ] R1.4 Float formatting and parsing (`std:conv` float halves) → Loam,

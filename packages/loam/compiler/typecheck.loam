@@ -3183,15 +3183,15 @@ fn check_call(n: int, expect: int) -> int {
             ast.NODES[n].ty = types.ty_void()
             return ast.NODES[n].ty
         }
-        // `"a {{x}} b"` arrives as __interp(parts...). Two or more parts are
-        // one `loam_interp` call over the raw parts, which codegen builds in
-        // one exact allocation (an integer's digits on the stack); one part
-        // is that string, or its `loam_decimal_of_*` / `loam_str_of_*`.
+        // `"a {{x}} b"` arrives as __interp(parts...): one `loam_interp`
+        // call over the raw parts, which codegen builds in one exact
+        // allocation (an integer's digits on the stack). A lone string is
+        // itself, a lone integer `loam_decimal_of_*`.
         if nm == "__interp" {
             let parts = ast.NODES[n].kids
             let mut acc = NONE
             for i in 0..parts.len {
-                let mut part = parts[i]
+                let part = parts[i]
                 let t = check_expr(part)
                 let k = tk(t)
                 if k != TK.String && k != TK.Int && k != TK.Float && k != TK.Bool {
@@ -3199,28 +3199,17 @@ fn check_call(n: int, expect: int) -> int {
                     ast.NODES[n].ty = types.ty_string()
                     return ast.NODES[n].ty
                 }
-                if parts.len >= 2 {
-                    continue
-                }
-                if k != TK.String {
-                    let w = new_call(NONE, []int { part }, ast.INFO[part].loc)
-                    let cb = if k == TK.Int && types.TYPES[t].is_unsigned != 0 && types.TYPES[t].bits == 64 { "loam_decimal_of_u64" } else if k == TK.Int { "loam_decimal_of_int" } else if k == TK.Float { "loam_str_of_float" } else { "loam_str_of_bool" }
-                    ast.EXTRA[ast.ex_mut(w)].cbuiltin = cb
-                    ast.EXTRA[ast.ex_mut(w)].has_cbuiltin = true
-                    ast.NODES[w].ty = types.ty_string()
-                    part = w
-                }
-                if acc == NONE {
+                if parts.len == 1 && k == TK.String {
                     acc = part
-                    continue
+                } else if parts.len == 1 && k == TK.Int {
+                    acc = new_call(NONE, []int { part }, ast.INFO[part].loc)
+                    let wide_unsigned = types.TYPES[t].is_unsigned != 0 && types.TYPES[t].bits == 64
+                    ast.EXTRA[ast.ex_mut(acc)].cbuiltin = if wide_unsigned { "loam_decimal_of_u64" } else { "loam_decimal_of_int" }
+                    ast.EXTRA[ast.ex_mut(acc)].has_cbuiltin = true
+                    ast.NODES[acc].ty = types.ty_string()
                 }
-                let cat = new_call(NONE, []int { acc, part }, nloc)
-                ast.EXTRA[ast.ex_mut(cat)].cbuiltin = "loam_str_concat"
-                ast.EXTRA[ast.ex_mut(cat)].has_cbuiltin = true
-                ast.NODES[cat].ty = types.ty_string()
-                acc = cat
             }
-            if parts.len >= 2 {
+            if acc == NONE && parts.len >= 1 {
                 acc = new_call(NONE, parts, nloc)
                 ast.EXTRA[ast.ex_mut(acc)].cbuiltin = "loam_interp"
                 ast.EXTRA[ast.ex_mut(acc)].has_cbuiltin = true
