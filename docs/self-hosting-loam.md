@@ -384,17 +384,18 @@ one wide struct per node family with a `kind` enum and the union of fields,
 or a `kind` + index into a per-kind side table. `switch` on the kind works
 (no exhaustiveness check — add a `default: panic(...)` everywhere).
 
-### 2.3 Hash maps are string-keyed and `i32`-hashed
+### 2.3 Hash maps are `Key`-keyed and `i32`-hashed
 
-`std:map` is `Map<T>` with `string` keys only (`hash_str` returns `int`).
+`std:map` is one `Map<T>` whose key is a small `Key` struct: `key_str` for
+`string` keys (content-hashed by `hash_str`, which returns `int`), `key_int`
+for `int` keys (multiplicative hash, no allocation). A generic key would need
+`==`/hash on a type parameter, i.e. new language machinery, so the key kind
+lives in a concrete `Key`, not in `K`. One struct, one method set
+(`map.new` / `map.put` / `map.get` / …, or `m.put(…)` / selective import):
 
-- [x] Integer-keyed map: `std:intmap` (`IntMap<T>`), the same
-      table as `std:map` with an int key and a multiplicative hash. Kept a
-      separate module on purpose: a generic key would need `==`/hash on a type
-      parameter, i.e. new language machinery.
-- [x] `Map<[]int>` / `IntMap<[]int>` work, and a value is mutated in place
-      through its slot: `push(m.entries[map_find(&mut m, k)].value, x)`.
-      Test: `compile_pass/std_intmap.loam`.
+- [x] `Map<[]int>` works with either key kind, and a value is mutated in
+      place through its slot: `push(m.entries[map.find(&mut m, key_int(k))].value, x)`.
+      Test: `compile_pass/std_map.loam`.
 
 ### 2.4 Memory and speed
 
