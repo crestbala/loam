@@ -21,6 +21,7 @@ import "zeuscore/logs.loam"
 import "zeuscore/platform.loam"
 import "zeuscore/runtime.loam"
 import "zeuscore/arena.loam"
+import "zeuscore/keymap.loam"
 import "zeuscore/nodes.loam"
 import "zeuscore/layout.loam"
 import "zeuscore/metrics.loam"
@@ -1239,7 +1240,7 @@ fn install_key(node: Node, spec: string, action: string, handler_fn: int, is_glo
     switch is_global {
         case true:
             // ctx 0 = matches whatever holds focus.
-            runtime.map_key(spec, act, 0)
+            keymap.map_in_context(spec, act, 0)
             on_action_global(act, signal_handle(0), 5, handler_fn)
             break
         default:
@@ -1327,7 +1328,7 @@ fn install_keys(node: Node, keys: []KeyBind) -> Node {
 }
 
 fn key_context(node: Node, name: string) -> Node {
-    nodes.ui[node.id].key_ctx = runtime.key_intern(name)
+    nodes.ui[node.id].key_ctx = keymap.intern(name)
     return node
 }
 fn focusable(node: Node) -> Node {
@@ -1348,11 +1349,11 @@ fn capture_text(node: Node) -> Node {
 fn key(node: Node, spec: string, action: string) -> Node {
     let mut ctx = nodes.ui[node.id].key_ctx
     if ctx == 0 {
-        ctx = runtime.key_intern_action(action)
+        ctx = keymap.context_from_action(action)
         nodes.ui[node.id].key_ctx = ctx
     }
     if ctx != 0 {
-        runtime.map_key(spec, action, ctx)
+        keymap.map_in_context(spec, action, ctx)
     }
     nodes.ui[node.id].focusable = 1
     return node
@@ -4291,18 +4292,29 @@ fn clear_font() {
 /** *default, and whatever `set_accent` picks after that. Status tints stay */
 /** *hue-distinct and quiet; the chart fields are the data-viz layer every chart */
 /** *reads (stroke + area wash). */
-// --- C boundary hooks -----------------------------------------------------
-// Bodyless: the runtime implements these (see `zeus_plat.c`), and `zeus`
-// re-exports them. Named `on_*` / `*_key` because they are the keyboard and
-// focus seams the host drives.
+// --- keymap hooks ---------------------------------------------------------
+// The keymap is `zeuscore/keymap.loam`; `zeus` re-exports these.
 
-fn on_action(node: Node, action: string, sig: Signal<int>, mode: int, value: int) -> Node {}
-fn on_action_global(action: string, sig: Signal<int>, mode: int, value: int) {}
+fn on_action(node: Node, action: string, sig: Signal<int>, mode: int, value: int) -> Node {
+    keymap.on_action(node.id, action, sig.id, mode, value)
+    return node
+}
+fn on_action_global(action: string, sig: Signal<int>, mode: int, value: int) {
+    keymap.on_action(0, action, sig.id, mode, value)
+}
 
 /** *Step `sig` by `delta`, clamped to lo..hi — arrow navigation over a range. */
-fn on_range(node: Node, action: string, sig: Signal<int>, delta: int, lo: int, hi: int) -> Node {}
-fn map_key(spec: string, action: string, ctx: string) {}
-fn remap_key(spec: string, action: string, ctx: string) {}
+fn on_range(node: Node, action: string, sig: Signal<int>, delta: int, lo: int, hi: int) -> Node {
+    keymap.on_action_clamped(node.id, action, sig.id, 4, delta, lo, hi)
+    return node
+}
+fn map_key(spec: string, action: string, ctx: string) {
+    keymap.map(spec, action, ctx)
+}
+/** *A user binding: outranks the defaults in the same context. */
+fn remap_key(spec: string, action: string, ctx: string) {
+    keymap.remap(spec, action, ctx)
+}
 /** *Foreground text. `ink` is the strongest ink. */
 fn ink() -> string { return role_token(ROLE.Ink) }
 

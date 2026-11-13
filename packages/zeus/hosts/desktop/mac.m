@@ -8,7 +8,12 @@
 #import <CoreVideo/CoreVideo.h>
 #import <VideoToolbox/VideoToolbox.h>
 #include "zeus_apple.h"
-#include "zeus_key.h"
+/* The key codes and modifier bits Zeus expects (zeuscore/keymap.loam). */
+#define ZEUS_MOD_SHIFT 1
+#define ZEUS_MOD_CTRL 2
+#define ZEUS_MOD_ALT 4
+#define ZEUS_MOD_CMD 8
+#define ZEUS_K_TAB 9
 #include <string.h>
 #include <stdlib.h>
 #include <malloc/malloc.h>
@@ -827,7 +832,7 @@ static void mac_link_arm(void) {
    something is animating — which would make `bench/own_buffer.sh` depend on a
    human moving the mouse, and let the two display paths be measured at different
    workloads. `ZEUS_FRAME_BENCH=1` keeps frames coming. Off by default; it exists
-   so the numbers in examples/zeus/myapp/readme.md can be re-derived. */
+   so the numbers in docs/mem-baseline.md can be re-derived. */
 static int frame_bench_on(void) {
     static int v = -1;
     if (v < 0) v = env_truthy("ZEUS_FRAME_BENCH");
@@ -1897,14 +1902,9 @@ static int host_load_image(void) {
     ZEUS_BIND(tree_dump, "loam_zeus_engine_tree_dump");
     ZEUS_BIND(signals_dump, "loam_zeus_engine_signals_dump");
     ZEUS_BIND(state_load, "loam_zeus_engine_state_load");
-    ZEUS_BIND(key_apply, "loam_zeus_engine_key_apply");
-    ZEUS_BIND(fill_focus, "loam_zeus_engine_fill_focus");
-    ZEUS_BIND(focus_depth, "loam_zeus_engine_focus_depth");
-    ZEUS_BIND(focus_node, "loam_zeus_engine_focus_node");
-    ZEUS_BIND(focus_ctx, "loam_zeus_engine_focus_ctx");
-    ZEUS_BIND(focus_step, "loam_zeus_engine_focus_step");
     ZEUS_BIND(focus_captures_text, "loam_zeus_engine_focus_captures_text");
     ZEUS_BIND(key, "loam_zeus_engine_key");
+    ZEUS_BIND(key_ev, "loam_zeus_engine_key_ev");
     ZEUS_BIND(key_up, "loam_zeus_engine_key_up");
     ZEUS_BIND(set_mods, "loam_zeus_engine_set_mods");
     ZEUS_BIND(insert, "loam_zeus_engine_insert");

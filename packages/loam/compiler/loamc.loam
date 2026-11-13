@@ -656,19 +656,15 @@ fn zeus_objects(headless: bool, ok: &mut bool) -> []string {
         push(host_flags, "-DZEUS_MEM_STATS")
     }
     let rt_h = "{{rt}}/zeus_rt.h"
-    let key_h = "{{rt}}/zeus_key.h"
     let plat_c = "{{rt}}/zeus_plat.c"
-    let key_c = "{{rt}}/zeus_key.c"
     let plat_o = "{{rt}}/.obj/zeus_plat{{tag}}.o"
-    let key_o = "{{rt}}/.obj/zeus_key{{tag}}.o"
-    let plat_deps = []string { plat_c, rt_h, key_h }
-    let key_deps = []string { key_c, key_h }
-    if !ensure_obj(plat_c, plat_o, &host_flags, &plat_deps) || !ensure_obj(key_c, key_o, &host_flags, &key_deps) {
+    let plat_deps = []string { plat_c, rt_h }
+    if !ensure_obj(plat_c, plat_o, &host_flags, &plat_deps) {
         fmt.eprintln("loam: failed to compile zeus runtime")
         *ok = false
         return []string {}
     }
-    let mut objs = []string { plat_o, key_o }
+    let mut objs = []string { plat_o }
     if headless {
         return objs
     }
@@ -686,7 +682,7 @@ fn zeus_objects(headless: bool, ok: &mut bool) -> []string {
             push(mac_flags, "-DLOAM_HOST_BUILD")
         }
         push(mac_flags, "-I{{zd}}/hosts/apple")
-        let mac_deps = []string { mac_m, rt_h, key_h, apple_h }
+        let mac_deps = []string { mac_m, rt_h, apple_h }
         let draw_deps = []string { draw_m, rt_h, apple_h }
         let media_deps = []string { media_m, rt_h, apple_h }
         if !ensure_obj(mac_m, mac_o, &mac_flags, &mac_deps) ||
@@ -703,7 +699,7 @@ fn zeus_objects(headless: bool, ok: &mut bool) -> []string {
     }
     let linux_c = "{{zd}}/hosts/desktop/linux.c"
     let linux_o = "{{rt}}/.obj/zeus_linux{{tag}}.o"
-    let linux_deps = []string { linux_c, rt_h, key_h }
+    let linux_deps = []string { linux_c, rt_h }
     if !ensure_obj(linux_c, linux_o, &host_flags, &linux_deps) {
         fmt.eprintln("loam: failed to compile {{linux_c}} (need libx11)")
         *ok = false
@@ -1248,7 +1244,6 @@ fn wasm_build(in_path: string, cpath: string, binpath: string, shard_dir: string
         let w_libc = "{{rt}}/zeus_wasm_libc.c"
         let w_host = "{{zeus_dir()}}/hosts/web/wasm.c"
         let w_plat = "{{rt}}/zeus_plat.c"
-        let w_key = "{{rt}}/zeus_key.c"
         let mut wasm_in = []string { "-x", "c", cpath }
         if shard_dir.len > 0 {
             let mut unit_cc = []string { wcc }
@@ -1262,7 +1257,7 @@ fn wasm_build(in_path: string, cpath: string, binpath: string, shard_dir: string
                     push(unit_cc_set, unit_cc[i])
                 }
             }
-            let mut extra = []string { w_libc, w_host, w_plat, w_key }
+            let mut extra = []string { w_libc, w_host, w_plat }
             if net_c.len > 0 {
                 push(extra, net_c)
             }
@@ -1287,7 +1282,7 @@ fn wasm_build(in_path: string, cpath: string, binpath: string, shard_dir: string
         push_list(&mut args, []string { "-Wl,--no-entry", "-Wl,--export-dynamic", "-Wl,--fatal-warnings", "-Wl,--export=__stack_pointer", "-Wl,-z,stack-size=4194304", "-Wl,--stack-first" })
         push_all(&mut args, &wasm_in)
         if !SHARD_LINKED {
-            push_list(&mut args, []string { "-x", "none", w_libc, w_host, w_plat, w_key, net_c })
+            push_list(&mut args, []string { "-x", "none", w_libc, w_host, w_plat, net_c })
         }
     } else {
         push_list(&mut args, []string { "-Oz", "-ffp-contract=off", owns, "-I{{rt}}/wasm_inc", "-I{{rt}}" })
@@ -1358,7 +1353,7 @@ fn ios_sim_run(app: string, bid: string) -> bool {
 /** *list of headers they all read. */
 fn ios_obj(cc_args: &[]string, src: string, obj: string) -> bool {
     let rt = loader.runtime_dir()
-    let deps = []string { src, "{{rt}}/zeus_rt.h", "{{rt}}/loam_rt.h", "{{rt}}/zeus_key.h", "{{rt}}/net_rt.h", "{{zeus_dir()}}/hosts/apple/zeus_apple.h" }
+    let deps = []string { src, "{{rt}}/zeus_rt.h", "{{rt}}/loam_rt.h", "{{rt}}/net_rt.h", "{{zeus_dir()}}/hosts/apple/zeus_apple.h" }
     if sys.exists(obj) == 1 {
         let mut stale = false
         for i in 0..deps.len {
@@ -1426,8 +1421,8 @@ fn ios_build(in_path: string, cpath: string, binpath: string, stem: string, shar
     let mut ios_mcc = []string {}
     push_all(&mut ios_mcc, &ios_cc)
     push_list(&mut ios_mcc, []string { "-x", "objective-c", "-fno-objc-arc", "-I{{zd}}/hosts/apple" })
-    let mut c_srcs = []string { "{{rt}}/zeus_plat.c", "{{rt}}/zeus_key.c" }
-    let mut c_names = []string { "zeus_plat", "zeus_key" }
+    let mut c_srcs = []string { "{{rt}}/zeus_plat.c" }
+    let mut c_names = []string { "zeus_plat" }
     if mods_use("http") {
         push(c_srcs, "{{rt}}/net.c")
         push(c_names, "net")
@@ -1558,7 +1553,7 @@ fn android_cmake(uses_http: bool) -> string {
     // A dev build leaves only the app's code unoptimized, as on the native
     // targets: it is what an edit recompiles.
     let dev = if want_dev() { "set_source_files_properties(app.c PROPERTIES COMPILE_OPTIONS -O0)\n" } else { "" }
-    return "cmake_minimum_required(VERSION 3.22.1)\nproject(zeus C)\nadd_library(zeus SHARED\n  app.c\n  \"{{zeus_dir()}}/hosts/android/android.c\"\n  \"{{rt}}/zeus_plat.c\"\n  \"{{rt}}/zeus_key.c\"\n{{net}})\ntarget_include_directories(zeus PRIVATE \"{{rt}}\")\ntarget_compile_definitions(zeus PRIVATE LOAM_ANDROID LOAM_ALLOC_TRACE{{owns}})\ntarget_compile_options(zeus PRIVATE -std=gnu99 -O1 -ffp-contract=off -fno-asynchronous-unwind-tables)\n{{dev}}target_link_libraries(zeus android log)\n"
+    return "cmake_minimum_required(VERSION 3.22.1)\nproject(zeus C)\nadd_library(zeus SHARED\n  app.c\n  \"{{zeus_dir()}}/hosts/android/android.c\"\n  \"{{rt}}/zeus_plat.c\"\n{{net}})\ntarget_include_directories(zeus PRIVATE \"{{rt}}\")\ntarget_compile_definitions(zeus PRIVATE LOAM_ANDROID LOAM_ALLOC_TRACE{{owns}})\ntarget_compile_options(zeus PRIVATE -std=gnu99 -O1 -ffp-contract=off -fno-asynchronous-unwind-tables)\n{{dev}}target_link_libraries(zeus android log)\n"
 }
 
 fn android_app_gradle(app_id: string) -> string {

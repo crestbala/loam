@@ -943,6 +943,9 @@ fn test() -> int {
         sys.exit(0)
     }
 
+    if ONLY == "" && trusted_over_budget() {
+        return 1
+    }
     if ONLY == "" && !ISOLATED {
         return test_batched(t0)
     }
@@ -1475,6 +1478,18 @@ fn is_exec(p: string) -> bool {
     return sys.exec_status() == 0
 }
 
+/** *The fingerprinted wasm module a web build wrote (`<web>/_zeus/app.<hash>.wasm`), */
+/** *or `""` if there is none. */
+fn app_wasm(web: string) -> string {
+    let names = sys.list_dir("{{web}}/_zeus")
+    for i in 0..names.len {
+        if starts_with(names[i], "app.") && ends_with(names[i], ".wasm") {
+            return "{{web}}/_zeus/{{names[i]}}"
+        }
+    }
+    return ""
+}
+
 fn is_nonempty(p: string) -> bool {
     sys.exec("test -s {{shq(p)}}")
     return sys.exec_status() == 0
@@ -1640,7 +1655,7 @@ fn ig_routes_table() {
         return
     }
     let W = "packages/loam/tests/routes_app/build/web"
-    if !is_nonempty("{{W}}/app.wasm") || !is_file("packages/loam/tests/routes_app/build/macos/app") {
+    if !is_nonempty(app_wasm(W)) || !is_file("packages/loam/tests/routes_app/build/macos/app") {
         bad("zeli build artifacts", bl)
         return
     }
@@ -1730,20 +1745,6 @@ fn ig_fmt_tree() {
     ok("zeli fmt (a tree: canonical, idempotent, generated and build output untouched)")
 }
 
-fn ig_myapp_routes() {
-    mark("zeli routes (myapp)")
-    let l = tmpf("myapp_routes_gen.log")
-    if !sh("{{shq(ZELI)}} routes examples/zeus/myapp > {{shq(l)}} 2>&1") {
-        bad("zeli routes (myapp)", l)
-        return
-    }
-    if !git_clean("examples/zeus/myapp/app_routes.loam", tmpf("myapp_routes_diff.log")) {
-        bad("zeli routes (myapp's table is not what is committed)", tmpf("myapp_routes_diff.log"))
-        return
-    }
-    ok("zeli routes (myapp: groups, params, meta and paths)")
-}
-
 fn ig_new() {
     mark("zeli new")
     let d = tmpf("newapp")
@@ -1794,7 +1795,7 @@ fn ig_build_base() {
     let out = tmpf("buildapp.out")
     let bstat = rc("{{shq(ZELI)}} build {{shq(d)}}/app --targets web,macos --base https://example.com/ > {{shq(out)}} 2>&1")
     let W = "{{d}}/app/build/web"
-    let good = bstat == 0 && is_nonempty("{{W}}/app.wasm") && is_exec("{{d}}/app/build/macos/app") && is_file("{{W}}/blog/index.html") && file_has("{{W}}/blog/index.html", "rel=\"canonical\" href=\"https://example.com/blog\"") && file_has("{{W}}/sitemap.xml", "https://example.com/blog/hello-world") && file_has("{{W}}/robots.txt", "Sitemap: https://example.com/sitemap.xml") && count_matches("{{W}}/blog/index.html", "<canvas") == 1
+    let good = bstat == 0 && is_nonempty(app_wasm(W)) && is_exec("{{d}}/app/build/macos/app") && is_file("{{W}}/blog/index.html") && file_has("{{W}}/blog/index.html", "rel=\"canonical\" href=\"https://example.com/blog\"") && file_has("{{W}}/sitemap.xml", "https://example.com/blog/hello-world") && file_has("{{W}}/robots.txt", "Sitemap: https://example.com/sitemap.xml") && count_matches("{{W}}/blog/index.html", "<canvas") == 1
     if good {
         ok("zeli build (--base: canonical URLs, sitemap, robots)")
     } else {
@@ -1825,20 +1826,18 @@ fn ig_build_exits() {
 fn ig_build_partial() {
     mark("zeli build partial")
     let d = tmpf("buildpart")
-    sh("chmod -R u+w {{shq(d)}} 2>/dev/null")
     if !reset_dir(d) {
         bad("zeli build (partial setup)", "")
         return
     }
-    mkdirp("{{d}}/build/web")
-    cp("packages/loam/tests/routes_app/app.loam", "{{d}}/app.loam")
-    cpR("packages/loam/tests/routes_app/routes", "{{d}}/routes")
-    chmod("500", "{{d}}/build/web")
+    mkdirp(d)
+    // A `#[c]` call builds on native and is refused on wasm, so web fails
+    // and macos builds, whatever the build directory holds.
+    write_text("{{d}}/app.loam", "import \"std:fmt\"\n\n#[c(\"abs\")]\nfn c_abs(x: i32) -> i32 {}\n\nfn main() {\n    if c_abs(-3) != 3 {\n        fmt.println(\"abs is wrong\")\n    }\n}\n")
     let po = "{{d}}/part.out"
     let no = "{{d}}/none.out"
     let pstat = rc("{{shq(ZELI)}} build {{shq(d)}} --targets web,macos > {{shq(po)}} 2>&1")
     let nstat = rc("{{shq(ZELI)}} build {{shq(d)}} --targets web > {{shq(no)}} 2>&1")
-    chmod("700", "{{d}}/build/web")
     if pstat != 0 || nstat != 1 || !file_matches(po, "^zeli: web failed") || !file_matches(po, "^zeli: built 1/2 target[(]s[)]") || !file_matches(no, "^zeli: built 0/1 target[(]s[)]") {
         bad2("zeli build (a partial build must exit 0, a total failure 1)", po, no)
         return
@@ -1859,7 +1858,7 @@ fn ig_serve_build() {
     let out = tmpf("serveonly.out")
     let dstat = rc("{{shq(ZELI)}} serve {{shq(d)}}/app --build-only > {{shq(out)}} 2>&1")
     let W = "{{d}}/app/build/web"
-    let good = dstat == 0 && is_nonempty("{{W}}/app.wasm") && is_file("{{W}}/index.html") && is_file("{{W}}/sitemap.xml") && file_matches(out, "zeli: serve build ok [(]--build-only[)]$") && file_matches(out, "zeli: routes -> app_routes[.]loam$")
+    let good = dstat == 0 && is_nonempty(app_wasm(W)) && is_file("{{W}}/index.html") && is_file("{{W}}/sitemap.xml") && file_matches(out, "zeli: serve build ok [(]--build-only[)]$") && file_matches(out, "zeli: routes -> app_routes[.]loam$")
     if good {
         ok("zeli serve --build-only (wasm + the web shell, no server bound)")
     } else {
@@ -2080,35 +2079,6 @@ fn ig_wasm_trap() {
         ok("wasm trap (Boundary recovery: startup restart, handler in place)")
     } else {
         bad2("wasm trap", trl, tbl)
-    }
-}
-
-fn ig_myapp_build() {
-    mark("myapp build")
-    let l = tmpf("myapp_build.log")
-    let web = "examples/zeus/myapp/build/web"
-    if sh("{{shq(ZELI)}} build examples/zeus/myapp > {{shq(l)}} 2>&1") && is_file("examples/zeus/myapp/build/macos/app") && file_has("{{web}}/blog/index.html", "<title>Blog</title>") && file_has("{{web}}/sitemap.xml", "/blog/hello-world") {
-        ok("zeus example myapp (barebone builds all targets)")
-    } else {
-        bad("zeus example myapp", l)
-    }
-
-    mark("myapp wasm")
-    let wl = tmpf("myapp_wasm.log")
-    let denom = tmpf("deno_myapp")
-    if sh("DENO_DIR={{shq(denom)}} deno run --quiet --allow-read packages/zeus/hosts/web/wasm_smoke.ts {{web}}/app.wasm > {{shq(wl)}} 2>&1") {
-        ok("zeus example myapp (wasm runs)")
-    } else {
-        bad("zeus example myapp wasm", wl)
-    }
-
-    mark("myapp routes")
-    let rl = tmpf("myapp_routes.log")
-    let bin = tmpf("myapp_routes")
-    if sh("{{shq(LOAMC)}} examples/zeus/myapp/tests/routes.loam -o {{shq(bin)}} > {{shq(rl)}} 2>&1 && {{shq(bin)}} >> {{shq(rl)}} 2>&1") {
-        ok("zeus example myapp (every route paints)")
-    } else {
-        bad("zeus example myapp routes", rl)
     }
 }
 
@@ -2487,13 +2457,6 @@ fn ig_api_freeze() {
     ok("api freeze (every name in packages/zeus/docs/api-freeze.md still exists)")
 }
 
-fn ig_myapp() {
-    ig_myapp_routes()
-    ig_myapp_build()
-}
-
-/** *`tests/fresh/check.sh` against `compiler` in `work`: the `.fresh` build */
-/** *cache's cases, one line per failure, empty when all hold. */
 fn fresh_cache_case(compiler: string, work: string, tag: string) -> string {
     let script = "{{ROOT}}/packages/loam/tests/fresh/check.sh"
     return sys.exec("rm -rf {{shq(work)}} && LOAM_HOME={{shq(ROOT)}} sh {{shq(script)}} {{shq(compiler)}} {{shq(work)}} {{shq(tag)}} 2>&1")
@@ -2825,8 +2788,6 @@ fn stanza_dispatch(name: string) -> bool {
         ig_fmt()
     } else if name == "fmt_tree" {
         ig_fmt_tree()
-    } else if name == "myapp" {
-        ig_myapp()
     } else if name == "new" {
         ig_new()
     } else if name == "build_base" {
@@ -2898,16 +2859,14 @@ fn stanza_dispatch(name: string) -> bool {
     return true
 }
 
-/** *The stanzas `nob integration` runs. A stanza is the unit of parallelism: `myapp` merges the route-table regeneration with the */
-/** *build that consumes it, and each of the others owns a scratch tree of its */
-/** *own, so no two can collide. */
+/** *The stanzas `nob integration` runs. A stanza is the unit of parallelism: each owns a scratch tree of its own, */
+/** *so no two can collide. */
 fn stanza_names() -> []string {
     let mut v = []string {}
     push(v, "routes_app")
     push(v, "pkg_sync")
     push(v, "fmt")
     push(v, "fmt_tree")
-    push(v, "myapp")
     push(v, "new")
     push(v, "build_base")
     push(v, "build_exits")
@@ -3082,6 +3041,105 @@ fn grammar() -> int {
 /** *cargo `target/`. Each path goes through `git clean`, so a tracked file */
 /** *(a few fixtures keep a binary under `build/`) is never touched. Kept: */
 /** *`node_modules`, `out/zed-grammar` (Zed's grammar repo), local data. */
+// --- trusted: lines of C nothing checks (docs/runtime-in-loam.md, R0) -------
+//
+// Every tracked .c / .h / .m file, by group. The runtime group has a budget:
+// each step of docs/runtime-in-loam.md lowers it in the same change that
+// deletes the C, so the runtime can only shrink. The target is zero.
+
+/** *Lines allowed under `packages/loam/runtime/`. Lower it when a step lands. */
+let RUNTIME_LINE_BUDGET: int = 9456
+
+/** *The group a tracked C file belongs to, or `""` for C that is not shipped. */
+fn trusted_group(path: string) -> string {
+    if starts_with(path, "packages/loam/tests/") {
+        return ""
+    }
+    if starts_with(path, "packages/loam/runtime/") {
+        return "runtime"
+    }
+    if starts_with(path, "packages/zeus/hosts/") {
+        return "hosts"
+    }
+    if contains_str(path, "/vendor/") || starts_with(path, "packages/tooling/tree-sitter-loam/src/") {
+        return "vendored"
+    }
+    // The seed and the test fixtures are generated or test-only.
+    return ""
+}
+
+/** *Newlines in `body`, as `wc -l` counts them. */
+fn newline_count(body: string) -> int {
+    let mut count = 0
+    for i in 0..body.len {
+        if body[i] == 10 {
+            count += 1
+        }
+    }
+    return count
+}
+
+/** *`n` right-aligned in `width` columns. */
+fn right_align(n: int, width: int) -> string {
+    let mut text = "{{n}}"
+    while text.len < width {
+        text = " {{text}}"
+    }
+    return text
+}
+
+/** *Count the tracked C by group; print the per-file table when `verbose`. */
+/** *The runtime group's total, or `-1` if git could not list the files. */
+fn trusted_runtime_lines(verbose: bool) -> int {
+    let listed = sys.exec("cd {{shq(ROOT)}} && git ls-files '*.c' '*.h' '*.m'")
+    if sys.exec_status() != 0 {
+        fmt.println("nob: trusted: git ls-files failed")
+        return -1
+    }
+    let groups = []string { "runtime", "hosts", "vendored" }
+    let mut group_totals = []int { 0, 0, 0 }
+    let paths = split_lines(listed)
+    for g in 0..groups.len {
+        if verbose {
+            fmt.println("{{groups[g]}}:")
+        }
+        for i in 0..paths.len {
+            if trusted_group(paths[i]) != groups[g] {
+                continue
+            }
+            let lines = newline_count(sys.read_file("{{ROOT}}/{{paths[i]}}"))
+            group_totals[g] = group_totals[g] + lines
+            if verbose {
+                fmt.println("  {{right_align(lines, 7)}}  {{paths[i]}}")
+            }
+        }
+        if verbose {
+            fmt.println("  {{right_align(group_totals[g], 7)}}  total {{groups[g]}}")
+        }
+    }
+    return group_totals[0]
+}
+
+/** *`true`, after saying why, when the runtime C is over its budget. */
+fn trusted_over_budget() -> bool {
+    let runtime_lines = trusted_runtime_lines(false)
+    if runtime_lines > RUNTIME_LINE_BUDGET {
+        fmt.println("nob: trusted: runtime is {{runtime_lines}} lines, over its budget of {{RUNTIME_LINE_BUDGET}}")
+        fmt.println("     runtime C may only shrink (docs/runtime-in-loam.md)")
+        return true
+    }
+    return false
+}
+
+fn trusted() -> int {
+    let runtime_lines = trusted_runtime_lines(true)
+    if runtime_lines < 0 || trusted_over_budget() {
+        return 1
+    }
+    fmt.println("runtime budget: {{runtime_lines}} of {{RUNTIME_LINE_BUDGET}} lines (target 0)")
+    return 0
+}
+
 fn clean() -> int {
     let size_before = trim(sys.exec("cd {{shq(ROOT)}} && du -sk . | cut -f1"))
     let fixed_paths = []string {
@@ -3367,6 +3425,8 @@ fn usage() {
     fmt.println("  grammar  regenerate, check and publish the tree-sitter grammar")
     fmt.println("  grammar-check  check the grammar against the compiler's parser")
     fmt.println("  install-editor  install the VS Code extension")
+    fmt.println("  trusted  lines of C per file (runtime, hosts, vendored); fails if the")
+    fmt.println("          runtime grows past its budget (docs/runtime-in-loam.md)")
     fmt.println("  clean   remove every build/, .zeus/, *.o and test scratch; keeps bin/")
     fmt.println("  fuzz-borrow [N]  N random programs (default 200): any the checker")
     fmt.println("          accepts that ASan flags is a borrow-checker hole")
@@ -3520,6 +3580,8 @@ fn main() {
         sys.exit(fuzz_borrow(n))
     } else if cmd == "clean" {
         sys.exit(clean())
+    } else if cmd == "trusted" {
+        sys.exit(trusted())
     } else if cmd == "help" {
         usage()
         sys.exit(0)

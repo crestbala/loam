@@ -22,9 +22,9 @@ fn has(hay: string, needle: string) -> bool {
 #[test]
 fn watches_app_and_framework_sources() {
     let none = []string {}
-    test.assert(zeli.is_watched_source("examples/zeus/myapp/app.loam", none))
-    test.assert(zeli.is_watched_source("examples/zeus/myapp/routes/blog/page.loam", none))
-    test.assert(zeli.is_watched_source("examples/zeus/myapp/routes/pricing/page.loam", none))
+    test.assert(zeli.is_watched_source("examples/zeus/dracula/app.loam", none))
+    test.assert(zeli.is_watched_source("examples/zeus/dracula/routes/stocks/page.loam", none))
+    test.assert(zeli.is_watched_source("examples/zeus/dracula/routes/screener/page.loam", none))
     test.assert(zeli.is_watched_source("packages/zeus/src/zeus.loam", none))
 }
 
@@ -33,13 +33,13 @@ fn ignores_output_caches_and_non_sources() {
     let none = []string {}
     /* The build output lives inside a watched root, so this filter is the only
        thing standing between an edit and a rebuild loop. */
-    test.assert(!zeli.is_watched_source("examples/zeus/myapp/build/web/app.wasm", none))
-    test.assert(!zeli.is_watched_source("examples/zeus/myapp/build/web/index.html", none))
-    test.assert(!zeli.is_watched_source("examples/zeus/myapp/build/web/x.loam", none))
-    test.assert(!zeli.is_watched_source("examples/zeus/myapp/.zeus/meta_dump.loam", none))
-    test.assert(!zeli.is_watched_source("examples/zeus/myapp/.git/x.loam", none))
+    test.assert(!zeli.is_watched_source("examples/zeus/dracula/build/web/app.wasm", none))
+    test.assert(!zeli.is_watched_source("examples/zeus/dracula/build/web/index.html", none))
+    test.assert(!zeli.is_watched_source("examples/zeus/dracula/build/web/x.loam", none))
+    test.assert(!zeli.is_watched_source("examples/zeus/dracula/.zeus/meta_dump.loam", none))
+    test.assert(!zeli.is_watched_source("examples/zeus/dracula/.git/x.loam", none))
     test.assert(!zeli.is_watched_source("packages/zeus/node_modules/p/x.loam", none))
-    test.assert(!zeli.is_watched_source("examples/zeus/myapp/app_routes.loam.bak", none))
+    test.assert(!zeli.is_watched_source("examples/zeus/dracula/app_routes.loam.bak", none))
 }
 
 #[test]
@@ -48,7 +48,7 @@ fn the_generated_route_table_is_not_a_source() {
        every rebuild, forever. The check is by name, and holds under a root. */
     let none = []string {}
     let roots = []string { "/app" }
-    test.assert(!zeli.is_watched_source("examples/zeus/myapp/app_routes.loam", none))
+    test.assert(!zeli.is_watched_source("examples/zeus/dracula/app_routes.loam", none))
     test.assert(!zeli.is_watched_source("/app/app_routes.loam", roots))
     test.assert(zeli.is_watched_source("/app/routes/page.loam", roots))
 }

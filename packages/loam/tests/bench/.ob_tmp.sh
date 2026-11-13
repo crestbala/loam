@@ -13,13 +13,13 @@
 #
 # For each run this reports the physical footprint (now and peak) and the
 # IOSurface / IOAccelerator regions, so the numbers in
-# examples/zeus/myapp/readme.md can be reproduced instead of hand-copied. It also
+# docs/mem-baseline.md can be reproduced instead of hand-copied. It also
 # byte-compares the window crops, which is how "the paths draw the same pixels"
 # is checked rather than asserted.
 #
 #   sh packages/loam/tests/bench/own_buffer.sh [app-dir] [seconds]
 #
-# Defaults: examples/zeus/myapp, 8s per path.
+# Defaults: examples/zeus/dracula, 8s per path.
 #
 # `vmmap` is the source of truth: it gives the physical footprint Activity
 # Monitor shows plus the per-region-type breakdown, and it needs no cooperation
@@ -37,7 +37,7 @@
 cd "$(dirname "$0")/../../../.." || exit 1
 set -u
 
-APP_DIR="${1:-examples/zeus/myapp}"
+APP_DIR="${1:-examples/zeus/dracula}"
 SECS="${2:-8}"
 OUT=packages/loam/tests/tmp/own_buffer
 LOAM=./bin/loamc

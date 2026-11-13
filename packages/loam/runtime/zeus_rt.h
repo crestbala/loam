@@ -66,13 +66,9 @@ int64_t loam_zeus_sig_gen(int64_t id);
 
 Node loam_zeus_bind(Node label, Signal sig);
 Node loam_zeus_bind_n(Node label, int32_t n);
-Node loam_zeusbase_on_action(Node node, loam_str action, Signal sig, int64_t mode, int64_t value);
-Node loam_zeusbase_on_range(Node node, loam_str action, Signal sig, int64_t delta, int64_t lo,
-                       int64_t hi);
-void loam_zeusbase_on_action_global(loam_str action, Signal sig, int64_t mode, int64_t value);
-void loam_zeusbase_map_key(loam_str spec, loam_str action, loam_str ctx);
-void loam_zeusbase_remap_key(loam_str spec, loam_str action, loam_str ctx);
 int zeus_handle_key_ev(int key, int mods);
+/* 1 while the focused node takes typed text, so a host routes keys to it. */
+int zeus_focus_captures_text(void);
 
 /* --- Platform hosts: zeus/desktop/mac.m, zeus/ios/ios.m, zeus/web/wasm.c --- */
 
@@ -304,11 +300,7 @@ void loam_platform_plat_clock_skip(int32_t ms);
 void loam_platform_plat_frame(loam_vec head, loam_vec ops, loam_vec strs, loam_vec path);
 int32_t loam_platform_plat_blit(loam_vec buf, int32_t w, int32_t h, int32_t gen,
                                 int32_t scale);
-int64_t loam_runtime_key_intern(loam_str name);
-int64_t loam_runtime_key_intern_action(loam_str action);
-void loam_runtime_key_reset(void);
-void loam_runtime_map_key(loam_str spec, loam_str action, int64_t ctx);
-int64_t loam_runtime_key_ev(int64_t key, int64_t mods);
+void loam_runtime_intern_fn_reset(void);
 int64_t loam_runtime_edit_append(int64_t slot, int64_t key);
 int64_t loam_runtime_edit_back(int64_t slot);
 int64_t loam_runtime_edit_del(int64_t slot);
@@ -423,15 +415,9 @@ void loam_router_engine_open_url(loam_str url);
 void loam_router_engine_history_back(void);
 void loam_router_engine_chunks_done(int32_t index);
 void loam_router_engine_chunks_slow(int32_t index);
-void loam_zeus_engine_key_apply(int32_t sig, int32_t mode, int32_t value, int32_t lo,
-                               int32_t hi);
-void loam_zeus_engine_fill_focus(void);
-int32_t loam_zeus_engine_focus_depth(void);
-int32_t loam_zeus_engine_focus_node(int32_t i);
-int32_t loam_zeus_engine_focus_ctx(int32_t i);
-int32_t loam_zeus_engine_focus_step(int32_t back);
 int32_t loam_zeus_engine_focus_captures_text(void);
 int32_t loam_zeus_engine_key(int32_t key);
+int32_t loam_zeus_engine_key_ev(int32_t key, int32_t mods);
 int32_t loam_zeus_engine_key_up(int32_t key, int32_t mods);
 void loam_zeus_engine_set_mods(int32_t mods);
 int32_t loam_zeus_engine_insert(loam_str text);
@@ -532,14 +518,9 @@ typedef struct {
     loam_str (*tree_dump)(void);
     loam_str (*signals_dump)(void);
     int32_t (*state_load)(loam_str snapshot);
-    void (*key_apply)(int32_t sig, int32_t mode, int32_t value, int32_t lo, int32_t hi);
-    void (*fill_focus)(void);
-    int32_t (*focus_depth)(void);
-    int32_t (*focus_node)(int32_t i);
-    int32_t (*focus_ctx)(int32_t i);
-    int32_t (*focus_step)(int32_t back);
     int32_t (*focus_captures_text)(void);
     int32_t (*key)(int32_t key);
+    int32_t (*key_ev)(int32_t key, int32_t mods);
     int32_t (*key_up)(int32_t key, int32_t mods);
     void (*set_mods)(int32_t mods);
     int32_t (*insert)(loam_str text);
@@ -578,14 +559,9 @@ void zeus_set_host_hooks(void (*run)(const char *path));
 #define loam_zeus_engine_tree_dump zeus_app_api.tree_dump
 #define loam_zeus_engine_signals_dump zeus_app_api.signals_dump
 #define loam_zeus_engine_state_load zeus_app_api.state_load
-#define loam_zeus_engine_key_apply zeus_app_api.key_apply
-#define loam_zeus_engine_fill_focus zeus_app_api.fill_focus
-#define loam_zeus_engine_focus_depth zeus_app_api.focus_depth
-#define loam_zeus_engine_focus_node zeus_app_api.focus_node
-#define loam_zeus_engine_focus_ctx zeus_app_api.focus_ctx
-#define loam_zeus_engine_focus_step zeus_app_api.focus_step
 #define loam_zeus_engine_focus_captures_text zeus_app_api.focus_captures_text
 #define loam_zeus_engine_key zeus_app_api.key
+#define loam_zeus_engine_key_ev zeus_app_api.key_ev
 #define loam_zeus_engine_key_up zeus_app_api.key_up
 #define loam_zeus_engine_set_mods zeus_app_api.set_mods
 #define loam_zeus_engine_insert zeus_app_api.insert

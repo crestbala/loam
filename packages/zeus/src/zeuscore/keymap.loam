@@ -1,0 +1,463 @@
+// keymap — keyboard chords, contexts, named actions, and dispatch.
+//
+// The chain is deliberately two-stage. A chord resolves to a named *action*
+// through the keymap, and the action reaches state through a handler that
+// writes a signal. Nothing binds a chord straight to an effect, which is what
+// lets a user remap Cmd+S without the component that saves knowing it moved.
+//
+// Moved from `runtime/zeus_key.c` (docs/runtime-in-loam.md, R1.1); the
+// behaviour is the same, including the order names are interned in.
+
+import "arena.loam"
+import "runtime.loam"
+import "std:str"
+
+const MOD_SHIFT: int = 1
+const MOD_CTRL: int = 2
+const MOD_ALT: int = 4
+const MOD_CMD: int = 8
+
+// Printable keys are their own ASCII code; everything else lives above it.
+// The hosts send these codes (`enums.loam` names them for apps).
+const KEY_BACK: int = 8
+const KEY_TAB: int = 9
+const KEY_ENTER: int = 13
+const KEY_ESC: int = 27
+const KEY_DEL: int = 127
+const KEY_LEFT: int = 1000
+const KEY_RIGHT: int = 1001
+const KEY_UP: int = 1002
+const KEY_DOWN: int = 1003
+const KEY_PGUP: int = 1004
+const KEY_PGDN: int = 1005
+const KEY_HOME: int = 1006
+const KEY_END: int = 1007
+const KEY_F1: int = 1010
+
+/** *Deepest focus chain a dispatch walks. */
+const FOCUS_CHAIN_MAX: int = 64
+/** *A chord token this long or longer is refused. */
+const TOKEN_MAX: int = 32
+/** *The context prefix of an action is cut to this many bytes. */
+const CONTEXT_PREFIX_MAX: int = 63
+
+// --- interned names --------------------------------------------------------
+
+/** *Name 0 is the empty name, so a zero ctx reads as "any context". */
+let mut interned_names: []string = []string { "" }
+
+/** *The id of `name`, adding it on first sight. `""` is always 0. */
+fn intern(name: string) -> int {
+    if name.len == 0 {
+        return 0
+    }
+    for i in 1..interned_names.len {
+        if interned_names[i] == name {
+            return i
+        }
+    }
+    push(interned_names, name)
+    return interned_names.len - 1
+}
+
+/** *The context an action belongs to: its family before the first `.` */
+/** *(`button.press` → `button`), or the whole name when there is none. */
+fn context_from_action(action: string) -> int {
+    if action.len == 0 {
+        return 0
+    }
+    let mut dot = -1
+    for i in 0..action.len {
+        if action[i] == 46 {
+            dot = i
+            break
+        }
+    }
+    if dot <= 0 {
+        return intern(action)
+    }
+    let mut prefix_len = dot
+    if prefix_len > CONTEXT_PREFIX_MAX {
+        prefix_len = CONTEXT_PREFIX_MAX
+    }
+    return intern(slice(action, 0, prefix_len))
+}
+
+// --- chord parsing ---------------------------------------------------------
+
+/** *Named keys, beside `SPECIAL_KEY_CODES` at the same index. */
+let SPECIAL_KEY_NAMES: []string = []string {
+    "escape", "esc", "enter", "return", "tab", "backspace", "delete", "space", "left", "right", "up",
+    "down", "pageup", "pagedown", "home", "end", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9",
+    "f10", "f11", "f12",
+}
+let SPECIAL_KEY_CODES: []int = []int {
+    KEY_ESC, KEY_ESC, KEY_ENTER, KEY_ENTER, KEY_TAB, KEY_BACK, KEY_DEL, 32, KEY_LEFT, KEY_RIGHT, KEY_UP,
+    KEY_DOWN, KEY_PGUP, KEY_PGDN, KEY_HOME, KEY_END, KEY_F1, KEY_F1 + 1, KEY_F1 + 2, KEY_F1 + 3,
+    KEY_F1 + 4, KEY_F1 + 5, KEY_F1 + 6, KEY_F1 + 7, KEY_F1 + 8, KEY_F1 + 9, KEY_F1 + 10, KEY_F1 + 11,
+}
+
+/** *A parsed chord: `key` 0 means the text did not parse. */
+struct Chord {
+    key: int,
+    mods: int,
+}
+
+/** *The modifier bit a word names, or 0. */
+fn modifier_bit(word: string) -> int {
+    if word == "cmd" || word == "super" {
+        return MOD_CMD
+    }
+    if word == "ctrl" || word == "control" {
+        return MOD_CTRL
+    }
+    if word == "alt" || word == "opt" {
+        return MOD_ALT
+    }
+    if word == "shift" {
+        return MOD_SHIFT
+    }
+    return 0
+}
+
+/** *One chord: modifier words joined by `-` or `+`, then a key name. Both */
+/** *separators are accepted because "cmd+s" is what people write. A letter */
+/** *is stored lowercased. */
+fn parse_chord(text: string) -> Chord {
+    let failed = Chord { key: 0, mods: 0 }
+    let mut mods = 0
+    let mut start = 0
+    for i in 0..text.len + 1 {
+        let at_end = i == text.len
+        if !at_end && text[i] != 45 && text[i] != 43 {
+            continue
+        }
+        let n = i - start
+        if n <= 0 || n >= TOKEN_MAX {
+            return failed
+        }
+        let word = str.to_lower(slice(text, start, i))
+        start = i + 1
+        if !at_end {
+            let bit = modifier_bit(word)
+            if bit == 0 {
+                return failed
+            }
+            mods = mods | bit
+            continue
+        }
+        for k in 0..SPECIAL_KEY_NAMES.len {
+            if word == SPECIAL_KEY_NAMES[k] {
+                return Chord { key: SPECIAL_KEY_CODES[k], mods: mods }
+            }
+        }
+        if n == 1 && word[0] >= 32 && word[0] < 127 {
+            return Chord { key: word[0], mods: mods }
+        }
+        return failed
+    }
+    return failed
+}
+
+/** *A spec is one chord, or two separated by spaces (`"g g"`, `"cmd-k cmd-s"`). */
+/** *`second.key` is 0 for a single chord; `first.key` is 0 if it did not parse. */
+struct ChordSpec {
+    first: Chord,
+    second: Chord,
+}
+
+fn parse_spec(spec: string) -> ChordSpec {
+    let none = Chord { key: 0, mods: 0 }
+    let mut space = -1
+    for i in 0..spec.len {
+        if spec[i] == 32 {
+            space = i
+            break
+        }
+    }
+    if space < 0 {
+        return ChordSpec { first: parse_chord(spec), second: none }
+    }
+    let first = parse_chord(slice(spec, 0, space))
+    if first.key == 0 {
+        return ChordSpec { first: none, second: none }
+    }
+    let mut rest = space
+    while rest < spec.len && spec[rest] == 32 {
+        rest += 1
+    }
+    let second = parse_chord(slice(spec, rest, spec.len))
+    if second.key == 0 {
+        return ChordSpec { first: none, second: none }
+    }
+    return ChordSpec { first: first, second: second }
+}
+
+// --- the keymap --------------------------------------------------------------
+//
+// One bind per index across these tables.
+
+let mut bind_key: []int = []int {}
+let mut bind_mods: []int = []int {}
+/** *The second chord of a sequence; 0 for a single chord. */
+let mut bind_key2: []int = []int {}
+let mut bind_mods2: []int = []int {}
+/** *0 = any context. */
+let mut bind_ctx: []int = []int {}
+let mut bind_action: []int = []int {}
+/** *1 for a user entry, which outranks a default at the same context. */
+let mut bind_user: []int = []int {}
+
+fn add_bind(spec: string, action: string, ctx: int, user: int) {
+    let parsed = parse_spec(spec)
+    if parsed.first.key == 0 {
+        return
+    }
+    let k1 = parsed.first.key
+    let m1 = parsed.first.mods
+    let k2 = parsed.second.key
+    let m2 = parsed.second.mods
+    let action_id = intern(action)
+    for i in 0..bind_key.len {
+        if bind_key[i] == k1 && bind_mods[i] == m1 && bind_key2[i] == k2 && bind_mods2[i] == m2 &&
+           bind_ctx[i] == ctx && bind_user[i] == user {
+            bind_action[i] = action_id
+            return
+        }
+    }
+    push(bind_key, k1)
+    push(bind_mods, m1)
+    push(bind_key2, k2)
+    push(bind_mods2, m2)
+    push(bind_ctx, ctx)
+    push(bind_action, action_id)
+    push(bind_user, user)
+}
+
+/** *Default binding in the context `ctx` (an interned id; 0 = any). */
+fn map_in_context(spec: string, action: string, ctx: int) {
+    add_bind(spec, action, ctx, 0)
+}
+
+/** *Default binding in the context named `ctx`. */
+fn map(spec: string, action: string, ctx: string) {
+    add_bind(spec, action, intern(ctx), 0)
+}
+
+/** *User binding in the context named `ctx`: outranks the defaults there. */
+fn remap(spec: string, action: string, ctx: string) {
+    add_bind(spec, action, intern(ctx), 1)
+}
+
+// --- handlers ----------------------------------------------------------------
+//
+// One handler per index across these tables, rebuilt with each view. Only
+// the first `handler_count` are live: a rebuild reuses the slots, so it
+// allocates nothing once the tables have grown.
+
+let mut handler_count: int = 0
+
+let mut handler_action: []int = []int {}
+/** *0 = global. */
+let mut handler_node: []int = []int {}
+let mut handler_signal: []int = []int {}
+/** *1 toggle, 2 set, 3 add, 4 add clamped to lo..hi, 5 call `value`. */
+let mut handler_mode: []int = []int {}
+let mut handler_value: []int = []int {}
+let mut handler_lo: []int = []int {}
+let mut handler_hi: []int = []int {}
+
+fn on_action(node_id: int, action: string, signal_id: int, mode: int, value: int) {
+    on_action_clamped(node_id, action, signal_id, mode, value, 0, 0)
+}
+
+fn on_action_clamped(node_id: int, action: string, signal_id: int, mode: int, value: int, lo: int, hi: int) {
+    let action_id = intern(action)
+    let slot = handler_count
+    handler_count += 1
+    if slot == handler_action.len {
+        push(handler_action, action_id)
+        push(handler_node, node_id)
+        push(handler_signal, signal_id)
+        push(handler_mode, mode)
+        push(handler_value, value)
+        push(handler_lo, lo)
+        push(handler_hi, hi)
+        return
+    }
+    handler_action[slot] = action_id
+    handler_node[slot] = node_id
+    handler_signal[slot] = signal_id
+    handler_mode[slot] = mode
+    handler_value[slot] = value
+    handler_lo[slot] = lo
+    handler_hi[slot] = hi
+}
+
+fn reset_handlers() {
+    handler_count = 0
+}
+
+/** *Run a handler: write its signal, or call its interned fn (mode 5). */
+fn apply(signal_id: int, mode: int, value: int, lo: int, hi: int) {
+    arena.ensure()
+    if mode == 5 {
+        runtime.invoke_fn(value)
+        return
+    }
+    if signal_id <= 0 {
+        return
+    }
+    if signal_id >= arena.sigs.len {
+        return
+    }
+    let mut next = arena.sigs[signal_id]
+    if mode == 1 {
+        if next == 0 {
+            next = 1
+        } else {
+            next = 0
+        }
+    } else if mode == 2 {
+        next = value
+    } else if mode == 3 {
+        next = next + value
+    } else if mode == 4 {
+        let mut vlo = lo
+        let mut vhi = hi
+        if vhi < vlo {
+            let t = vlo
+            vlo = vhi
+            vhi = t
+        }
+        next = next + value
+        if next < vlo {
+            next = vlo
+        }
+        if next > vhi {
+            next = vhi
+        }
+    } else {
+        next = next + 1
+    }
+    arena.store_sig(signal_id, next)
+}
+
+// --- dispatch ----------------------------------------------------------------
+
+/** *The first chord of a sequence, held until the next key decides it. */
+let mut pending_key: int = 0
+let mut pending_mods: int = 0
+
+/** *The focus chain, innermost first, capped at `FOCUS_CHAIN_MAX`. */
+fn chain_depth() -> int {
+    arena.fill_focus_chain()
+    let mut depth = arena.chain_nodes.len
+    if depth > FOCUS_CHAIN_MAX {
+        depth = FOCUS_CHAIN_MAX
+    }
+    return depth
+}
+
+/** *Does this chord open a sequence in any context on the focus chain? */
+fn opens_sequence(key: int, mods: int, depth: int) -> bool {
+    for i in 0..bind_key.len {
+        if bind_key2[i] == 0 || bind_key[i] != key || bind_mods[i] != mods {
+            continue
+        }
+        if bind_ctx[i] == 0 {
+            return true
+        }
+        for d in 0..depth {
+            if arena.chain_ctxs[d] == bind_ctx[i] {
+                return true
+            }
+        }
+    }
+    return false
+}
+
+/** *The best action bound to the chords in `ctx`, or 0. A user entry */
+/** *outranks a default. */
+fn resolve_in(ctx: int, k1: int, m1: int, k2: int, m2: int) -> int {
+    let mut best = 0
+    let mut best_user = -1
+    for i in 0..bind_key.len {
+        if bind_ctx[i] != ctx {
+            continue
+        }
+        if bind_key[i] != k1 || bind_mods[i] != m1 || bind_key2[i] != k2 || bind_mods2[i] != m2 {
+            continue
+        }
+        if bind_user[i] > best_user {
+            best = bind_action[i]
+            best_user = bind_user[i]
+        }
+    }
+    return best
+}
+
+/** *Innermost matching context wins, and a context-scoped entry outranks an */
+/** *unscoped one. */
+fn resolve(k1: int, m1: int, k2: int, m2: int, depth: int) -> int {
+    for d in 0..depth {
+        let found = resolve_in(arena.chain_ctxs[d], k1, m1, k2, m2)
+        if found != 0 {
+            return found
+        }
+    }
+    return resolve_in(0, k1, m1, k2, m2)
+}
+
+fn fire_handler(i: int) -> int {
+    apply(handler_signal[i], handler_mode[i], handler_value[i], handler_lo[i], handler_hi[i])
+    return 1
+}
+
+/** *Fire the innermost handler for `action`: the focused node, then each */
+/** *ancestor, then global. The first one to run consumes the event. */
+fn fire(action: int, depth: int) -> int {
+    for d in 0..depth {
+        for i in 0..handler_count {
+            if handler_action[i] == action && handler_node[i] == arena.chain_nodes[d] {
+                return fire_handler(i)
+            }
+        }
+    }
+    for i in 0..handler_count {
+        if handler_action[i] == action && handler_node[i] == 0 {
+            return fire_handler(i)
+        }
+    }
+    return 0
+}
+
+/** *Resolve and run a key through the keymap. `1` if it was consumed. */
+fn dispatch(key: int, mods: int) -> int {
+    let typed = (key >= 32 && key < 127) || key == KEY_BACK || key == KEY_DEL || key == KEY_TAB ||
+                key == KEY_ENTER || key == 10
+    if typed && (mods | MOD_SHIFT) == MOD_SHIFT && arena.focus_captures_text() != 0 {
+        return 0
+    }
+    let depth = chain_depth()
+    if pending_key != 0 {
+        let action = resolve(pending_key, pending_mods, key, mods, depth)
+        pending_key = 0
+        pending_mods = 0
+        if action != 0 {
+            return fire(action, depth)
+        }
+        // The sequence died here; the key is still spent.
+        return 1
+    }
+    let action = resolve(key, mods, 0, 0, depth)
+    if action != 0 && fire(action, depth) != 0 {
+        return 1
+    }
+    if opens_sequence(key, mods, depth) {
+        pending_key = key
+        pending_mods = mods
+        return 1
+    }
+    return 0
+}

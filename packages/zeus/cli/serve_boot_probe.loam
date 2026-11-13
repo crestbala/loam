@@ -142,6 +142,27 @@ fn trim_field(field: string) -> string {
 
 /** *Subscribe to the live channel and return the connection. It is held open */
 /** *across the edit below, which is the whole point of the channel. */
+/** *The wasm module's URL from a shell's preload link (`href="/_zeus/app.<hash>.wasm"`), */
+/** *as a browser finds it; `""` if the shell names none. */
+fn wasm_url_of(shell: string) -> string {
+    let marker = "\" as=\"fetch\" type=\"application/wasm\""
+    let mut end = -1
+    for i in 0..shell.len - marker.len + 1 {
+        if slice(shell, i, i + marker.len) == marker {
+            end = i
+            break
+        }
+    }
+    if end < 0 {
+        return ""
+    }
+    let mut start = end
+    while start > 0 && shell[start - 1] != 34 {
+        start -= 1
+    }
+    return slice(shell, start, end)
+}
+
 fn sse_open(port: int) -> int {
     let fd = net.tcp_connect("127.0.0.1", port)
     if fd < 0 {
@@ -197,7 +218,9 @@ fn main() {
     )
 
     /* 2. The module is served with the type a browser insists on. */
-    let wasm = exchange(port, "GET", "/app.wasm", "", "")
+    let wasm_url = wasm_url_of(body_of(blog))
+    check(wasm_url.len > 0, "the shell names its wasm module")
+    let wasm = exchange(port, "GET", wasm_url, "", "")
     check(
         header_of(wasm, "content-type") == "application/wasm",
         "the wasm module has its content type",

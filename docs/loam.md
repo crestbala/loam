@@ -118,7 +118,7 @@ loam/
     editors/      editor integrations (Zed, Cursor/VS Code)
   examples/
     language/     standalone demo .loam programs (not test fixtures)
-    zeus/         zeus apps (gallery, dashboard, myapp scaffold) + full-stack counter example
+    zeus/         zeus apps (gallery, dashboard, dracula) + full-stack counter example
   bin/loamc       the compiler
   bin/loam-lsp    editor diagnostics / hover (incl. doc comments) / go-to-def / completion / semantic tokens
   bin/loam-fmt     formatter (one style, no options)
@@ -234,7 +234,7 @@ on macOS a GUI build also compiles Cocoa.
 
 What `loam` does about that:
 
-- Runtime files (`zeus_plat.c`, `zeus_key.c`, `packages/zeus/hosts/desktop/mac.m`) compile once into
+- Runtime files (`zeus_plat.c`, `packages/zeus/hosts/desktop/mac.m`) compile once into
   `packages/loam/runtime/.obj/` and are reused until those sources change.
 - `ZEUS_HEADLESS=1` (tests) skips Cocoa and uses `-O0` on generated C.
 - GUI builds use `-O1` on generated C, not `-O2` (same overflow checks,
