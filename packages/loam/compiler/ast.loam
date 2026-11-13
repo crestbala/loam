@@ -68,6 +68,9 @@ enum Kind {
 // `flags`, as C's ast.h.
 const F_AWAIT: int = 32
 const F_WRAPPED_LIT: int = 128
+/** *Import: injected by the loader for a lowering (`std:decimal`, `std:key`); */
+/** *codegen calls it by C name, so its alias is no name in the program. */
+const F_IMPLICIT: int = 1024
 
 /** *A source span: the module it is in (an index into the session's module */
 /** *list; C's `SourceLoc.file`), and 1-based line and byte column, start and */

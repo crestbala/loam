@@ -136,6 +136,18 @@ fn walk(n: int) {
             mark_cname("loam_decimal_ewrite_int")
             mark_cname("loam_decimal_ewrite_u64")
         }
+        // `__value_key(x)` appends with the `std:key` fns; each keeps itself
+        // and what it calls (`decimal`, `buf`, `conv` bits) through the
+        // ordinary call walk.
+        if (ast.INFO[n].marks & ast.M_VALUE_KEY) != 0 {
+            mark_cname("loam_key_push_vec_tag")
+            mark_cname("loam_key_push_str")
+            mark_cname("loam_decimal_push_int")
+            mark_cname("loam_decimal_push_u64")
+            mark_cname("loam_key_push_f32")
+            mark_cname("loam_key_push_f64")
+            mark_cname("loam_key_push_addr")
+        }
     }
     switch x.kind {
         case Kind.Ident:

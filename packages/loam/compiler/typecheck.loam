@@ -594,7 +594,7 @@ fn module_imported(prog: int, name: string) -> bool {
     }
     let ims = imports_of(prog)
     for i in 0..ims.len {
-        if ast.INFO[ims[i]].name == name {
+        if ast.INFO[ims[i]].name == name && (ast.NODES[ims[i]].flags & ast.F_IMPLICIT) == 0 {
             return true
         }
     }
@@ -1125,7 +1125,7 @@ fn is_place_path(n: int) -> bool {
 fn is_ffi_mod(name: string) -> bool {
     return name == "zeus" || name == "zeusbase" || name == "http" || name == "fmt" || name == "maya" ||
         name == "platform" || name == "sys" || name == "net" || name == "async" || name == "thread" ||
-        name == "buf" || name == "conv" || name == "str" || name == "decimal"
+        name == "buf" || name == "conv" || name == "str" || name == "decimal" || name == "key"
 }
 
 /** *Outside `LOAM_STD_DIR`, a bodyless fn is a C seam too. */
