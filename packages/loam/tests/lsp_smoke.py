@@ -102,6 +102,10 @@ def main() -> int:
         "}\n"
     )
     fmt_uri = (ROOT / "std" / "fmt.loam").resolve().as_uri()
+    # The line `fn write(` is on, so an edit to fmt.loam does not move the probe.
+    fmt_write_line = next(
+        i for i, line in enumerate((ROOT / "std" / "fmt.loam").read_text().splitlines()) if line.startswith("fn write(")
+    )
 
     async_src = (
         'import "std:async"\n'
@@ -280,7 +284,7 @@ def main() -> int:
                 "jsonrpc": "2.0",
                 "id": 13,
                 "method": "textDocument/hover",
-                "params": {"textDocument": {"uri": fmt_uri}, "position": {"line": 23, "character": 3}},
+                "params": {"textDocument": {"uri": fmt_uri}, "position": {"line": fmt_write_line, "character": 3}},
             }
         )
         + rpc(

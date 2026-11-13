@@ -1,0 +1,9 @@
+// `string_from_bytes` over a `[]u8` takes the buffer: the local is moved into
+// the string, so reading it afterwards is a use-after-move.
+import "std:fmt"
+
+fn main() {
+    let bytes = zeroed_bytes(3)
+    let text = string_from_bytes(bytes)
+    fmt.println(text, bytes.len)
+}

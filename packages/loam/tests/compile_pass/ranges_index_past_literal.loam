@@ -1,0 +1,11 @@
+// `i` runs to 3 but the literal has three bytes: the last read must trap.
+import "std:fmt"
+
+fn main() {
+    let word = "abc"
+    let mut total = 0
+    for i in 0..4 {
+        total += word[i]
+    }
+    fmt.println(total)
+}

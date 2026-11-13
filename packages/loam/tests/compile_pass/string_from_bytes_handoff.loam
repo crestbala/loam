@@ -1,0 +1,65 @@
+// `string_from_bytes` adopts an unshared buffer without copying (keeping
+// its spare room, as Rust's `String::from_utf8` does) and copies a shared one.
+import "std:fmt"
+import "std:sys"
+
+let GLOBAL_BYTES: []u8 = []u8 { 104, 105 }
+
+struct Holder {
+    bytes: []u8,
+}
+
+fn check(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn digits_of(n: int) -> string {
+    let mut bytes = []u8 { 0, 0, 0 }
+    bytes[0] = (48 + n / 100) as u8
+    bytes[1] = (48 + n / 10 % 10) as u8
+    bytes[2] = (48 + n % 10) as u8
+    return string_from_bytes(bytes)
+}
+
+fn three_bytes() -> []u8 {
+    let mut bytes = []u8 {}
+    for i in 0..3 {
+        push(bytes, (97 + i) as u8)
+    }
+    return bytes
+}
+
+fn main() {
+    // Unshared: adopted.
+    check(digits_of(407) == "407", "an adopted buffer keeps its bytes")
+
+    // Shared: the string copies, and the other holder still sees its bytes.
+    let mut first = []u8 { 0, 0 }
+    first[0] = 111
+    first[1] = 107
+    let second = first
+    let text = string_from_bytes(first)
+    check(text == "ok" && second.len == 2 && second[1] == 107, "a shared buffer is copied")
+
+    // Grown by pushes, with spare room: adopted, room and all.
+    let mut grown = []u8 {}
+    for i in 0..300 {
+        push(grown, (97 + i % 26) as u8)
+    }
+    let long_text = string_from_bytes(grown)
+    check(long_text.len == 300 && long_text[0] == 97 && long_text[299] == 97 + 299 % 26, "a grown buffer keeps its bytes")
+
+    // Empty, a global and a field stay readable (they are shared reads).
+    check(string_from_bytes([]u8 {}) == "", "empty bytes are the empty string")
+    check(string_from_bytes(GLOBAL_BYTES) == "hi" && GLOBAL_BYTES.len == 2, "a global is read, not moved")
+    let holder = Holder { bytes: []u8 { 120 } }
+    check(string_from_bytes(holder.bytes) == "x" && holder.bytes.len == 1, "a field is read, not moved")
+
+    // A literal and a call's result go straight in.
+    check(string_from_bytes([]u8 { 97, 98 }) == "ab", "a literal goes over whole")
+    check(string_from_bytes(three_bytes()).len == 3, "a call's result goes over whole")
+    fmt.println("ok")
+}

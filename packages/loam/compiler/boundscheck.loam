@@ -4,7 +4,8 @@
 // Two proofs:
 //   - `a[LITERAL]` with `0 <= LITERAL < N` for `[N]T`.
 //   - `for i in 0..C.len { ... C[i] ... }`: the loop variable indexes the same
-//     container the range bounds, so `i` is in `[0, C.len)` on every iteration.
+//     container the range bounds, so `i` is in `[0, C.len)` on every iteration;
+//     `C[C.len - 1 - i]`, the same walk backwards, is in range too.
 //     `C` is a place (a local, then fields, through derefs; no index), and
 //     `C[i]` must name that same place. The body must not be able to shrink
 //     it: no whole or field assignment to its root, no `&mut` of it, no `pop`
@@ -151,17 +152,48 @@ fn may_shrink(n: int, root_res: int, by_ref: bool) -> bool {
     return false
 }
 
-/** *`index` is exactly the loop variable of a proof in force whose bounded */
-/** *place `target` names. */
+/** *The loop variable of `index` when it is `i` or `C.len - 1 - i` with `C` */
+/** *the place `target` names; else `ast.NONE`. */
+fn indexing_var(index: int, target: int) -> int {
+    if index == ast.NONE {
+        return ast.NONE
+    }
+    if ast.NODES[index].kind == Kind.Ident {
+        return index
+    }
+    // `C.len - 1 - i` parses as `(C.len - 1) - i`.
+    if ast.NODES[index].kind != Kind.Binary || ast.NODES[index].op != Tok.Minus {
+        return ast.NONE
+    }
+    let var = ast.NODES[index].b
+    let last = ast.NODES[index].a
+    if var == ast.NONE || ast.NODES[var].kind != Kind.Ident || last == ast.NONE ||
+        ast.NODES[last].kind != Kind.Binary || ast.NODES[last].op != Tok.Minus {
+        return ast.NONE
+    }
+    let one = ast.NODES[last].b
+    let len = ast.NODES[last].a
+    if one == ast.NONE || ast.NODES[one].kind != Kind.Number || ast.INFO[one].num != 1 ||
+        len_container_ident(len) == ast.NONE || !same_place(ast.NODES[len].a, target) {
+        return ast.NONE
+    }
+    return var
+}
+
+/** *`index` is the loop variable of a proof in force whose bounded place */
+/** *`target` names, or that place's `.len - 1 -` it: walking `C` backwards. */
+/** *With `i` in `[0, N)` and `C.len >= N` (the body cannot shrink `C`; the */
+/** *runtime keeps a length within `int`), `C.len - 1 - i` is in `[0, C.len)`. */
 fn is_proven_index(index: int, target: int) -> bool {
-    if index == ast.NONE || ast.NODES[index].kind != Kind.Ident || ast.NODES[index].res == ast.NONE {
+    let var = indexing_var(index, target)
+    if var == ast.NONE || ast.NODES[var].res == ast.NONE {
         return false
     }
     let mut i = PROOFS.len
     while i > 0 {
         i = i - 1
         let proof = PROOFS[i]
-        if proof.loop_node != ast.NONE && proof.bound != ast.NONE && ast.NODES[index].res == proof.loop_node &&
+        if proof.loop_node != ast.NONE && proof.bound != ast.NONE && ast.NODES[var].res == proof.loop_node &&
             same_place(proof.bound, target) {
             return true
         }

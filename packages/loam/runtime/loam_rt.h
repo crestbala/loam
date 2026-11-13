@@ -209,32 +209,6 @@ static inline loam_str loam_fmt_itoa(char buf[24], int64_t v) {
     return s;
 }
 
-static inline void loam_fmt_write_int(int64_t v) {
-    char buf[24];
-    loam_str s = loam_fmt_itoa(buf, v);
-    loam_write_bytes(s.ptr, (size_t)s.len);
-}
-
-/* A u64 in decimal: the whole 0..2^64-1 range, never a sign. */
-static inline loam_str loam_fmt_utoa(char buf[24], uint64_t u) {
-    char *end = buf + 24;
-    char *p = end;
-    do {
-        *--p = (char)('0' + (u % 10));
-        u /= 10;
-    } while (u);
-    loam_str s;
-    s.ptr = p;
-    s.len = (int64_t)(end - p);
-    return s;
-}
-
-static inline void loam_fmt_write_u64(uint64_t v) {
-    char buf[24];
-    loam_str s = loam_fmt_utoa(buf, v);
-    loam_write_bytes(s.ptr, (size_t)s.len);
-}
-
 static inline void loam_fmt_write_bool(bool v) {
     if (v) loam_write_bytes("true", 4);
     else loam_write_bytes("false", 5);
@@ -264,16 +238,6 @@ static inline void loam_fmt_ewrite(loam_str s) {
     if (!s.ptr || s.len <= 0) return;
     loam_ewrite_bytes(s.ptr, (size_t)s.len);
 }
-static inline void loam_fmt_ewrite_int(int64_t v) {
-    char buf[24];
-    loam_str s = loam_fmt_itoa(buf, v);
-    loam_ewrite_bytes(s.ptr, (size_t)s.len);
-}
-static inline void loam_fmt_ewrite_u64(uint64_t v) {
-    char buf[24];
-    loam_str s = loam_fmt_utoa(buf, v);
-    loam_ewrite_bytes(s.ptr, (size_t)s.len);
-}
 static inline void loam_fmt_ewrite_bool(bool v) {
     if (v) loam_ewrite_bytes("true", 4);
     else loam_ewrite_bytes("false", 5);
@@ -292,7 +256,14 @@ static inline bool loam_fmt_eq(loam_str a, loam_str b) {
     return memcmp(a.ptr, b.ptr, (size_t)a.len) == 0;
 }
 
-static inline void loam_panic(const char *file, int line, const char *msg) {
+/* Panics never return; out of line, a check is just a compare and branch. */
+#if defined(__GNUC__) || defined(__clang__)
+#define LOAM_COLD __attribute__((noinline, noreturn, unused))
+#else
+#define LOAM_COLD
+#endif
+
+static LOAM_COLD void loam_panic(const char *file, int line, const char *msg) {
     fflush(stdout);
     fprintf(stderr, "%s:%d: panic: %s\n", file, line, msg);
     loam_jmp_set_msg(msg, (int64_t)strlen(msg));
@@ -304,7 +275,7 @@ static inline void loam_panic(const char *file, int line, const char *msg) {
 
 /* `panic(msg)` — like loam_panic but with a runtime string, so `std:test` and
    other Loam code can build the message. */
-static inline void loam_panic_str(const char *file, int line, loam_str msg) {
+static LOAM_COLD void loam_panic_str(const char *file, int line, loam_str msg) {
     fflush(stdout);
     fprintf(stderr, "%s:%d: panic: %.*s\n", file, line,
             (int)(msg.len > 0 ? msg.len : 0), msg.ptr ? msg.ptr : "");
@@ -670,7 +641,11 @@ static inline char *loam_str_bytes(int64_t n) {
     return (char *)(blk + 1);
 }
 
+/* `.len` is a Loam `int` (i32), so no string or vec may hold more. */
+#define LOAM_LEN_MAX INT32_MAX
+
 static inline loam_str loam_str_owned(char *p, int64_t n) {
+    if (n > LOAM_LEN_MAX) loam_panic("string", 0, "longer than an int can index");
     loam_str s;
     s.ptr = p;
     s.len = n;
@@ -798,15 +773,16 @@ static inline void loam_vec_unique(loam_vec *v, size_t esz, const char *f, int l
    request (a first buffer, an exact size, a small vec) doubles up to `n`. */
 #define LOAM_VEC_GROW4_BYTES ((int64_t)256 * 1024)
 static inline int64_t loam_vec_grown_cap(int64_t cap, int64_t n, size_t esz, const char *f, int l) {
+    /* Capacity stops at the limit too: a push into spare room skips this. */
+    if (n > LOAM_LEN_MAX) loam_panic(f, l, "more elements than an int can index");
     if (cap > 0 && n == cap + 1 && esz && cap >= LOAM_VEC_GROW4_BYTES / (int64_t)esz &&
         cap <= INT64_MAX / 4)
-        return cap * 4;
-    if (cap <= 0) cap = 8;
-    while (cap < n) {
-        if (cap > INT64_MAX / 2) loam_panic(f, l, "out of memory");
-        cap *= 2;
+        cap = cap * 4;
+    else {
+        if (cap <= 0) cap = 8;
+        while (cap < n) cap *= 2;
     }
-    return cap;
+    return cap < LOAM_LEN_MAX ? cap : LOAM_LEN_MAX;
 }
 
 static inline void loam_vec_reserve(loam_vec *v, int64_t n, size_t esz, const char *f, int l) {
@@ -1324,24 +1300,6 @@ static inline loam_str loam_key_addr(uint64_t bits, char kind) {
     return loam_str_owned(out, o);
 }
 
-static inline loam_str loam_str_of_int(int64_t v) {
-    char buf[24];
-    loam_str s = loam_fmt_itoa(buf, v);
-    char *p = loam_str_bytes(s.len);
-    memcpy(p, s.ptr, (size_t)s.len);
-    p[s.len] = 0;
-    return loam_str_owned(p, s.len);
-}
-
-static inline loam_str loam_str_of_u64(uint64_t v) {
-    char buf[24];
-    loam_str s = loam_fmt_utoa(buf, v);
-    char *p = loam_str_bytes(s.len);
-    memcpy(p, s.ptr, (size_t)s.len);
-    p[s.len] = 0;
-    return loam_str_owned(p, s.len);
-}
-
 static inline loam_str loam_str_of_float(double v) {
     char buf[64];
     loam_str s = loam_fmt_ftoa(buf, v);
@@ -1377,8 +1335,13 @@ static inline loam_str loam_string_from_bytes(loam_vec b) {
     return loam_str_owned(p, n);
 }
 
-/** `string_from_bytes` for a `[]u8`, whose elements are already bytes. */
+/** `string_from_bytes` for a `[]u8`. A vec and a string share a layout, so
+ *  an unshared buffer with room for the NUL becomes the string: no copy. */
 static inline loam_str loam_string_from_u8(loam_vec b) {
+    if (b.ptr && b.cap > b.len && *loam_vec_rc(b.ptr) == 1) {
+        ((char *)b.ptr)[b.len] = 0;
+        return loam_str_owned((char *)b.ptr, b.len);
+    }
     int64_t n = b.len > 0 ? b.len : 0;
     char *p = loam_str_bytes(n);
     if (n) memcpy(p, b.ptr, (size_t)n);
@@ -1407,16 +1370,28 @@ static inline void loam_buf_push_bytes(loam_vec *b, const loam_vec *src) {
     b->len += n;
 }
 
-static inline void loam_buf_push_i64(loam_vec *b, int64_t v) {
-    char tmp[24];
-    loam_buf_push_str(b, loam_fmt_itoa(tmp, v));
+/* std:decimal hands on `d[first..20]`, digits it made on the stack. */
+static inline int64_t loam_decimal_digits_len(int32_t first) {
+    if (first < 0 || first > 20) loam_panic("decimal", 0, "digits out of range");
+    return 20 - (int64_t)first;
 }
 
-static inline void loam_buf_push_int(loam_vec *b, int64_t v) { loam_buf_push_i64(b, v); }
+static inline loam_str loam_decimal_text_of_digits(const uint8_t *d, int32_t first) {
+    return loam_str_copy((const char *)d + first, loam_decimal_digits_len(first));
+}
 
-static inline void loam_buf_push_u64(loam_vec *b, uint64_t v) {
-    char tmp[24];
-    loam_buf_push_str(b, loam_fmt_utoa(tmp, v));
+static inline void loam_decimal_push_digits(loam_vec *b, const uint8_t *d, int32_t first) {
+    int64_t n = loam_decimal_digits_len(first);
+    if (!b) return;
+    loam_vec_reserve(b, b->len + n, 1, "buf.push_int", 0);
+    memcpy((char *)b->ptr + b->len, d + first, (size_t)n);
+    b->len += n;
+}
+
+static inline void loam_decimal_write_digits(const uint8_t *d, int32_t first, bool to_err) {
+    int64_t n = loam_decimal_digits_len(first);
+    if (to_err) loam_ewrite_bytes((const char *)d + first, (size_t)n);
+    else loam_write_bytes((const char *)d + first, (size_t)n);
 }
 
 /** A string copy of the bytes; the buffer stays usable. */
@@ -1679,8 +1654,6 @@ static inline loam_str loam_sys_arg(int64_t i) {
         return (loam_str){"", 0};
     return (loam_str){loam_argv[i], (int64_t)strlen(loam_argv[i])};
 }
-
-
 
 static inline int64_t loam_sys_env_set(loam_str name) {
     char buf[256];

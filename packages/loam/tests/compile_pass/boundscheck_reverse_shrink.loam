@@ -1,0 +1,13 @@
+// A body that shrinks `C` loses the backward proof: the index keeps its trap.
+import "std:fmt"
+
+fn main() {
+    let mut xs = []int { 1, 2, 3, 4 }
+    let mut total = 0
+    for i in 0..xs.len {
+        total += xs[xs.len - 1 - i]
+        pop(xs)
+        pop(xs)
+    }
+    fmt.println(total)
+}

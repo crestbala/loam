@@ -356,6 +356,10 @@ const ASTF_STATE: int = 16
 const ASTF_AWAIT: int = 32
 const ASTF_DEFAULT: int = 64
 const ASTF_WRAPPED_LIT: int = 128
+/** *`ranges`: this `+ - * / %` or unary `-` provably cannot overflow or trap. */
+const ASTF_NO_OVERFLOW: int = 256
+/** *`ranges`: this integer cast's source provably fits the target. */
+const ASTF_CONV_SAFE: int = 512
 
 // --- generics ------------------------------------------------------------------------
 
@@ -1121,7 +1125,7 @@ fn is_place_path(n: int) -> bool {
 fn is_ffi_mod(name: string) -> bool {
     return name == "zeus" || name == "zeusbase" || name == "http" || name == "fmt" || name == "maya" ||
         name == "platform" || name == "sys" || name == "net" || name == "async" || name == "thread" ||
-        name == "buf" || name == "conv" || name == "str"
+        name == "buf" || name == "conv" || name == "str" || name == "decimal"
 }
 
 /** *Outside `LOAM_STD_DIR`, a bodyless fn is a C seam too. */
@@ -3195,7 +3199,7 @@ fn check_call(n: int, expect: int) -> int {
                 }
                 if k != TK.String {
                     let w = new_call(NONE, []int { part }, ast.INFO[part].loc)
-                    let cb = if k == TK.Int && types.TYPES[t].is_unsigned != 0 && types.TYPES[t].bits == 64 { "loam_str_of_u64" } else if k == TK.Int { "loam_str_of_int" } else if k == TK.Float { "loam_str_of_float" } else { "loam_str_of_bool" }
+                    let cb = if k == TK.Int && types.TYPES[t].is_unsigned != 0 && types.TYPES[t].bits == 64 { "loam_decimal_of_u64" } else if k == TK.Int { "loam_decimal_of_int" } else if k == TK.Float { "loam_str_of_float" } else { "loam_str_of_bool" }
                     ast.EXTRA[ast.ex_mut(w)].cbuiltin = cb
                     ast.EXTRA[ast.ex_mut(w)].has_cbuiltin = true
                     ast.NODES[w].ty = types.ty_string()

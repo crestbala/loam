@@ -1,0 +1,42 @@
+// `ranges` drops the checks on arithmetic, casts and indexes it proves safe.
+// The values must be exactly what the checked code computes.
+import "std:fmt"
+import "std:sys"
+
+fn check(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn digit_of(n: int) -> int {
+    // `n % 10` is in -9..9, so `48 + ...` cannot overflow.
+    return 48 + n % 10
+}
+
+fn main() {
+    check(digit_of(1234) == 52 && digit_of(-1234) == 44, "a digit of a signed value")
+    let negative = -2147483647 - 1
+    check(negative % 100 == -48 && -(negative % 100) * 2 == 96, "the least int, by remainders")
+    check(negative / 10 == -214748364 && negative / -10 == 214748364, "the least int, by literal divisors")
+    let pairs = "00010203040506070809"
+    let mut text = []u8 {}
+    for i in 0..10 {
+        // `i * 2 + 1` is at most 19, inside the 20-byte literal.
+        push(text, pairs[i * 2 + 1] as u8)
+    }
+    check(string_from_bytes(text) == "0123456789", "a literal read by a proven index")
+    let table = [5]int { 10, 20, 30, 40, 50 }
+    let mut total = 0
+    for i in 0..5 {
+        total += table[i]
+    }
+    check(total == 150, "a fixed array read in range")
+    let small: i16 = 1200
+    let widened = small as int * 3
+    check(widened == 3600 && (widened % 256) as u8 == 16, "casts that fit")
+    let byte = "z"[0]
+    check((byte - 32) as u8 == 90, "a string byte stays a byte")
+    fmt.println("ok")
+}

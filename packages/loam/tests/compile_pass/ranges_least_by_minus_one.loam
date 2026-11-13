@@ -1,0 +1,8 @@
+// `x / k` with `k` -1 and `x` possibly the least int overflows: kept, traps.
+import "std:fmt"
+
+fn main() {
+    let least = -2147483647 - 1
+    let minus_one = -1
+    fmt.println(least / minus_one)
+}

@@ -67,6 +67,29 @@ fn unit_static() -> string {
     return if SHARD { "" } else { "static " }
 }
 
+/** *A kept fn of a `std` module (`LOAM_STD_DIR`, not a package's `src`, */
+/** *whose fns separately built hosts and `zeus_plat.c` call) is private to */
+/** *the unit (`static `) when only the unit calls it: a whole-unit build, */
+/** *after DCE, and not one of the module's C roots. Then `cc` may inline it */
+/** *into its callers, as it did the runtime header's `static inline` C. */
+fn fn_linkage(m: int, d: int) -> string {
+    if SHARD || !dce.RAN || dce.SKIP || m < 0 || !typecheck.MODS[m].is_std ||
+        typecheck.user_seam_mod(typecheck.MODS[m].path) {
+        return ""
+    }
+    let x = ast.ex(d)
+    if !ast.EXTRA[x].has_sname || (ast.NODES[d].op & dce.FN_TEST) != 0 {
+        return ""
+    }
+    let roots = dce.c_roots(typecheck.MODS[m].name)
+    for r in 0..roots.len {
+        if ast.EXTRA[x].sname == "loam_{{typecheck.MODS[m].name}}_{{roots[r]}}" {
+            return ""
+        }
+    }
+    return "static "
+}
+
 fn w(s: string) {
     buf.push_str(&mut OUT, s)
 }
@@ -1768,7 +1791,7 @@ fn move_inst(x: &Inst) {
             w("{{d}} = loam_fn_move(&{{a}});\n")
         }
     } else if k == TK.Vec {
-        if types.is_copy(ty) {
+        if types.is_copy(ty) && (x.bits & ir.I_MOVED) == 0 {
             w("{{d}} = loam_vec_retain(&{{a}});\n")
         } else {
             w("{{d}} = loam_vec_move(&{{a}});\n")
@@ -2044,9 +2067,11 @@ fn call_inst(x: &Inst) {
     }
     // Owning arguments share storage with the caller, but the callee drops its
     // params on exit: keep them alive across the call.
+    // An argument handed over whole (`I_MOVED`) is the callee's already.
+    let handed_over = (x.bits & ir.I_MOVED) != 0
     let mut nkeep = 0
     for k in 0..x.nargs {
-        if arg_kept(call_arg_type(x, k)) {
+        if arg_kept(call_arg_type(x, k)) && !handed_over {
             nkeep = nkeep + 1
         }
     }
@@ -2303,7 +2328,10 @@ fn inst(i: int) {
             store(x)
             break
         case Op.Addr:
-            w("{{lv(x.dst)}} = &")
+            // A borrowed fixed array is a pointer to its first element (how
+            // `&[N]T` is typed in C), so the array itself decays to it.
+            let borrows_array = x.place != NONE && tkind(ir.PLACES[x.place].ty) == TK.Array
+            w(if borrows_array { "{{lv(x.dst)}} = " } else { "{{lv(x.dst)}} = &" })
             place(x.place)
             w(";\n")
             break
@@ -2335,7 +2363,8 @@ fn inst(i: int) {
                 w("{{lv(x.dst)}} = (")
                 w_ctype(x.ty)
                 w(")(~{{lv(x.a)}});\n")
-            } else if x.binop != Tok.Bang && x.binop != Tok.Tilde && types.is_int_kind(at) {
+            } else if x.binop != Tok.Bang && x.binop != Tok.Tilde && types.is_int_kind(at) &&
+                (x.bits & ir.I_NO_TRAP) == 0 {
                 w("{{lv(x.dst)}} = {{neg_fn(x.ty)}}({{lv(x.a)}}, ")
                 ir_loc(x.file, x.line)
                 w(");\n")
@@ -2785,11 +2814,12 @@ fn fn_body(f: int, is_main: bool) {
     flush_big()
 }
 
-fn emit_fn(d: int, is_main: bool) {
+fn emit_fn(d: int, is_main: bool, linkage: string) {
     let cn = fn_cname(d)
     let f = find_ir_fn(cn)
     shard_mark(cn)
     line_directive(ast.INFO[d].loc.file, ast.INFO[d].loc.line)
+    w(linkage)
     fn_sig(d, is_main)
     if f == NONE || !ir.FNS[f].lowered {
         fatal("internal: fn '{{cn}}' was not lowered to IR")
@@ -3531,6 +3561,7 @@ fn emit_c() {
             if m == 0 && ast.INFO[d].name == "main" {
                 continue
             }
+            w(fn_linkage(m, d))
             fn_sig(d, false)
             w(";\n")
         }
@@ -3615,7 +3646,7 @@ fn emit_c() {
             continue
         }
         set_mono_subst(i)
-        emit_fn(f, false)
+        emit_fn(f, false, "")
         clear_subst()
     }
 
@@ -3652,7 +3683,7 @@ fn emit_c() {
                     w(" { loam_panic(\"<server>\", 0, \"server function excluded from client build\"); __builtin_unreachable(); }\n")
                     continue
                 }
-                emit_fn(d, is_main)
+                emit_fn(d, is_main, if is_main { "" } else { fn_linkage(m, d) })
             }
         }
         m = m - 1

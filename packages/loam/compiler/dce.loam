@@ -13,6 +13,7 @@
 // Sets are flags per node, not lists searched: the C keeps them as arrays and
 // scans them on every insert.
 
+import "std:map"
 import "ast.loam"
 import "typecheck.loam"
 
@@ -106,11 +107,36 @@ fn walk_params(f: int) {
     }
 }
 
+/** *Loam fns by their C name, for builtins implemented in Loam: a call the */
+/** *checker gave a C name (`"{{n}}"` is `loam_decimal_of_int`) keeps the fn. */
+let mut BY_CNAME: Map<int> = map_new(-1)
+
+/** *Keep the Loam fn whose C name is `cname`, if there is one. */
+fn mark_cname(cname: string) {
+    let f = map_get(&mut BY_CNAME, cname)
+    if f >= 0 {
+        mark_fn(f)
+    }
+}
+
 fn walk(n: int) {
     if n == NONE {
         return
     }
     let x = &ast.NODES[n]
+    if x.kind == Kind.Call {
+        let cx = ast.ex(n)
+        if ast.EXTRA[cx].has_cbuiltin {
+            mark_cname(ast.EXTRA[cx].cbuiltin)
+        }
+        // `println(n)` / `eprintln(n)` write an integer with `std:decimal`.
+        if (ast.INFO[n].marks & ast.M_PRINTLN) != 0 {
+            mark_cname("loam_decimal_write_int")
+            mark_cname("loam_decimal_write_u64")
+            mark_cname("loam_decimal_ewrite_int")
+            mark_cname("loam_decimal_ewrite_u64")
+        }
+    }
     switch x.kind {
         case Kind.Ident:
             mark_fn(x.res)
@@ -239,7 +265,21 @@ fn run() {
         push(DONE, false)
     }
     TODO = []int {}
+    BY_CNAME = map_new(-1)
     let nmods = typecheck.MODS.len
+    for m in 0..nmods {
+        let root = typecheck.MODS[m].root
+        if root == NONE {
+            continue
+        }
+        let decls = ast.NODES[root].kids
+        for i in 0..decls.len {
+            let d = decls[i]
+            if kind(d) == Kind.Fn && ast.EXTRA[ast.ex(d)].has_sname {
+                map_put(&mut BY_CNAME, ast.EXTRA[ast.ex(d)].sname, d)
+            }
+        }
+    }
     for m in 0..nmods {
         let root = typecheck.MODS[m].root
         if root == NONE {
@@ -317,6 +357,16 @@ fn run() {
         }
         walk_params(f)
     }
+}
+
+/** *The fn declared with C name `cname` is not emitted: DCE dropped it. A */
+/** *name no declaration has (an instance, a closure) is never dropped here. */
+fn dropped(cname: string) -> bool {
+    if !RAN {
+        return false
+    }
+    let f = map_get(&mut BY_CNAME, cname)
+    return f >= 0 && !keep(f)
 }
 
 fn keep(f: int) -> bool {

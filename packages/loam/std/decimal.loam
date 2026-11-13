@@ -1,0 +1,107 @@
+// decimal — integers as decimal text.
+//
+// `"{{n}}"` and `fmt.println(n)` compile to these; the loader imports this
+// module into every program, so interpolation needs no import of its own.
+// Moved from `loam_rt.h` (docs/runtime-in-loam.md, R1.3a).
+//
+// The digits are made as the C did, least significant first into a 20-byte
+// array on the stack (`fill`); every index there is proven in range, so the
+// loop keeps no check. One small hook then hands the bytes on: a string
+// (`text_of_digits`), the end of a `[]u8` (`push_digits`), or stdout or
+// stderr (`write_digits`), so `println(n)` allocates nothing.
+// Nothing here reads a module-level `let`: `std:batch` formats before modules
+// initialize.
+
+/** *Write `magnitude`'s digits, after a `-` when `negative`, at the end of */
+/** *`out`; returns the index of the first. 20 bytes hold every `u64` and, */
+/** *with its sign, every `i64`. */
+fn fill(out: &mut [20]u8, magnitude: u64, negative: bool) -> int {
+    let mut rest = magnitude
+    let mut first = 0
+    for k in 0..20 {
+        out[19 - k] = (u64(48) + rest % u64(10)) as u8
+        rest = rest / u64(10)
+        if rest == u64(0) {
+            first = 19 - k
+            break
+        }
+    }
+    if negative {
+        first -= 1
+        out[first] = 45 as u8
+    }
+    return first
+}
+
+/** *`out[first..20]` as a string. */
+fn text_of_digits(out: &[20]u8, first: int) -> string {}
+
+/** *Append `out[first..20]` to `b`. */
+fn push_digits(b: &mut []u8, out: &[20]u8, first: int) {}
+
+/** *Write `out[first..20]` to stderr when `to_err`, else stdout. */
+fn write_digits(out: &[20]u8, first: int, to_err: bool) {}
+
+/** *The magnitude of `v` as a `u64`: the least `i64` too. */
+fn magnitude_of(v: i64) -> u64 {
+    if v < i64(0) {
+        return ((i64(0) - (v + i64(1))) as u64) + u64(1)
+    }
+    return v as u64
+}
+
+/** *`v` in decimal: `"-42"`, `"0"`. */
+fn of_int(v: i64) -> string {
+    let mut out = [20]u8 { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
+    let first = fill(&mut out, magnitude_of(v), v < i64(0))
+    return text_of_digits(&out, first)
+}
+
+/** *`v` in decimal, over the whole unsigned range. */
+fn of_u64(v: u64) -> string {
+    let mut out = [20]u8 { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
+    let first = fill(&mut out, v, false)
+    return text_of_digits(&out, first)
+}
+
+/** *Append `v` in decimal to `b`. */
+fn push_int(b: &mut []u8, v: i64) {
+    let mut out = [20]u8 { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
+    let first = fill(&mut out, magnitude_of(v), v < i64(0))
+    push_digits(b, &out, first)
+}
+
+/** *Append `v` in decimal to `b`, over the whole unsigned range. */
+fn push_u64(b: &mut []u8, v: u64) {
+    let mut out = [20]u8 { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
+    let first = fill(&mut out, v, false)
+    push_digits(b, &out, first)
+}
+
+/** *`v` in decimal to stdout (`println(n)`); nothing is allocated. */
+fn write_int(v: i64) {
+    let mut out = [20]u8 { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
+    let first = fill(&mut out, magnitude_of(v), v < i64(0))
+    write_digits(&out, first, false)
+}
+
+/** *`v` in decimal to stdout, over the whole unsigned range. */
+fn write_u64(v: u64) {
+    let mut out = [20]u8 { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
+    let first = fill(&mut out, v, false)
+    write_digits(&out, first, false)
+}
+
+/** *`v` in decimal to stderr (`eprintln(n)`). */
+fn ewrite_int(v: i64) {
+    let mut out = [20]u8 { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
+    let first = fill(&mut out, magnitude_of(v), v < i64(0))
+    write_digits(&out, first, true)
+}
+
+/** *`v` in decimal to stderr, over the whole unsigned range. */
+fn ewrite_u64(v: u64) {
+    let mut out = [20]u8 { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
+    let first = fill(&mut out, v, false)
+    write_digits(&out, first, true)
+}
