@@ -36,13 +36,17 @@ fn write_int(n: int) {
 }
 
 /** *Write `true` or `false` (no quotes). */
-fn write_bool(b: bool) {}
+fn write_bool(b: bool) {
+    write(if b { "true" } else { "false" })
+}
 
 /** *Write a float in decimal (`%.15g`). */
 fn write_float(x: float) {}
 
 /** *Write a single newline. */
-fn writeln() {}
+fn writeln() {
+    write("\n")
+}
 
 /** *Print the arguments and a newline. Accepts mixed `string` / `int` / `bool` / `float`. */
 /** */
@@ -55,6 +59,16 @@ fn println() {}
 /** *Write `s` to stderr. Diagnostics go here, so they never mix with what a */
 /** *program prints to stdout. */
 fn ewrite(s: string) {}
+
+/** *`write_bool` to stderr. */
+fn ewrite_bool(b: bool) {
+    ewrite(if b { "true" } else { "false" })
+}
+
+/** *`writeln` to stderr. */
+fn ewriteln() {
+    ewrite("\n")
+}
 
 /** *`println` to stderr: the same mix of `string` / `int` / `bool` / `float`. */
 /** */
