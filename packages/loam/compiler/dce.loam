@@ -139,6 +139,11 @@ fn walk(n: int) {
         // `__value_key(x)` appends with the `std:key` fns; each keeps itself
         // and what it calls (`decimal`, `buf`, `conv` bits) through the
         // ordinary call walk.
+        // An interpolation formats its integers with `std:decimal`'s `fill`.
+        if ast.EXTRA[ast.ex(n)].has_cbuiltin && ast.EXTRA[ast.ex(n)].cbuiltin == "loam_interp" {
+            mark_cname("loam_decimal_fill")
+            mark_cname("loam_decimal_magnitude_of")
+        }
         if (ast.INFO[n].marks & ast.M_VALUE_KEY) != 0 {
             mark_cname("loam_key_push_vec_tag")
             mark_cname("loam_key_push_str")
