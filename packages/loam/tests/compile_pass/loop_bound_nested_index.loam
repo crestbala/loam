@@ -1,0 +1,11 @@
+// `rows.len` bounds the loop, not `rows[0].len`: the inner read must trap.
+import "std:fmt"
+
+fn main() {
+    let rows = [][]int { []int { 5 }, []int { 1, 2, 3 } }
+    let mut total = 0
+    for i in 0..rows.len {
+        total += rows[0][i]
+    }
+    fmt.println(total)
+}

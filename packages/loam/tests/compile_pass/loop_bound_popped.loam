@@ -1,0 +1,12 @@
+// A `pop` of the bounded container in the body shrinks it below the range.
+import "std:fmt"
+
+fn main() {
+    let mut xs = []int { 1, 2, 3 }
+    let mut total = 0
+    for i in 0..xs.len {
+        pop(xs)
+        total += xs[i]
+    }
+    fmt.println(total)
+}
