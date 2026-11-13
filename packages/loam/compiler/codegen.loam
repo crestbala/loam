@@ -2674,7 +2674,8 @@ fn batch_table() -> int {
         push(edges, row)
     }
     let bytes = nmods / 8 + 1
-    w("    extern int loam_batch_serve(void);\n")
+    // `std:batch.serve`, which the batch program imports (nob's suite source).
+    w("    extern int32_t loam_batch_serve(void);\n")
     w("    const int loam_served = loam_batch_serve();\n")
     w("    if (loam_served >= 0) return loam_served;\n")
     w("    const char *loam_case_env = getenv(\"LOAM_CASE\");\n")

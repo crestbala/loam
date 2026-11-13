@@ -2163,21 +2163,6 @@ fn main() {
         return
     }
 
-    if env_on("LOAM_BATCH") {
-        // The fork-per-case runner (`-x none`: the link may still be reading
-        // its inputs as C).
-        let run_c = "{{rt}}/batch_run.c"
-        let run_o = "{{rt}}/.obj/batch_run.o"
-        let no_flags = []string {}
-        let run_deps = []string { run_c }
-        if !ensure_obj(run_c, run_o, &no_flags, &run_deps) {
-            fmt.eprintln("loam: failed to compile the batch runner")
-            sys.remove_path(cpath)
-            sys.exit(1)
-        }
-        push_list(&mut extra_link, []string { "-x", "none", run_o })
-    }
-
     t0 = async.now_ms()
     let mut unit_args = cc()
     push_all(&mut unit_args, &copt)

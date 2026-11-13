@@ -1,0 +1,206 @@
+// batch — run a batch program's cases by forking, for `LOAM_BATCH` builds.
+//
+// `nob test` builds its fixtures into one binary. Starting that binary once per
+// fixture costs a shell, an exec and dyld every time; forking it before any module
+// has initialized costs almost nothing and hands each case the same pristine
+// process. The generated C `main` calls `serve` (`loam_batch_serve`) first, and a
+// child returns from it to carry on as one ordinary case.
+//
+// `LOAM_SERVE` names a manifest of `<case>\t<id>\t<label>\t<golden or empty>`
+// lines. A case's output goes to `<manifest dir>/<id>.out`. One that exits 0, and
+// matches its golden if it has one, prints `ok   <label>` and adds its id to
+// `<manifest dir>/passed`. Anything else is left out, for the caller to rerun and
+// report: this module never decides that a case failed.
+//
+// `serve` runs before any module initializes, so nothing here may read a
+// module-level `let`: locals, literals and calls only. Moved from
+// `runtime/batch_run.c` (docs/runtime-in-loam.md, R1.2).
+
+import "std:fmt"
+import "std:str"
+import "std:sys"
+
+/** *Past this a case has hung; the caller's rerun reports it. */
+const CASE_SECONDS: int = 120
+
+#[c("fork")]
+fn c_fork() -> i32 {}
+
+/** *`status` has one element, which `wait` fills. */
+#[c("wait")]
+fn c_wait(status: []i32) -> i32 {}
+
+/** *`open` is variadic, so only its two fixed arguments cross: no mode. */
+#[c("open")]
+fn c_open_read(path: string, flags: i32) -> i32 {}
+
+/** *`open(path, O_WRONLY | O_CREAT | O_TRUNC, mode)` without the variadic. */
+#[c("creat")]
+fn c_creat(path: string, mode: i32) -> i32 {}
+
+#[c("dup2")]
+fn c_dup2(from: i32, to: i32) -> i32 {}
+
+#[c("close")]
+fn c_close(fd: i32) -> i32 {}
+
+#[c("setenv")]
+fn c_setenv(name: string, value: string, overwrite: i32) -> i32 {}
+
+#[c("unsetenv")]
+fn c_unsetenv(name: string) -> i32 {}
+
+#[c("alarm")]
+fn c_alarm(seconds: i32) -> i32 {}
+
+#[c("_exit")]
+fn c_exit_now(code: i32) {}
+
+/** *`stream` 0 is `NULL`: flush every stdio stream. */
+#[c("fflush")]
+fn c_fflush(stream: i64) -> i32 {}
+
+/** *One manifest line. */
+struct ServeCase {
+    case_id: string,
+    id: string,
+    label: string,
+    /** *A golden to compare the output with, or `""`. */
+    want: string,
+}
+
+/** *Split one manifest line on tabs into its four fields; missing ones are `""`. */
+fn parse_line(line: string) -> ServeCase {
+    let mut fields = []string {}
+    let mut start = 0
+    for i in 0..line.len {
+        if line[i] == 9 && fields.len < 3 {
+            push(fields, str.slice(line, start, i))
+            start = i + 1
+        }
+    }
+    push(fields, str.slice(line, start, line.len))
+    while fields.len < 4 {
+        push(fields, "")
+    }
+    return ServeCase { case_id: fields[0], id: fields[1], label: fields[2], want: fields[3] }
+}
+
+/** *Both files exist and hold the same bytes. */
+fn same_file(a: string, b: string) -> bool {
+    if sys.exists(a) == 0 || sys.exists(b) == 0 {
+        return false
+    }
+    return sys.read_file(a) == sys.read_file(b)
+}
+
+/** *The child's half: become case `c`, its output in `<dir>/<id>.out`. */
+fn enter_case(c: ServeCase, dir: string) {
+    let out_fd = c_creat("{{dir}}/{{c.id}}.out", 420)
+    let null_fd = c_open_read("/dev/null", 0)
+    if out_fd < 0 || null_fd < 0 {
+        c_exit_now(1)
+    }
+    c_dup2(null_fd, 0)
+    c_dup2(out_fd, 1)
+    c_dup2(out_fd, 2)
+    c_close(out_fd)
+    c_close(null_fd)
+    c_setenv("LOAM_CASE", c.case_id, 1)
+    c_unsetenv("LOAM_SERVE")
+    c_alarm(CASE_SECONDS)
+}
+
+/** *Exited normally with status 0, from a `wait` status word. */
+fn exited_zero(status: i32) -> bool {
+    let word = status as int
+    return (word & 127) == 0 && ((word >> 8) & 255) == 0
+}
+
+/** *Run the manifest. `0` when finished, in the parent; `-1` in a child, or */
+/** *when this process is not serving, so `main` carries on. */
+fn serve() -> int {
+    let manifest = sys.env("LOAM_SERVE")
+    if manifest.len == 0 {
+        return -1
+    }
+    let mut jobs = 1
+    let jobs_text = sys.env("LOAM_SERVE_JOBS")
+    if jobs_text.len > 0 {
+        jobs = 0
+        for i in 0..jobs_text.len {
+            let digit = jobs_text[i] - 48
+            if digit < 0 || digit > 9 {
+                break
+            }
+            jobs = jobs * 10 + digit
+        }
+    }
+    if jobs < 1 {
+        jobs = 1
+    }
+    let mut dir = manifest
+    for i in 0..manifest.len {
+        if manifest[i] == 47 {
+            dir = str.slice(manifest, 0, i)
+        }
+    }
+    if sys.exists(manifest) == 0 {
+        return 1
+    }
+    let text = sys.read_file(manifest)
+
+    let mut cases = []ServeCase {}
+    let mut start = 0
+    for i in 0..text.len + 1 {
+        if i == text.len || text[i] == 10 {
+            if i > start {
+                push(cases, parse_line(str.slice(text, start, i)))
+            }
+            start = i + 1
+        }
+    }
+
+    let mut pids = []int {}
+    let mut passed = ""
+    let mut next = 0
+    let mut running = 0
+    let mut status = []i32 { 0 }
+    while next < cases.len || running > 0 {
+        if next < cases.len && running < jobs {
+            c_fflush(0)
+            let pid = c_fork() as int
+            if pid == 0 {
+                enter_case(cases[next], dir)
+                return -1
+            }
+            if pid < 0 {
+                break
+            }
+            push(pids, pid)
+            next += 1
+            running += 1
+            continue
+        }
+        let done = c_wait(status) as int
+        if done < 0 {
+            break
+        }
+        running -= 1
+        for i in 0..next {
+            if pids[i] != done {
+                continue
+            }
+            let c = cases[i]
+            if exited_zero(status[0]) && (c.want.len == 0 || same_file(c.want, "{{dir}}/{{c.id}}.out")) {
+                passed = "{{passed}}{{c.id}}\n"
+                fmt.eprintln("ok   {{c.label}}")
+            }
+            break
+        }
+    }
+    if sys.write_file("{{dir}}/passed", passed) != 0 {
+        return 1
+    }
+    return 0
+}

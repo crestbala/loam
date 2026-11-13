@@ -165,7 +165,7 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       `wasm_inc`), hosts 4,871, vendored 346,122 (sqlite, monocypher, raygui
       and the generated tree-sitter parser).
 - [x] R0.2 The budget: `RUNTIME_LINE_BUDGET` in `nob.loam`, set at 9,939
-      and lowered by each step since (now **9,456**, after R1.1).
+      and lowered by each step since (now **9,297**, after R1.2).
       `nob trusted` and the unfiltered `nob test` fail if `runtime/` grows
       past it. Each step below lowers it to its new count in the same
       change.
@@ -184,8 +184,19 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       Not benchmarked: the keymap runs once per key press, never per
       frame. **Runtime: 9,939 → 9,456** (−483: the two files, plus the
       trampolines in `zeus_plat.c` and `zeus_rt.h`).
-- [ ] R1.2 `batch_run.c` → generated Loam: the batched-test runner becomes
-      a `main` that `loamc` emits beside the batch, so no C file is linked.
+- [x] R1.2 `batch_run.c` → `std:batch` (206 lines). Done 2026-11-13. The
+      fork-per-case runner is a std module whose `serve` compiles to
+      `loam_batch_serve`, the name the generated batch `main` already
+      calls; nob's suite program imports it and DCE keeps it as a C root.
+      Its kernel calls are `#[c]` bindings straight to libc, with no shim
+      (`fork`, `wait`, `dup2`, `close`, `setenv`, `unsetenv`, `alarm`,
+      `_exit`, `fflush`); the variadic `open` is only ever called with its
+      two fixed arguments, and the output file uses `creat`. It runs before
+      any module initializes, so it reads no module-level `let`. This also
+      shows R2.1 is mostly there: a std module can bind libc with no
+      `#![c_source]`. Speed: the suite's serve phase is 8–9 s against the
+      C runner's 8 s, and the full suite still passes (617).
+      **Runtime: 9,456 → 9,297** (−159).
 - [ ] R1.3 `loam_rt.h` fmt / str / conv / buf verbs → `std` Loam fns, one
       verb family per change, each benchmarked against its C twin.
 - [ ] R1.4 Float formatting and parsing (`std:conv` float halves) → Loam,
