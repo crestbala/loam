@@ -37,6 +37,9 @@ struct Parser {
     hidden_id: int,
     /** *The module being parsed: stamped on every `Loc` (`loc.file`). */
     file: int,
+    /** *A `__value_key(..)` call was parsed (kept across modules): the */
+    /** *loader then loads `std:key`, which it lowers to. */
+    value_key: bool,
 }
 
 /** *What `take_docs` found: C's NULL is `has` false. */
@@ -67,6 +70,7 @@ fn parser_new(src: string) -> Parser {
         spill: []int {},
         hidden_id: 0,
         file: 0,
+        value_key: false,
     }
 }
 
@@ -1102,6 +1106,9 @@ fn same_line(p: &Parser) -> bool {
 /** *owns nothing: every exit of a fn drops each owning local some path may */
 /** *have set, and most expressions leave the loop at once. */
 fn parse_call_suffix(p: &mut Parser, callee: int, call_loc: Loc) -> int {
+    if ast.NODES[callee].kind == Kind.Ident && ast.INFO[callee].name == "__value_key" {
+        p.value_key = true
+    }
     let mut left = callee
     let mut loc = call_loc
     let mut args = []int {}

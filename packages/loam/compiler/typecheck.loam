@@ -3183,8 +3183,10 @@ fn check_call(n: int, expect: int) -> int {
             ast.NODES[n].ty = types.ty_void()
             return ast.NODES[n].ty
         }
-        // `"a {{x}} b"` arrives as __interp(parts...): fold it into
-        // loam_str_of_* / loam_str_concat builtin calls.
+        // `"a {{x}} b"` arrives as __interp(parts...). Two or more parts are
+        // one `loam_interp` call over the raw parts, which codegen builds in
+        // one exact allocation (an integer's digits on the stack); one part
+        // is that string, or its `loam_decimal_of_*` / `loam_str_of_*`.
         if nm == "__interp" {
             let parts = ast.NODES[n].kids
             let mut acc = NONE
@@ -3196,6 +3198,9 @@ fn check_call(n: int, expect: int) -> int {
                     err(ast.INFO[part].loc, "cannot interpolate {{types.type_name(t)}}")
                     ast.NODES[n].ty = types.ty_string()
                     return ast.NODES[n].ty
+                }
+                if parts.len >= 2 {
+                    continue
                 }
                 if k != TK.String {
                     let w = new_call(NONE, []int { part }, ast.INFO[part].loc)
@@ -3214,6 +3219,12 @@ fn check_call(n: int, expect: int) -> int {
                 ast.EXTRA[ast.ex_mut(cat)].has_cbuiltin = true
                 ast.NODES[cat].ty = types.ty_string()
                 acc = cat
+            }
+            if parts.len >= 2 {
+                acc = new_call(NONE, parts, nloc)
+                ast.EXTRA[ast.ex_mut(acc)].cbuiltin = "loam_interp"
+                ast.EXTRA[ast.ex_mut(acc)].has_cbuiltin = true
+                ast.NODES[acc].ty = types.ty_string()
             }
             if acc == NONE {
                 acc = new_string("", nloc)

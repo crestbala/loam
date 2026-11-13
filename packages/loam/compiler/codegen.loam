@@ -688,6 +688,57 @@ fn int_bits(t: int) -> int {
     return if b != 0 { b } else { 64 }
 }
 
+/** *`"a {{n}} b"`: every part's bytes, then one exact allocation they are */
+/** *copied into. An integer's digits go onto the stack through */
+/** *`std:decimal`'s `fill`; a float is a temporary `str_of_float`, released */
+/** *after the copy; a bool is `true` / `false`. */
+fn interp(x: &Inst) {
+    let n = x.nargs
+    let mut ptrs = []string {}
+    let mut lens = []string {}
+    w("{ ")
+    for k in 0..n {
+        let v = lv(arg_of(x, k))
+        let t = resolve(local_ty(arg_of(x, k)))
+        let kind = if t == NO_TYPE { TK.String } else { types.TYPES[t].kind }
+        if kind == TK.Int {
+            if types.TYPES[t].is_unsigned != 0 {
+                w("uint8_t _id{{k}}[20]; int32_t _if{{k}} = loam_decimal_fill(_id{{k}}, (uint64_t)({{v}}), false); ")
+            } else {
+                w("uint8_t _id{{k}}[20]; int32_t _if{{k}} = loam_decimal_fill(_id{{k}}, loam_decimal_magnitude_of((int64_t)({{v}})), (int64_t)({{v}}) < 0); ")
+            }
+            push(ptrs, "(const char *)_id{{k}} + _if{{k}}")
+            push(lens, "(int64_t)(20 - _if{{k}})")
+        } else if kind == TK.Float {
+            w("loam_str _is{{k}} = loam_str_of_float({{v}}); ")
+            push(ptrs, "_is{{k}}.ptr")
+            push(lens, "_is{{k}}.len")
+        } else if kind == TK.Bool {
+            push(ptrs, "(({{v}}) ? \"true\" : \"false\")")
+            push(lens, "(int64_t)(({{v}}) ? 4 : 5)")
+        } else {
+            push(ptrs, "{{v}}.ptr")
+            push(lens, "{{v}}.len")
+        }
+    }
+    w("int64_t _in = 0")
+    for k in 0..n {
+        w(" + {{lens[k]}}")
+    }
+    w("; char *_ip = loam_str_bytes(_in); int64_t _io = 0; ")
+    for k in 0..n {
+        w("if ({{lens[k]}} > 0) { memcpy(_ip + _io, {{ptrs[k]}}, (size_t){{lens[k]}}); _io += {{lens[k]}}; } ")
+    }
+    w("_ip[_in] = 0; {{lv(x.dst)}} = loam_str_owned(_ip, _in); ")
+    for k in 0..n {
+        let t = resolve(local_ty(arg_of(x, k)))
+        if t != NO_TYPE && types.TYPES[t].kind == TK.Float {
+            w("loam_str_release(&_is{{k}}); ")
+        }
+    }
+    w("}\n")
+}
+
 /** *Append literal `s` to the key buffer `b`. */
 fn vk_lit(b: string, s: string) {
     w("loam_buf_push_str({{b}}, ")
@@ -1843,6 +1894,10 @@ fn builtin_call(x: &Inst) -> bool {
     }
     let name = ir.TEXTS[x.text]
     let has_dst = x.dst >= 0
+    if name == "loam_interp" && has_dst {
+        interp(x)
+        return true
+    }
     if name == "loam_value_key" && x.nargs >= 1 && has_dst {
         // A string alone is its own key: the rows of one `Each` share a
         // type, so no tag or length is needed (inside a compound, `push_str`

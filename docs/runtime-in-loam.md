@@ -287,11 +287,35 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       unchanged. Speed against HEAD's C (median M cycles, 300k keys):
       string keys 4.5 vs 22.9 (−80%), struct/vec keys 268.5 vs 462.6
       (−42%); greeninfer headless 31.9 vs 32.5; self-emit 165.6 ms vs
-      164.2 ms (+0.9%, open). Binaries (new vs HEAD): greeninfer 1,044,656
+      164.2 ms (+0.9%, closed by R1.3c). Binaries (new vs HEAD): greeninfer 1,044,656
       vs 1,044,688 (−32; `__text` −352, no key code left), nob, loamc and
       the tiny int program unchanged. Fixture: `golden/valuekey_edges`
       (expected from the old C, but for the five lone-string lines).
       **Runtime: 9,270 → 9,127** (−143).
+- [x] R1.3c Interpolation in one exact allocation. Done 2026-11-14. Two or
+      more parts are one `loam_interp` call over the raw parts (no
+      `decimal.of_int` temporaries), which codegen expands in place: an
+      integer's digits go onto the stack through `decimal.fill`, the
+      lengths are summed, then one `loam_str_bytes` and a `memcpy` per
+      part, as the C key did; a float is a temporary `str_of_float`, a
+      bool `true` / `false`. One part keeps its old lowering. No new C.
+      `std:key` (and with it `conv` and `buf`) is now loaded only when a
+      module parses `__value_key` (the parser notes it); R1.3b had loaded
+      it into every program, which cost a tiny program 13% compile time
+      and exposed `conv.parse_int` returning `Result<i32>` under
+      `--int64-compat` (fixed: `int(r.val)`). Module ranks stay a
+      permutation with the entry last. Speed against HEAD (median M
+      cycles): `"S{{s.len}}:{{s}}"` 22.3 vs 72.7 (−69%, 132 vs 434 M
+      instructions; the C key was 22.7), one-part `"{{n}}"` 182.8 vs
+      182.0 (same lowering), string keys 4.5 vs 22.7, struct/vec keys
+      248.1 vs 453.9 (−45%); self-emit 151.8 ms vs 168.4 ms (−10%); a
+      tiny program compiles in 8.7 vs 9.0 ms. Binaries (new vs HEAD): nob
+      533,224 vs 599,192 (−65,968), loamc 1,795,608 vs 1,861,416
+      (−65,808), greeninfer 1,044,480 vs 1,044,688 (−208), tiny int
+      program unchanged. The seed's C grows (4,799,032 bytes: each site is
+      expanded in place) while every binary shrinks. Full suite 635
+      passed; `selfhost_seed`, `ownership_asan`, `wasm_smoke`,
+      `android_project` and `lsp` green.
 - [ ] R1.3 `loam_rt.h` fmt / str / conv / buf verbs → `std` Loam fns, one
       verb family per change, each benchmarked against its C twin.
 - [ ] R1.4 Float formatting and parsing (`std:conv` float halves) → Loam,

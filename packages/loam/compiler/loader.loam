@@ -1123,15 +1123,12 @@ fn implicit_import(alias: string, spec: string, loc: Loc) -> int {
 
 /** *Outside `http`, an implicit import for `#[proto]` (http) and `#[json]` */
 /** *(std:json) structs. The entry module also imports `std:decimal`, which */
-/** *`"{{n}}"` and `println(n)` compile to, and `std:key`, which */
-/** *`__value_key(x)` compiles to, so no program has to. Those two are */
-/** *`F_IMPLICIT`: no name in the program, so a local `key` stays a local. */
+/** *`"{{n}}"` and `println(n)` compile to, so no program has to (and */
+/** *`load` adds `std:key` when one is needed). Both are `F_IMPLICIT`: no */
+/** *name in the program, so a local `key` stays a local. */
 fn implicit_imports(root: int, alias: string) {
     if typecheck.MODS.len == 1 && !imports_spec(root, "std:decimal") {
         push(ast.NODES[root].kids, implicit_import("decimal", "std:decimal", ast.INFO[root].loc))
-    }
-    if typecheck.MODS.len == 1 && !imports_spec(root, "std:key") {
-        push(ast.NODES[root].kids, implicit_import("key", "std:key", ast.INFO[root].loc))
     }
     if alias == "http" {
         return
@@ -1266,7 +1263,36 @@ fn load(path: string) -> bool {
     typecheck.RT_PATH = rt_path()
     typecheck.STD_DIR = std_dir()
     discover(path)
-    return load_module(path, stem_of(path))
+    PARSER.value_key = false
+    if !load_module(path, stem_of(path)) {
+        return false
+    }
+    // `__value_key(x)` (Zeus `Each`) lowers to `std:key`: loaded only when a
+    // module calls it, so no other program parses or checks it. The entry
+    // module stays last in init order.
+    let root = typecheck.MODS[0].root
+    if !PARSER.value_key || imports_spec(root, "std:key") {
+        return true
+    }
+    let im = implicit_import("key", "std:key", ast.INFO[root].loc)
+    push(ast.NODES[root].kids, im)
+    let ip = resolve_import(path, im)
+    if ip.len == 0 {
+        return false
+    }
+    ast.EXTRA[ast.ex_mut(im)].sname = ip
+    ast.EXTRA[ast.ex_mut(im)].has_sname = true
+    let before = typecheck.MODS.len
+    if !load_module(ip, "key") {
+        return false
+    }
+    // Ranks stay a permutation: the modules just loaded took ranks
+    // `before..len`, after the entry's `before - 1`; the entry moves last.
+    for m in before..typecheck.MODS.len {
+        typecheck.MODS[m].rank = typecheck.MODS[m].rank - 1
+    }
+    typecheck.MODS[0].rank = typecheck.MODS.len - 1
+    return true
 }
 
 /** *Forget the last load, for a process that loads again (see `ast.reset`). */

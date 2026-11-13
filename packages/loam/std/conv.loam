@@ -191,7 +191,7 @@ fn parse_int(s: string) -> Result<int> {
     if r.val < i64(-2147483648) || r.val > i64(2147483647) {
         return res_err("\"{{s}}\" is out of range for int", 0)
     }
-    return res_ok(i32(r.val))
+    return res_ok(int(r.val))
 }
 
 /** *The shortest decimal text that reads back as exactly `x` (`%.17g` at most). */
