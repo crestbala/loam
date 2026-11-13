@@ -155,7 +155,7 @@ zeus is an error; the package is `import "zeus"`. `import "fmt"` is not the
 language module; that is `import "std:fmt"`.
 
 `packages/loam/std/` holds the language core (`async`, `buf`, `conv`, `date`,
-`fmt`, `font`, `intmap`, `json`, `kv`, `log`, `map`, `math`, `net`, `result`,
+`fmt`, `font`, `json`, `kv`, `log`, `map`, `math`, `net`, `result`,
 `str`, `sys`, `test`, `thread`, `unicode`). `zeus`, `zui`, `http`, and `maya` are packages. Their
 manifests point at `src/<name>.loam`. Relative imports are for a module's own
 siblings (`packages/zeus/src/router.loam` → `"zeuscore/platform.loam"`).
