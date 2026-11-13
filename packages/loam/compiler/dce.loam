@@ -62,6 +62,10 @@ fn c_roots(module_name: string) -> []string {
             "engine_sprite_rgb", "engine_sprite_x", "engine_sprite_y",
         }
     }
+    // A `LOAM_BATCH` main calls the fork-per-case runner, `loam_batch_serve`.
+    if module_name == "batch" {
+        return []string { "serve" }
+    }
     // The web host binds fonts through `loam_metrics_bind`.
     if module_name == "metrics" {
         return []string { "bind" }

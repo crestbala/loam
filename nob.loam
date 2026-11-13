@@ -35,7 +35,7 @@
 // binary on its first exec, about 0.3s per binary, one at a time across the whole
 // machine, whatever `-j` says. So a full run builds the fixtures into two
 // binaries, and each binary forks one process per fixture before anything has
-// initialized (`runtime/batch_run.c`); only that fixture's modules then start
+// initialized (`std:batch`); only that fixture's modules then start
 // (`codegen_set_batch`). A fixture that does not pass that way is rerun, then
 // retried on its own, and that verdict stands.
 // `--isolated` is the slower check that no fixture depends on being batched.
@@ -1052,7 +1052,8 @@ fn unlines(v: []string) -> string {
 /** *The program that holds `files`: each is imported as `case<N>`, and `LOAM_CASE` */
 /** *picks the one whose `main` this process runs. */
 fn suite_source(files: []string) -> string {
-    let mut lines = []string { "import \"std:sys\"" }
+    // `std:batch` is the fork-per-case runner the generated `main` calls first.
+    let mut lines = []string { "import \"std:sys\"", "import \"std:batch\"" }
     for i in 0..files.len {
         push(lines, "import \"{{files[i]}}\" as case{{i}}")
     }
@@ -3048,7 +3049,7 @@ fn grammar() -> int {
 // deletes the C, so the runtime can only shrink. The target is zero.
 
 /** *Lines allowed under `packages/loam/runtime/`. Lower it when a step lands. */
-let RUNTIME_LINE_BUDGET: int = 9456
+let RUNTIME_LINE_BUDGET: int = 9297
 
 /** *The group a tracked C file belongs to, or `""` for C that is not shipped. */
 fn trusted_group(path: string) -> string {
