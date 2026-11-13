@@ -186,29 +186,6 @@ static inline void loam_fmt_write(loam_str s) {
     loam_write_bytes(s.ptr, (size_t)s.len);
 }
 
-static inline loam_str loam_fmt_itoa(char buf[24], int64_t v) {
-    char *end = buf + 24;
-    char *p = end;
-    uint64_t u;
-    if (v < 0)
-        u = (uint64_t)(-(v + 1)) + 1;
-    else
-        u = (uint64_t)v;
-    if (u == 0) {
-        *--p = '0';
-    } else {
-        while (u) {
-            *--p = (char)('0' + (u % 10));
-            u /= 10;
-        }
-        if (v < 0) *--p = '-';
-    }
-    loam_str s;
-    s.ptr = p;
-    s.len = (int64_t)(end - p);
-    return s;
-}
-
 static inline void loam_fmt_write_bool(bool v) {
     if (v) loam_write_bytes("true", 4);
     else loam_write_bytes("false", 5);
@@ -1166,140 +1143,6 @@ static inline loam_str loam_str_concat(loam_str a, loam_str b) {
     return loam_str_owned(p, an + bn);
 }
 
-/* Content keys for `Each`. The compiler emits these from `__value_key`.
-   A string keys by its bytes, not the `loam_str` header (two copies of the
-   same text are one row). `loam_key_cat` releases both inputs. A static
-   piece has `own = 0`, so releasing it is a no-op and the copy lives in
-   the result. */
-
-static inline loam_str loam_key_static(const char *p, int64_t n) {
-    loam_str s;
-    s.ptr = p ? p : "";
-    s.len = n > 0 ? n : 0;
-    s.own = 0;
-    return s;
-}
-
-static inline loam_str loam_key_cat(loam_str a, loam_str b) {
-    loam_str r = loam_str_concat(a, b);
-    loam_str_release(&a);
-    loam_str_release(&b);
-    return r;
-}
-
-static inline int loam_u64_dec(char *dst, uint64_t u) {
-    char rev[32];
-    int r = 0;
-    int i;
-    if (u == 0) rev[r++] = '0';
-    else while (u && r < 32) {
-        rev[r++] = (char)('0' + (u % 10));
-        u /= 10;
-    }
-    for (i = 0; i < r; i++) dst[i] = rev[r - 1 - i];
-    return r;
-}
-
-static inline loam_str loam_key_tag(char kind, int64_t n, char end) {
-    char nb[24];
-    loam_str ns = loam_fmt_itoa(nb, n);
-    int64_t total = 1 + (ns.len > 0 ? ns.len : 0) + 1;
-    char *p = loam_str_bytes(total);
-    int64_t o = 0;
-    p[o++] = kind;
-    if (ns.len > 0 && ns.ptr) {
-        memcpy(p + o, ns.ptr, (size_t)ns.len);
-        o += ns.len;
-    }
-    p[o++] = end;
-    p[total] = 0;
-    return loam_str_owned(p, total);
-}
-
-static inline loam_str loam_key_str(loam_str s) {
-    int64_t n = s.len > 0 ? s.len : 0;
-    char nb[24];
-    loam_str ns = loam_fmt_itoa(nb, n);
-    int64_t total = 1 + (ns.len > 0 ? ns.len : 0) + 1 + n;
-    char *p = loam_str_bytes(total);
-    int64_t o = 0;
-    p[o++] = 'S';
-    if (ns.len > 0 && ns.ptr) {
-        memcpy(p + o, ns.ptr, (size_t)ns.len);
-        o += ns.len;
-    }
-    p[o++] = ':';
-    if (n > 0 && s.ptr) memcpy(p + o, s.ptr, (size_t)n);
-    p[total] = 0;
-    return loam_str_owned(p, total);
-}
-
-static inline loam_str loam_key_int(int64_t v, int bits, int unsig) {
-    char nb[24], vb[32];
-    loam_str ns = loam_fmt_itoa(nb, bits);
-    int vl;
-    if (unsig) vl = loam_u64_dec(vb, (uint64_t)v);
-    else {
-        loam_str vs = loam_fmt_itoa(vb, v);
-        vl = vs.len > 0 ? (int)vs.len : 0;
-        if (vl > 0 && vs.ptr && vs.ptr != vb) memmove(vb, vs.ptr, (size_t)vl);
-    }
-    int64_t total = 1 + (ns.len > 0 ? ns.len : 0) + 2 + vl;
-    char *p = loam_str_bytes(total);
-    int64_t o = 0;
-    p[o++] = 'i';
-    if (ns.len > 0 && ns.ptr) {
-        memcpy(p + o, ns.ptr, (size_t)ns.len);
-        o += ns.len;
-    }
-    p[o++] = unsig ? 'u' : 's';
-    p[o++] = ':';
-    if (vl > 0) memcpy(p + o, vb, (size_t)vl);
-    p[total] = 0;
-    return loam_str_owned(p, total);
-}
-
-static inline loam_str loam_key_fbits(const void *p, int bits) {
-    unsigned char raw[8];
-    int n = bits <= 32 ? 4 : 8;
-    int o = 0;
-    int i;
-    char buf[24];
-    char *out;
-    static const char hexd[] = "0123456789abcdef";
-    memset(raw, 0, sizeof raw);
-    if (p) memcpy(raw, p, (size_t)n);
-    buf[o++] = 'f';
-    if (bits >= 100) buf[o++] = (char)('0' + (bits / 100) % 10);
-    if (bits >= 10) buf[o++] = (char)('0' + (bits / 10) % 10);
-    buf[o++] = (char)('0' + (bits % 10));
-    buf[o++] = ':';
-    for (i = 0; i < n; i++) {
-        buf[o++] = hexd[raw[i] >> 4];
-        buf[o++] = hexd[raw[i] & 15];
-    }
-    out = loam_str_bytes(o);
-    memcpy(out, buf, (size_t)o);
-    out[o] = 0;
-    return loam_str_owned(out, o);
-}
-
-static inline loam_str loam_key_addr(uint64_t bits, char kind) {
-    char buf[20];
-    int o = 0;
-    int i;
-    char *out;
-    static const char hexd[] = "0123456789abcdef";
-    buf[o++] = kind;
-    buf[o++] = ':';
-    for (i = 15; i >= 0; i--)
-        buf[o++] = hexd[(bits >> (i * 4)) & 15];
-    out = loam_str_bytes(o);
-    memcpy(out, buf, (size_t)o);
-    out[o] = 0;
-    return loam_str_owned(out, o);
-}
-
 static inline loam_str loam_str_of_float(double v) {
     char buf[64];
     loam_str s = loam_fmt_ftoa(buf, v);
@@ -1434,6 +1277,20 @@ static inline double loam_conv_strtod(loam_str s) {
     memcpy(buf, s.ptr, (size_t)s.len);
     buf[s.len] = 0;
     return strtod(buf, NULL);
+}
+
+/* `std:key` reads a float's bytes for its content key. A value conversion
+   would round (`1.5 as u32` is 1); only `memcpy` sees the raw bytes. */
+static inline uint32_t loam_conv_f32_bits(float v) {
+    uint32_t out = 0;
+    memcpy(&out, &v, sizeof out);
+    return out;
+}
+
+static inline uint64_t loam_conv_f64_bits(double v) {
+    uint64_t out = 0;
+    memcpy(&out, &v, sizeof out);
+    return out;
 }
 
 /** The operating system: "macos" | "linux" | "windows" | "ios" | "android" |

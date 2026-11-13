@@ -1,0 +1,75 @@
+// key — content keys for `Each`: a string matching iff the value matches.
+//
+// Moved from `loam_rt.h` (docs/runtime-in-loam.md, R1.3b). Codegen lowers
+// `__value_key(x)` to one `[]u8` that these append to, piece by piece, and
+// turns it into the key string at the end without a copy: no piece string,
+// no concatenation. A string keys by its bytes, not the `loam_str` header
+// (two copies of the same text are one row); a string alone is its own key
+// (codegen retains it), since the rows of one `Each` share a type. Integers are `std:decimal`
+// after a literal prefix, floats the bit readers in `std:conv`, strings
+// `std:buf`. Constant pieces (`b1`, `R2{`, `i32s:`, `}`, `~` for a cycle)
+// codegen appends as literals itself.
+
+import "std:buf"
+import "std:conv"
+import "std:decimal"
+
+/** *A vec's tag: its row count, then the open bracket — "V3[". A struct's */
+/** *and an array's tags ("R2{", "A3[") and an integer's prefix ("i32s:") are */
+/** *constants, so codegen writes them as literals. */
+fn push_vec_tag(b: &mut []u8, n: int) {
+    push(b, u8('V'))
+    decimal.push_int(b, i64(n))
+    push(b, u8('['))
+}
+
+/** *A string: its length, then its bytes — "S3:foo". */
+fn push_str(b: &mut []u8, s: string) {
+    push(b, u8('S'))
+    decimal.push_int(b, i64(s.len))
+    push(b, u8(':'))
+    buf.push_str(b, s)
+}
+
+/** *The hex digit of `x`'s low four bits. Every step is proven in range */
+/** *(`std:decimal` style), so it keeps no check. */
+fn hexd(x: u64) -> u8 {
+    return u8("0123456789abcdef"[i32(x % u64(16))])
+}
+
+/** *`n` raw bytes of `bits` in memory order (low byte first), two hex digits */
+/** *each, after `head`: 1.0 as f32 is "f32:0000803f". */
+fn push_hex_bytes(b: &mut []u8, head: string, bits: u64, n: int) {
+    buf.push_str(b, head)
+    let mut rest = bits
+    for i in 0..n {
+        push(b, hexd(rest / u64(16)))
+        push(b, hexd(rest))
+        rest = rest / u64(256)
+    }
+}
+
+/** *An `f32` by its raw bytes — "f32:0000803f". */
+fn push_f32(b: &mut []u8, v: float) {
+    push_hex_bytes(b, "f32:", u64(conv.f32_bits(v)), 4)
+}
+
+/** *An `f64` by its raw bytes — "f64:000000000000f03f". */
+fn push_f64(b: &mut []u8, v: f64) {
+    push_hex_bytes(b, "f64:", conv.f64_bits(v), 8)
+}
+
+/** *An address: `kind`, ":", 16 hex digits, high first — "p:00007fff…". */
+fn push_addr(b: &mut []u8, bits: u64, kind: u8) {
+    let mut digits = [16]u8 { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
+    let mut rest = bits
+    for i in 0..16 {
+        digits[15 - i] = hexd(rest)
+        rest = rest / u64(16)
+    }
+    push(b, kind)
+    push(b, u8(':'))
+    for i in 0..16 {
+        push(b, digits[i])
+    }
+}

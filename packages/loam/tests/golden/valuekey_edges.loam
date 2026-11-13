@@ -1,0 +1,81 @@
+// `__value_key` (the content key `Each` rows match by) at every edge: each
+// scalar kind at its limits, nested structs, vecs, arrays and a cycle. The
+// expected output came from the C keys (`loam_key_*`) this replaced, except
+// the first five lines: a string alone is now its own key (the rows of one
+// `Each` share a type), where the C wrote "S3:foo"; inside a compound it is
+// still length-prefixed, as before. A local
+// named `key` stays a local: the loader's implicit `std:key` is no name here.
+import "std:fmt"
+
+struct Point {
+    x: int,
+    y: int,
+}
+
+struct Row {
+    name: string,
+    on: bool,
+    at: Point,
+    tags: []string,
+    w: f64,
+}
+
+struct Tree {
+    label: string,
+    kids: []Tree,
+}
+
+fn main() {
+    let strs = []string { "", "a", "foo", "héllo", "S3:x" }
+    for i in 0..strs.len {
+        fmt.println(__value_key(strs[i]))
+    }
+    fmt.println(__value_key(true))
+    fmt.println(__value_key(false))
+    let ints = []int { 0, -1, 7, 2147483647, -2147483647 - 1 }
+    for i in 0..ints.len {
+        fmt.println(__value_key(ints[i]))
+    }
+    let wides = []i64 { i64(0), i64(9223372036854775807), i64(-9223372036854775807) - i64(1) }
+    for i in 0..wides.len {
+        fmt.println(__value_key(wides[i]))
+    }
+    let unsigned = []u64 { u64(0), u64(255), u64(18446744073709551615) }
+    for i in 0..unsigned.len {
+        fmt.println(__value_key(unsigned[i]))
+    }
+    let bytes = []u8 { 0 as u8, 255 as u8 }
+    for i in 0..bytes.len {
+        fmt.println(__value_key(bytes[i]))
+    }
+    let singles = []float { 0.0, 1.0, -1.5, 3.25 }
+    for i in 0..singles.len {
+        fmt.println(__value_key(singles[i]))
+    }
+    let doubles = []f64 { f64(0.0), f64(1.0), f64(-2.5), f64(0.1) }
+    for i in 0..doubles.len {
+        fmt.println(__value_key(doubles[i]))
+    }
+    let p = Point { x: 3, y: -4 }
+    fmt.println(__value_key(p))
+    let row = Row { name: "n", on: true, at: p, tags: []string { "x", "" }, w: f64(1.0) }
+    fmt.println(__value_key(row))
+    let empty = []int {}
+    fmt.println(__value_key(empty))
+    let rows = []Point { p, Point { x: 0, y: 0 } }
+    fmt.println(__value_key(rows))
+    let fixed = [3]int { 1, 2, 3 }
+    fmt.println(__value_key(fixed))
+    let leaf = Tree { label: "leaf", kids: []Tree {} }
+    let tree = Tree { label: "root", kids: []Tree { leaf } }
+    fmt.println(__value_key(tree))
+    let mut total = 0
+    let mut key = "abc"
+    key = "{{key}}d"
+    fmt.println(key.len)
+    for i in 0..1000 {
+        let k = __value_key(Row { name: "r{{i}}", on: i % 2 == 0, at: Point { x: i, y: -i }, tags: []string { "t" }, w: f64(0.5) })
+        total = total + k.len
+    }
+    fmt.println(total)
+}

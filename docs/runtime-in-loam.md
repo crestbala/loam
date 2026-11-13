@@ -190,7 +190,7 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       `wasm_inc`), hosts 4,871, vendored 346,122 (sqlite, monocypher, raygui
       and the generated tree-sitter parser).
 - [x] R0.2 The budget: `RUNTIME_LINE_BUDGET` in `nob.loam`, set at 9,939
-      and lowered by each step since (now **9,270**, after R1.3a).
+      and lowered by each step since (now **9,127**, after R1.3b).
       `nob trusted` and the unfiltered `nob test` fail if `runtime/` grows
       past it. Each step below lowers it to its new count in the same
       change.
@@ -261,6 +261,37 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       passed; `selfhost_seed`, `ownership_asan`, `wasm_smoke`,
       `android_project`, `cost` and `lsp` all green. `nob trusted`: 9,270.
       **Runtime: 9,297 → 9,270** (−27).
+- [x] R1.3b Content keys for `Each` (`std:key`, 90 lines). Done
+      2026-11-14. `__value_key(x)` lowers to one `[]u8` that `std:key`
+      appends to (`push_vec_tag`, `push_str`, `push_f32` / `push_f64`,
+      `push_addr`), then `string_from_u8` adopts it: no piece strings and
+      no concatenation, where the C built every piece and re-joined them
+      (O(n²) in pieces). Constant pieces (struct and array tags `R2{` /
+      `A3[`, integer prefixes `i32s:`, `b1`, `}`, `~`) are literals from
+      codegen; integers then go through `decimal.push_int` / `push_u64`.
+      A string alone is its own key (a retain, no allocation): the rows of
+      one `Each` share a type, so it needs no tag; inside a compound it is
+      still length-prefixed. Every other key is byte-identical to the C.
+      Hex digits come from a string literal indexed by `x % 16`, so the
+      `ranges` pass proves every step and the fns keep no check. The two
+      allowed hooks are `conv.f32_bits` / `f64_bits` (a `memcpy` bit-cast).
+      `loam_key_*`, `loam_fmt_itoa` and `loam_u64_dec` are deleted. The
+      loader's implicit `std:decimal` / `std:key` imports carry
+      `F_IMPLICIT` and `module_imported` skips them, so they are no name in
+      the program: a local `key` (as in `loamc.loam`) stays a local, and a
+      user module named `key` (mune) still resolves. Bugs found in the
+      staged version and fixed: `fbits` hexed one digit per byte and in
+      the wrong byte order, `u64` max panicked in a checked `as u64`, and
+      the borrowed `cat` leaked both inputs. Bootstrapped from HEAD's seed
+      (stage 0 builds the new compiler, which rebuilds itself); `nob seed`
+      unchanged. Speed against HEAD's C (median M cycles, 300k keys):
+      string keys 4.5 vs 22.9 (−80%), struct/vec keys 268.5 vs 462.6
+      (−42%); greeninfer headless 31.9 vs 32.5; self-emit 165.6 ms vs
+      164.2 ms (+0.9%, open). Binaries (new vs HEAD): greeninfer 1,044,656
+      vs 1,044,688 (−32; `__text` −352, no key code left), nob, loamc and
+      the tiny int program unchanged. Fixture: `golden/valuekey_edges`
+      (expected from the old C, but for the five lone-string lines).
+      **Runtime: 9,270 → 9,127** (−143).
 - [ ] R1.3 `loam_rt.h` fmt / str / conv / buf verbs → `std` Loam fns, one
       verb family per change, each benchmarked against its C twin.
 - [ ] R1.4 Float formatting and parsing (`std:conv` float halves) → Loam,

@@ -205,6 +205,14 @@ fn f64_to_g17(x: f64) -> string {}
 /** *writes a float constant. */
 fn f64_to_g6(x: f64) -> string {}
 
+/** *`v`'s raw bytes as a `u32`: what `key.of_f32` hexes. A bit-cast, not a */
+/** *conversion (`1.5 as u32` is 1); only `memcpy` can read the bytes. */
+fn f32_bits(v: float) -> u32 {}
+
+/** *`v`'s raw bytes as a `u64`: what `key.of_f64` hexes. A bit-cast, not a */
+/** *conversion. */
+fn f64_bits(v: f64) -> u64 {}
+
 /** *`strtod` over text already checked by `parse_f64`. */
 fn strtod(s: string) -> f64 {}
 

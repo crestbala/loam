@@ -1115,12 +1115,23 @@ fn import_node(alias: string, spec: string, loc: Loc) -> int {
     return ast.add(n)
 }
 
+fn implicit_import(alias: string, spec: string, loc: Loc) -> int {
+    let n = import_node(alias, spec, loc)
+    ast.NODES[n].flags = ast.F_IMPLICIT
+    return n
+}
+
 /** *Outside `http`, an implicit import for `#[proto]` (http) and `#[json]` */
 /** *(std:json) structs. The entry module also imports `std:decimal`, which */
-/** *`"{{n}}"` and `println(n)` compile to, so no program has to. */
+/** *`"{{n}}"` and `println(n)` compile to, and `std:key`, which */
+/** *`__value_key(x)` compiles to, so no program has to. Those two are */
+/** *`F_IMPLICIT`: no name in the program, so a local `key` stays a local. */
 fn implicit_imports(root: int, alias: string) {
     if typecheck.MODS.len == 1 && !imports_spec(root, "std:decimal") {
-        push(ast.NODES[root].kids, import_node("decimal", "std:decimal", ast.INFO[root].loc))
+        push(ast.NODES[root].kids, implicit_import("decimal", "std:decimal", ast.INFO[root].loc))
+    }
+    if typecheck.MODS.len == 1 && !imports_spec(root, "std:key") {
+        push(ast.NODES[root].kids, implicit_import("key", "std:key", ast.INFO[root].loc))
     }
     if alias == "http" {
         return

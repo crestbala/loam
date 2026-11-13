@@ -688,16 +688,25 @@ fn int_bits(t: int) -> int {
     return if b != 0 { b } else { 64 }
 }
 
-fn value_key(t0: int, place: string) {
+/** *Append literal `s` to the key buffer `b`. */
+fn vk_lit(b: string, s: string) {
+    w("loam_buf_push_str({{b}}, ")
+    str_lit(s)
+    w("); ")
+}
+
+/** *Statements appending `place`'s key (type `t0`) to the `[]u8` at `b` */
+/** *through `std:key`'s `push_*`: one buffer for the whole key. */
+fn value_key(t0: int, place: string, b: string) {
     let t = vk_resolve(t0)
     if t == NO_TYPE {
-        w("loam_key_static(\"~\", 1)")
+        vk_lit(b, "~")
         return
     }
     let k = types.TYPES[t].kind
     let compound = k == TK.Struct || k == TK.Vec || k == TK.Array
     if compound && (VK_STACK.len >= 24 || vk_seen(t)) {
-        w("loam_key_static(\"~\", 1)")
+        vk_lit(b, "~")
         return
     }
     if compound {
@@ -707,40 +716,50 @@ fn value_key(t0: int, place: string) {
     VK_TMP = VK_TMP + 1
     switch k {
         case TK.String:
-            w("loam_key_str({{place}})")
+            w("loam_key_push_str({{b}}, {{place}}); ")
             break
         case TK.Bool:
-            w("loam_key_static(({{place}}) ? \"b1\" : \"b0\", 2)")
+            w("loam_buf_push_str({{b}}, ({{place}}) ? ")
+            str_lit("b1")
+            w(" : ")
+            str_lit("b0")
+            w("); ")
             break
         case TK.Int:
+            // Width and signedness are the type's: a literal prefix, then
+            // `std:decimal` appends the value.
             if types.TYPES[t].is_unsigned != 0 {
-                w("loam_key_int((int64_t)(uint64_t)({{place}}), {{int_bits(t)}}, 1)")
+                vk_lit(b, "i{{int_bits(t)}}u:")
+                w("loam_decimal_push_u64({{b}}, (uint64_t)({{place}})); ")
             } else {
-                w("loam_key_int((int64_t)({{place}}), {{int_bits(t)}}, 0)")
+                vk_lit(b, "i{{int_bits(t)}}s:")
+                w("loam_decimal_push_int({{b}}, (int64_t)({{place}})); ")
             }
             break
         case TK.Float:
-            w("loam_key_fbits(&({{place}}), {{int_bits(t)}})")
+            if int_bits(t) <= 32 {
+                w("loam_key_push_f32({{b}}, {{place}}); ")
+            } else {
+                w("loam_key_push_f64({{b}}, {{place}}); ")
+            }
             break
         case TK.Ptr:
-            w("loam_key_addr((uint64_t)(uintptr_t)({{place}}), 'p')")
+            w("loam_key_push_addr({{b}}, (uint64_t)(uintptr_t)({{place}}), 112); ")
             break
         case TK.Box:
-            w("loam_key_addr((uint64_t)(uintptr_t)({{place}}), 'x')")
+            w("loam_key_push_addr({{b}}, (uint64_t)(uintptr_t)({{place}}), 120); ")
             break
         case TK.Proc:
-            w("loam_key_addr((uint64_t)(uintptr_t)({{place}}).fn, 'F')")
+            w("loam_key_push_addr({{b}}, (uint64_t)(uintptr_t)({{place}}).fn, 70); ")
             break
         case TK.Struct:
             let names = types.TYPES[t].field_names
             let fts = types.TYPES[t].field_types
-            w("({ loam_str _a{{id}} = loam_key_tag('R', {{names.len}}, '{'); ")
+            vk_lit(b, "R{{names.len}}{")
             for fi in 0..names.len {
-                w("{ loam_str _k{{id}}_{{fi}} = ")
-                value_key(fts[fi], "{{place}}.{{cid(names[fi])}}")
-                w("; _a{{id}} = loam_key_cat(_a{{id}}, _k{{id}}_{{fi}}); } ")
+                value_key(fts[fi], "{{place}}.{{cid(names[fi])}}", b)
             }
-            w("_a{{id}} = loam_key_cat(_a{{id}}, loam_key_static(\"}\", 1)); _a{{id}}; })")
+            vk_lit(b, "}")
             break
         case TK.Vec, TK.Array:
             let e = types.TYPES[t].elem
@@ -748,10 +767,11 @@ fn value_key(t0: int, place: string) {
             let alen = if types.TYPES[t].array_len > i64(0) { types.TYPES[t].array_len } else { i64(0) }
             let ename = "_e{{id}}"
             if is_vec {
-                w("({ loam_str _a{{id}} = loam_key_tag('V', {{place}}.len, '['); int64_t _i{{id}}; ")
+                w("loam_key_push_vec_tag({{b}}, {{place}}.len); { int64_t _i{{id}}; ")
                 w("for (_i{{id}} = 0; _i{{id}} < {{place}}.len; _i{{id}}++) { ")
             } else {
-                w("({ loam_str _a{{id}} = loam_key_tag('A', {{alen}}, '['); int64_t _i{{id}}; ")
+                vk_lit(b, "A{{alen}}[")
+                w("{ int64_t _i{{id}}; ")
                 w("for (_i{{id}} = 0; _i{{id}} < {{alen}}; _i{{id}}++) { ")
             }
             var_decl(e, ename)
@@ -761,13 +781,12 @@ fn value_key(t0: int, place: string) {
             } else {
                 w("memcpy(&{{ename}}, &({{place}})[_i{{id}}], sizeof({{ename}})); ")
             }
-            w("{ loam_str _k{{id}} = ")
-            value_key(e, ename)
-            w("; _a{{id}} = loam_key_cat(_a{{id}}, _k{{id}}); } } ")
-            w("_a{{id}} = loam_key_cat(_a{{id}}, loam_key_static(\"]\", 1)); _a{{id}}; })")
+            value_key(e, ename, b)
+            w("} } ")
+            vk_lit(b, "]")
             break
         default:
-            w("loam_key_static(\"~\", 1)")
+            vk_lit(b, "~")
             break
     }
     if compound {
@@ -1825,9 +1844,17 @@ fn builtin_call(x: &Inst) -> bool {
     let name = ir.TEXTS[x.text]
     let has_dst = x.dst >= 0
     if name == "loam_value_key" && x.nargs >= 1 && has_dst {
-        w("{{lv(x.dst)}} = ")
-        value_key(x.ty, lv(arg_of(x, 0)))
-        w(";\n")
+        // A string alone is its own key: the rows of one `Each` share a
+        // type, so no tag or length is needed (inside a compound, `push_str`
+        // still length-prefixes it so the pieces cannot run together).
+        let vt = vk_resolve(x.ty)
+        if vt != NO_TYPE && types.TYPES[vt].kind == TK.String {
+            w("{{lv(x.dst)}} = {{lv(arg_of(x, 0))}}; loam_str_retain({{lv(x.dst)}});\n")
+            return true
+        }
+        w("{ loam_vec _vk = {0}; ")
+        value_key(x.ty, lv(arg_of(x, 0)), "&_vk")
+        w("{{lv(x.dst)}} = loam_string_from_u8(_vk); }\n")
         return true
     }
     if name == "loam_sig_push" && x.nargs >= 1 && has_dst {
