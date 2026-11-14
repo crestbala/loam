@@ -638,7 +638,40 @@ straight to libc, so no C shim.
       `compile_fail` (164), `thread_spawn`, `async_await`, `http`; the 8
       stanzas plus `wasm_trap`; `cross-check.sh` Linux 123/123 and Windows
       111/111 on both CPUs. **Runtime: 8,389 → 8,286** (−103).
-- [ ] R2.4 stdin: `read_stdin` / `read_line` buffering.
+- [x] R2.4 stdin: `read_stdin` / `read_line`. Done 2026-11-15. Both stay
+      unbuffered, as the C was: a JSON-RPC peer mixes them, and a child that
+      shares stdin must get the very next byte. `read_line` is Loam over raw
+      `read` (`_read` on Windows, which takes an `unsigned` and gives an
+      `int`, so each OS has its exact signature: a 32-bit count where
+      `size_t` is expected would leave the upper register bits undefined).
+      It reads one byte per call into a 1-byte buffer kept between calls,
+      grows a line buffer that is emptied (not freed) per line, retries on
+      `EINTR` via `c_errno`, and stops at 8192 bytes as before. Windows
+      binary mode is one `_setmode` behind a module flag. `read_stdin` is
+      `string_from_bytes(read_fd(0, n))` over a new public hook,
+      `sys.read_fd(fd, n) -> []u8`: it reads until `n` bytes or the end and
+      sets the length to what `read` returned, so no byte is unwritten and
+      none is zero-filled first. It is memory-safe as a public fn (a bad
+      `fd` reads nothing), and it is the primitive the deferred R2.2
+      `read_file` speed fix needs. Module buffers are race-free: workers
+      cannot reach `sys` (checked: every I/O `sys` call, now Loam over
+      `#[c]`, is still refused in a worker, at its binding or its global;
+      only the pure `sys.os()` passes). Probe vs HEAD's C (CRLF, blank line,
+      mixed `read_stdin` / `read_line`, 0 and negative `n`, a 9000-byte line
+      split at 8192, NUL bytes, a child sharing stdin, 2.5 MB, EOF), from a
+      file and through a pipe: identical, 0 leaks. Benchmark vs HEAD's C:
+      `read_stdin` 100 MB in 64 KiB calls 11–13 vs 10–13 ms, in one call
+      16–17 vs 17–20 ms (the buffer becomes the string with no copy).
+      `read_line` over 1M lines, one syscall per byte in both: median 23.93
+      vs 23.56 s (+1.6%), user CPU +0.25 s (about 8 ns a byte; kernel time
+      equal). That residual is safe vec bookkeeping per byte (refcount,
+      bounds and copy-on-write checks on the buffers) against C's stack
+      array; closing it needs borrowed `[]u8` params for `#[c]`. Seed
+      5,097,807 → 5,097,820 bytes, seed = stage 1 = stage 2. Suite:
+      `sys_spawn` (pipes a child's stdin), `sys_exec`, `sys`, `compile_fail`
+      (164), `thread`, `http`; the 8 stanzas plus `wasm_trap` (`lsp` speaks
+      JSON-RPC through both); `cross-check.sh` Linux 123/123 and Windows
+      111/111 on both CPUs. **Runtime: 8,286 → 8,249** (−37).
 - [ ] R2.5 `watch_*` bookkeeping over kqueue / inotify / Win32 bindings.
 - [ ] R2.6 Win32 paths through the same bindings; the Windows CI job is green.
 

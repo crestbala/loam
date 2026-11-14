@@ -835,11 +835,129 @@ fn run(argv: &[]string) -> int {
 }
 
 /** *Read exactly `n` bytes of stdin (fewer only at end of input), unbuffered. */
-fn read_stdin(n: int) -> string {}
+fn read_stdin(n: int) -> string {
+    return read_stdin_os(n)
+}
 
 /** *One line of stdin *including* its `\n`: `""` is end of input, `"\n"` a */
 /** *blank line. Unbuffered, so it can be mixed with `read_stdin`. */
-fn read_line() -> string {}
+fn read_line() -> string {
+    return read_line_os()
+}
+
+/** *Up to `n` bytes from the open descriptor `fd`: reads until `n` arrive or */
+/** *the input ends, retrying when a signal interrupts. Fewer at end of input */
+/** *or on an error; empty for a bad `fd`. Each byte is written once, never */
+/** *zero-filled first. Native only. */
+#[os("posix", "windows")]
+fn read_fd(fd: int, n: int) -> []u8 {}
+
+/** *Native `read_stdin`: one `read_fd` of fd 0, the buffer taken over as the */
+/** *string without a copy. */
+#[os("posix", "windows")]
+fn read_stdin_os(n: int) -> string {
+    stdin_binary()
+    if n <= 0 {
+        return ""
+    }
+    return string_from_bytes(read_fd(0, n))
+}
+
+/** *No stdin on wasm. */
+#[os("wasm")]
+fn read_stdin_os(n: int) -> string {
+    return ""
+}
+
+/** *Native `read_line`: one byte per `read`, so not a byte past the `\n` is */
+/** *taken from a stream another reader (or a child) shares. At most 8192 */
+/** *bytes, as before. */
+#[os("posix", "windows")]
+fn read_line_os() -> string {
+    stdin_binary()
+    if stdin_byte.len == 0 {
+        stdin_byte = buf.with_len(1)
+    }
+    // Emptied, not freed: its capacity carries over, so a line costs one
+    // allocation (the copy out), as the C's stack buffer did.
+    while line_buf.len > 0 {
+        pop(line_buf)
+    }
+    while line_buf.len < 8192 {
+        let r = read_byte()
+        if r < 0 && c_errno() == 4 {
+            // `EINTR` (4 on every target here): a signal, not the end.
+            continue
+        }
+        if r <= 0 {
+            break
+        }
+        let c = stdin_byte[0]
+        push(line_buf, c)
+        if c == u8('\n') {
+            break
+        }
+    }
+    return buf.to_string(&line_buf)
+}
+
+/** *`read_line`'s one-byte landing spot and line under construction, kept */
+/** *between calls. Workers cannot reach `sys` (docs/threads.md), so no two */
+/** *threads share them. */
+let mut stdin_byte: []u8 = []u8 {}
+let mut line_buf: []u8 = []u8 {}
+
+/** *No stdin on wasm. */
+#[os("wasm")]
+fn read_line_os() -> string {
+    return ""
+}
+
+/** *One byte of fd 0 into `stdin_byte`: `1`, `0` at end of input, `-1` on */
+/** *an error. */
+#[os("posix")]
+fn read_byte() -> i64 {
+    return c_read(0, stdin_byte, i64(1))
+}
+
+/** *Windows: `_read` takes an `unsigned` count and gives an `int`. */
+#[os("windows")]
+fn read_byte() -> i64 {
+    return i64(c_read_win(0, stdin_byte, 1))
+}
+
+/** *`read` straight from libc (`size_t` in, `ssize_t` out). */
+#[os("posix")]
+#[c("read")]
+fn c_read(fd: i32, b: []u8, n: i64) -> i64 {}
+
+/** *`_read` straight from the Windows CRT. */
+#[os("windows")]
+#[c("_read")]
+fn c_read_win(fd: i32, b: []u8, n: u32) -> i32 {}
+
+/** *Whether stdin is in binary mode yet (Windows only needs it). */
+let mut stdin_raw: bool = false
+
+/** *posix stdin is bytes already. */
+#[os("posix")]
+fn stdin_binary() {
+    return
+}
+
+/** *Windows: binary mode once (`_O_BINARY`), so no `\r\n` is rewritten. */
+#[os("windows")]
+fn stdin_binary() {
+    if !stdin_raw {
+        c_setmode(0, 32768)
+        stdin_raw = true
+    }
+}
+
+/** *`_setmode` straight from the Windows CRT. */
+#[os("windows")]
+#[c("_setmode")]
+fn c_setmode(fd: i32, mode: i32) -> i32 {}
 
 /** *True for an absolute path: `/x`, or on Windows `C:/x`, `C:\x`, `\\host\x`. */
 fn is_abs(path: string) -> bool {

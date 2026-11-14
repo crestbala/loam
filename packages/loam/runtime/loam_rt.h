@@ -1233,11 +1233,6 @@ static inline loam_str loam_sys_arg(int64_t i) {
    in `std/sys.loam` now (R2.2), so the stubs are gone. */
 /* `sys.mkdir` / `sys.rename` / `sys.cwd` answer from Loam `#[os("wasm")]`
    variants too (R2.2): nothing is created, renamed, or listed. */
-static inline loam_str loam_sys_read_stdin(int64_t n) {
-    (void)n;
-    return (loam_str){"", 0};
-}
-static inline loam_str loam_sys_read_line(void) { return (loam_str){"", 0}; }
 /* No filesystem, so nothing to watch: a caller sees "no watcher here" rather
    than an empty event stream, which would be a reload that never fires. */
 static inline int64_t loam_sys_watch_open(void) { return 0; }
@@ -1545,53 +1540,21 @@ int loam_sys_spawnp(int32_t *pid, const char *file, int64_t *argv) {
 #endif
 #endif
 
-/* --- sys.read_stdin / sys.read_line: unbuffered, for a JSON-RPC peer --- */
-static inline void loam_stdin_binary(void) {
-#ifdef _WIN32
-    static int done;
-    if (!done) {
-        _setmode(0, 0x8000 /* _O_BINARY */);
-        done = 1;
-    }
-#endif
-}
-
-/** Exactly `n` bytes, fewer only at end of input. */
-static inline loam_str loam_sys_read_stdin(int64_t n) {
-    char *p;
-    int64_t got = 0;
-    loam_stdin_binary();
-    if (n <= 0) return (loam_str){"", 0};
-    p = loam_str_bytes(n);
-    while (got < n) {
-        ssize_t r = read(0, p + got, (size_t)(n - got));
+/* `sys.read_stdin` / `sys.read_line` live in `std/sys.loam` (R2.4), over
+   this one hook and raw `read`. `sys.read_fd(fd, n)`: up to `n` bytes of
+   `fd` into a fresh buffer whose length is what `read` returned, retried on
+   `EINTR`; no byte is unwritten and none is zeroed first. */
+static inline loam_vec loam_sys_read_fd(int64_t fd, int64_t n) {
+    loam_vec v = loam_vec_new();
+    if (n <= 0) return v;
+    loam_vec_reserve(&v, n + 1, 1, "sys.read_fd", 0);
+    while (v.len < n) {
+        ssize_t r = read((int)fd, (char *)v.ptr + v.len, (size_t)(n - v.len));
         if (r < 0 && errno == EINTR) continue;
         if (r <= 0) break;
-        got += r;
+        v.len += r;
     }
-    p[got] = 0;
-    if (got == 0) {
-        loam_str e = loam_str_owned(p, 0);
-        loam_str_release(&e);
-        return (loam_str){"", 0};
-    }
-    return loam_str_owned(p, got);
-}
-
-/** One line *with* its `\n`, so `""` means end of input and `"\n"` a blank line. */
-static inline loam_str loam_sys_read_line(void) {
-    char buf[8192];
-    int64_t n = 0;
-    loam_stdin_binary();
-    while (n < (int64_t)sizeof buf) {
-        char c;
-        ssize_t r = read(0, &c, 1);
-        if (r < 0 && errno == EINTR) continue;
-        if (r <= 0) break;
-        buf[n++] = c;
-        if (c == '\n') break;
-    }
-    return loam_str_copy(buf, n);
+    return v;
 }
 
 /* --- sys.watch_*: the kernel half of change-driven reload ---
