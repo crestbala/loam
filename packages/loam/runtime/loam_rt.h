@@ -1233,14 +1233,6 @@ static inline loam_str loam_sys_arg(int64_t i) {
    in `std/sys.loam` now (R2.2), so the stubs are gone. */
 /* `sys.mkdir` / `sys.rename` / `sys.cwd` answer from Loam `#[os("wasm")]`
    variants too (R2.2): nothing is created, renamed, or listed. */
-static inline int64_t loam_sys_spawn(const loam_vec *argv) {
-    (void)argv;
-    return -1;
-}
-static inline int64_t loam_sys_wait(int64_t h) {
-    (void)h;
-    return -1;
-}
 static inline loam_str loam_sys_read_stdin(int64_t n) {
     (void)n;
     return (loam_str){"", 0};
@@ -1523,130 +1515,35 @@ char *loam_sys_getcwd(char *buf, size_t n) {
 #endif
 #endif
 
-/* --- sys.spawn / sys.wait: run a program without a shell ---
-   `argv[0]` is looked up on PATH. Children live in a small table so a handle
-   is an int on every platform (a pid on POSIX, a process HANDLE on Windows).
-   -1 = could not start. */
-#define LOAM_SPAWN_MAX 256
-#ifdef _WIN32
-LOAM_RT_STATE intptr_t loam_spawn_tab[LOAM_SPAWN_MAX];
-#else
+/* `sys.spawn` / `sys.wait` live in `std/sys.loam` (R2.3e): the spawn table
+   and the Windows quoting are Loam, over raw `waitpid` / `_spawnvp` /
+   `_cwait`. Three shims are left. `loam_sys_argv_fill` lays a `char **` over
+   Loam-owned slots (8 bytes each, so any pointer width fits);
+   `loam_sys_spawnp` exists because `environ` is a variable, which no binding
+   can name; `loam_sys_errno` lets `waitpid` retry on `EINTR` alone. */
+void loam_sys_argv_fill(char *block, const int64_t *offsets, int64_t n, int64_t *slots);
+int loam_sys_errno(void);
+#ifndef _WIN32
 #include <spawn.h>
 extern char **environ;
-LOAM_RT_STATE pid_t loam_spawn_tab[LOAM_SPAWN_MAX];
+int loam_sys_spawnp(int32_t *pid, const char *file, int64_t *argv);
 #endif
-LOAM_RT_STATE unsigned char loam_spawn_live[LOAM_SPAWN_MAX];
-
-static char *loam_cstr_dup(loam_str s) {
-    char *p = (char *)malloc((size_t)(s.len > 0 ? s.len : 0) + 1);
-    if (!p) return NULL;
-    if (s.len > 0) memcpy(p, s.ptr, (size_t)s.len);
-    p[s.len > 0 ? s.len : 0] = 0;
-    return p;
+#ifdef LOAM_RT_DEFINE_JMP
+void loam_sys_argv_fill(char *block, const int64_t *offsets, int64_t n, int64_t *slots) {
+    char **av = (char **)slots;
+    for (int64_t i = 0; i < n; i++) av[i] = block + offsets[i];
+    av[n] = NULL;
 }
-
-#ifdef _WIN32
-/* The MS C runtime joins argv with spaces, so each argument is quoted the
-   way `CommandLineToArgvW` splits it back: backslashes double only before a
-   quote, and a quote is escaped. */
-static char *loam_win_quote(const char *a) {
-    size_t n = strlen(a), i, o = 0;
-    int plain = n > 0;
-    for (i = 0; i < n; i++)
-        if (a[i] == ' ' || a[i] == '\t' || a[i] == '"') plain = 0;
-    char *q = (char *)malloc(2 * n + 3);
-    if (!q) return NULL;
-    if (plain) {
-        memcpy(q, a, n + 1);
-        return q;
-    }
-    q[o++] = '"';
-    for (i = 0; i < n; i++) {
-        size_t bs = 0;
-        while (i < n && a[i] == '\\') {
-            bs++;
-            i++;
-        }
-        if (i == n) {
-            while (bs--) { q[o++] = '\\'; q[o++] = '\\'; }
-            break;
-        }
-        if (a[i] == '"') {
-            while (bs--) { q[o++] = '\\'; q[o++] = '\\'; }
-            q[o++] = '\\';
-            q[o++] = '"';
-        } else {
-            while (bs--) q[o++] = '\\';
-            q[o++] = a[i];
-        }
-    }
-    q[o++] = '"';
-    q[o] = 0;
-    return q;
+int loam_sys_errno(void) { return errno; }
+#ifndef _WIN32
+int loam_sys_spawnp(int32_t *pid, const char *file, int64_t *argv) {
+    pid_t p = 0;
+    int r = posix_spawnp(&p, file, NULL, NULL, (char **)argv, environ);
+    *pid = (int32_t)p;
+    return r;
 }
 #endif
-
-static inline int64_t loam_sys_spawn(const loam_vec *argv) {
-    int64_t n = argv ? argv->len : 0, i;
-    int slot = -1, ok = 0;
-    char **av;
-    if (n <= 0) return -1;
-    for (i = 0; i < LOAM_SPAWN_MAX; i++)
-        if (!loam_spawn_live[i]) {
-            slot = (int)i;
-            break;
-        }
-    if (slot < 0) return -1;
-    av = (char **)calloc((size_t)n + 1, sizeof(char *));
-    if (!av) return -1;
-    for (i = 0; i < n; i++) {
-        char *c = loam_cstr_dup(((const loam_str *)argv->ptr)[i]);
-#ifdef _WIN32
-        av[i] = c ? loam_win_quote(c) : NULL;
-        free(c);
-#else
-        av[i] = c;
 #endif
-    }
-#ifdef _WIN32
-    {
-        intptr_t h = _spawnvp(_P_NOWAIT, av[0], (const char *const *)av);
-        if (h != -1) {
-            loam_spawn_tab[slot] = h;
-            ok = 1;
-        }
-    }
-#else
-    {
-        pid_t pid;
-        if (posix_spawnp(&pid, av[0], NULL, NULL, av, environ) == 0) {
-            loam_spawn_tab[slot] = pid;
-            ok = 1;
-        }
-    }
-#endif
-    for (i = 0; i < n; i++) free(av[i]);
-    free(av);
-    if (!ok) return -1;
-    loam_spawn_live[slot] = 1;
-    return slot + 1;
-}
-
-/** Block until the child exits: its exit code, or -1 for a bad handle or a
- *  child killed by a signal. Each handle is waited for once. */
-static inline int64_t loam_sys_wait(int64_t h) {
-    int slot = (int)h - 1, st = 0;
-    if (slot < 0 || slot >= LOAM_SPAWN_MAX || !loam_spawn_live[slot]) return -1;
-    loam_spawn_live[slot] = 0;
-#ifdef _WIN32
-    if (_cwait(&st, loam_spawn_tab[slot], 0) == -1) return -1;
-    return st;
-#else
-    while (waitpid(loam_spawn_tab[slot], &st, 0) < 0)
-        if (errno != EINTR) return -1;
-    return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
-#endif
-}
 
 /* --- sys.read_stdin / sys.read_line: unbuffered, for a JSON-RPC peer --- */
 static inline void loam_stdin_binary(void) {

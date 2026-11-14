@@ -611,11 +611,219 @@ fn c_stat(path: string) -> Result<[]i64> {
 /** *a shell, so nothing in an argument is ever interpreted. Returns a handle for */
 /** *`wait`, or `-1` if it could not start. Up to 256 children at a time. Native */
 /** *only; wasm returns `-1`. */
-fn spawn(argv: &[]string) -> int {}
+fn spawn(argv: &[]string) -> int {
+    return spawn_os(argv)
+}
 
 /** *Wait for a `spawn`ed child: its exit code, or `-1` for a bad handle or a */
 /** *child killed by a signal. Each handle is waited for once. */
-fn wait(handle: int) -> int {}
+fn wait(handle: int) -> int {
+    return wait_os(handle)
+}
+
+/** *The spawn table: a child's pid (posix) or process handle (Windows) per */
+/** *slot, `0` for a free one. A handle is its slot plus one, so it is a */
+/** *small int on every platform. Filled to 256 slots on the first `spawn`. */
+let mut spawned: []i64 = []i64 {}
+
+/** *The most children alive at once. */
+const SPAWN_MAX: int = 256
+
+/** *Native `spawn`: a free slot, the arguments packed NUL-terminated into one */
+/** *buffer, a `char **` laid over Loam-owned slots, then one start call. C */
+/** *allocates nothing, and every buffer outlives the call that reads it. */
+#[os("posix", "windows")]
+fn spawn_os(argv: &[]string) -> int {
+    let n = argv.len
+    if n <= 0 {
+        return -1
+    }
+    if spawned.len == 0 {
+        for i in 0..SPAWN_MAX {
+            push(spawned, i64(0))
+        }
+    }
+    let mut slot = -1
+    for i in 0..SPAWN_MAX {
+        if spawned[i] == i64(0) {
+            slot = i
+            break
+        }
+    }
+    if slot < 0 {
+        return -1
+    }
+    let mut block = []u8 {}
+    let mut offsets = []i64 {}
+    let mut slots = []i64 {}
+    let mut file = ""
+    for i in 0..n {
+        let a = spawn_arg(argv[i])
+        if i == 0 {
+            file = a
+        }
+        push(offsets, i64(block.len))
+        buf.push_str(&mut block, a)
+        push(block, u8(0))
+        push(slots, i64(0))
+    }
+    push(slots, i64(0))
+    c_argv_fill(block, offsets, i64(n), slots)
+    let id = start_child(file, slots)
+    if id == i64(0) {
+        return -1
+    }
+    spawned[slot] = id
+    return slot + 1
+}
+
+/** *No processes on wasm. */
+#[os("wasm")]
+fn spawn_os(argv: &[]string) -> int {
+    return -1
+}
+
+/** *Native `wait`: the slot's child, freed first so a handle is waited for */
+/** *once, whatever the outcome. */
+#[os("posix", "windows")]
+fn wait_os(handle: int) -> int {
+    let slot = handle - 1
+    if slot < 0 || slot >= spawned.len || spawned[slot] == i64(0) {
+        return -1
+    }
+    let id = spawned[slot]
+    spawned[slot] = i64(0)
+    return wait_child(id)
+}
+
+/** *No processes on wasm. */
+#[os("wasm")]
+fn wait_os(handle: int) -> int {
+    return -1
+}
+
+/** *An argument as the child sees it: posix passes it untouched. */
+#[os("posix")]
+fn spawn_arg(a: string) -> string {
+    return a
+}
+
+/** *The MS C runtime joins argv with spaces, so each argument is quoted the */
+/** *way `CommandLineToArgvW` splits it back: backslashes double only before */
+/** *a quote, and a quote is escaped. A plain argument stays as it is. */
+#[os("windows")]
+fn spawn_arg(a: string) -> string {
+    let mut plain = a.len > 0
+    for i in 0..a.len {
+        if a[i] == ' ' || a[i] == '\t' || a[i] == '"' {
+            plain = false
+        }
+    }
+    if plain {
+        return a
+    }
+    let mut q = []u8 {}
+    push(q, u8('"'))
+    let mut i = 0
+    while i < a.len {
+        let mut slashes = 0
+        while i < a.len && a[i] == '\\' {
+            slashes = slashes + 1
+            i = i + 1
+        }
+        // Before a quote, or the closing quote, each backslash doubles.
+        let doubled = i == a.len || a[i] == '"'
+        for k in 0..(if doubled { slashes * 2 } else { slashes }) {
+            push(q, u8('\\'))
+        }
+        if i == a.len {
+            break
+        }
+        if a[i] == '"' {
+            push(q, u8('\\'))
+        }
+        push(q, u8(a[i]))
+        i = i + 1
+    }
+    push(q, u8('"'))
+    return string_from_bytes(q)
+}
+
+/** *posix: `posix_spawnp` through the shim (it names `environ`); the pid, */
+/** *or `0` when the program could not start. */
+#[os("posix")]
+fn start_child(file: string, argv: []i64) -> i64 {
+    let pid = []i32 { 0 }
+    if c_spawnp(pid, file, argv) != 0 {
+        return i64(0)
+    }
+    return i64(pid[0])
+}
+
+/** *Windows: `_spawnvp(_P_NOWAIT, ...)`, the process handle or `0`. */
+#[os("windows")]
+fn start_child(file: string, argv: []i64) -> i64 {
+    let h = c_spawnvp(1, file, argv)
+    return if h == i64(-1) { i64(0) } else { h }
+}
+
+/** *posix: `waitpid`, retried only when a signal interrupted it (`EINTR` */
+/** *is 4 on Linux and macOS). The exit code, or `-1` for a child a signal */
+/** *killed or a failed wait (`WIFEXITED` spelled out, as in `exit_code`). */
+#[os("posix")]
+fn wait_child(id: i64) -> int {
+    let st = []i32 { 0 }
+    while c_waitpid(i32(id), st, 0) < 0 {
+        if c_errno() != 4 {
+            return -1
+        }
+    }
+    if (st[0] & 127) != 0 {
+        return -1
+    }
+    return int((st[0] >> 8) & 255)
+}
+
+/** *Windows: `_cwait` hands back the exit code itself. */
+#[os("windows")]
+fn wait_child(id: i64) -> int {
+    let st = []i32 { 0 }
+    if c_cwait(st, id, 0) == i64(-1) {
+        return -1
+    }
+    return int(st[0])
+}
+
+/** *Lay a `char **` over `slots`: entry `i` points at `offsets[i]` in */
+/** *`block`, then a NULL. The slots are storage only; Loam never reads them. */
+#[os("posix", "windows")]
+#[c("loam_sys_argv_fill")]
+fn c_argv_fill(block: []u8, offsets: []i64, n: i64, slots: []i64) {}
+
+/** *`posix_spawnp(pid, file, NULL, NULL, argv, environ)`: `0` on success. */
+#[os("posix")]
+#[c("loam_sys_spawnp")]
+fn c_spawnp(pid: []i32, file: string, argv: []i64) -> i32 {}
+
+/** *`_spawnvp` straight from the Windows CRT: a process handle or `-1`. */
+#[os("windows")]
+#[c("_spawnvp")]
+fn c_spawnvp(mode: i32, file: string, argv: []i64) -> i64 {}
+
+/** *`waitpid` straight from libc: the pid, or `-1` (see `c_errno`). */
+#[os("posix")]
+#[c("waitpid")]
+fn c_waitpid(pid: i32, status: []i32, options: i32) -> i32 {}
+
+/** *`_cwait` straight from the Windows CRT: the handle, or `-1`. */
+#[os("windows")]
+#[c("_cwait")]
+fn c_cwait(status: []i32, h: i64, action: i32) -> i64 {}
+
+/** *The calling thread's `errno`, for a retry that must know why. */
+#[os("posix", "windows")]
+#[c("loam_sys_errno")]
+fn c_errno() -> i32 {}
 
 /** *`spawn` then `wait`: the exit code, or `-1` if it could not start. */
 fn run(argv: &[]string) -> int {
