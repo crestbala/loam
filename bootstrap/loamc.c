@@ -44,6 +44,7 @@ static inline ssize_t writev(int fd, const struct iovec *iov, int n) {
 #define pclose _pclose
 #define lstat stat
 #define mkdir(path, mode) _mkdir(path)
+#define loam_sys_stdout_tty_win(fd) ((int32_t)isatty(STDOUT_FILENO))
 #else
 #include <sys/uio.h>
 #endif
@@ -1327,7 +1328,6 @@ static inline loam_str loam_sys_exec(loam_str cmd) {
     return (loam_str){"", 0};
 }
 static inline int64_t loam_sys_exec_status(void) { return 1; }
-static inline int64_t loam_sys_stdout_tty(void) { return 0; }
 static inline loam_str loam_sys_read_file(loam_str path) {
     (void)path;
     return (loam_str){"", 0};
@@ -1512,7 +1512,6 @@ static inline loam_str loam_sys_exec(loam_str cmd) {
 }
 
 static inline int64_t loam_sys_exec_status(void) { return loam_sys_last_status; }
-static inline int64_t loam_sys_stdout_tty(void) { return isatty(STDOUT_FILENO); }
 
 /* The development-host seam (`std:host`): hand the process to a `zeli serve` host
    that loads the app as a shared image. Declared here because that is where a
@@ -157347,7 +157346,7 @@ bb10:;
     return;
 }
 
-#line 54 "sys.loam"
+#line 77 "sys.loam"
 static Result__string loam_sys_read(loam_str path) {
     loam_str _l1;
     loam_str _l2;
@@ -157360,21 +157359,21 @@ static Result__string loam_sys_read(loam_str path) {
     loam_str _l9;
     Result__string _l10;
 bb0:;
-#line 55
+#line 78
     _l1 = loam_sys_read_file(path);
     _l2 = _l1;
     loam_str_retain(_l2);
-#line 56
+#line 79
     _l3 = loam_sys_io_error();
     _l4 = _l3;
     loam_str_retain(_l4);
-#line 57
+#line 80
     _l5 = _l4.len;
     _l6 = 0;
     _l7 = (_l5 > _l6);
     if (_l7) goto bb1; else goto bb2;
 bb1:;
-#line 58
+#line 81
     _l9 = ((loam_str){(const char *)"", 0});
     _l8 = loam_result_res_err__string(_l4, _l9);
     loam_str_release(&_l9);
@@ -157384,7 +157383,7 @@ bb1:;
     loam_str_release(&_l1);
     return _l8;
 bb2:;
-#line 60
+#line 83
     _l10 = loam_result_res_ok__string(_l2);
     loam_str_release(&_l4);
     loam_str_release(&_l3);
@@ -157393,7 +157392,7 @@ bb2:;
     return _l10;
 }
 
-#line 89
+#line 112
 static int32_t loam_sys_run(const loam_vec * argv) {
     int32_t _l1;
     int32_t _l2;
@@ -157404,26 +157403,26 @@ static int32_t loam_sys_run(const loam_vec * argv) {
     int32_t _l7;
     int32_t _l8;
 bb0:;
-#line 90
+#line 113
     _l1 = loam_sys_spawn(argv);
     _l2 = _l1;
-#line 91
+#line 114
     _l3 = 0;
     _l4 = (_l2 < _l3);
     if (_l4) goto bb1; else goto bb2;
 bb1:;
-#line 92
+#line 115
     _l5 = 0;
     _l6 = 1;
     _l7 = (_l5 - _l6);
     return _l7;
 bb2:;
-#line 94
+#line 117
     _l8 = loam_sys_wait(_l2);
     return _l8;
 }
 
-#line 105
+#line 128
 static bool loam_sys_is_abs(loam_str path) {
     int32_t _l1;
     int32_t _l2;
@@ -157487,20 +157486,20 @@ static bool loam_sys_is_abs(loam_str path) {
     int32_t _l60;
     bool _l61;
 bb0:;
-#line 106
+#line 129
     _l1 = path.len;
     _l2 = 0;
     _l3 = (_l1 == _l2);
     if (_l3) goto bb1; else goto bb2;
 bb1:;
-#line 107
+#line 130
     _l4 = false;
     return _l4;
 bb2:;
-#line 109
+#line 132
     _l6 = 0;
     _l7 = path.len;
-    (void)loam_idx(_l6, _l7, "sys.loam", 109);
+    (void)loam_idx(_l6, _l7, "sys.loam", 132);
     _l8 = ((int64_t)(unsigned char)(path.ptr[_l6]));
     _l9 = 47;
     _l10 = (_l8 == _l9);
@@ -157509,7 +157508,7 @@ bb2:;
 bb3:;
     _l11 = 0;
     _l12 = path.len;
-    (void)loam_idx(_l11, _l12, "sys.loam", 109);
+    (void)loam_idx(_l11, _l12, "sys.loam", 132);
     _l13 = ((int64_t)(unsigned char)(path.ptr[_l11]));
     _l14 = 92;
     _l15 = (_l13 == _l14);
@@ -157518,11 +157517,11 @@ bb3:;
 bb4:;
     if (_l5) goto bb5; else goto bb6;
 bb5:;
-#line 110
+#line 133
     _l16 = true;
     return _l16;
 bb6:;
-#line 112
+#line 135
     _l20 = path.len;
     _l21 = 3;
     _l22 = (_l20 >= _l21);
@@ -157531,7 +157530,7 @@ bb6:;
 bb7:;
     _l23 = 1;
     _l24 = path.len;
-    (void)loam_idx(_l23, _l24, "sys.loam", 112);
+    (void)loam_idx(_l23, _l24, "sys.loam", 135);
     _l25 = ((int64_t)(unsigned char)(path.ptr[_l23]));
     _l26 = 58;
     _l27 = (_l25 == _l26);
@@ -157543,7 +157542,7 @@ bb8:;
 bb9:;
     _l29 = 2;
     _l30 = path.len;
-    (void)loam_idx(_l29, _l30, "sys.loam", 112);
+    (void)loam_idx(_l29, _l30, "sys.loam", 135);
     _l31 = ((int64_t)(unsigned char)(path.ptr[_l29]));
     _l32 = 47;
     _l33 = (_l31 == _l32);
@@ -157555,7 +157554,7 @@ bb10:;
 bb11:;
     _l34 = 2;
     _l35 = path.len;
-    (void)loam_idx(_l34, _l35, "sys.loam", 112);
+    (void)loam_idx(_l34, _l35, "sys.loam", 135);
     _l36 = ((int64_t)(unsigned char)(path.ptr[_l34]));
     _l37 = 92;
     _l38 = (_l36 == _l37);
@@ -157565,10 +157564,10 @@ bb12:;
     _l18 = _l28;
     goto bb10;
 bb13:;
-#line 113
+#line 136
     _l41 = 0;
     _l42 = path.len;
-    (void)loam_idx(_l41, _l42, "sys.loam", 113);
+    (void)loam_idx(_l41, _l42, "sys.loam", 136);
     _l43 = ((int64_t)(unsigned char)(path.ptr[_l41]));
     _l44 = 97;
     _l45 = (_l43 >= _l44);
@@ -157579,7 +157578,7 @@ bb14:;
 bb15:;
     _l46 = 0;
     _l47 = path.len;
-    (void)loam_idx(_l46, _l47, "sys.loam", 113);
+    (void)loam_idx(_l46, _l47, "sys.loam", 136);
     _l48 = ((int64_t)(unsigned char)(path.ptr[_l46]));
     _l49 = 122;
     _l50 = (_l48 <= _l49);
@@ -157591,21 +157590,21 @@ bb16:;
 bb17:;
     _l52 = 0;
     _l53 = path.len;
-    (void)loam_idx(_l52, _l53, "sys.loam", 113);
+    (void)loam_idx(_l52, _l53, "sys.loam", 136);
     _l54 = ((int64_t)(unsigned char)(path.ptr[_l52]));
     _l55 = 65;
     _l56 = (_l54 >= _l55);
     _l51 = _l56;
     if (_l56) goto bb19; else goto bb20;
 bb18:;
-#line 112
+#line 135
     _l17 = _l39;
     goto bb14;
 bb19:;
-#line 113
+#line 136
     _l57 = 0;
     _l58 = path.len;
-    (void)loam_idx(_l57, _l58, "sys.loam", 113);
+    (void)loam_idx(_l57, _l58, "sys.loam", 136);
     _l59 = ((int64_t)(unsigned char)(path.ptr[_l57]));
     _l60 = 90;
     _l61 = (_l59 <= _l60);
@@ -157616,7 +157615,7 @@ bb20:;
     goto bb18;
 }
 
-#line 162
+#line 185
 static loam_vec loam_sys_list_dir(loam_str path) {
     loam_vec _l1 = {0};
     loam_vec _l2;
@@ -157629,10 +157628,10 @@ static loam_vec loam_sys_list_dir(loam_str path) {
     int32_t _l9;
     int32_t _l10;
 bb0:;
-#line 163
+#line 186
     _l1 = loam_vec_new();
     _l2 = loam_vec_move(&_l1);
-#line 164
+#line 187
     _l3 = 0;
     _l4 = loam_sys_dir_count(path);
     _l5 = _l3;
@@ -157641,19 +157640,19 @@ bb1:;
     _l6 = (_l5 < _l4);
     if (_l6) goto bb2; else goto bb4;
 bb2:;
-#line 165
+#line 188
     _l7 = &_l2;
     _l8 = loam_sys_dir_entry(path, _l5);
-    loam_vec_push_take(_l7, &_l8, sizeof(loam_str), loam_elem_retain_1, "sys.loam", 165);
+    loam_vec_push_take(_l7, &_l8, sizeof(loam_str), loam_elem_retain_1, "sys.loam", 188);
     goto bb3;
 bb3:;
-#line 164
+#line 187
     _l9 = 1;
     _l10 = (_l5 + _l9);
     _l5 = _l10;
     goto bb1;
 bb4:;
-#line 167
+#line 190
     loam_vec_drop_owned(&_l1, sizeof(loam_str), loam_elem_release_1);
     return _l2;
 }

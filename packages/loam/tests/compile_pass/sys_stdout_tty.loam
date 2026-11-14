@@ -1,0 +1,9 @@
+// `sys.stdout_tty` is `#[os]` variants in `std/sys.loam` (R2.1): posix binds
+// `isatty` straight from libc, wasm answers `0`, Windows keeps a one-line
+// hook; the runtime C (`loam_sys_stdout_tty`) is gone.
+import "std:fmt"
+import "std:sys"
+
+fn main() {
+    fmt.println("tty:", sys.stdout_tty() >= 0)
+}

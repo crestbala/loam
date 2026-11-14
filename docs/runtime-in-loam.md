@@ -422,8 +422,25 @@ straight to libc, so no C shim.
       unchanged), `wasm_smoke`, `wasm_float`, `lsp`, `ownership_asan`,
       `android_project`, `cost`, `fresh_cache` green. **Runtime: 8,700**
       (unchanged: compiler-only, no runtime moved).
-- [ ] R2.1 `#[c]` usable from `std` itself, with libc symbols needing no
-      `#![c_source]`; wasm keeps its own import table.
+- [x] R2.1 `#[c]` usable from `std` itself. Done 2026-11-14. No compiler
+      change was needed: raw libc symbols already link with no `#![c_source]`
+      (proven by `compile_pass/c_ffi`'s `memcpy` / `floor` / `strlen` and by
+      `std:batch`'s nine bindings since R1.2); the blockers were convention,
+      now written in `boundary.md` (bindings are module-private, so each sits
+      beside a safe wrapper; per-OS shape is `#[os]` variants; Windows keeps
+      a hook behind a wrapper until R2.6). First production binding:
+      `sys.stdout_tty` is Loam over `#[os]` variants — posix `#[c("isatty")]`,
+      a wasm stub returning `0` (today's answer), a Windows wrapper over the
+      one-line `loam_sys_stdout_tty_win` hook macro — and `loam_rt.h` loses
+      `loam_sys_stdout_tty` plus its wasm stub. No compiler change: the R2.1a
+      machinery (`#[os]`+`#[c]` stacking, `#if`-guarded wrappers, `client_c_ok`
+      skipping non-wasm variants) already covered it; a probe combining all
+      three confirmed native and `--target wasm32` builds before touching std.
+      Fixture: `compile_pass/sys_stdout_tty` (prints `tty: true`). `stdout_tty` runs once per process, so no hot-path
+      benchmark (same single `isatty` syscall either way). Binaries (new vs
+      HEAD): tiny int program 16,936 unchanged, nob 533,216 unchanged, loamc
+      1,814,408 unchanged (no compiler change). **Runtime: 8,700 → 8,699** (−1: two C lines deleted, one hook
+      macro added).
 - [ ] R2.2 Files and dirs: `read_file`, `write_file`, `io_error`, directory
       walks, paths.
 - [ ] R2.3 Process: `exec`, `spawn` / `wait` and the spawn table, `env`,
