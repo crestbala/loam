@@ -3434,11 +3434,22 @@ fn c_bindings() {
                 w("#define LOAM_CSYM_S2(x) #x\n")
                 w("#define LOAM_CSYM_S(x) LOAM_CSYM_S2(x)\n")
                 w("#define LOAM_CSYM(s) __asm__(LOAM_CSYM_S(__USER_LABEL_PREFIX__) s)\n")
-                w("static inline char *loam_csym_cstr(loam_str s) {\n")
+                // A string argument C needs NUL-terminated: copied into the
+                // wrapper's own stack buffer when it fits, so a path or a
+                // name costs no malloc. The long case stays out of line, so
+                // the short one inlines and a literal's copy folds away.
+                w("static __attribute__((noinline, cold)) char *loam_csym_cstr_heap(loam_str s) {\n")
                 w("    char *b = (char *)malloc((size_t)s.len + 1);\n")
-                w("    if (s.len) memcpy(b, s.ptr, (size_t)s.len);\n")
+                w("    if (!b) abort();\n")
+                w("    memcpy(b, s.ptr, (size_t)s.len);\n")
                 w("    b[s.len] = 0;\n")
                 w("    return b;\n")
+                w("}\n")
+                w("static inline char *loam_csym_cstr(loam_str s, char *buf, size_t cap) {\n")
+                w("    if ((size_t)s.len >= cap) return loam_csym_cstr_heap(s);\n")
+                w("    if (s.len) memcpy(buf, s.ptr, (size_t)s.len);\n")
+                w("    buf[s.len] = 0;\n")
+                w("    return buf;\n")
                 w("}\n")
                 w("static inline loam_str loam_csym_str(const char *p) {\n")
                 w("    if (!p) return (loam_str){\"\", 0, 0};\n")
@@ -3461,7 +3472,8 @@ fn c_bindings() {
             w(" {\n")
             for k in 0..np {
                 if tkind(param_type(ft, k)) == TK.String {
-                    w("    char *_cs{{k}} = loam_csym_cstr({{cid(param_name(d, k))}});\n")
+                    w("    char _cb{{k}}[256];\n")
+                    w("    char *_cs{{k}} = loam_csym_cstr({{cid(param_name(d, k))}}, _cb{{k}}, sizeof _cb{{k}});\n")
                 }
             }
             w("    ")
@@ -3504,7 +3516,7 @@ fn c_bindings() {
             for k in 0..np {
                 let pk = tkind(param_type(ft, k))
                 if pk == TK.String {
-                    w("    free(_cs{{k}});\n")
+                    w("    if (_cs{{k}} != _cb{{k}}) free(_cs{{k}});\n")
                 } else if pk == TK.Vec {
                     w("    loam_vec_drop(&{{cid(param_name(d, k))}});\n")
                 }

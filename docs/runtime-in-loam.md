@@ -555,6 +555,36 @@ straight to libc, so no C shim.
       `c_ffi`, `http`; the 8 stanzas plus `wasm_trap`; `cross-check.sh` Linux
       x86_64 / aarch64 122/122 and Windows x86_64 / aarch64 110/110 (was 4
       failed). Seed 5,053,218 → 5,062,375 bytes, seed = stage 1 = stage 2. **Runtime: 8,540 → 8,479** (−61).
+- [x] R2.3c `env` / `env_set` / `exit` in Loam. Done 2026-11-14. `env` is
+      raw `getenv` (the wrapper copies its answer; NULL is `""`), the
+      256-byte name rule kept in Loam; `env_set` takes `getenv` as an address
+      and asks `memchr(p, 0, 1)` whether the first byte is the NUL, so it
+      never copies the value; `exit` is raw `exit`, and wasm keeps one
+      `abort` hook (`loam_sys_wasm_exit`: wasm builds may reach no `#[c]`).
+      **Codegen win for every `#[c]` binding:** a `string` argument is now
+      NUL-terminated in a 256-byte stack buffer in the wrapper, with the heap
+      only for longer strings, behind an out-of-line cold helper. It used to
+      be a `malloc` + `free` per argument. With the hot path that small, the
+      chain inlines, and a literal's copy folds into a store as the old C's
+      did. This also speeds up R2.2's `fopen` / `stat` / `mkdir` bindings.
+      R2.2 debt paid on the way: `c_stat` / `c_lstat` built a `strerror`
+      message on every miss that no caller read; misses no longer build it.
+      Behaviour matches HEAD (set, empty, unset, empty name, 256-byte name;
+      `exit` from 50 frames deep gives the same code). `compile_fail/
+      module_builtin_fn_value` now uses `sys.argc`, since `sys.exit` is no
+      longer a bodyless hook (a Loam fn may be a value). Benchmark vs HEAD's
+      C (3 rounds): `env` ×2M 118–130 vs 119–120 ms (parity); `env_set` unset
+      ×4M 333–347 vs 333–336 (parity); `env_set` set ×4M 115–117 vs 108–111
+      (+1.5 ns per call: one `memchr` call where C loaded the byte inline,
+      the one residual this step leaves); R2.2's `mtime` ×400k 754–762 vs
+      729–747 (+2–3%, was +4%) and `exists` miss 581–590 vs 555–569 (+4%, was
+      +9%). The rest is the per-call `[]i64` slot buffer, R2.2 speed work.
+      Compiler emitting itself, same input, 40 alternating runs: median
+      158.8 vs 158.6 ms. Seed 5,062,375 → 5,071,275 bytes, seed = stage 1 =
+      stage 2. Suite: `sys`, `fs`, `sys_stamp`, `std_buf_conv`, `c_ffi`,
+      `os_`, `exit`, `compile_fail` (164), `http`; the 8 stanzas plus
+      `wasm_trap`; `cross-check.sh` Linux 122/122 and Windows 110/110 on both
+      CPUs. **Runtime: 8,479 → 8,448** (−31).
 - [ ] R2.4 stdin: `read_stdin` / `read_line` buffering.
 - [ ] R2.5 `watch_*` bookkeeping over kqueue / inotify / Win32 bindings.
 - [ ] R2.6 Win32 paths through the same bindings; the Windows CI job is green.

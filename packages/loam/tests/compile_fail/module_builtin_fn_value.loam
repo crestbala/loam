@@ -1,5 +1,7 @@
+// A bodyless runtime hook has no C fn to point at: `sys.argc` reads the
+// argument vector the generated entry stored, so it cannot be a value.
 import "std:sys"
 
 fn main() {
-    let f = sys.exit
+    let f = sys.argc
 }

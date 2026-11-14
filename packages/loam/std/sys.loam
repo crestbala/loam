@@ -166,13 +166,90 @@ fn target() -> string {
 }
 
 /** *`1` if the environment variable is set and non-empty. */
-fn env_set(name: string) -> int {}
+fn env_set(name: string) -> int {
+    return env_set_os(name)
+}
+
+/** *Native `env_set`: `getenv`'s pointer and one byte of it, never a copy. */
+#[os("posix", "windows")]
+fn env_set_os(name: string) -> int {
+    if name.len == 0 || name.len >= 256 {
+        return 0
+    }
+    // Set and non-empty: a pointer whose first byte is not the NUL.
+    let p = c_getenv_at(name)
+    return if p != 0 && c_memchr(p, 0, 1) == 0 { 1 } else { 0 }
+}
+
+/** *No environment on wasm. */
+#[os("wasm")]
+fn env_set_os(name: string) -> int {
+    return 0
+}
+
+/** *`getenv` as the address of its answer (`0` when unset). Private, and */
+/** *only ever handed to `c_memchr` below. */
+#[os("posix", "windows")]
+#[c("getenv")]
+fn c_getenv_at(name: string) -> i64 {}
+
+/** *`memchr` straight from libc: the first `c` in the `n` bytes at `p`, or */
+/** *`0`. Reads at most `n` bytes. */
+#[os("posix", "windows")]
+#[c("memchr")]
+fn c_memchr(p: i64, c: i32, n: i64) -> i64 {}
 
 /** *Exit the process with `code`. */
-fn exit(code: int) {}
+fn exit(code: int) {
+    exit_os(code)
+}
+
+/** *Native `exit`: libc's, so `atexit` handlers and stdio flushing run. */
+#[os("posix", "windows")]
+fn exit_os(code: int) {
+    c_exit(i32(code))
+}
+
+/** *wasm has no process to leave: the host traps (`abort`), as before. */
+#[os("wasm")]
+fn exit_os(code: int) {
+    wasm_exit()
+}
+
+/** *`exit` straight from libc. */
+#[os("posix", "windows")]
+#[c("exit")]
+fn c_exit(code: i32) {}
+
+/** *The wasm runtime's `abort`: a bodyless hook, since wasm binds no libc. */
+#[os("wasm")]
+fn wasm_exit() {}
 
 /** *Value of `name`, or empty if unset. Native only; wasm returns empty. */
-fn env(name: string) -> string {}
+fn env(name: string) -> string {
+    return env_os(name)
+}
+
+/** *Native `env`: `getenv` straight from libc, its answer copied (NULL is */
+/** *`""`). A name of 256 bytes or more is never looked up, as before. */
+#[os("posix", "windows")]
+fn env_os(name: string) -> string {
+    if name.len == 0 || name.len >= 256 {
+        return ""
+    }
+    return c_getenv(name)
+}
+
+/** *No environment on wasm. */
+#[os("wasm")]
+fn env_os(name: string) -> string {
+    return ""
+}
+
+/** *`getenv` straight from libc. */
+#[os("posix", "windows")]
+#[c("getenv")]
+fn c_getenv(name: string) -> string {}
 
 /** *Write `body` to `path`. `0` on success. Native only; wasm returns `1`. */
 fn write_file(path: string, body: string) -> int {
@@ -435,13 +512,14 @@ fn stamp_os(path: string) -> Result<string> {
 #[c("loam_sys_stat")]
 fn c_stat_raw(path: string, out: []i64) -> i32 {}
 
-/** *The shim's five slots, or the reason `stat` failed. A five-zero literal */
+/** *The shim's five slots, or an error (no message: no caller asks). A five-zero literal */
 /** *on every call: the shim writes through the wrapper into it. */
 #[os("posix", "windows")]
 fn c_stat(path: string) -> Result<[]i64> {
     let mut out = []i64 { 0, 0, 0, 0, 0 }
+    // No caller reads why: a miss is just a miss, so no message is built.
     if c_stat_raw(path, out) == 0 {
-        return res_err(c_strerror(), out)
+        return res_err("", out)
     }
     return res_ok(out)
 }
@@ -833,8 +911,9 @@ fn c_lstat_raw(path: string, out: []i64) -> i32 {}
 #[os("posix", "windows")]
 fn c_lstat(path: string) -> Result<[]i64> {
     let mut out = []i64 { 0, 0 }
+    // No caller reads why: a miss is just a miss, so no message is built.
     if c_lstat_raw(path, out) == 0 {
-        return res_err(c_strerror(), out)
+        return res_err("", out)
     }
     return res_ok(out)
 }
