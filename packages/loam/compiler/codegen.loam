@@ -2924,27 +2924,71 @@ fn ir_fn_of(d: int) -> int {
     return NONE
 }
 
-/** *The C condition an `#[os]` mask stands for (`parser.OS_*` bits). */
+/** *The C condition an `#[os]` / `#[arch]` mask stands for (`ast.OS_*` and */
+/** *`ast.ARCH_*` bits). A mask naming both halves of `apple` (macOS, iOS) or */
+/** *`linux` (Linux, Android) tests the plain macro, as before the split. */
 fn os_condition(mask: int) -> string {
-    if mask == 19 {
+    let os = mask & ast.OS_ALL
+    let arch = mask & ast.ARCH_ALL
+    let os_text = if os == 0 { "" } else { os_terms(os) }
+    if arch == 0 {
+        return os_text
+    }
+    let arch_text = arch_terms(arch)
+    return if os == 0 { arch_text } else { "({{os_text}}) && ({{arch_text}})" }
+}
+
+fn os_terms(os: int) -> string {
+    let apple = ast.OS_MACOS | ast.OS_IOS
+    let linux = ast.OS_LINUX | ast.OS_ANDROID
+    if os == (apple | linux | ast.OS_OTHER) {
         return "!defined(_WIN32) && !defined(__wasm32__)"
     }
     let mut terms = []string {}
-    if (mask & 1) != 0 {
+    if (os & apple) == apple {
         push(terms, "defined(__APPLE__)")
+    } else if (os & ast.OS_MACOS) != 0 {
+        push(terms, "(defined(__APPLE__) && !defined(LOAM_IOS))")
+    } else if (os & ast.OS_IOS) != 0 {
+        push(terms, "(defined(__APPLE__) && defined(LOAM_IOS))")
     }
-    if (mask & 2) != 0 {
+    if (os & linux) == linux {
         push(terms, "defined(__linux__)")
+    } else if (os & ast.OS_LINUX) != 0 {
+        push(terms, "(defined(__linux__) && !defined(__ANDROID__) && !defined(LOAM_ANDROID))")
+    } else if (os & ast.OS_ANDROID) != 0 {
+        push(terms, "(defined(__ANDROID__) || defined(LOAM_ANDROID))")
     }
-    if (mask & 4) != 0 {
+    if (os & ast.OS_WINDOWS) != 0 {
         push(terms, "defined(_WIN32)")
     }
-    if (mask & 8) != 0 {
+    if (os & ast.OS_WASM) != 0 {
         push(terms, "defined(__wasm32__)")
     }
-    if (mask & 16) != 0 {
+    if (os & ast.OS_OTHER) != 0 {
         push(terms, "(!defined(__APPLE__) && !defined(__linux__) && !defined(_WIN32) && !defined(__wasm32__))")
     }
+    return or_join(terms)
+}
+
+fn arch_terms(arch: int) -> string {
+    let mut terms = []string {}
+    if (arch & ast.ARCH_X86_64) != 0 {
+        push(terms, "defined(__x86_64__) || defined(_M_X64)")
+    }
+    if (arch & ast.ARCH_AARCH64) != 0 {
+        push(terms, "defined(__aarch64__) || defined(_M_ARM64)")
+    }
+    if (arch & ast.ARCH_WASM32) != 0 {
+        push(terms, "defined(__wasm32__)")
+    }
+    if (arch & ast.ARCH_OTHER) != 0 {
+        push(terms, "(!defined(__x86_64__) && !defined(_M_X64) && !defined(__aarch64__) && !defined(_M_ARM64) && !defined(__wasm32__))")
+    }
+    return or_join(terms)
+}
+
+fn or_join(terms: []string) -> string {
     let mut out = ""
     for i in 0..terms.len {
         out = if i == 0 { terms[i] } else { "{{out}} || {{terms[i]}}" }

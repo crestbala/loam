@@ -2154,49 +2154,69 @@ fn parse_c_directive(p: &mut Parser) -> int {
 }
 
 // `op` bits on Fn and Struct nodes.
-/** *`#[os(...)]` bits (on a Fn's `numb`): which targets a variant is for. */
-const OS_APPLE: int = 1
-const OS_LINUX: int = 2
-const OS_WINDOWS: int = 4
-const OS_WASM: int = 8
-/** *Any other Unix (BSD, ...): not Apple, Linux, Windows or wasm. */
-const OS_OTHER: int = 16
-
-/** *The target bit of one `#[os]` name, or 0 when it names none. `posix` */
-/** *is every target but Windows and wasm; Android is `linux`, iOS `apple`. */
+/** *The target bits of one `#[os]` name, or 0 when it names none. `apple` */
+/** *is macOS and iOS, `linux` is Linux and Android, and `posix` is every */
+/** *target but Windows and wasm. */
 fn os_bits(name: string) -> int {
+    if name == "macos" {
+        return ast.OS_MACOS
+    }
+    if name == "ios" {
+        return ast.OS_IOS
+    }
     if name == "apple" {
-        return OS_APPLE
+        return ast.OS_MACOS | ast.OS_IOS
+    }
+    if name == "android" {
+        return ast.OS_ANDROID
     }
     if name == "linux" {
-        return OS_LINUX
+        return ast.OS_LINUX | ast.OS_ANDROID
     }
     if name == "windows" {
-        return OS_WINDOWS
+        return ast.OS_WINDOWS
     }
     if name == "wasm" {
-        return OS_WASM
+        return ast.OS_WASM
     }
     if name == "posix" {
-        return OS_APPLE | OS_LINUX | OS_OTHER
+        return ast.OS_MACOS | ast.OS_IOS | ast.OS_LINUX | ast.OS_ANDROID | ast.OS_OTHER
     }
     return 0
 }
 
-/** *`#[os("posix", "wasm")]` after the name: the union of the targets, or */
-/** *0 after an error. */
-fn parse_os_attr(p: &mut Parser) -> int {
-    consume(p, Tok.Lparen, "expected ( after #[os")
+/** *The bit of one `#[arch]` name, or 0 when it names none. */
+fn arch_bits(name: string) -> int {
+    if name == "x86_64" {
+        return ast.ARCH_X86_64
+    }
+    if name == "aarch64" {
+        return ast.ARCH_AARCH64
+    }
+    if name == "wasm32" {
+        return ast.ARCH_WASM32
+    }
+    if name == "other" {
+        return ast.ARCH_OTHER
+    }
+    return 0
+}
+
+/** *`#[os("posix", "wasm")]` / `#[arch("x86_64")]` after the name: the */
+/** *union of the targets, or 0 after an error. */
+fn parse_target_attr(p: &mut Parser, attr: string) -> int {
+    let names = if attr == "os" { "macos, ios, apple, linux, android, windows, wasm or posix" } else { "x86_64, aarch64, wasm32 or other" }
+    consume(p, Tok.Lparen, "expected ( after #[{{attr}}")
     let mut mask = 0
     while true {
         if !eat(p, Tok.String) {
-            error(p, "#[os] expects target names: #[os(\"posix\")], with apple, linux, windows, wasm or posix")
+            error(p, clip95("#[{{attr}}] expects target names: {{names}}"))
             return 0
         }
         let name = tok_unescaped(p, p.prev)
-        let bits = os_bits(name)
+        let bits = if attr == "os" { os_bits(name) } else { arch_bits(name) }
         if bits == 0 {
-            error(p, clip95("unknown #[os] target '{{name}}' (want apple, linux, windows, wasm or posix)"))
+            error(p, clip95("unknown #[{{attr}}] target '{{name}}' (want {{names}})"))
             return 0
         }
         mask = mask | bits
@@ -2204,7 +2224,7 @@ fn parse_os_attr(p: &mut Parser) -> int {
             break
         }
     }
-    consume(p, Tok.Rparen, "expected ) after #[os targets")
+    consume(p, Tok.Rparen, "expected ) after #[{{attr}} targets")
     return mask
 }
 
@@ -2269,12 +2289,14 @@ fn parse_program(p: &mut Parser) -> int {
                 break
             }
             let attr = tok_text(p, p.prev)
-            if attr == "os" {
-                os_mask = parse_os_attr(p)
-                if os_mask == 0 {
+            if attr == "os" || attr == "arch" {
+                // Both kinds share one mask: OS bits low, arch bits high.
+                let bits = parse_target_attr(p, attr)
+                if bits == 0 {
                     attr_failed = true
                     break
                 }
+                os_mask = os_mask | bits
             } else if attr == "proto" {
                 st_bits = ST_PROTO
             } else if attr == "test" {
@@ -2337,7 +2359,7 @@ fn parse_program(p: &mut Parser) -> int {
                 break
             }
             if os_mask != 0 && !check(p, Tok.Fn) {
-                error(p, "#[os] can only be applied to a fn")
+                error(p, "#[os] / #[arch] can only be applied to a fn")
                 attr_failed = true
                 break
             }

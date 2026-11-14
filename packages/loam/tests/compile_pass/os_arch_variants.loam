@@ -1,0 +1,69 @@
+// `#[os]` tells macOS, iOS and Android apart (`apple` and `linux` name the
+// pairs), and `#[arch]` picks by CPU. A variant may name both; two variants
+// clash only when they share an OS and a CPU.
+import "std:fmt"
+import "std:sys"
+
+#[os("macos")]
+fn desk() -> string {
+    return "macos"
+}
+
+#[os("ios")]
+fn desk() -> string {
+    return "ios"
+}
+
+#[os("linux")]
+fn desk() -> string {
+    return "linux"
+}
+
+#[os("windows")]
+fn desk() -> string {
+    return "windows"
+}
+
+#[os("wasm")]
+fn desk() -> string {
+    return "wasm"
+}
+
+#[arch("aarch64")]
+fn cpu() -> string {
+    return "aarch64"
+}
+
+#[arch("x86_64")]
+fn cpu() -> string {
+    return "x86_64"
+}
+
+#[arch("wasm32", "other")]
+fn cpu() -> string {
+    return "other"
+}
+
+#[os("apple")]
+#[arch("aarch64")]
+fn combo() -> string {
+    return "apple-arm"
+}
+
+#[os("apple")]
+#[arch("x86_64", "wasm32", "other")]
+fn combo() -> string {
+    return "apple-other"
+}
+
+#[os("linux", "windows", "wasm")]
+fn combo() -> string {
+    return "not-apple"
+}
+
+fn main() {
+    let apple = sys.os() == "macos" || sys.os() == "ios"
+    let want = if !apple { "not-apple" } else if sys.arch() == "aarch64" { "apple-arm" } else { "apple-other" }
+    let arch = if sys.arch() == "aarch64" || sys.arch() == "x86_64" { sys.arch() } else { "other" }
+    fmt.println(desk() == sys.os() || sys.os() == "android", cpu() == arch, combo() == want)
+}
