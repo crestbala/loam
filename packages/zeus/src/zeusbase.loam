@@ -29,6 +29,7 @@ import "zeuscore/track.loam"
 import "zeuscore/style.loam"
 import "std:log"
 import "std:result"
+import "std:sys"
 
 // --- handles --------------------------------------------------------------
 
@@ -4273,7 +4274,9 @@ fn load_font(family: string, src: string) -> int {
 /** *``` */
 fn use_font(src: string) -> int {
     arena.ensure()
-    return metrics.bind(platform.plat_font_bytes(src))
+    // A host hook (the web's fetch) answers first; otherwise `src` is a path.
+    let fetched = platform.plat_font_bytes(src)
+    return metrics.bind(if fetched.len > 0 { fetched } else { sys.read_file(src) })
 }
 
 /** *Bind already-loaded font bytes for in-tree measurement. The web host has no */

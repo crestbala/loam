@@ -2,7 +2,20 @@
 //
 // Bodyless `fn`s resolve to `loam_sys_<name>` in `loam_rt`. No protocol here.
 
+import "std:buf"
 import "std:result"
+import "std:str"
+
+/** *Why the last `read_file` came back empty. Set by `read_file`, read by */
+/** *`io_error`: an empty file and a missing one read the same, and `sys.read` */
+/** *tells them apart. */
+let mut last_error: string = ""
+
+/** *Why the last `read_file` came back empty: `""` when it succeeded (the file */
+/** *may just be empty), otherwise a message such as `"No such file or directory"`. */
+fn io_error() -> string {
+    return last_error
+}
 
 /** *The operating system: `"macos"`, `"linux"`, `"windows"`, `"ios"`, */
 /** *`"android"`, `"wasm"`, or `"other"`. */
@@ -28,7 +41,45 @@ fn exit(code: int) {}
 fn env(name: string) -> string {}
 
 /** *Write `body` to `path`. `0` on success. Native only; wasm returns `1`. */
-fn write_file(path: string, body: string) -> int {}
+fn write_file(path: string, body: string) -> int {
+    return write_file_os(path, body)
+}
+
+/** *Native `write_file`: stdio in one call (`wb`), like the C it replaces. */
+#[os("posix", "windows")]
+fn write_file_os(path: string, body: string) -> int {
+    let f = c_fopen(path, "wb")
+    if f == 0 {
+        return 1
+    }
+    if body.len > 0 && c_fwrite(body, 1, i64(body.len), f) != i64(body.len) {
+        c_fclose(f)
+        return 1
+    }
+    return c_fclose(f)
+}
+
+/** *No filesystem on wasm: nothing is written. */
+#[os("wasm")]
+fn write_file_os(path: string, body: string) -> int {
+    return 1
+}
+
+/** *`FILE*` from `fopen(path, mode)`, or `0`. Private: only this module's own */
+/** *fns may name it, and only between their `fopen` and their `fclose`. */
+#[os("posix", "windows")]
+#[c("fopen")]
+fn c_fopen(path: string, mode: string) -> i64 {}
+
+/** *`fwrite` straight from libc: bytes of `p` through `f`. */
+#[os("posix", "windows")]
+#[c("fwrite")]
+fn c_fwrite(p: string, size: i64, n: i64, f: i64) -> i64 {}
+
+/** *`fclose` straight from libc: `0` when `f` closed. */
+#[os("posix", "windows")]
+#[c("fclose")]
+fn c_fclose(f: i64) -> i32 {}
 
 /** *Run `cmd` via the shell; capture stdout (redirect `2>&1` to include stderr). */
 /** *Native only; wasm returns empty. `exec_status` is the exit code. */
@@ -66,11 +117,86 @@ fn c_tty_hook(fd: i32) -> i32 {}
 
 /** *Read the whole file. Empty if missing or over 1 GiB. Native only; wasm */
 /** *returns empty. */
-fn read_file(path: string) -> string {}
+fn read_file(path: string) -> string {
+    last_error = ""
+    return read_sized(path)
+}
 
-/** *Why the last `read_file` came back empty: `""` when it succeeded (the file */
-/** *may just be empty), otherwise a message such as `"No such file or directory"`. */
-fn io_error() -> string {}
+/** *Native `read_file`: `fopen` + `fseek`/`ftell` sizing + one `with_len` */
+/** *allocation + `fread`, the C shape verbatim. Sets `last_error` itself: a */
+/** *short read keeps the bytes it got and still says why it stopped. */
+#[os("posix", "windows")]
+fn read_sized(path: string) -> string {
+    if path.len == 0 || path.len >= 4095 {
+        last_error = if path.len == 0 { "empty path" } else { "path too long" }
+        return ""
+    }
+    let f = c_fopen(path, "rb")
+    if f == 0 {
+        last_error = c_strerror()
+        return ""
+    }
+    if c_fseek(f, 0, 2) != 0 {
+        last_error = c_strerror()
+        c_fclose(f)
+        return ""
+    }
+    let size = c_ftell(f)
+    // Loam's `int` indexes a string: past 1 GiB the read is empty, as before.
+    if size < 0 || size > 1073741824 {
+        last_error = if size < 0 { "not a regular file" } else { "file too large (over 1 GiB)" }
+        c_fclose(f)
+        return ""
+    }
+    c_fseek(f, 0, 0)
+    let mut bytes = buf.with_len(int(size))
+    let n = c_fread(bytes, 1, size, f)
+    if n < size && c_ferror(f) != 0 {
+        last_error = "read error"
+    }
+    c_fclose(f)
+    if n == 0 {
+        return ""
+    }
+    let text = string_from_bytes(bytes)
+    return if n < size { str.slice(text, 0, int(n)) } else { text }
+}
+
+/** *No filesystem on wasm: nothing is read. */
+#[os("wasm")]
+fn read_sized(path: string) -> string {
+    last_error = "no filesystem"
+    return ""
+}
+
+/** *`ferror` straight from libc: nonzero when the stream hit an error. */
+#[os("posix", "windows")]
+#[c("ferror")]
+fn c_ferror(f: i64) -> i32 {}
+
+/** *`fseek` straight from libc: `0` when it moved. */
+#[os("posix", "windows")]
+#[c("fseek")]
+fn c_fseek(f: i64, off: i64, whence: i32) -> i32 {}
+
+/** *`ftell` straight from libc: the size after a seek to the end, or `-1`. */
+#[os("posix", "windows")]
+#[c("ftell")]
+fn c_ftell(f: i64) -> i64 {}
+
+/** *`fread` straight from libc: bytes through `f` into `buf`. A fresh `with_len` */
+/** *buffer, as `compile_pass/c_ffi` proves: C writes through the wrapper are */
+/** *visible to the caller, which then moves it into `string_from_bytes`. */
+#[os("posix", "windows")]
+#[c("fread")]
+fn c_fread(buf: []u8, size: i64, n: i64, f: i64) -> i64 {}
+
+/** *`strerror(errno)` as a fresh string: why the last call failed. Named */
+/** *`c_strerror` because C's own two-meaning `strerror` takes an argument */
+/** *this wrapper never passes: the error is always the current one. */
+#[os("posix", "windows")]
+#[c("loam_sys_strerror")]
+fn c_strerror() -> string {}
 
 /** *Read the whole file, or an error saying why not. Unlike `read_file`, an empty */
 /** *file and a missing one are told apart. */
@@ -84,19 +210,111 @@ fn read(path: string) -> Result<string> {
 }
 
 /** *Write the bytes of `b` to `path` without building a string first (see */
-/** *`std:buf`). `0` on success. Native only; wasm returns `1`. */
-fn write_bytes(path: string, b: &[]u8) -> int {}
+/** *`std:buf`). `0` on success. Native only; wasm returns `1`. By value: the */
+/** *call shares the buffer (one refcount bump, no byte copy). */
+fn write_bytes(path: string, b: []u8) -> int {
+    return write_bytes_os(path, b)
+}
+
+/** *Native `write_bytes`: one `fwrite` of the buffer, like the C it replaces. */
+#[os("posix", "windows")]
+fn write_bytes_os(path: string, b: []u8) -> int {
+    let f = c_fopen(path, "wb")
+    if f == 0 {
+        return 1
+    }
+    if b.len > 0 && c_fwrite_buf(b, 1, i64(b.len), f) != i64(b.len) {
+        c_fclose(f)
+        return 1
+    }
+    return c_fclose(f)
+}
+
+/** *No filesystem on wasm: nothing is written. */
+#[os("wasm")]
+fn write_bytes_os(path: string, b: []u8) -> int {
+    return 1
+}
+
+/** *`fwrite` straight from libc over a byte buffer (the `string` twin above */
+/** *covers text). By value: the call shares the buffer and the wrapper drops */
+/** *its copy, so C only ever reads. */
+#[os("posix", "windows")]
+#[c("fwrite")]
+fn c_fwrite_buf(b: []u8, size: i64, n: i64, f: i64) -> i64 {}
 
 /** *Last modification time of `path` in milliseconds since the epoch, or `-1` */
 /** *when it does not exist. Sub-second where the file system records it. */
-fn mtime(path: string) -> i64 {}
+fn mtime(path: string) -> i64 {
+    return mtime_os(path)
+}
+
+/** *Native `mtime`: one `stat`, through the five-slot `c_stat` shim. */
+#[os("posix", "windows")]
+fn mtime_os(path: string) -> i64 {
+    let st = c_stat(path)
+    if st.tag == ResultTag.Err {
+        return -1
+    }
+    return st.val[0] * 1000 + st.val[1] / 1000000
+}
+
+/** *No filesystem on wasm: nothing has a time. */
+#[os("wasm")]
+fn mtime_os(path: string) -> i64 {
+    return -1
+}
 
 /** *`"<sec> <nsec> <size>"` of the regular file at `path`: its modification time */
 /** *(seconds and nanoseconds since the epoch; nanoseconds are `0` where the file */
 /** *system has none) and its size in bytes. `""` when `path` is missing or is not */
 /** *a regular file. Compare two stamps whole to tell whether a file changed. */
 /** *Native only; wasm returns `""`. */
-fn stamp(path: string) -> string {}
+fn stamp(path: string) -> string {
+    let t = stamp_os(path)
+    if t.tag == ResultTag.Err {
+        return ""
+    }
+    return t.val
+}
+
+/** *Native `stamp`: the same `stat`, formatted in Loam. */
+#[os("posix", "windows")]
+fn stamp_os(path: string) -> Result<string> {
+    let st = c_stat(path)
+    if st.tag == ResultTag.Err {
+        return res_err("", "")
+    }
+    // The C compared whole structs; here the regular-file test is the shim's
+    // own slot, and the text is what `%lld %lld %lld` printed.
+    if st.val[3] == 0 {
+        return res_err("", "")
+    }
+    return res_ok("{{st.val[0]}} {{st.val[1]}} {{st.val[2]}}")
+}
+
+/** *No filesystem on wasm: nothing has a stamp. */
+#[os("wasm")]
+fn stamp_os(path: string) -> Result<string> {
+    return res_err("", "")
+}
+
+/** *One `stat(2)`: five slots (mtime-sec, mtime-nsec, size, is-regular, */
+/** *is-dir). The layout lives in C; Loam only reads numbers. */
+#[os("posix", "windows")]
+#[c("loam_sys_stat")]
+fn c_stat_raw(path: string, out: []i64) -> i32 {}
+
+/** *The shim's five slots, or the reason `stat` failed. A five-zero literal */
+/** *on every call: the shim writes through the wrapper into it. */
+#[os("posix", "windows")]
+fn c_stat(path: string) -> Result<[]i64> {
+    let mut out = []i64 { 0, 0, 0, 0, 0 }
+    if c_stat_raw(path, out) == 0 {
+        return res_err(c_strerror(), out)
+    }
+    return res_ok(out)
+}
 
 /** *Start `argv[0]` (looked up on `PATH`) with `argv` as its arguments, without */
 /** *a shell, so nothing in an argument is ever interpreted. Returns a handle for */
@@ -138,10 +356,83 @@ fn is_abs(path: string) -> bool {
 
 /** *Create `path` and parents (`mkdir -p`). `0` on success. Native only; */
 /** *wasm returns `1`. */
-fn mkdir(path: string) -> int {}
+fn mkdir(path: string) -> int {
+    return mkdir_os(path)
+}
+
+/** *Native `mkdir -p`: walk the path in Loam, one `mkdir` per level. `C:` is */
+/** *a drive, not a directory to create. The shim hands back `errno` itself */
+/** *(`0` on success): comparing message text would depend on the locale. */
+#[os("posix", "windows")]
+fn mkdir_os(path: string) -> int {
+    let n = path.len
+    let mut i = 1
+    while i <= n {
+        if i != n && path[i] != '/' && path[i] != '\\' {
+            i = i + 1
+            continue
+        }
+        // `C:` is a drive, not a directory to create.
+        if i == 2 && path[1] == ':' {
+            i = i + 1
+            continue
+        }
+        let part = str.slice(path, 0, i)
+        // `17` is `EEXIST` (see the shim): the level is already there.
+        if part.len > 0 && c_mkdir(part) != 0 && c_mkdir_errno() != 17 {
+            return 1
+        }
+        i = i + 1
+    }
+    return 0
+}
+
+/** *No filesystem on wasm: nothing is created. */
+#[os("wasm")]
+fn mkdir_os(path: string) -> int {
+    return 1
+}
+
+/** *One `mkdir(2)`: `0` when the level exists now. The `errno` stays in C for */
+/** *the caller to ask about (below), so no message text crosses. */
+#[os("posix", "windows")]
+#[c("loam_sys_mkdir_one")]
+fn c_mkdir(path: string) -> i32 {}
+
+/** *The `errno` the last `c_mkdir` left: `17` (`EEXIST`) means the level was */
+/** *already there. */
+#[os("posix", "windows")]
+#[c("loam_sys_mkdir_errno")]
+fn c_mkdir_errno() -> i32 {}
 
 /** *Rename `from` to `to`. `0` on success. Native only; wasm returns `1`. */
-fn rename(from: string, to: string) -> int {}
+fn rename(from: string, to: string) -> int {
+    return rename_os(from, to)
+}
+
+/** *Native `rename`: POSIX replaces the target; Windows refuses an existing */
+/** *one, so the Loam side removes it first and retries, like the C did. */
+#[os("posix", "windows")]
+fn rename_os(from: string, to: string) -> int {
+    if c_rename(from, to) == 0 {
+        return 0
+    }
+    if c_remove(to) == 0 && c_rename(from, to) == 0 {
+        return 0
+    }
+    return 1
+}
+
+/** *No filesystem on wasm: nothing is renamed. */
+#[os("wasm")]
+fn rename_os(from: string, to: string) -> int {
+    return 1
+}
+
+/** *`rename` straight from libc: `0` when `to` names `from` now. */
+#[os("posix", "windows")]
+#[c("rename")]
+fn c_rename(from: string, to: string) -> i32 {}
 
 /** *Command-line argument count, the program path included. `0` on iOS, */
 /** *Android and wasm, where no command line reaches the program. */
@@ -161,42 +452,316 @@ fn args() -> []string {
 }
 
 /** *`1` if `path` exists, whatever it is. Native only; wasm returns `0`. */
-fn exists(path: string) -> int {}
+fn exists(path: string) -> int {
+    return exists_os(path)
+}
+
+/** *Native `exists`: the `stat` shim says whether the path stats. */
+#[os("posix", "windows")]
+fn exists_os(path: string) -> int {
+    let st = c_stat(path)
+    return if st.tag == ResultTag.Err { 0 } else { 1 }
+}
+
+/** *No filesystem on wasm: nothing exists. */
+#[os("wasm")]
+fn exists_os(path: string) -> int {
+    return 0
+}
 
 /** *`1` if `path` is a directory. Native only; wasm returns `0`. */
-fn is_dir(path: string) -> int {}
+fn is_dir(path: string) -> int {
+    return is_dir_os(path)
+}
+
+/** *Native `is_dir`: the shim's own directory slot. */
+#[os("posix", "windows")]
+fn is_dir_os(path: string) -> int {
+    let st = c_stat(path)
+    if st.tag == ResultTag.Err {
+        return 0
+    }
+    return int(st.val[4])
+}
+
+/** *No filesystem on wasm: nothing is a directory. */
+#[os("wasm")]
+fn is_dir_os(path: string) -> int {
+    return 0
+}
 
 /** *The canonical absolute spelling of an existing path (symlinks, `.` and */
 /** *`..` resolved), or `""` when it does not exist. Native only; wasm */
 /** *returns `""`. */
-fn realpath(path: string) -> string {}
+fn realpath(path: string) -> string {
+    return realpath_os(path)
+}
+
+/** *`realpath(3)` straight from libc, into the caller's buffer (4096 bytes */
+/** *covers `PATH_MAX` on every posix target), so libc allocates nothing. */
+/** *`0` (NULL) when the path does not resolve. */
+#[os("posix")]
+#[c("realpath")]
+fn c_realpath(path: string, resolved: []u8) -> i64 {}
+
+/** *Windows has no `realpath`: `_fullpath` plus the slash fix and an existence */
+/** *check, behind a hook with the same shape until its Loam binding lands (R2.6). */
+#[os("windows")]
+#[c("loam_sys_realpath_win")]
+fn c_realpath(path: string, resolved: []u8) -> i64 {}
+
+/** *Native `realpath`: resolve into a zeroed buffer, trimmed at the first NUL. */
+/** *An empty path is `""`, as the C had it. */
+#[os("posix", "windows")]
+fn realpath_os(path: string) -> string {
+    let mut resolved = buf.with_len(4096)
+    if path.len == 0 || c_realpath(path, resolved) == 0 {
+        return ""
+    }
+    return until_nul(resolved)
+}
+
+/** *No filesystem on wasm: nothing resolves. */
+#[os("wasm")]
+fn realpath_os(path: string) -> string {
+    return ""
+}
 
 /** *Number of entries in the directory `path`, `.` and `..` excluded. `0` when */
 /** *`path` is not a readable directory. Native only; wasm returns `0`. */
-fn dir_count(path: string) -> int {}
+fn dir_count(path: string) -> int {
+    return dir_count_os(path)
+}
+
+/** *Native `dir_count`: one listing, freed at once. */
+#[os("posix", "windows")]
+fn dir_count_os(path: string) -> int {
+    let t = dir_names_raw(path)
+    if t.tag == ResultTag.Err {
+        return 0
+    }
+    c_dir_free(t.val.ptr, t.val.n)
+    return t.val.n
+}
+
+/** *No filesystem on wasm: no directory has entries. */
+#[os("wasm")]
+fn dir_count_os(path: string) -> int {
+    return 0
+}
 
 /** *Entry `i` of `path`, sorted by name, as a fresh string — a caller that keeps */
 /** *it keeps its own copy. Empty when `i` is out of range. Native only; wasm */
 /** *returns empty. */
-fn dir_entry(path: string, i: int) -> string {}
+fn dir_entry(path: string, i: int) -> string {
+    return dir_entry_os(path, i)
+}
+
+/** *Native `dir_entry`: one listing, freed at once. The rescan-per-call costs */
+/** *what the C paid: directories here are small, and no stale cache can lie. */
+#[os("posix", "windows")]
+fn dir_entry_os(path: string, i: int) -> string {
+    let names = list_dir_os(path)
+    if i < 0 || i >= names.len {
+        return ""
+    }
+    return names[i]
+}
+
+/** *No filesystem on wasm: no directory has entries. */
+#[os("wasm")]
+fn dir_entry_os(path: string, i: int) -> string {
+    return ""
+}
 
 /** *Every entry of `path`, sorted. The convenience form of `dir_count` / */
 /** *`dir_entry`. */
 fn list_dir(path: string) -> []string {
+    return list_dir_os(path)
+}
+
+/** *Native `list_dir`: the shim's names, insertion-sorted in Loam by byte order */
+/** *(what `strcmp` orders), because a walk visits the same tree in the same */
+/** *order every time. A directory here holds tens of entries. */
+#[os("posix", "windows")]
+fn list_dir_os(path: string) -> []string {
+    let t = dir_names_raw(path)
+    if t.tag == ResultTag.Err {
+        return []string {}
+    }
     let mut out = []string {}
-    for i in 0..dir_count(path) {
-        push(out, dir_entry(path, i))
+    for i in 0..t.val.n {
+        push(out, c_dir_name(t.val.ptr, i64(i)))
+    }
+    c_dir_free(t.val.ptr, t.val.n)
+    // Insertion sort, the C shape: tens of entries, no second dependency.
+    for i in 1..out.len {
+        let key = out[i]
+        let mut j = i - 1
+        while j >= 0 && c_strcmp(out[j], key) > 0 {
+            out[j + 1] = out[j]
+            j = j - 1
+        }
+        out[j + 1] = key
     }
     return out
 }
 
+/** *No filesystem on wasm: every listing is empty. */
+#[os("wasm")]
+fn list_dir_os(path: string) -> []string {
+    return []string {}
+}
+
+/** *One `opendir`/`readdir` pass: the C array's address as an `i64` and its */
+/** *length. The dirent layout never crosses into Loam. */
+#[os("posix", "windows")]
+#[c("loam_dir_names")]
+fn c_dir_names(path: string, out: []i64) -> i64 {}
+
+/** *One name out of the listing: a fresh string, so the caller keeps its own */
+/** *copy after the array is freed. */
+#[os("posix", "windows")]
+#[c("loam_dir_name_at")]
+fn c_dir_name(names: i64, i: i64) -> string {}
+
+/** *Free the listing and its names. */
+#[os("posix", "windows")]
+#[c("loam_dir_free")]
+fn c_dir_free(names: i64, n: int) {}
+
+/** *`strcmp` straight from libc: byte order for the directory sort. */
+#[os("posix", "windows")]
+#[c("strcmp")]
+fn c_strcmp(a: string, b: string) -> i32 {}
+
+/** *A directory listing in hand: the C array as an `i64`, its length, and the */
+/** *freedom to read it. Freed by the caller (`dir_count`, `list_dir`). */
+struct DirNames {
+    ptr: i64,
+    n: int,
+}
+
+/** *The shim's listing, or the reason it failed. A one-slot `[]i64` carries */
+/** *the `char**` across, as a `FILE*` crosses as an `i64`. */
+#[os("posix", "windows")]
+fn dir_names_raw(path: string) -> Result<DirNames> {
+    let mut slot = []i64 { 0 }
+    let n = c_dir_names(path, slot)
+    if slot[0] == 0 {
+        return res_err(c_strerror(), DirNames { ptr: 0, n: 0 })
+    }
+    return res_ok(DirNames { ptr: slot[0], n: int(n) })
+}
+
 /** *Remove `path`, recursing into a directory. `0` on success, including when */
 /** *`path` is already gone. Native only; wasm returns `1`. */
-fn remove_path(path: string) -> int {}
+fn remove_path(path: string) -> int {
+    return remove_path_os(path)
+}
+
+/** *Native `remove_path`: the `lstat`-and-recurse walk in Loam. Symlinks are */
+/** *never followed (`lstat`, not `stat`): a linked directory removes the link, */
+/** *not its target. Paths are `/` on every side, and overlong children are */
+/** *skipped as before. */
+#[os("posix", "windows")]
+fn remove_path_os(path: string) -> int {
+    let st = c_lstat(path)
+    if st.tag == ResultTag.Err {
+        return 0
+    }
+    if st.val[1] != 0 {
+        let t = dir_names_raw(path)
+        if t.tag == ResultTag.Ok {
+            for i in 0..t.val.n {
+                let child = c_dir_name(t.val.ptr, i64(i))
+                let sub = "{{path}}/{{child}}"
+                if sub.len < 4096 {
+                    remove_path_os(sub)
+                }
+            }
+            c_dir_free(t.val.ptr, t.val.n)
+        }
+        return c_rmdir(path)
+    }
+    return c_remove(path)
+}
+
+/** *No filesystem on wasm: nothing is removed. */
+#[os("wasm")]
+fn remove_path_os(path: string) -> int {
+    return 1
+}
+
+/** *One `lstat(2)`: like `c_stat` but never follows a symlink. Slots */
+/** *(exists, is-dir); `0` when the path is gone. */
+#[os("posix", "windows")]
+#[c("loam_sys_lstat")]
+fn c_lstat_raw(path: string, out: []i64) -> i32 {}
+
+/** *The `lstat` shim's two slots. */
+#[os("posix", "windows")]
+fn c_lstat(path: string) -> Result<[]i64> {
+    let mut out = []i64 { 0, 0 }
+    if c_lstat_raw(path, out) == 0 {
+        return res_err(c_strerror(), out)
+    }
+    return res_ok(out)
+}
+
+/** *`rmdir` straight from libc: `0` when the directory went. */
+#[os("posix", "windows")]
+#[c("rmdir")]
+fn c_rmdir(path: string) -> i32 {}
+
+/** *`remove` straight from libc: `0` when the file went. */
+#[os("posix", "windows")]
+#[c("remove")]
+fn c_remove(path: string) -> i32 {}
 
 /** *The process's working directory, absolute. Empty when it cannot be read, and */
 /** *on wasm, where there is none. */
-fn cwd() -> string {}
+fn cwd() -> string {
+    return cwd_os()
+}
+
+/** *Native `cwd`: `getcwd` into a `with_len` buffer. The C read the length */
+/** *back from `strlen`; Loam trims at the first NUL instead (a path cannot */
+/** *hold one, and the buffer is zeroed). */
+#[os("posix", "windows")]
+fn cwd_os() -> string {
+    let mut cwd = buf.with_len(4096)
+    if c_getcwd(cwd, 4096) == 0 {
+        return ""
+    }
+    return until_nul(cwd)
+}
+
+/** *The bytes of a C-filled buffer up to its first NUL, as a string. */
+#[os("posix", "windows")]
+fn until_nul(b: []u8) -> string {
+    let mut n = 0
+    while n < b.len && b[n] != 0 {
+        n = n + 1
+    }
+    let mut out = []u8 {}
+    for i in 0..n {
+        push(out, b[i])
+    }
+    return string_from_bytes(out)
+}
+
+/** *No filesystem on wasm: there is no directory. */
+#[os("wasm")]
+fn cwd_os() -> string {
+    return ""
+}
+
+/** *One `getcwd`: the path bytes in `buf`, or NULL. A shim because Windows */
+/** *spells it `_getcwd` (see below). */
+#[os("posix", "windows")]
+#[c("loam_sys_getcwd")]
+fn c_getcwd(buf: []u8, n: i64) -> i64 {}
 
 /** *Open a filesystem watcher, for the paths `watch_add` is then given. Returns a */
 /** *handle (> 0), or `0` when this host has no kernel watcher — macOS and the */

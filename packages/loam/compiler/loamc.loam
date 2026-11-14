@@ -457,7 +457,7 @@ fn fresh_save(out: string, key: string) {
         buf.push_str(&mut b, "F {{st}} {{FRESH_DEPS[i]}}\n")
     }
     let tmp = "{{stamp}}.{{BUILD_TAG}}.tmp"
-    if sys.write_bytes(tmp, &b) != 0 || sys.rename(tmp, stamp) != 0 {
+    if sys.write_bytes(tmp, b) != 0 || sys.rename(tmp, stamp) != 0 {
         sys.remove_path(tmp)
     }
 }
@@ -1096,7 +1096,7 @@ fn shard_compile(cpath: string, cc_args: &[]string, dir: string, extra: &[]strin
     for i in 0..SHARD_OBJS.len {
         buf.push_str(&mut list, "\"{{SHARD_OBJS[i]}}\"\n")
     }
-    if sys.write_bytes(rsp, &list) != 0 {
+    if sys.write_bytes(rsp, list) != 0 {
         return ""
     }
     shard_prune(dir, hpath, rsp)
@@ -2023,7 +2023,7 @@ fn main() {
                 fmt.eprintln("error: cannot create directory for output")
                 sys.exit(1)
             }
-            if sys.write_bytes(out_path, &text) != 0 {
+            if sys.write_bytes(out_path, text) != 0 {
                 fmt.eprintln("error: cannot write '{{out_path}}'")
                 sys.exit(1)
             }

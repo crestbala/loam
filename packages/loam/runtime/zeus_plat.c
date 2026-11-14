@@ -801,9 +801,10 @@ int64_t loam_platform_plat_load_font(loam_str family, loam_str src) {
 }
 
 /* In-tree metrics (`packages/zeus/src/zeuscore/metrics.loam`) parse the font's tables, so
-   they need its bytes. The default reads `src` as a path — desktop, iOS, and
-   Android all have a filesystem. The web host has none and installs a hook
-   that fetches the URL and pushes the bytes back (packages/zeus/hosts/web). */
+   they need its bytes. The web host has no filesystem and installs a hook
+   that fetches the URL and pushes the bytes back (packages/zeus/hosts/web).
+   Without a hook the answer is empty and `zeus.use_font` reads `src` as a
+   path in Loam (`sys.read_file`, R2.2) — desktop, iOS, and Android. */
 static loam_str (*plat_font_bytes_fn)(loam_str src);
 
 void zeus_set_font_bytes_hook(loam_str (*fetch)(loam_str src)) {
@@ -812,7 +813,7 @@ void zeus_set_font_bytes_hook(loam_str (*fetch)(loam_str src)) {
 
 loam_str loam_platform_plat_font_bytes(loam_str src) {
     if (plat_font_bytes_fn) return plat_font_bytes_fn(src);
-    return loam_sys_read_file(src);
+    return (loam_str){"", 0};
 }
 
 void loam_zeus_plat_measure(loam_str s, int32_t px, int32_t *w, int32_t *h) {
