@@ -1216,18 +1216,9 @@ static inline void loam_floattext_write_text(const uint8_t *d, int32_t len, bool
    `cpu_count` over raw `sysconf`. */
 
 #ifdef __wasm32__
-static inline int64_t loam_sys_env_set(loam_str name) {
-    (void)name;
-    return 0;
-}
-static inline void loam_sys_exit(int64_t code) {
-    (void)code;
-    abort();
-}
-static inline loam_str loam_sys_env(loam_str name) {
-    (void)name;
-    return (loam_str){"", 0};
-}
+/* `sys.env` / `sys.env_set` / `sys.exit` live in `std/sys.loam` (R2.3c);
+   wasm's `exit` traps through this hook. */
+static inline void loam_sys_wasm_exit(void) { abort(); }
 /* No process and no command line in wasm: the host calls the entry with no
    arguments, so `sys.argc()` is 0 and `sys.arg(i)` is empty. */
 static inline void loam_argv_set(int argc, char **argv) {
@@ -1316,30 +1307,8 @@ static inline loam_str loam_sys_arg(int64_t i) {
     return (loam_str){loam_argv[i], (int64_t)strlen(loam_argv[i])};
 }
 
-static inline int64_t loam_sys_env_set(loam_str name) {
-    char buf[256];
-    const char *v;
-    if (!name.ptr || name.len <= 0 || name.len >= 256) return 0;
-    memcpy(buf, name.ptr, (size_t)name.len);
-    buf[name.len] = 0;
-    v = getenv(buf);
-    if (!v || !v[0]) return 0;
-    return 1;
-}
-static inline void loam_sys_exit(int64_t code) { exit((int)code); }
-
-static inline loam_str loam_sys_env(loam_str name) {
-    char buf[256];
-    const char *v;
-    size_t n;
-    if (!name.ptr || name.len <= 0 || name.len >= 256) return (loam_str){"", 0};
-    memcpy(buf, name.ptr, (size_t)name.len);
-    buf[name.len] = 0;
-    v = getenv(buf);
-    if (!v) return (loam_str){"", 0};
-    n = strlen(v);
-    return loam_str_copy(v, (int64_t)n);
-}
+/* `sys.env` / `sys.env_set` / `sys.exit` live in `std/sys.loam` (R2.3c):
+   raw `getenv` / `exit`, the 256-byte name rule in Loam. */
 
 /* `sys.write_file` / `sys.write_bytes` live in `std/sys.loam` too (R2.2):
    same stdio bindings, one `fwrite` of the text or the buffer. */
