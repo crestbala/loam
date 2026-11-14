@@ -1166,6 +1166,19 @@ static inline loam_str loam_buf_to_string(const loam_vec *b) {
     return loam_str_copy((const char *)b->ptr, b->len);
 }
 
+/* `buf.with_len(n)`: one allocation of `n` zeroed bytes, for a buffer C fills
+   (`fread`, `getcwd`), instead of a push loop's check per byte. The spare
+   byte keeps `string_from_bytes` copy-free when `n` is a power of two. */
+static inline loam_vec loam_buf_with_len(int64_t n) {
+    loam_vec v = loam_vec_new();
+    if (n > 0) {
+        loam_vec_reserve(&v, n + 1, 1, "buf.with_len", 0);
+        memset(v.ptr, 0, (size_t)n);
+        v.len = n;
+    }
+    return v;
+}
+
 /* `std:key` reads a float's bytes for its content key. A value conversion
    would round (`1.5 as u32` is 1); only `memcpy` sees the raw bytes. */
 static inline uint32_t loam_conv_f32_bits(float v) {
@@ -1289,60 +1302,17 @@ static inline loam_str loam_sys_arg(int64_t i) {
 }
 /* There is no filesystem in wasm: nothing exists, nothing lists, nothing
    removes. A host that has one (a worker with a virtual FS) would implement
-   these rather than Loam guessing. */
-static inline int64_t loam_sys_exists(loam_str path) {
-    (void)path;
-    return 0;
-}
-static inline int64_t loam_sys_is_dir(loam_str path) {
-    (void)path;
-    return 0;
-}
-static inline loam_str loam_sys_realpath(loam_str path) {
-    (void)path;
-    return (loam_str){"", 0};
-}
-static inline int64_t loam_sys_dir_count(loam_str path) {
-    (void)path;
-    return 0;
-}
-static inline loam_str loam_sys_dir_entry(loam_str path, int64_t i) {
-    (void)path;
-    (void)i;
-    return (loam_str){"", 0};
-}
-static inline int64_t loam_sys_remove_path(loam_str path) {
-    (void)path;
-    return 1;
-}
-static inline int64_t loam_sys_write_file(loam_str path, loam_str body) {
-    (void)path;
-    (void)body;
-    return 1;
-}
+   these rather than Loam guessing. `read_file` / `write_file` / `exists` /
+   `is_dir` / `realpath` / `dir_count` / `dir_entry` / `remove_path` /
+   `write_bytes` / `mtime` / `stamp` answer from Loam `#[os("wasm")]` variants
+   in `std/sys.loam` now (R2.2), so the stubs are gone. */
 static inline loam_str loam_sys_exec(loam_str cmd) {
     (void)cmd;
     return (loam_str){"", 0};
 }
 static inline int64_t loam_sys_exec_status(void) { return 1; }
-static inline loam_str loam_sys_read_file(loam_str path) {
-    (void)path;
-    return (loam_str){"", 0};
-}
-static inline loam_str loam_sys_io_error(void) { return (loam_str){"no filesystem", 13}; }
-static inline int64_t loam_sys_write_bytes(loam_str path, const loam_vec *b) {
-    (void)path;
-    (void)b;
-    return 1;
-}
-static inline int64_t loam_sys_mtime(loam_str path) {
-    (void)path;
-    return -1;
-}
-static inline loam_str loam_sys_stamp(loam_str path) {
-    (void)path;
-    return (loam_str){"", 0};
-}
+/* `sys.mkdir` / `sys.rename` / `sys.cwd` answer from Loam `#[os("wasm")]`
+   variants too (R2.2): nothing is created, renamed, or listed. */
 static inline int64_t loam_sys_spawn(const loam_vec *argv) {
     (void)argv;
     return -1;
@@ -1356,16 +1326,6 @@ static inline loam_str loam_sys_read_stdin(int64_t n) {
     return (loam_str){"", 0};
 }
 static inline loam_str loam_sys_read_line(void) { return (loam_str){"", 0}; }
-static inline int64_t loam_sys_mkdir(loam_str path) {
-    (void)path;
-    return 1;
-}
-static inline int64_t loam_sys_rename(loam_str from, loam_str to) {
-    (void)from;
-    (void)to;
-    return 1;
-}
-static inline loam_str loam_sys_cwd(void) { return (loam_str){"", 0}; }
 /* No filesystem, so nothing to watch: a caller sees "no watcher here" rather
    than an empty event stream, which would be a reload that never fires. */
 static inline int64_t loam_sys_watch_open(void) { return 0; }
@@ -1442,23 +1402,8 @@ static inline loam_str loam_sys_env(loam_str name) {
     return loam_str_copy(v, (int64_t)n);
 }
 
-static inline int64_t loam_sys_write_file(loam_str path, loam_str body) {
-    char pbuf[4096];
-    FILE *f;
-    if (!path.ptr || path.len <= 0 || path.len >= 4095) return 1;
-    memcpy(pbuf, path.ptr, (size_t)path.len);
-    pbuf[path.len] = 0;
-    f = fopen(pbuf, "wb");
-    if (!f) return 1;
-    if (body.ptr && body.len > 0) {
-        if (fwrite(body.ptr, 1, (size_t)body.len, f) != (size_t)body.len) {
-            fclose(f);
-            return 1;
-        }
-    }
-    fclose(f);
-    return 0;
-}
+/* `sys.write_file` / `sys.write_bytes` live in `std/sys.loam` too (R2.2):
+   same stdio bindings, one `fwrite` of the text or the buffer. */
 
 static inline loam_str loam_sys_exec(loam_str cmd) {
     char cbuf[8192];
@@ -1516,79 +1461,59 @@ static inline int64_t loam_sys_exec_status(void) { return loam_sys_last_status; 
    no-op outside a host build, so an app that calls it still runs its own loop. */
 void loam_host_run(loam_str path);
 
-/* Why the last `sys.read_file` came back empty, or "" when it succeeded: an
-   empty file and a missing one read the same, and `sys.read` tells them apart
-   through `sys.io_error()`. A static message, never freed. */
-LOAM_RT_STATE const char *loam_sys_io_err LOAM_RT_INIT("");
+/* `sys.read_file` / `sys.io_error` / `sys.write_file` live in `std/sys.loam`
+   now (R2.2): stdio `#[c]` bindings over `FILE*`-as-`i64` (`fopen` / `fread` /
+   `fwrite` / `fclose` raw from libc) plus one `strerror` binding and a
+   module-level error slot. The wasm stubs answer from Loam. */
 
-static inline loam_str loam_sys_read_file(loam_str path) {
-    char pbuf[4096];
-    FILE *f;
-    long sz;
-    char *p;
-    size_t n;
-    /* Loam's `int` indexes a string, so a file has to fit in an i32 length.
-       1 GiB leaves headroom; past it the read is empty, as documented. */
-    const size_t max_n = (size_t)1u << 30;
-    loam_sys_io_err = "";
-    if (!path.ptr || path.len <= 0 || path.len >= 4095) {
-        loam_sys_io_err = path.len <= 0 ? "empty path" : "path too long";
-        return (loam_str){"", 0};
-    }
-    memcpy(pbuf, path.ptr, (size_t)path.len);
-    pbuf[path.len] = 0;
-    f = fopen(pbuf, "rb");
-    if (!f) {
-        loam_sys_io_err = strerror(errno);
-        return (loam_str){"", 0};
-    }
-    if (fseek(f, 0, SEEK_END) != 0) {
-        loam_sys_io_err = strerror(errno);
-        fclose(f);
-        return (loam_str){"", 0};
-    }
-    sz = ftell(f);
-    if (sz < 0 || (size_t)sz > max_n) {
-        loam_sys_io_err = sz < 0 ? "not a regular file" : "file too large (over 1 GiB)";
-        fclose(f);
-        return (loam_str){"", 0};
-    }
-    rewind(f);
-    p = loam_str_bytes((int64_t)sz);
-    n = fread(p, 1, (size_t)sz, f);
-    if (n < (size_t)sz && ferror(f)) loam_sys_io_err = "read error";
-    fclose(f);
-    p[n] = 0;
-    if (n == 0) {
-        loam_str e = loam_str_owned(p, 0);
-        loam_str_release(&e);
-        return (loam_str){"", 0};
-    }
-    return loam_str_owned(p, (int64_t)n);
+/* `strerror(errno)` for the `sys` Loam bindings: the error is always the
+   current one, so the binding takes no argument and C reads `errno` itself.
+   A `const char *`, the `#[c]` string-return ABI: the wrapper copies it (a
+   `loam_str` return would come back through a struct-return slot the wrapper
+   never passes). Declared here, defined once in the owning unit (the
+   `LOAM_RT_DEFINE_JMP` block below), like the trap state: the `#[c]` wrapper
+   references it as a symbol. */
+const char *loam_sys_strerror(void);
+#ifdef LOAM_RT_DEFINE_JMP
+const char *loam_sys_strerror(void) {
+    return strerror(errno);
 }
+#endif
 
-static inline loam_str loam_sys_io_error(void) {
-    return (loam_str){loam_sys_io_err, (int64_t)strlen(loam_sys_io_err)};
-}
-
-/* `[]u8` straight to a file: a built buffer is written without first becoming
-   one giant string. Returns 0 on success, like `write_file`. */
-static inline int64_t loam_sys_write_bytes(loam_str path, const loam_vec *b) {
-    char pbuf[4096];
-    FILE *f;
-    if (!path.ptr || path.len <= 0 || path.len >= 4095) return 1;
-    memcpy(pbuf, path.ptr, (size_t)path.len);
-    pbuf[path.len] = 0;
-    f = fopen(pbuf, "wb");
-    if (!f) return 1;
-    if (b && b->ptr && b->len > 0 && fwrite(b->ptr, 1, (size_t)b->len, f) != (size_t)b->len) {
-        fclose(f);
-        return 1;
-    }
-    return fclose(f) == 0 ? 0 : 1;
-}
+/* `sys.write_bytes` lives in `std/sys.loam` too (R2.2): same stdio bindings,
+   one `fwrite` of the buffer. */
 
 #include <sys/stat.h>
+
+/* One `stat(2)` for the `sys` Loam bindings: the layout differs per OS, so
+   Loam cannot read the struct itself. `out` takes five slots
+   (mtime-sec, mtime-nsec, size, is-regular, is-dir); `1` when the path
+   stats, else `0`. The sub-second field is per target (macOS `st_mtimespec`,
+   Linux `st_mtim`, elsewhere whole seconds); the type tests use `S_ISREG` /
+   `S_ISDIR`, which are macros Loam cannot name. Declared here, defined once
+   in the owning unit (see `loam_sys_strerror` above): the `#[c]` wrapper
+   references it as a symbol. */
+int loam_sys_stat(const char *path, int64_t *out);
+#ifdef LOAM_RT_DEFINE_JMP
+int loam_sys_stat(const char *path, int64_t *out) {
+    struct stat st;
+    if (!path || !out || stat(path, &st) != 0) return 0;
+#if defined(__APPLE__)
+    out[0] = (int64_t)st.st_mtimespec.tv_sec;
+    out[1] = (int64_t)st.st_mtimespec.tv_nsec;
+#elif defined(__linux__)
+    out[0] = (int64_t)st.st_mtim.tv_sec;
+    out[1] = (int64_t)st.st_mtim.tv_nsec;
+#else
+    out[0] = (int64_t)st.st_mtime;
+    out[1] = 0;
+#endif
+    out[2] = (int64_t)st.st_size;
+    out[3] = S_ISREG(st.st_mode) ? 1 : 0;
+    out[4] = S_ISDIR(st.st_mode) ? 1 : 0;
+    return 1;
+}
+#endif
 
 static int loam_sys_cpath(loam_str path, char *buf, size_t cap) {
     if (!path.ptr || path.len <= 0 || (size_t)path.len + 1 > cap) return 1;
@@ -1597,61 +1522,29 @@ static int loam_sys_cpath(loam_str path, char *buf, size_t cap) {
     return 0;
 }
 
-/* Last modification time in milliseconds since the epoch, or -1 when the path
-   does not exist. Sub-second where the platform records it. */
-static inline int64_t loam_sys_mtime(loam_str path) {
-    char pbuf[4096];
-    struct stat st;
-    if (loam_sys_cpath(path, pbuf, sizeof pbuf) != 0) return -1;
-    if (stat(pbuf, &st) != 0) return -1;
-#if defined(__APPLE__)
-    return (int64_t)st.st_mtimespec.tv_sec * 1000 + (int64_t)st.st_mtimespec.tv_nsec / 1000000;
-#elif defined(__linux__)
-    return (int64_t)st.st_mtim.tv_sec * 1000 + (int64_t)st.st_mtim.tv_nsec / 1000000;
-#else
-    return (int64_t)st.st_mtime * 1000;
-#endif
-}
-
-/* "<sec> <nsec> <size>" of a regular file (modification time and byte size),
-   or "" when `path` is missing or not a regular file. Build caches compare
-   these: a change within the same millisecond still shows in the nanoseconds
-   or the size. Where the platform has no sub-second time, nsec is 0. */
-static inline loam_str loam_sys_stamp(loam_str path) {
-    char pbuf[4096], out[96];
-    struct stat st;
-    long long sec, nsec;
-    int n;
-    if (loam_sys_cpath(path, pbuf, sizeof pbuf) != 0) return (loam_str){"", 0};
-    if (stat(pbuf, &st) != 0 || !S_ISREG(st.st_mode)) return (loam_str){"", 0};
-#if defined(__APPLE__)
-    sec = (long long)st.st_mtimespec.tv_sec;
-    nsec = (long long)st.st_mtimespec.tv_nsec;
-#elif defined(__linux__)
-    sec = (long long)st.st_mtim.tv_sec;
-    nsec = (long long)st.st_mtim.tv_nsec;
-#else
-    sec = (long long)st.st_mtime;
-    nsec = 0;
-#endif
-    n = snprintf(out, sizeof out, "%lld %lld %lld", sec, nsec, (long long)st.st_size);
-    if (n <= 0 || (size_t)n >= sizeof out) return (loam_str){"", 0};
-    return loam_str_copy(out, (int64_t)n);
-}
+/* `sys.mtime` / `sys.stamp` live in `std/sys.loam` too (R2.2): the same five-
+   slot `loam_sys_stat` shim, read as numbers and (for `stamp`) formatted in
+   Loam. */
 
 #include <dirent.h>
 /**
- * Names in `dirpath`, `.` and `..` excluded, sorted by name so a walk visits
- * the same tree in the same order every time. Each name and the array belong to
- * the caller (see `loam_dir_free`); `*out` is NULL when the directory cannot be
- * read, which is not an error worth reporting — an unreadable directory is an
- * empty one as far as a walk is concerned.
+ * Names in `dirpath`, `.` and `..` excluded, *unsorted*: sorting moved to
+ * Loam (`sys.list_dir`, R2.2), over a raw `strcmp` binding. Each name and the
+ * array belong to the caller (see `loam_dir_free`); `*out` is NULL when the
+ * directory cannot be read, which is not an error worth reporting — an
+ * unreadable directory is an empty one as far as a walk is concerned.
+ * Declared here, defined once in the owning unit (see `loam_sys_strerror`
+ * above): the `#[c]` wrappers reference these as symbols.
  */
-static int64_t loam_dir_names(const char *dirpath, char ***out) {
+int64_t loam_dir_names(const char *dirpath, char ***out);
+const char *loam_dir_name_at(char **names, int64_t i);
+void loam_dir_free(char **names, int64_t n);
+#ifdef LOAM_RT_DEFINE_JMP
+int64_t loam_dir_names(const char *dirpath, char ***out) {
     DIR *d = opendir(dirpath);
     struct dirent *e;
     char **names = NULL;
-    int64_t n = 0, cap = 0, i;
+    int64_t n = 0, cap = 0;
     if (!d) {
         *out = NULL;
         return 0;
@@ -1677,162 +1570,109 @@ static int64_t loam_dir_names(const char *dirpath, char ***out) {
         n++;
     }
     closedir(d);
-    /* Insertion sort: a directory here holds tens of entries, and this keeps the
-       runtime free of a second libc dependency for the common case. */
-    for (i = 1; i < n; i++) {
-        char *key = names[i];
-        int64_t j = i - 1;
-        while (j >= 0 && strcmp(names[j], key) > 0) {
-            names[j + 1] = names[j];
-            j--;
-        }
-        names[j + 1] = key;
-    }
     *out = names;
     return n;
 }
 
-static void loam_dir_free(char **names, int64_t n) {
+const char *loam_dir_name_at(char **names, int64_t i) {
+    return names ? names[i] : "";
+}
+
+void loam_dir_free(char **names, int64_t n) {
     int64_t i;
     for (i = 0; i < n; i++) free(names[i]);
     free(names);
 }
-
-static inline int64_t loam_sys_exists(loam_str path) {
-    char buf[4096];
-    struct stat st;
-    if (loam_sys_cpath(path, buf, sizeof buf)) return 0;
-    return stat(buf, &st) == 0 ? 1 : 0;
-}
-
-static inline int64_t loam_sys_is_dir(loam_str path) {
-    char buf[4096];
-    struct stat st;
-    if (loam_sys_cpath(path, buf, sizeof buf)) return 0;
-    return (stat(buf, &st) == 0 && S_ISDIR(st.st_mode)) ? 1 : 0;
-}
-
-/** The canonical absolute spelling of an existing path (symlinks, `.` and `..`
-    resolved), or "" when it does not exist. */
-static inline loam_str loam_sys_realpath(loam_str path) {
-    char buf[4096];
-    char *rp;
-    loam_str out = {"", 0};
-    if (loam_sys_cpath(path, buf, sizeof buf)) return out;
-#if defined(_WIN32)
-    rp = _fullpath(NULL, buf, 0);
-    if (rp) {
-        struct stat st;
-        char *c;
-        for (c = rp; *c; c++)
-            if (*c == '\\') *c = '/';
-        if (stat(rp, &st) != 0) {
-            free(rp);
-            return out;
-        }
-    }
-#else
-    rp = realpath(buf, NULL);
 #endif
-    if (!rp) return out;
-    out = loam_str_copy(rp, (int64_t)strlen(rp));
-    free(rp);
-    return out;
-}
 
-/* Re-reads the directory per call rather than caching a listing: an entry comes
-   back as a fresh `loam_new` string, so a caller that keeps one (a recursive
-   walk keeping the names of the level it is in) keeps its own copy. Directories
-   here are small, so the rescan is not worth the staleness a cache would cost. */
-static inline int64_t loam_sys_dir_count(loam_str path) {
-    char buf[4096];
-    char **names;
-    int64_t n;
-    if (loam_sys_cpath(path, buf, sizeof buf)) return 0;
-    n = loam_dir_names(buf, &names);
-    loam_dir_free(names, n);
-    return n;
-}
+/* `sys.exists` / `sys.is_dir` live in `std/sys.loam` too (R2.2): the same
+   `loam_sys_stat` shim, read as numbers. */
 
-static inline loam_str loam_sys_dir_entry(loam_str path, int64_t idx) {
-    char buf[4096];
-    char **names;
-    int64_t n;
-    loam_str out = {"", 0};
-    if (loam_sys_cpath(path, buf, sizeof buf)) return out;
-    n = loam_dir_names(buf, &names);
-    if (idx >= 0 && idx < n) {
-        out = loam_str_copy(names[idx], (int64_t)strlen(names[idx]));
-    }
-    loam_dir_free(names, n);
-    return out;
-}
-
-static int loam_rm_path(const char *p) {
+/* `sys.realpath` lives in `std/sys.loam` too (R2.2): posix binds `realpath(3)`
+   straight from libc into a 4096-byte Loam buffer; Windows keeps its
+   `_fullpath` quirk behind a hook with the same shape (NULL on a miss). */
+#ifdef _WIN32
+char *loam_sys_realpath_win(const char *path, char *resolved);
+#ifdef LOAM_RT_DEFINE_JMP
+char *loam_sys_realpath_win(const char *path, char *resolved) {
     struct stat st;
-    if (lstat(p, &st) != 0) return 0; /* already gone */
-    if (S_ISDIR(st.st_mode)) {
-        char **names;
-        int64_t n = loam_dir_names(p, &names), i;
-        for (i = 0; i < n; i++) {
-            char child[4096];
-            if (strlen(p) + strlen(names[i]) + 2 > sizeof child) continue;
-            snprintf(child, sizeof child, "%s/%s", p, names[i]);
-            loam_rm_path(child);
-        }
-        loam_dir_free(names, n);
-        return rmdir(p) == 0 ? 0 : 1;
-    }
-    return remove(p) == 0 ? 0 : 1;
+    char *c;
+    if (!_fullpath(resolved, path, 4096)) return NULL;
+    for (c = resolved; *c; c++)
+        if (*c == '\\') *c = '/';
+    return stat(resolved, &st) == 0 ? resolved : NULL;
 }
+#endif
+#endif
 
-static inline int64_t loam_sys_remove_path(loam_str path) {
-    char buf[4096];
-    if (loam_sys_cpath(path, buf, sizeof buf)) return 1;
-    return (int64_t)loam_rm_path(buf);
+/* `sys.dir_count` / `sys.dir_entry` live in `std/sys.loam` too (R2.2): one
+   listing per call through the same shims, freed at once; the sort is Loam.
+   The rescan-per-call costs what the C paid, and no stale cache can lie. */
+
+/* One `lstat(2)` for `remove_path`: like `loam_sys_stat` (same gate) but a
+   symlink stays a link — `stat` would follow it into its target's tree. */
+int loam_sys_lstat(const char *path, int64_t *out);
+#ifdef LOAM_RT_DEFINE_JMP
+int loam_sys_lstat(const char *path, int64_t *out) {
+    struct stat st;
+    if (!path || !out || lstat(path, &st) != 0) return 0;
+    out[0] = 1;
+    out[1] = S_ISDIR(st.st_mode) ? 1 : 0;
+    return 1;
 }
-static inline int64_t loam_sys_mkdir(loam_str path) {
-    char buf[4096];
-    size_t i, n;
-    if (loam_sys_cpath(path, buf, sizeof buf)) return 1;
-    n = (size_t)path.len;
-    for (i = 1; i <= n; i++) {
-        char save;
-        if (i != n && buf[i] != '/' && buf[i] != '\\') continue;
-        /* `C:` is a drive, not a directory to create. */
-        if (i == 2 && buf[1] == ':') continue;
-        save = buf[i];
-        buf[i] = 0;
-        if (buf[0] && mkdir(buf, 0755) != 0 && errno != EEXIST) return 1;
-        buf[i] = save;
+#endif
+
+/* `sys.remove_path` lives in `std/sys.loam` too (R2.2): the `lstat`-and-
+   -recurse walk in Loam — a linked directory removes the link, never its
+   target — over raw `remove` / `rmdir` bindings. */
+/* `sys.mkdir` lives in `std/sys.loam` too (R2.2): the `-p` walk in Loam, one
+   `mkdir` per level. The shim hands back `errno` itself, so no message text
+   crosses (and `EEXIST` is 17 on every target here: POSIX, macOS, Windows). */
+int loam_sys_mkdir_one(const char *path);
+int loam_sys_mkdir_errno(void);
+#ifdef LOAM_RT_DEFINE_JMP
+static int loam_sys_mkdir_last;
+int loam_sys_mkdir_one(const char *path) {
+    if (!path) return -1;
+    if (mkdir(path, 0755) != 0) {
+        loam_sys_mkdir_last = errno;
+        return -1;
     }
+    loam_sys_mkdir_last = 0;
     return 0;
 }
-
-static inline int64_t loam_sys_rename(loam_str from, loam_str to) {
-    char a[4096], b[4096];
-    if (loam_sys_cpath(from, a, sizeof a) || loam_sys_cpath(to, b, sizeof b)) return 1;
-#ifdef _WIN32
-    /* POSIX rename replaces the target; Windows refuses an existing one. */
-    if (rename(a, b) == 0) return 0;
-    remove(b);
-#endif
-    return rename(a, b) == 0 ? 0 : 1;
+int loam_sys_mkdir_errno(void) {
+    return loam_sys_mkdir_last;
 }
-
-/* A fresh string, like every other sys result: the caller may keep it. */
-static inline loam_str loam_sys_cwd(void) {
-    char buf[4096];
-    size_t n;
-    if (!getcwd(buf, sizeof buf)) return (loam_str){"", 0};
-    n = strlen(buf);
-#ifdef _WIN32
-    /* Paths are `/` on the Loam side (every Win32 file API accepts it). */
-    for (size_t i = 0; i < n; i++)
-        if (buf[i] == '\\') buf[i] = '/';
 #endif
-    return loam_str_copy(buf, (int64_t)n);
+
+/* `sys.mkdir` lives in `std/sys.loam` too (R2.2): the `-p` walk there. */
+
+/* `sys.rename` lives in `std/sys.loam` too (R2.2): POSIX replaces the target,
+   and the Loam side removes-then-retries for Windows, like the C did. */
+
+/* `sys.cwd` lives in `std/sys.loam` too (R2.2): `getcwd` into a Loam buffer,
+   trimmed at the first NUL. The slash fix stays in C on Windows (below).
+   Declared here, defined once in the owning unit (see `loam_sys_strerror`
+   above): the `#[c]` wrapper references it as a symbol. */
+char *loam_sys_getcwd(char *buf, size_t n);
+#ifdef LOAM_RT_DEFINE_JMP
+#ifdef _WIN32
+char *loam_sys_getcwd(char *buf, size_t n) {
+    char *p = _getcwd(buf, n);
+    if (p) {
+        /* Paths are `/` on the Loam side (every Win32 file API accepts it). */
+        for (char *c = p; *c; c++)
+            if (*c == '\\') *c = '/';
+    }
+    return p;
 }
+#else
+char *loam_sys_getcwd(char *buf, size_t n) {
+    return getcwd(buf, n);
+}
+#endif
+#endif
 
 /* --- sys.spawn / sys.wait: run a program without a shell ---
    `argv[0]` is looked up on PATH. Children live in a small table so a handle

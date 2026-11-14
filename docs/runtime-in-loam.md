@@ -441,8 +441,68 @@ straight to libc, so no C shim.
       HEAD): tiny int program 16,936 unchanged, nob 533,216 unchanged, loamc
       1,814,408 unchanged (no compiler change). **Runtime: 8,700 → 8,699** (−1: two C lines deleted, one hook
       macro added).
-- [ ] R2.2 Files and dirs: `read_file`, `write_file`, `io_error`, directory
-      walks, paths.
+- [x] R2.2 Files and dirs. Done 2026-11-14. `read_file` / `write_file` /
+      `write_bytes` / `io_error` are Loam over stdio `#[c]` bindings
+      (`FILE*`-as-`i64`; `fopen` / `fread` / `fwrite` / `ferror` / `fclose`
+      raw from libc) plus a `strerror(errno)` shim and a module-level error
+      slot; `stat` is a five-slot shim (`loam_sys_stat`: sec, nsec, size,
+      is-regular, is-dir — the layout and the `S_IS*` macros cannot cross)
+      behind one `stat` per call for `mtime` / `stamp` / `exists` / `is_dir`;
+      dirents are read by `loam_dir_names` + `loam_dir_name_at` shims with
+      the insertion sort in Loam over a raw `strcmp` binding; `remove_path` is
+      the `lstat`-and-recurse walk (symlinks never followed) over raw
+      `remove` / `rmdir`; `mkdir -p` is a Loam walk over a `mkdir` shim that
+      hands back `errno` (`EEXIST` is 17 on all three targets); `rename` is
+      raw with the Windows remove-then-retry in Loam; `realpath` is raw
+      `realpath(3)` into a 4096-byte Loam buffer on posix (libc allocates
+      nothing) and a same-shape `_fullpath` hook on Windows; `cwd` is
+      `getcwd` into a buffer trimmed at the first NUL. New primitive:
+      `buf.with_len(n)` (one zeroed allocation with a spare byte, so
+      `string_from_bytes` takes it without a copy). The shims are defined
+      once in the owning unit (`LOAM_RT_DEFINE_JMP`), like the trap state.
+      `write_bytes` now takes `b: []u8` by value (one refcount bump, no byte
+      copy; four compiler call sites and one fixture dropped their `&`). All
+      wasm variants answer from Loam; the wasm stub block loses the moved
+      fns. Zeus's `plat_font_bytes` no longer falls back to the C reader:
+      with no host hook it answers `""` and `zeus.use_font` reads the path
+      with `sys.read_file`.
+      **Bug found on the way:** a `#[c]` fn returning `string` is called as
+      returning `const char *` (the wrapper copies it). The first draft's
+      `loam_sys_strerror` returned a `loam_str`, which arm64 hands back
+      through a struct-return pointer (x8) that the wrapper never set, so
+      every failed `fopen` / `stat` wrote 24 bytes through a stray pointer
+      and the fresh loamc aborted with a damaged free list on any file. The
+      draft also bound `realpath` with one argument (the second was register
+      garbage, and the `malloc`'d answer leaked) and gave the Windows hook a
+      `loam_str` parameter where the wrapper passes `char *`. All three now
+      use the `#[c]` ABI (`const char *` in and out, caller buffers).
+      Behaviour matches the C exactly, checked against HEAD's source: `"empty
+      path"` / `"path too long"` (≥ 4095) / `"not a regular file"` / `"file
+      too large (over 1 GiB)"` / `"read error"` (only with `ferror`; a short
+      read keeps its bytes), `"no filesystem"` on wasm, rescan-per-call
+      listings, overlong children skipped. A probe of every moved fn
+      (including 2,000 rounds of failed reads, `realpath`, and `list_dir`) prints
+      what the C printed and has 0 leaks. The wasm `abort` is declared `noreturn` now
+      (it ends in `__builtin_trap`), so the `-Winvalid-noreturn` warnings on
+      `loam_panic` are gone from wasm builds. Benchmark (same compiler,
+      `LOAM_HOME` switched to HEAD's std and runtime; 3 alternating rounds,
+      steady state): 50 MB `read_file` 11–12 ms Loam vs 7 ms C (~1.6×: the
+      gap is `with_len` zeroing 50 MB, kept so a buffer never exposes
+      uninitialized bytes; `calloc` was tried and only helps a read on fresh
+      pages, so it was not kept); `mtime` ×200k 384–390 vs 368–373 ms (+4%:
+      one `[]i64` and `Result` per call); `realpath` + `cwd` ×20k 480–489 vs
+      468–501 ms (+2%); `list_dir` ×2000 69 vs 1,172–1,186 ms (17× faster:
+      the C version rescanned the directory once per entry). Compiler `--emit-c`
+      of itself 0.15 vs 0.15 s. Binaries (new vs HEAD): tiny int program
+      33,688 vs 33,688, nob 533,912 vs 533,224 (+688), loamc 1,831,608 vs
+      1,814,408 (+17,200, +0.9%: the moved fns are out-of-line Loam plus
+      their `Result` monomorphs, not `static inline` C). Seed 4,977,434 →
+      5,035,141 bytes, seed = stage 1 = stage 2. Fixtures `fs`, `sys`,
+      `sys_stamp`, `std_buf_conv`, `c_ffi`, `os_`, `buf`, `compile_fail`,
+      `golden_font_metrics` and all 59 `draw_golden` pass; `selfhost_seed`,
+      `wasm_smoke`, `wasm_float`, `wasm_trap`, `lsp`, `ownership_asan`,
+      `android_project`, `cost`, `fresh_cache` green, each run alone.
+      **Runtime: 8,699 → 8,540** (−159).
 - [ ] R2.3 Process: `exec`, `spawn` / `wait` and the spawn table, `env`,
       `exit`, `os`, `arch`, `cpu_count`.
 - [ ] R2.4 stdin: `read_stdin` / `read_line` buffering.

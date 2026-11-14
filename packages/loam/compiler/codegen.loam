@@ -3892,7 +3892,7 @@ fn emit_c() {
     }
     flush()
     if SINK.len > 0 {
-        if sys.write_bytes(SINK, &OUT) != 0 {
+        if sys.write_bytes(SINK, OUT) != 0 {
             fatal("cannot write '{{SINK}}'")
         }
         OUT = []u8 {}

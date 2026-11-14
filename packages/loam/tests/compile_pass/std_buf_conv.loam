@@ -32,7 +32,7 @@ fn main() {
     buf.push_i64(&mut b, i64(-5))
     fmt.println(buf.to_string(&b))
     fmt.println(
-        sys.write_bytes("loam_std_buf_conv_test.out", &b),
+        sys.write_bytes("loam_std_buf_conv_test.out", b),
         sys.mtime("loam_std_buf_conv_test.out") > i64(0),
         sys.mtime("/nope"),
     )

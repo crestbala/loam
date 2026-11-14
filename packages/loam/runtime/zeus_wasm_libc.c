@@ -173,7 +173,7 @@ int32_t zeus_heap_used(void) {
     return (int32_t)(heap_off - free_bytes);
 }
 
-void abort(void) {
+__attribute__((noreturn)) void abort(void) {
     zeus_js_panic("abort", 5);
     /* The host import normally throws; if it returns, trap rather than spin. */
     __builtin_trap();
