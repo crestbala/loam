@@ -1,0 +1,48 @@
+// `#[os]`: one fn per target, all emitted into the same C under `#if`, so
+// the C builds on every target and the compiler there picks its own. Calls
+// (and a fn value) name the first variant; a `#[c]` binding can be one.
+import "std:fmt"
+
+#[os("posix")]
+fn family() -> string {
+    return "posix"
+}
+
+#[os("windows")]
+fn family() -> string {
+    return "windows"
+}
+
+#[os("wasm")]
+fn family() -> string {
+    return "wasm"
+}
+
+#[os("posix")]
+#[c("getpid")]
+fn c_pid() -> i32 {}
+
+#[os("windows", "wasm")]
+fn c_pid() -> i32 {
+    return 1
+}
+
+#[os("apple")]
+fn kernel() -> string {
+    return "darwin"
+}
+
+#[os("linux")]
+fn kernel() -> string {
+    return "linux"
+}
+
+#[os("windows", "wasm")]
+fn kernel() -> string {
+    return "other"
+}
+
+fn main() {
+    let f = family
+    fmt.println(family(), f(), c_pid() > 0, kernel().len > 0)
+}

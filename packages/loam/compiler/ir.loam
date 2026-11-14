@@ -177,6 +177,9 @@ struct IrFn {
     cap_types: []int,
     /** *`__init`: the module whose globals it sets. */
     init_mod: int,
+    /** *The Fn declaration lowered, or NONE: `#[os]` variants share a C */
+    /** *name, so codegen finds a fn's body by this. */
+    decl: int,
 }
 
 /** *`lower_modules` ran: the IR below is the whole program's. */
@@ -299,6 +302,7 @@ fn begin_fn(cname: string, has_cname: bool, name: string, has_name: bool, sig: i
         caps: []string {},
         cap_types: []int {},
         init_mod: 0,
+        decl: NONE,
     })
     CF = FNS.len - 1
     F_LOCALS = LOCALS.len
@@ -2852,6 +2856,7 @@ fn lower_fn(d: int) {
     let cname = if has_override { CNAME_OVERRIDE } else { ast.EXTRA[x].sname }
     begin_fn(cname, has_override || ast.EXTRA[x].has_sname, ast.INFO[d].name, ast.INFO[d].has_name, ir_subst(ast.NODES[d].ty))
     FNS[CF].env_local = NONE
+    FNS[CF].decl = if has_override { NONE } else { d }
     FNS[CF].is_main = CUR_MOD == 0 && !has_override && ast.INFO[d].has_name && ast.INFO[d].name == "main"
     CUR = new_block()
     bind_module_globals()

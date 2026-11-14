@@ -402,6 +402,26 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
 **R2. `sys` over direct bindings.** Every kernel call is a `#[c]` binding
 straight to libc, so no C shim.
 
+- [x] R2.1a Per-OS fns in Loam (`#[os]`). Done 2026-11-14. One name may have
+      several fn variants in a module when their masks are disjoint and their
+      signatures equal; calls resolve to the first, all share one C name, and
+      codegen wraps each variant's prototype, body and `#[c]` wrapper in `#if`
+      for its targets (`apple`, `linux`, `windows`, `wasm`, `posix` = apple |
+      linux | other Unix; `posix` emits `!defined(_WIN32) &&
+      !defined(__wasm32__)`). Attributes stack (`#[os("posix")]
+      #[c("getpid")]`); a bodyless runtime hook must be every variant or none.
+      DCE keeps all variants; only the as-value trampoline comes from the
+      primary. `client_c_ok` skips non-wasm variants on wasm (and std `#[c]`
+      on iOS/Android); the committed seed still builds unchanged on Linux and
+      Windows. Tree-sitter `repeat($.attribute)` regenerated via `nob grammar`
+      (src/parser.c, grammar.json, zed extension.toml). Fixtures:
+      `compile_pass/os_variants` (prints `posix posix true true`),
+      `compile_fail/os_overlap`, `os_signature`, `os_unknown`,
+      `os_plain_twice`; `loam-fmt` leaves them unchanged. Suite: `os_`,
+      `compile_fail` pass; `selfhost_seed` (seed = stage 1 = stage 2,
+      unchanged), `wasm_smoke`, `wasm_float`, `lsp`, `ownership_asan`,
+      `android_project`, `cost`, `fresh_cache` green. **Runtime: 8,700**
+      (unchanged: compiler-only, no runtime moved).
 - [ ] R2.1 `#[c]` usable from `std` itself, with libc symbols needing no
       `#![c_source]`; wasm keeps its own import table.
 - [ ] R2.2 Files and dirs: `read_file`, `write_file`, `io_error`, directory

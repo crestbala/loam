@@ -62,7 +62,7 @@ module.exports = grammar({
     _attribute_args: $ => seq('(', $.string, repeat(seq(',', $.string)), optional(','), ')'),
 
     function_item: $ => seq(
-      optional($.attribute),
+      repeat($.attribute),
       optional(field('async', 'async')),
       'fn',
       field('name', $.identifier),
@@ -115,7 +115,7 @@ module.exports = grammar({
     ),
 
     struct_item: $ => seq(
-      optional($.attribute),
+      repeat($.attribute),
       'struct',
       field('name', $.identifier),
       optional($.type_params),

@@ -91,6 +91,17 @@ fn mark_fn(f: int) {
     }
     KEPT[f] = true
     push(TODO, f)
+    // Calls name an `#[os]` fn's first variant; the build keeps each one,
+    // and the C compiler picks the target's.
+    if typecheck.os_mask(f) != 0 {
+        let p = typecheck.os_primary(f)
+        for i in 0..typecheck.OS_DECLS.len {
+            let v = typecheck.OS_DECLS[i]
+            if typecheck.os_primary(v) == p {
+                mark_fn(v)
+            }
+        }
+    }
 }
 
 fn walk_list(nodes: &[]int) {

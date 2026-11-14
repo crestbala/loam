@@ -2910,9 +2910,65 @@ fn fn_body(f: int, is_main: bool) {
     flush_big()
 }
 
+/** *The IR fn lowered from declaration `d`: by its C name, unless `d` is */
+/** *an `#[os]` variant, which shares that name with the others. */
+fn ir_fn_of(d: int) -> int {
+    if typecheck.os_mask(d) == 0 {
+        return find_ir_fn(fn_cname(d))
+    }
+    for f in 0..ir.FNS.len {
+        if ir.FNS[f].decl == d {
+            return f
+        }
+    }
+    return NONE
+}
+
+/** *The C condition an `#[os]` mask stands for (`parser.OS_*` bits). */
+fn os_condition(mask: int) -> string {
+    if mask == 19 {
+        return "!defined(_WIN32) && !defined(__wasm32__)"
+    }
+    let mut terms = []string {}
+    if (mask & 1) != 0 {
+        push(terms, "defined(__APPLE__)")
+    }
+    if (mask & 2) != 0 {
+        push(terms, "defined(__linux__)")
+    }
+    if (mask & 4) != 0 {
+        push(terms, "defined(_WIN32)")
+    }
+    if (mask & 8) != 0 {
+        push(terms, "defined(__wasm32__)")
+    }
+    if (mask & 16) != 0 {
+        push(terms, "(!defined(__APPLE__) && !defined(__linux__) && !defined(_WIN32) && !defined(__wasm32__))")
+    }
+    let mut out = ""
+    for i in 0..terms.len {
+        out = if i == 0 { terms[i] } else { "{{out}} || {{terms[i]}}" }
+    }
+    return out
+}
+
+/** *Open `d`'s `#[os]` condition, if it has one; `os_end` closes it. */
+fn os_begin(d: int) {
+    let mask = typecheck.os_mask(d)
+    if mask != 0 {
+        w("#if {{os_condition(mask)}}\n")
+    }
+}
+
+fn os_end(d: int) {
+    if typecheck.os_mask(d) != 0 {
+        w("#endif\n")
+    }
+}
+
 fn emit_fn(d: int, is_main: bool, linkage: string) {
     let cn = fn_cname(d)
-    let f = find_ir_fn(cn)
+    let f = ir_fn_of(d)
     shard_mark(cn)
     line_directive(ast.INFO[d].loc.file, ast.INFO[d].loc.line)
     w(linkage)
@@ -3354,6 +3410,7 @@ fn c_bindings() {
             let ret = ret_type(ft)
             let rk = tkind(ret)
             let np = ast.NODES[d].kids.len
+            os_begin(d)
             w("extern void {{cn}}__csym(void) LOAM_CSYM(\"{{c_sym_of(d)}}\");\n")
             w("static ")
             fn_sig(d, false)
@@ -3412,6 +3469,7 @@ fn c_bindings() {
                 w("    return _r;\n")
             }
             w("}\n")
+            os_end(d)
         }
     }
     if any {
@@ -3661,16 +3719,20 @@ fn emit_c() {
                 if std_mod || c_sym_of(d).len > 0 {
                     continue
                 }
+                os_begin(d)
                 fn_sig(d, false)
                 w(";\n")
+                os_end(d)
                 continue
             }
             if m == 0 && ast.INFO[d].name == "main" {
                 continue
             }
+            os_begin(d)
             w(fn_linkage(m, d))
             fn_sig(d, false)
             w(";\n")
+            os_end(d)
         }
         flush_big()
     }
@@ -3723,7 +3785,8 @@ fn emit_c() {
                 let d = decls[i]
                 // A user seam has a prototype above, so it can be a value too.
                 if is_fn(d) && (ast.INFO[d].marks & ast.M_AS_VALUE) != 0 &&
-                    (!is_intrinsic(d) || c_sym_of(d).len > 0 || !std_mod) && !is_generic(d) && dce.keep(d) {
+                    (!is_intrinsic(d) || c_sym_of(d).len > 0 || !std_mod) && !is_generic(d) && dce.keep(d) &&
+                    typecheck.os_primary(d) == d {
                     as_fn_tramp(d, proto)
                 }
             }
@@ -3790,7 +3853,9 @@ fn emit_c() {
                     w(" { loam_panic(\"<server>\", 0, \"server function excluded from client build\"); __builtin_unreachable(); }\n")
                     continue
                 }
+                os_begin(d)
                 emit_fn(d, is_main, if is_main { "" } else { fn_linkage(m, d) })
+                os_end(d)
             }
         }
         m = m - 1

@@ -226,6 +226,35 @@ runtime headers; an app resolves its own by shipping one C file:
 GreenInfer is the working example (`examples/zeus/greeninfer/`): Loam owns
 all engine logic; the C file is only the NEON kernel and mmap trampolines.
 
+Per-OS code lives in Loam behind `#[os]` instead of `#ifdef` C. One name may
+have several fn variants in a module when their target masks are disjoint and
+their signatures equal; calls name the first and every variant shares one C
+name, wrapped in `#if` for its targets:
+
+```loam
+#[os("posix")]              // apple, linux, and other Unix (not Windows, not wasm)
+fn family() -> string {
+    return "posix"
+}
+
+#[os("windows")]
+fn family() -> string {
+    return "windows"
+}
+
+#[os("wasm")]
+fn family() -> string {
+    return "wasm"
+}
+```
+
+Targets are `apple`, `linux`, `windows`, `wasm`, and `posix` (the union of
+apple, linux, and other Unix; Android counts as `linux`, iOS as `apple`).
+Attributes stack, so `#[os("posix")]` sits beside `#[c("getpid")]` on one fn.
+A bodyless runtime hook must be every variant or none (wrap a hook in a fn
+instead); overlapping masks, mismatched signatures, and a plain second fn of
+the same name are all compile errors.
+
 ### Compile time
 
 `loam` itself is fast (tens of milliseconds to typecheck and emit C). Linking

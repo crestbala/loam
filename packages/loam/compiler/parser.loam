@@ -2154,6 +2154,60 @@ fn parse_c_directive(p: &mut Parser) -> int {
 }
 
 // `op` bits on Fn and Struct nodes.
+/** *`#[os(...)]` bits (on a Fn's `numb`): which targets a variant is for. */
+const OS_APPLE: int = 1
+const OS_LINUX: int = 2
+const OS_WINDOWS: int = 4
+const OS_WASM: int = 8
+/** *Any other Unix (BSD, ...): not Apple, Linux, Windows or wasm. */
+const OS_OTHER: int = 16
+
+/** *The target bit of one `#[os]` name, or 0 when it names none. `posix` */
+/** *is every target but Windows and wasm; Android is `linux`, iOS `apple`. */
+fn os_bits(name: string) -> int {
+    if name == "apple" {
+        return OS_APPLE
+    }
+    if name == "linux" {
+        return OS_LINUX
+    }
+    if name == "windows" {
+        return OS_WINDOWS
+    }
+    if name == "wasm" {
+        return OS_WASM
+    }
+    if name == "posix" {
+        return OS_APPLE | OS_LINUX | OS_OTHER
+    }
+    return 0
+}
+
+/** *`#[os("posix", "wasm")]` after the name: the union of the targets, or */
+/** *0 after an error. */
+fn parse_os_attr(p: &mut Parser) -> int {
+    consume(p, Tok.Lparen, "expected ( after #[os")
+    let mut mask = 0
+    while true {
+        if !eat(p, Tok.String) {
+            error(p, "#[os] expects target names: #[os(\"posix\")], with apple, linux, windows, wasm or posix")
+            return 0
+        }
+        let name = tok_unescaped(p, p.prev)
+        let bits = os_bits(name)
+        if bits == 0 {
+            error(p, clip95("unknown #[os] target '{{name}}' (want apple, linux, windows, wasm or posix)"))
+            return 0
+        }
+        mask = mask | bits
+        if !eat(p, Tok.Comma) {
+            break
+        }
+    }
+    consume(p, Tok.Rparen, "expected ) after #[os targets")
+    return mask
+}
+
 const FN_ASYNC: int = 1
 const FN_TEST: int = 2
 const FN_SERVER: int = 4
@@ -2194,22 +2248,34 @@ fn parse_program(p: &mut Parser) -> int {
         let mut is_server = false
         let mut c_sym = ""
         let mut has_c_sym = false
-        if eat(p, Tok.Hash) {
+        let mut os_mask = 0
+        let mut attr_failed = false
+        let mut dir_seen = false
+        while eat(p, Tok.Hash) {
             if eat(p, Tok.Bang) {
                 let cd = parse_c_directive(p)
                 if bad(p, cd) {
+                    attr_failed = true
                     break
                 }
                 push(kids, cd)
-                continue
+                dir_seen = true
+                break
             }
             consume(p, Tok.Lbracket, "expected [ after #")
             if !eat(p, Tok.Ident) {
                 error(p, "expected attribute name")
+                attr_failed = true
                 break
             }
             let attr = tok_text(p, p.prev)
-            if attr == "proto" {
+            if attr == "os" {
+                os_mask = parse_os_attr(p)
+                if os_mask == 0 {
+                    attr_failed = true
+                    break
+                }
+            } else if attr == "proto" {
                 st_bits = ST_PROTO
             } else if attr == "test" {
                 is_test = true
@@ -2225,6 +2291,7 @@ fn parse_program(p: &mut Parser) -> int {
                 consume(p, Tok.Lparen, "expected ( after #[c")
                 if !eat(p, Tok.String) {
                     error(p, "#[c] expects a C symbol name: #[c(\"sym\")]")
+                    attr_failed = true
                     break
                 }
                 c_sym = tok_unescaped(p, p.prev)
@@ -2232,37 +2299,59 @@ fn parse_program(p: &mut Parser) -> int {
                 consume(p, Tok.Rparen, "expected ) after #[c symbol")
             } else {
                 error(p, clip95("unknown attribute '{{attr}}'"))
+                attr_failed = true
                 break
             }
             consume(p, Tok.Rbracket, "expected ] after attribute")
+            if check(p, Tok.Hash) {
+                continue
+            }
             if st_bits == ST_PROTO && !check(p, Tok.Struct) {
                 error(p, "#[proto] can only be applied to a struct")
+                attr_failed = true
                 break
             }
             if is_test && !check(p, Tok.Fn) {
                 error(p, "#[test] can only be applied to a fn")
+                attr_failed = true
                 break
             }
             if is_server && !check(p, Tok.Fn) {
                 error(p, "#[server] can only be applied to a fn")
+                attr_failed = true
                 break
             }
             if st_bits == ST_JSON && !check(p, Tok.Struct) {
                 error(p, "#[json] can only be applied to a struct")
+                attr_failed = true
                 break
             }
             if st_bits == ST_MUST_CHECK && !check(p, Tok.Struct) {
                 error(p, "#[must_check] can only be applied to a struct")
+                attr_failed = true
                 break
             }
             if st_bits == ST_NO_SEND && !check(p, Tok.Struct) {
                 error(p, "#[no_send] can only be applied to a struct")
+                attr_failed = true
+                break
+            }
+            if os_mask != 0 && !check(p, Tok.Fn) {
+                error(p, "#[os] can only be applied to a fn")
+                attr_failed = true
                 break
             }
             if has_c_sym && !check(p, Tok.Fn) {
                 error(p, "#[c] can only be applied to a fn")
+                attr_failed = true
                 break
             }
+        }
+        if attr_failed {
+            break
+        }
+        if dir_seen {
+            continue
         }
         if eat(p, Tok.Fn) {
             let f = parse_fn(p)
@@ -2278,6 +2367,7 @@ fn parse_program(p: &mut Parser) -> int {
                 ast.NODES[f].op = bits
                 ast.EXTRA[ast.ex_mut(f)].text = c_sym
                 ast.EXTRA[ast.ex_mut(f)].has_text = has_c_sym
+                ast.EXTRA[ast.ex_mut(f)].numb = os_mask
                 push(kids, f)
                 decl_count = decl_count + 1
             }

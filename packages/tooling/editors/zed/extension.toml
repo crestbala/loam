@@ -7,7 +7,7 @@ description = "Loam language: syntax highlighting and diagnostics via loam-lsp"
 
 [grammars.loam]
 repository = "file:///Users/bala_mani/Documents/loam/out/zed-grammar"
-rev = "18fee0da0a45a2d92e9fa1cccfbe0517d524423e"
+rev = "e53158b294258fb621ab42e593b06bedbd36e47d"
 
 [language_servers.loam-lsp]
 name = "Loam LSP"
