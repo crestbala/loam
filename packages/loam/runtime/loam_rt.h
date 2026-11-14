@@ -41,7 +41,6 @@ static inline ssize_t writev(int fd, const struct iovec *iov, int n) {
 #define pclose _pclose
 #define lstat stat
 #define mkdir(path, mode) _mkdir(path)
-#define loam_sys_stdout_tty_win(fd) ((int32_t)isatty(STDOUT_FILENO))
 #else
 #include <sys/uio.h>
 #endif
@@ -1212,69 +1211,9 @@ static inline void loam_floattext_write_text(const uint8_t *d, int32_t len, bool
     else loam_write_bytes((const char *)d, (size_t)n);
 }
 
-/** The operating system: "macos" | "linux" | "windows" | "ios" | "android" |
- *  "wasm" | "other". The driver picks executable suffixes and the C compiler
- *  from this. */
-static inline loam_str loam_sys_os(void) {
-#if defined(__wasm32__)
-    return (loam_str){"wasm", 4};
-#elif defined(LOAM_ANDROID) || defined(__ANDROID__)
-    return (loam_str){"android", 7};
-#elif defined(LOAM_IOS)
-    return (loam_str){"ios", 3};
-#elif defined(_WIN32)
-    return (loam_str){"windows", 7};
-#elif defined(__APPLE__)
-    return (loam_str){"macos", 5};
-#elif defined(__linux__)
-    return (loam_str){"linux", 5};
-#else
-    return (loam_str){"other", 5};
-#endif
-}
-
-/** The CPU: "x86_64" | "aarch64" | "wasm32" | "other". The driver passes
- *  arm64-only flags to the C compiler by it. */
-static inline loam_str loam_sys_arch(void) {
-#if defined(__wasm32__)
-    return (loam_str){"wasm32", 6};
-#elif defined(__x86_64__) || defined(_M_X64)
-    return (loam_str){"x86_64", 6};
-#elif defined(__aarch64__) || defined(_M_ARM64)
-    return (loam_str){"aarch64", 7};
-#else
-    return (loam_str){"other", 5};
-#endif
-}
-
-/** Online CPUs, at least 1: how many children a parallel build runs at once.
- *  1 on wasm, iOS and Android, where nothing is spawned. */
-static inline int64_t loam_sys_cpu_count(void) {
-#if defined(__wasm32__) || defined(LOAM_IOS) || defined(LOAM_ANDROID)
-    return 1;
-#elif defined(_WIN32)
-    const char *n = getenv("NUMBER_OF_PROCESSORS");
-    long v = n ? strtol(n, NULL, 10) : 0;
-    return v > 0 ? (int64_t)v : 1;
-#else
-    long v = sysconf(_SC_NPROCESSORS_ONLN);
-    return v > 0 ? (int64_t)v : 1;
-#endif
-}
-
-/** Compile target: "wasm" | "ios" | "android" | "native". Used by
- *  `http.client()` to pick a default RPC address. */
-static inline loam_str loam_sys_target(void) {
-#ifdef __wasm32__
-    return (loam_str){"wasm", 4};
-#elif defined(LOAM_ANDROID)
-    return (loam_str){"android", 7};
-#elif defined(LOAM_IOS)
-    return (loam_str){"ios", 3};
-#else
-    return (loam_str){"native", 6};
-#endif
-}
+/* `sys.os` / `sys.arch` / `sys.cpu_count` / `sys.target` live in
+   `std/sys.loam` (R2.3b): one `#[os]` / `#[arch]` variant per target, and
+   `cpu_count` over raw `sysconf`. */
 
 #ifdef __wasm32__
 static inline int64_t loam_sys_env_set(loam_str name) {

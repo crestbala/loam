@@ -32,12 +32,12 @@ fn kernel() -> string {
     return "darwin"
 }
 
-#[os("linux")]
+#[os("linux", "android")]
 fn kernel() -> string {
     return "linux"
 }
 
-#[os("windows", "wasm")]
+#[os("windows", "wasm", "other")]
 fn kernel() -> string {
     return "other"
 }

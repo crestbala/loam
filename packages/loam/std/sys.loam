@@ -18,18 +18,152 @@ fn io_error() -> string {
 }
 
 /** *The operating system: `"macos"`, `"linux"`, `"windows"`, `"ios"`, */
-/** *`"android"`, `"wasm"`, or `"other"`. */
-fn os() -> string {}
+/** *`"android"`, `"wasm"`, or `"other"`. Fixed when the program is built: */
+/** *each target compiles only its own variant. */
+#[os("macos")]
+fn os() -> string {
+    return "macos"
+}
 
-/** *The CPU: `"x86_64"`, `"aarch64"`, `"wasm32"`, or `"other"`. */
-fn arch() -> string {}
+/** *`sys.os()` on this target. */
+#[os("ios")]
+fn os() -> string {
+    return "ios"
+}
+
+/** *`sys.os()` on this target. */
+#[os("linux")]
+fn os() -> string {
+    return "linux"
+}
+
+/** *`sys.os()` on this target. */
+#[os("android")]
+fn os() -> string {
+    return "android"
+}
+
+/** *`sys.os()` on this target. */
+#[os("windows")]
+fn os() -> string {
+    return "windows"
+}
+
+/** *`sys.os()` on this target. */
+#[os("wasm")]
+fn os() -> string {
+    return "wasm"
+}
+
+/** *`sys.os()` on this target. */
+#[os("other")]
+fn os() -> string {
+    return "other"
+}
+
+/** *The CPU: `"x86_64"`, `"aarch64"`, `"wasm32"`, or `"other"`. Fixed when */
+/** *the program is built, like `os`. */
+#[arch("x86_64")]
+fn arch() -> string {
+    return "x86_64"
+}
+
+/** *`sys.arch()` on this CPU. */
+#[arch("aarch64")]
+fn arch() -> string {
+    return "aarch64"
+}
+
+/** *`sys.arch()` on this CPU. */
+#[arch("wasm32")]
+fn arch() -> string {
+    return "wasm32"
+}
+
+/** *`sys.arch()` on this CPU. */
+#[arch("other")]
+fn arch() -> string {
+    return "other"
+}
 
 /** *Online CPUs, at least 1: how many children a parallel job runs at once. */
-/** *`1` on wasm, iOS and Android. */
-fn cpu_count() -> int {}
+/** *`1` on wasm, iOS and Android, where nothing is spawned, and on an Unix */
+/** *this std does not know (`_SC_NPROCESSORS_ONLN` is a per-OS number). */
+#[os("macos")]
+fn cpu_count() -> int {
+    // `_SC_NPROCESSORS_ONLN` in the macOS SDK.
+    return at_least_one(c_sysconf(58))
+}
+
+/** *Linux: `_SC_NPROCESSORS_ONLN` is 84 in glibc and musl alike. */
+#[os("linux")]
+fn cpu_count() -> int {
+    return at_least_one(c_sysconf(84))
+}
+
+/** *Windows: the count the system puts in the environment, read as `strtol` */
+/** *did (leading spaces, then digits; anything else stops it). */
+#[os("windows")]
+fn cpu_count() -> int {
+    let v = env("NUMBER_OF_PROCESSORS")
+    let mut i = 0
+    while i < v.len && (v[i] == ' ' || v[i] == '\t') {
+        i = i + 1
+    }
+    // A sign as `strtol` takes it: `-` can only make the count below one.
+    if i < v.len && (v[i] == '+' || v[i] == '-') {
+        if v[i] == '-' {
+            return 1
+        }
+        i = i + 1
+    }
+    let mut n = 0
+    while i < v.len && v[i] >= '0' && v[i] <= '9' && n < 1000000 {
+        n = n * 10 + int(v[i] - '0')
+        i = i + 1
+    }
+    return if n > 0 { n } else { 1 }
+}
+
+/** *wasm, iOS, Android, and an unknown Unix: one at a time. */
+#[os("wasm", "ios", "android", "other")]
+fn cpu_count() -> int {
+    return 1
+}
+
+/** *`sysconf(name)` straight from libc: `-1` when the name is unknown. */
+#[os("macos", "linux")]
+#[c("sysconf")]
+fn c_sysconf(name: i32) -> i64 {}
+
+/** *`v` as a count: never below one. */
+fn at_least_one(v: i64) -> int {
+    return if v > i64(0) { int(v) } else { 1 }
+}
 
 /** *Compile `--target`: `"wasm"`, `"ios"`, `"android"`, or `"native"`. */
-fn target() -> string {}
+#[os("wasm")]
+fn target() -> string {
+    return "wasm"
+}
+
+/** *`sys.target()` on iOS. */
+#[os("ios")]
+fn target() -> string {
+    return "ios"
+}
+
+/** *`sys.target()` on Android. */
+#[os("android")]
+fn target() -> string {
+    return "android"
+}
+
+/** *`sys.target()` on a desktop or server build. */
+#[os("macos", "linux", "windows", "other")]
+fn target() -> string {
+    return "native"
+}
 
 /** *`1` if the environment variable is set and non-empty. */
 fn env_set(name: string) -> int {}
@@ -91,7 +225,8 @@ fn exec_status() -> int {}
 /** *`1` if stdout is a terminal, so output may be redrawn in place. A child of */
 /** *`exec` cannot tell, its stdout being the capture pipe. Wasm returns `0`. */
 fn stdout_tty() -> int {
-    return int(c_isatty(1))
+    // `_isatty` answers any nonzero value for a terminal; this answers `1`.
+    return if c_isatty(1) != 0 { 1 } else { 0 }
 }
 
 /** *`isatty(2)`, bound straight from libc: `1` when `fd` is a terminal. */
@@ -105,15 +240,10 @@ fn c_isatty(fd: i32) -> i32 {
     return 0
 }
 
-/** *Windows has no `isatty` on this path; the C below keeps today's answer. */
+/** *The Windows CRT spells it `_isatty`. */
 #[os("windows")]
-fn c_isatty(fd: i32) -> i32 {
-    return c_tty_hook(fd)
-}
-
-#[os("windows")]
-#[c("loam_sys_stdout_tty_win")]
-fn c_tty_hook(fd: i32) -> i32 {}
+#[c("_isatty")]
+fn c_isatty(fd: i32) -> i32 {}
 
 /** *Read the whole file. Empty if missing or over 1 GiB. Native only; wasm */
 /** *returns empty. */

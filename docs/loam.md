@@ -232,7 +232,7 @@ their signatures equal; calls name the first and every variant shares one C
 name, wrapped in `#if` for its targets:
 
 ```loam
-#[os("posix")]              // apple, linux, and other Unix (not Windows, not wasm)
+#[os("posix")]              // Apple, Linux, Android, other Unix (not Windows, not wasm)
 fn family() -> string {
     return "posix"
 }
@@ -249,10 +249,10 @@ fn family() -> string {
 ```
 
 Targets are `macos`, `ios`, `apple` (both), `linux`, `android`, `windows`,
-`wasm`, and `posix` (every Apple and Linux target plus other Unix). `linux`
-includes Android, as `apple` includes iOS; name `macos` or `android` to tell
-them apart. `#[arch(...)]` picks by CPU the same way, with `x86_64`,
-`aarch64`, `wasm32`, and `other`, and a variant may carry both:
+`wasm`, `other` (any other Unix), and `posix` (every target but Windows and
+wasm). As in Rust, `linux` is not Android; name both for the kernel family.
+`#[arch(...)]` picks by CPU the same way, with `x86_64`, `aarch64`, `wasm32`,
+and `other`, and a variant may carry both:
 
 ```loam
 #[os("apple")]

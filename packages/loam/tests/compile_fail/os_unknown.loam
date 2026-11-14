@@ -1,4 +1,4 @@
-// `#[os]` names macos, ios, apple, linux, android, windows, wasm or posix.
+// `#[os]` names macos, ios, apple, linux, android, windows, wasm, other or posix.
 #[os("beos")]
 fn name() -> string {
     return "a"
