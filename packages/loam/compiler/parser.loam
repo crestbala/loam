@@ -2154,9 +2154,9 @@ fn parse_c_directive(p: &mut Parser) -> int {
 }
 
 // `op` bits on Fn and Struct nodes.
-/** *The target bits of one `#[os]` name, or 0 when it names none. `apple` */
-/** *is macOS and iOS, `linux` is Linux and Android, and `posix` is every */
-/** *target but Windows and wasm. */
+/** *The target bits of one `#[os]` name, or 0 when it names none. As in */
+/** *Rust, `linux` is not Android; `apple` is macOS and iOS, `other` is any */
+/** *other Unix, and `posix` is every target but Windows and wasm. */
 fn os_bits(name: string) -> int {
     if name == "macos" {
         return ast.OS_MACOS
@@ -2171,7 +2171,10 @@ fn os_bits(name: string) -> int {
         return ast.OS_ANDROID
     }
     if name == "linux" {
-        return ast.OS_LINUX | ast.OS_ANDROID
+        return ast.OS_LINUX
+    }
+    if name == "other" {
+        return ast.OS_OTHER
     }
     if name == "windows" {
         return ast.OS_WINDOWS
@@ -2205,7 +2208,7 @@ fn arch_bits(name: string) -> int {
 /** *`#[os("posix", "wasm")]` / `#[arch("x86_64")]` after the name: the */
 /** *union of the targets, or 0 after an error. */
 fn parse_target_attr(p: &mut Parser, attr: string) -> int {
-    let names = if attr == "os" { "macos, ios, apple, linux, android, windows, wasm or posix" } else { "x86_64, aarch64, wasm32 or other" }
+    let names = if attr == "os" { "macos, ios, apple, linux, android, windows, wasm, other or posix" } else { "x86_64, aarch64, wasm32 or other" }
     consume(p, Tok.Lparen, "expected ( after #[{{attr}}")
     let mut mask = 0
     while true {

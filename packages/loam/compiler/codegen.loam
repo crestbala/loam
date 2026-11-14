@@ -2925,8 +2925,8 @@ fn ir_fn_of(d: int) -> int {
 }
 
 /** *The C condition an `#[os]` / `#[arch]` mask stands for (`ast.OS_*` and */
-/** *`ast.ARCH_*` bits). A mask naming both halves of `apple` (macOS, iOS) or */
-/** *`linux` (Linux, Android) tests the plain macro, as before the split. */
+/** *`ast.ARCH_*` bits). A mask naming macOS and iOS, or Linux and Android, */
+/** *tests the plain `__APPLE__` / `__linux__` macro. */
 fn os_condition(mask: int) -> string {
     let os = mask & ast.OS_ALL
     let arch = mask & ast.ARCH_ALL

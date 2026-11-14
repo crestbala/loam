@@ -1,5 +1,5 @@
-// `#[os]` tells macOS, iOS and Android apart (`apple` and `linux` name the
-// pairs), and `#[arch]` picks by CPU. A variant may name both; two variants
+// `#[os]` tells macOS, iOS, Linux and Android apart (`apple` names the
+// pair; `linux` is not Android, as in Rust), and `#[arch]` picks by CPU. A variant may name both; two variants
 // clash only when they share an OS and a CPU.
 import "std:fmt"
 import "std:sys"
@@ -19,6 +19,11 @@ fn desk() -> string {
     return "linux"
 }
 
+#[os("android")]
+fn desk() -> string {
+    return "android"
+}
+
 #[os("windows")]
 fn desk() -> string {
     return "windows"
@@ -27,6 +32,11 @@ fn desk() -> string {
 #[os("wasm")]
 fn desk() -> string {
     return "wasm"
+}
+
+#[os("other")]
+fn desk() -> string {
+    return "other"
 }
 
 #[arch("aarch64")]
@@ -56,7 +66,7 @@ fn combo() -> string {
     return "apple-other"
 }
 
-#[os("linux", "windows", "wasm")]
+#[os("linux", "android", "windows", "wasm", "other")]
 fn combo() -> string {
     return "not-apple"
 }
@@ -65,5 +75,5 @@ fn main() {
     let apple = sys.os() == "macos" || sys.os() == "ios"
     let want = if !apple { "not-apple" } else if sys.arch() == "aarch64" { "apple-arm" } else { "apple-other" }
     let arch = if sys.arch() == "aarch64" || sys.arch() == "x86_64" { sys.arch() } else { "other" }
-    fmt.println(desk() == sys.os() || sys.os() == "android", cpu() == arch, combo() == want)
+    fmt.println(desk() == sys.os(), cpu() == arch, combo() == want)
 }

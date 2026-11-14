@@ -532,6 +532,29 @@ straight to libc, so no C shim.
       `c_ffi`, `grammar-check`; `selfhost_seed`, `wasm_smoke`, `wasm_float`,
       `wasm_trap`, `lsp`, `ownership_asan`, `android_project`, `cost`,
       `fresh_cache` green. **Runtime: 8,540** (unchanged: compiler only).
+- [x] R2.3b `os` / `arch` / `cpu_count` / `target` in Loam. Done 2026-11-14.
+      One `#[os]` / `#[arch]` variant per target returning its literal;
+      `cpu_count` is raw `sysconf` with the per-OS `_SC_NPROCESSORS_ONLN`
+      (58 in the macOS SDK, 84 in glibc and musl, read from the headers via
+      zig), Windows parses `NUMBER_OF_PROCESSORS` as `strtol` did, and wasm /
+      iOS / Android answer `1`. An unknown Unix (`other`) now answers `1`
+      too: its constant differs per BSD and no BSD is a supported target
+      (docs/platforms.md). R2.3a's names were corrected here before anything
+      used them: as in Rust, `linux` is Linux only, `android` separate, and
+      `other` (any other Unix) is nameable; naming both `linux` and
+      `android` still emits plain `__linux__`. Two-stage bootstrap (compiler
+      with HEAD's std, seed, then the new std). Preprocessing the emitted C
+      with zig for x86_64 Linux, Android, x86_64 Windows, iOS and wasm keeps
+      exactly one variant of each fn with the right value. Pre-existing bug
+      fixed (from R2.1): Windows `sys.stdout_tty` bound a `#define` macro as
+      a link symbol, so four fixtures failed to link in `cross-check.sh`;
+      Windows now binds `_isatty` raw, and `stdout_tty` normalizes the CRT's
+      nonzero answer to the documented `1`. Benchmark vs HEAD's C: the
+      fact checks constant-fold away in both (0 ms for 50M), `cpu_count`
+      ×200k 100–109 ms both. Suite: `os_`, `arch_`, `sys`, `compile_fail`,
+      `c_ffi`, `http`; the 8 stanzas plus `wasm_trap`; `cross-check.sh` Linux
+      x86_64 / aarch64 122/122 and Windows x86_64 / aarch64 110/110 (was 4
+      failed). Seed 5,053,218 → 5,062,375 bytes, seed = stage 1 = stage 2. **Runtime: 8,540 → 8,479** (−61).
 - [ ] R2.4 stdin: `read_stdin` / `read_line` buffering.
 - [ ] R2.5 `watch_*` bookkeeping over kqueue / inotify / Win32 bindings.
 - [ ] R2.6 Win32 paths through the same bindings; the Windows CI job is green.
