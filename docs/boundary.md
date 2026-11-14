@@ -80,6 +80,22 @@ trampoline in the package, with no logic, as `packages/crypto` has for Argon2. A
 C runs on native builds only. A wasm, iOS, or Android build refuses a `#[c]` fn it
 can reach, and one only a `#[server]` body calls leaves nothing in that build.
 
+## Bindings in std
+
+`std` modules bind libc directly, with no `#![c_source]`: the symbol comes
+from the C library every program already links. `std:batch` binds `fork` /
+`wait` / `open` / `creat` this way, and `std:sys` binds `isatty` for
+`stdout_tty`. The same rules as package bindings apply, plus two:
+
+- A `#[c]` fn is private to its module, so the binding sits beside a safe
+  wrapper in the same `std` module, and importers call only the wrapper.
+  Loam-side per-OS differences are `#[os]` variants (`posix` binds the libc
+  symbol, `wasm` is a Loam stub matching today's runtime answer, `windows`
+  wraps a differently named hook until its own binding lands).
+- Until R2.6, Windows keeps its C behind a `#[os("windows")]` Loam wrapper
+  fn calling a differently named hook, so the committed seed still builds
+  unchanged on Linux and Windows without running the Windows CI job.
+
 ## What belongs where
 
 | Layer | C | Loam |
