@@ -3,10 +3,10 @@
 // Integers are pure Loam: `*_to_str`, radix forms, and `parse_*` returning a
 // `Result` that says why a parse failed. Parsing reads what a Loam literal
 // reads: an optional sign (signed parses only), then decimal, `0x` hex, `0o`
-// octal, or `0b` binary, with `_` allowed between digits. Floats go through
-// the C library (`loam_conv_*` in loam_rt.h): `f64_to_str` is the shortest
-// text that reads back to the same value, and `parse_f64` is `strtod` over a
-// syntax checked here first. Both are exact on every target, wasm included.
+// octal, or `0b` binary, with `_` allowed between digits. Floats are
+// `std:floattext`: `f64_to_str` is the shortest text that reads back to the
+// same value, and `parse_f64` is `strtod` over a syntax checked here first.
+// Both are exact, and the same on every target.
 //
 // ```
 // conv.u64_to_radix(u64(255), 16)   // "ff"
@@ -14,6 +14,7 @@
 // conv.parse_int("12x")              // Err("invalid digit 'x' in \"12x\"")
 // ```
 
+import "std:floattext"
 import "std:result"
 
 fn int_to_str(n: int) -> string {
@@ -195,15 +196,21 @@ fn parse_int(s: string) -> Result<int> {
 }
 
 /** *The shortest decimal text that reads back as exactly `x` (`%.17g` at most). */
-fn f64_to_str(x: f64) -> string {}
+fn f64_to_str(x: f64) -> string {
+    return floattext.shortest(x)
+}
 
 /** *`x` printed as C's `%.17g`: 17 significant digits, so `0.1` is */
 /** *`0.10000000000000001`. What generated C writes for a float constant. */
-fn f64_to_g17(x: f64) -> string {}
+fn f64_to_g17(x: f64) -> string {
+    return floattext.text(x, 17)
+}
 
 /** *`x` printed as C's `%g` (6 significant digits), as `loamc --emit-ir` */
 /** *writes a float constant. */
-fn f64_to_g6(x: f64) -> string {}
+fn f64_to_g6(x: f64) -> string {
+    return floattext.text(x, 6)
+}
 
 /** *`v`'s raw bytes as a `u32`: what `key.of_f32` hexes. A bit-cast, not a */
 /** *conversion (`1.5 as u32` is 1); only `memcpy` can read the bytes. */
@@ -211,10 +218,14 @@ fn f32_bits(v: float) -> u32 {}
 
 /** *`v`'s raw bytes as a `u64`: what `key.of_f64` hexes. A bit-cast, not a */
 /** *conversion. */
-fn f64_bits(v: f64) -> u64 {}
+fn f64_bits(v: f64) -> u64 {
+    return floattext.bits_of(v)
+}
 
-/** *`strtod` over text already checked by `parse_f64`. */
-fn strtod(s: string) -> f64 {}
+/** *C's `strtod`: the double nearest the decimal at the start of `s`. */
+fn strtod(s: string) -> f64 {
+    return floattext.parse(s)
+}
 
 fn digits_from(s: string, at: int) -> int {
     let mut i = at

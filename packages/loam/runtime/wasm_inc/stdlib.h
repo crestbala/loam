@@ -10,5 +10,4 @@ void exit(int c);
 char *getenv(const char *name);
 int atoi(const char *s);
 /* Exact, round-to-nearest-even (zeus_wasm_libc.c). */
-double strtod(const char *s, char **end);
 #endif

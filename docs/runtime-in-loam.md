@@ -190,7 +190,7 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       `wasm_inc`), hosts 4,871, vendored 346,122 (sqlite, monocypher, raygui
       and the generated tree-sitter parser).
 - [x] R0.2 The budget: `RUNTIME_LINE_BUDGET` in `nob.loam`, set at 9,939
-      and lowered by each step since (now **9,079**, after R1.3e).
+      and lowered by each step since (now **8,700**, after R1.4).
       `nob trusted` and the unfiltered `nob test` fail if `runtime/` grows
       past it. Each step below lowers it to its new count in the same
       change.
@@ -350,10 +350,54 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       and `fmt.eq` (string `==`). A Loam body for those would copy byte by
       byte; they move only if a checked byte-copy intrinsic lands, so the
       compiler can lower a Loam loop to `memcpy`.
-- [ ] R1.4 Float formatting and parsing (`std:conv` float halves) → Loam,
-      byte-identical to `%.17g` / `strtod` on the existing fixtures plus a
-      differential test; the wasm-float block in `zeus_wasm_libc.c` goes
-      with it.
+- [x] R1.4 Float text and parsing (`std:floattext`, 961 lines). Done
+      2026-11-14. `text(v, p)` is C's `%.<p>g` (p in 1..17, half to even on
+      the exact value), `shortest` the fewest of 15 / 16 / 17 digits that
+      read back, `parse` C's `strtod`; NaN prints `nan` (as macOS, not
+      glibc's `-nan`). Both directions take one fast path with a proof: 10^q
+      is a coarse 128-bit power (10^27j, 26 entries) times an exact 64-bit
+      one (10^r = 5^r·2^r, 27 entries), every step truncates, so the exact
+      product is in `[R, R + 4)` units of its last bit; only when the bits
+      under the last digit (or the 53-bit mantissa) are within that of a
+      half does it take the exact base-1e9 bignum, ported from the wasm
+      libc. Parsing first tries Clinger (≤ 2^53, |e| ≤ 22), then a 64-bit
+      power (one product, about 1 in 100 undecided), then the 128-bit one;
+      subnormals round in the fast path too. `println` / interpolation of a
+      float lower to `floattext.write` / `ewrite` / `of_float`;
+      `conv.f64_to_str` / `f64_to_g17` / `f64_to_g6` / `strtod` /
+      `f64_bits` are Loam over it, and `fmt.write_float` (no caller) is gone.
+      The module loads only when a loaded module has a float literal or the
+      word `float` / `f32` / `f64` (the parser notes it, as `__value_key`),
+      so a float-free program neither parses nor checks it (importing ~600
+      lines costs a tiny program +30% compile time). New in the compiler: a
+      fixed-array literal of plain data in a module-level binding is static
+      data (`ir.static_data`), not init code, and an immutable binding of
+      plain data is no module state to threadcheck, so workers may format
+      floats and the tables are right before module init. Four hooks
+      (`bits_of`, `of_bits`, `text_of`, `write_text`: two bit casts, two
+      buffer hand-offs) replace `loam_fmt_ftoa`, `write_float`,
+      `ewrite_float`, `str_of_float`, `loam_conv_f64_to_*`, `strtod` and
+      `f64_bits`; the wasm-float block (324 lines), the `%g` branch of the
+      wasm `snprintf` and its `strtod` declaration are deleted. Differential
+      test: `float_diff.c` now writes the host libc's answers and
+      `float_check.loam` checks them (420,026 checks in the `wasm_float`
+      stanza, 6.3M by hand, 0 mismatches); `golden/floattext_edges`
+      (expected from HEAD's C, byte-identical). Speed against macOS libc
+      (median ns per call): `%.15g` 65 vs 254 (typical values) and 72 vs
+      629 (random bits), `%.17g` 73 vs 284 / 73 vs 687, shortest 111 vs 418
+      / 168 vs 1,576; parse of shortest text 17 vs 24, but of 17-digit
+      `%.17g` text with large exponents 45 vs 31 (1.4x slower: the digit
+      loop is one dependent multiply per digit, and 8-byte loads are not in
+      the language; a native 128-bit multiply would save only 7 ns, not
+      worth a builtin). Self-emit 153 ms vs 149 ms, with 870 more lines of
+      std to emit. Binaries (new vs HEAD): tiny int program unchanged
+      (33,688), nob 533,216 vs 533,224, loamc 1,813,160 vs 1,795,544
+      (+17,616) and a float-printing program 51,336 vs 34,360 (+16,976):
+      a program that formats floats now carries its formatter instead of
+      calling libc's. Fixtures: golden 135, zeus 445, greeninfer passed;
+      `selfhost_seed`, `wasm_float`, `wasm_smoke`, `wasm_trap`,
+      `ownership_asan`, `android_project`, `cost`, `lsp`, `fresh_cache`
+      green. **Runtime: 9,079 → 8,700** (−379).
 
 **R2. `sys` over direct bindings.** Every kernel call is a `#[c]` binding
 straight to libc, so no C shim.

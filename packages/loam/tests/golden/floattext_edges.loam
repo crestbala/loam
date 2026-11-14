@@ -1,0 +1,44 @@
+// Floats as decimal text and back (`std:floattext`), at the edges, through
+// each way out: interpolation, `println`, `eprintln`-free stdout, and
+// `std:conv`. The expected output came from the C library this replaced.
+import "std:fmt"
+import "std:conv"
+
+fn show(v: f64) {
+    fmt.println("{{v}}", v, conv.f64_to_str(v), conv.f64_to_g17(v), conv.f64_to_g6(v))
+}
+
+fn main() {
+    let zero: f64 = 0.0
+    let one: f64 = 1.0
+    let values: []f64 = []f64 {
+        0.0, 1.0, 0.1, 0.5, 2.5, 3.0, 100.0, 1e15, 1e16, 1e17, 1e21, 1e22, 1e23,
+        123456.789, 0.0001, 0.00001, 1.5e-7, 1e100, 1e300, 1e-300, 5e-324,
+        2.2250738585072014e-308, 2.225073858507201e-308, 1.7976931348623157e308,
+        9007199254740992.0, 9007199254740993.0, 0.30000000000000004, 299792458.0,
+        6.02214076e23, 1.602176634e-19, 3.141592653589793, 2.718281828459045,
+    }
+    for i in 0..values.len {
+        show(values[i])
+        show(zero - values[i])
+    }
+    show(one / zero)
+    show(zero - one / zero)
+    let third = one / f64(3.0)
+    fmt.println(third, "a{{third}}b{{one}}c")
+    let small: float = 0.1
+    let big: float = 3.4e38
+    fmt.println(small, big, "{{small}}")
+    let texts = []string {
+        "0", "-0", "1e400", "-1e400", "1e-400", "4.9406564584124654e-324",
+        "2.4703282292062327e-324", "2.4703282292062328e-324", "1.7976931348623158e308",
+        "1.7976931348623159e308", "123456789012345678901234567890", "000.000", "1.",
+        ".5", "0.5e1", "inf", "-inf", "nan", "9007199254740993",
+        "2.2250738585072011e-308", "0.1000000000000000055511151231257827021181583404541015625",
+        "1.000000000000000111022302462515654042363166809082031251", "1e", "1e+", "12x", "",
+    }
+    for i in 0..texts.len {
+        let r = conv.parse_f64(texts[i])
+        fmt.println("[{{texts[i]}}]", conv.f64_to_g17(r.val), r.tag == ResultTag.Ok, conv.f64_to_g17(conv.strtod(texts[i])))
+    }
+}

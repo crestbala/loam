@@ -9,6 +9,7 @@ import "std:map"
 import "ast.loam"
 import "types.loam"
 import "dump.loam"
+import "ir.loam"
 
 /** *C symbols a worker may call; everything else in the seam stays on the */
 /** *UI thread. */
@@ -17,14 +18,15 @@ let WORKER_SEAM_OK: []string = []string {
     "loam_ch_alloc", "loam_ch_send", "loam_ch_try_send", "loam_ch_recv",
     "loam_ch_pop", "loam_ch_ready",
     "loam_fmt_write", "loam_fmt_writeln", "loam_fmt_write_int",
-    "loam_fmt_write_bool", "loam_fmt_write_float", "loam_fmt_eq",
+    "loam_fmt_write_bool", "loam_fmt_eq",
     "loam_fmt_ewrite", "loam_fmt_ewriteln",
-    "loam_fmt_ewrite_bool", "loam_fmt_ewrite_float",
+    "loam_fmt_ewrite_bool",
     "loam_interp", "loam_decimal_fill", "loam_decimal_magnitude_of", "loam_decimal_of_int", "loam_decimal_of_u64", "loam_decimal_write_int", "loam_decimal_write_u64",
-    "loam_decimal_ewrite_int", "loam_decimal_ewrite_u64", "loam_str_of_float",
+    "loam_decimal_ewrite_int", "loam_decimal_ewrite_u64",
     "loam_string_from_bytes",
     "loam_string_from_u8",
-    "loam_conv_f32_bits", "loam_conv_f64_bits",
+    "loam_conv_f32_bits", "loam_floattext_bits_of", "loam_floattext_of_bits",
+    "loam_floattext_text_of", "loam_floattext_write_text",
     "loam_key_push_vec_tag", "loam_key_push_str", "loam_decimal_push_int",
     "loam_decimal_push_u64", "loam_key_push_f32", "loam_key_push_f64", "loam_key_push_addr",
     "loam_async_now_ms", "loam_async_sleep",
@@ -403,7 +405,9 @@ fn threadcheck_modules(module_names: []string, roots: []int) -> int {
         let root = roots[m]
         for i in 0..ast.NODES[root].kids.len {
             let decl = ast.NODES[root].kids[i]
-            if ast.NODES[decl].kind == Kind.Var {
+            // An immutable binding of plain data (`ir.static_data`: a number,
+            // a string, a table) is no state: it is written into the binary.
+            if ast.NODES[decl].kind == Kind.Var && (ast.NODES[decl].op != 0 || !ir.static_data(ast.NODES[decl].b)) {
                 map.put(&mut MODULE_GLOBALS, map.key_int(decl), 1)
             }
         }

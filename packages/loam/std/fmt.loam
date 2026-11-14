@@ -12,8 +12,9 @@
 // ```
 //
 // `println` is not a real function: the compiler turns the arguments into
-// `write` / `write_int` / `write_bool` plus a newline. Empty bodies below
-// are runtime hooks (`loam_fmt_*` in loam_rt.h).
+// `write` / `write_int` / `write_bool` plus a newline; a float is written
+// by `std:floattext` (`%.15g`). Empty bodies below are runtime hooks
+// (`loam_fmt_*` in loam_rt.h).
 
 import "std:decimal"
 
@@ -39,9 +40,6 @@ fn write_int(n: int) {
 fn write_bool(b: bool) {
     write(if b { "true" } else { "false" })
 }
-
-/** *Write a float in decimal (`%.15g`). */
-fn write_float(x: float) {}
 
 /** *Write a single newline. */
 fn writeln() {

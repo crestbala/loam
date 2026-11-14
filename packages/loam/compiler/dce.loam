@@ -139,6 +139,9 @@ fn walk(n: int) {
             mark_cname("loam_fmt_ewrite_bool")
             mark_cname("loam_fmt_writeln")
             mark_cname("loam_fmt_ewriteln")
+            // A float, with `std:floattext` (loaded when floats appear).
+            mark_cname("loam_floattext_write")
+            mark_cname("loam_floattext_ewrite")
         }
         // `__value_key(x)` appends with the `std:key` fns; each keeps itself
         // and what it calls (`decimal`, `buf`, `conv` bits) through the
@@ -147,6 +150,7 @@ fn walk(n: int) {
         if ast.EXTRA[ast.ex(n)].has_cbuiltin && ast.EXTRA[ast.ex(n)].cbuiltin == "loam_interp" {
             mark_cname("loam_decimal_fill")
             mark_cname("loam_decimal_magnitude_of")
+            mark_cname("loam_floattext_of_float")
         }
         if (ast.INFO[n].marks & ast.M_VALUE_KEY) != 0 {
             mark_cname("loam_key_push_vec_tag")

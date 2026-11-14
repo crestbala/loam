@@ -2654,17 +2654,19 @@ fn ig_ownership_asan() {
     ok("ownership asan (Box contents and module-let temporaries: ASan clean, no leaks)")
 }
 
-/** *Floats on wasm: the wasm libc's exact `%g` / `strtod` match the host libc */
-/** *(float_diff.c over the wasm-float block), and a program printing and parsing */
-/** *floats writes the same bytes as a wasm module as it does natively. */
+/** *Floats: `std:floattext` gives the host libc's `%.<p>g` and `strtod` */
+/** *answers (float_diff.c writes them, float_check.loam checks them), and a */
+/** *program printing and parsing floats writes the same bytes as a wasm */
+/** *module as it does natively. */
 fn ig_wasm_float() {
     mark("wasm float")
     let dir = "{{ROOT}}/packages/loam/tests/wasm_smoke"
-    let blk = tmpf("wasm_float_block.h")
-    let diff = tmpf("float_diff")
-    let o = sys.exec("sed -n '/BEGIN wasm-float/,/END wasm-float/p' {{shq(ROOT)}}/packages/loam/runtime/zeus_wasm_libc.c > {{shq(blk)}} && cc -O2 -w -DWASM_FLOAT_BLOCK='\"{{blk}}\"' {{shq(dir)}}/float_diff.c -o {{shq(diff)}} -lm 2>&1 && {{shq(diff)}} 20000 2>&1")
+    let gen = tmpf("float_diff")
+    let cases = tmpf("float_cases.txt")
+    let check = tmpf("float_check")
+    let o = sys.exec("cc -O2 -w {{shq(dir)}}/float_diff.c -o {{shq(gen)}} -lm 2>&1 && {{shq(gen)}} 20000 > {{shq(cases)}} && {{shq(LOAMC)}} {{shq(dir)}}/float_check.loam -o {{shq(check)}} >/dev/null 2>&1 && {{shq(check)}} {{shq(cases)}} 2>&1")
     if sys.exec_status() != 0 {
-        bad("wasm float (exact %g / strtod vs host libc)", o)
+        bad("wasm float (std:floattext vs host libc)", o)
         return
     }
     let nat = tmpf("float_app")
@@ -2681,7 +2683,7 @@ fn ig_wasm_float() {
         bad("wasm float (wasm output differs from native)", "native:\n{{want}}\nwasm:\n{{got}}")
         return
     }
-    ok("wasm float (exact %g / strtod; {{trim(o)}}; wasm prints what native prints)")
+    ok("wasm float (std:floattext is libc's %g / strtod: {{trim(o)}}; wasm prints what native prints)")
 }
 
 /** *Package resolution, selective imports, and a reproducible vendor tree. */
@@ -3049,7 +3051,7 @@ fn grammar() -> int {
 // deletes the C, so the runtime can only shrink. The target is zero.
 
 /** *Lines allowed under `packages/loam/runtime/`. Lower it when a step lands. */
-let RUNTIME_LINE_BUDGET: int = 9079
+let RUNTIME_LINE_BUDGET: int = 8700
 
 /** *The group a tracked C file belongs to, or `""` for C that is not shipped. */
 fn trusted_group(path: string) -> string {
