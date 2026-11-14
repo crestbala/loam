@@ -1,0 +1,14 @@
+// Two `#[os]` variants for one target: `posix` already covers `linux`.
+#[os("posix")]
+fn name() -> string {
+    return "a"
+}
+
+#[os("linux")]
+fn name() -> string {
+    return "b"
+}
+
+fn main() {
+    name()
+}

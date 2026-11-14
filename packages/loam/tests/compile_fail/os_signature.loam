@@ -1,0 +1,14 @@
+// `#[os]` variants must share one signature.
+#[os("posix")]
+fn size() -> int {
+    return 1
+}
+
+#[os("windows")]
+fn size() -> i64 {
+    return i64(1)
+}
+
+fn main() {
+    size()
+}

@@ -1,0 +1,13 @@
+// Without `#[os]` on both, a second fn of one name is still an error.
+#[os("posix")]
+fn name() -> string {
+    return "a"
+}
+
+fn name() -> string {
+    return "b"
+}
+
+fn main() {
+    name()
+}

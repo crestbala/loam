@@ -1,0 +1,9 @@
+// `#[os]` names apple, linux, windows, wasm or posix.
+#[os("beos")]
+fn name() -> string {
+    return "a"
+}
+
+fn main() {
+    name()
+}
