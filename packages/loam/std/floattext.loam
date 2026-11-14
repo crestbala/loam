@@ -1,0 +1,961 @@
+// floattext — floats as decimal text, and decimal text as floats.
+//
+// Moved from `loam_rt.h` and the wasm libc (docs/runtime-in-loam.md, R1.4).
+// Every answer is the one a correct C library gives: `text(v, p)` is
+// `%.<p>g`, rounded half to even on the exact value, and `parse(s)` is
+// `strtod`, the double nearest the exact decimal. One spelling differs from
+// glibc on purpose and matches macOS: a NaN prints as `nan`, never `-nan`.
+//
+// Both directions take one fast path, with a proof it is right:
+//
+// - `v` times a power of ten is one 64 x 128-bit product. The power comes
+//   from two small tables (`pow10`), and every step truncates, so the exact
+//   product lies in `[R, R + 4)` units of `R`'s last bit.
+// - The digits (or the 53-bit mantissa) are then decided by the bits under
+//   them. Only when those bits lie within 4 units of the halfway point is
+//   the answer in doubt: an exact tie, or a value too near one to tell.
+//   That rare case takes the exact path, a base-1e9 bignum (`Big`), as the
+//   wasm libc did for every value.
+//
+// The loader imports this module only when a loaded module writes a float
+// literal or names `float` / `f32` / `f64` (no program can hold a float
+// otherwise), so programs without floats neither parse nor check it.
+
+import "std:decimal"
+
+/** *A 128-bit unsigned integer, as two halves. */
+struct Wide {
+    hi: u64,
+    lo: u64,
+}
+
+/** *10^q as `m`·2^`exp`, `m` in [2^127, 2^128), truncated: the exact power */
+/** *is under (m + 3)·2^exp. */
+struct Pow10 {
+    m: Wide,
+    exp: int,
+}
+
+/** *`digits`·10^(`exp10` - precision + 1): `exp10` is the decimal exponent */
+/** *of the first digit, and `digits` has exactly `precision` of them. */
+struct Rounded {
+    digits: u64,
+    exp10: int,
+}
+
+/** *What `scan` read: up to `cap` significant digits as `w` (the first 19) */
+/** *and, past 19, as `digits` (one per byte, 0..9); the value is */
+/** *that digit run times 10^`exp10`, plus a little more when `sticky`. */
+struct Scan {
+    w: u64,
+    count: int,
+    exp10: int,
+    sticky: bool,
+    any: bool,
+}
+
+/** *10^(27j) for j in -13..12, truncated to 128 bits: hi halves, lo halves */
+/** *and binary exponents. `m = floor(10^(27j) / 2^exp)` in [2^127, 2^128). */
+let COARSE_HI: [26]u64 = [26]u64 {
+    0x8049a4ac0c5811ae, 0xcf42894a5dce35ea, 0xa76c582338ed2621, 0x873e4f75e2224e68,
+    0xda7f5bf590966848, 0xb080392cc4349dec, 0x8e938662882af53e, 0xe65829b3046b0afa,
+    0xba121a4650e4ddeb, 0x964e858c91ba2655, 0xf2d56790ab41c2a2, 0xc428d05aa4751e4c,
+    0x9e74d1b791e07e48, 0x8000000000000000, 0xcecb8f27f4200f3a, 0xa70c3c40a64e6c51,
+    0x86f0ac99b4e8dafd, 0xda01ee641a708de9, 0xb01ae745b101e9e4, 0x8e41ade9fbebc27d,
+    0xe5d3ef282a242e81, 0xb9a74a0637ce2ee1, 0x95f83d0a1fb69cd9, 0xf24a01a73cf2dccf,
+    0xc3b8358109e84f07, 0x9e19db92b4e31ba9,
+}
+let COARSE_LO: [26]u64 = [26]u64 {
+    0x205b896d777d6278, 0x52064cac828675b9, 0xaf2af2b80af6f24e, 0x5a7744a6e804a291,
+    0xaf39a475506a899e, 0xbd8d794d96aacfb3, 0x547eb47b7282ee9c, 0x0cb4a5a3112a5112,
+    0x92f34d62616ce413, 0x3a6a07f8d510f86f, 0xfae27299423fb9c3, 0xaa97e14c3c26b886,
+    0x775ea264cf55347d, 0x0000000000000000, 0x0000000000000000, 0x999090b65f67d924,
+    0x69a028bb3ded71a3, 0xe80e6f4820cc9495, 0x5ec05dcff72e7f8f, 0x14588f13be847307,
+    0x8f1668c8a86da5fa, 0x6d953e2bd7173692, 0x4abdaf101564f98e, 0xbc633b39673c8cec,
+    0x0a862f80ec4700c8, 0x6c07a2c26a8346d1,
+}
+let COARSE_EXP: [26]int = [26]int {
+    -1293, -1204, -1114, -1024, -935, -845, -755, -666, -576, -486, -397, -307, -217,
+    -127, -38, 52, 142, 231, 321, 411, 500, 590, 680, 769, 859, 949,
+}
+
+/** *10^r for r in 0..26, exact in 64 bits (10^r = 5^r·2^r and 5^26 < 2^64): */
+/** *`m` in [2^63, 2^64) and its binary exponent. */
+let FINE: [27]u64 = [27]u64 {
+    0x8000000000000000, 0xa000000000000000, 0xc800000000000000, 0xfa00000000000000,
+    0x9c40000000000000, 0xc350000000000000, 0xf424000000000000, 0x9896800000000000,
+    0xbebc200000000000, 0xee6b280000000000, 0x9502f90000000000, 0xba43b74000000000,
+    0xe8d4a51000000000, 0x9184e72a00000000, 0xb5e620f480000000, 0xe35fa931a0000000,
+    0x8e1bc9bf04000000, 0xb1a2bc2ec5000000, 0xde0b6b3a76400000, 0x8ac7230489e80000,
+    0xad78ebc5ac620000, 0xd8d726b7177a8000, 0x878678326eac9000, 0xa968163f0a57b400,
+    0xd3c21bcecceda100, 0x84595161401484a0, 0xa56fa5b99019a5c8,
+}
+let FINE_EXP: [27]int = [27]int {
+    -63, -60, -57, -54, -50, -47, -44, -40, -37, -34, -30, -27, -24, -20, -17, -14,
+    -10, -7, -4, 0, 3, 6, 10, 13, 16, 20, 23,
+}
+
+/** *10^k for k in 0..19, the integer powers digit counts compare with. */
+let TEN: [20]u64 = [20]u64 {
+    1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000, 1000000000,
+    10000000000, 100000000000, 1000000000000, 10000000000000, 100000000000000,
+    1000000000000000, 10000000000000000, 100000000000000000, 1000000000000000000,
+    10000000000000000000,
+}
+
+/** *1e0..1e22, every one exact as a double: Clinger's fast path. */
+let EXACT: [23]f64 = [23]f64 {
+    1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14,
+    1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22,
+}
+
+
+/** *`v`'s raw bits (a `memcpy`, not a conversion). */
+fn bits_of(v: f64) -> u64 {}
+
+/** *The double whose raw bits are `u`. */
+fn of_bits(u: u64) -> f64 {}
+
+/** *`out[0..len]` as a string. */
+fn text_of(out: &[32]u8, len: int) -> string {}
+
+/** *Write `out[0..len]` to stderr when `to_err`, else stdout. */
+fn write_text(out: &[32]u8, len: int, to_err: bool) {}
+
+/** *The full product of `a` and `b`, from four 32-bit products. */
+fn mul_wide(a: u64, b: u64) -> Wide {
+    let a0 = a & u64(0xffffffff)
+    let a1 = a >> u64(32)
+    let b0 = b & u64(0xffffffff)
+    let b1 = b >> u64(32)
+    // Each factor is under 2^32, so no product reaches 2^64: they cannot
+    // wrap, and the checks `*` would keep (`ranges` bounds only factors
+    // under 2^31) are dropped.
+    let p0 = wrapping_mul(a0, b0)
+    let p1 = wrapping_mul(a0, b1)
+    let p2 = wrapping_mul(a1, b0)
+    let mid = (p0 >> u64(32)) + (p1 & u64(0xffffffff)) + (p2 & u64(0xffffffff))
+    return Wide {
+        hi: wrapping_mul(a1, b1) + (p1 >> u64(32)) + (p2 >> u64(32)) + (mid >> u64(32)),
+        lo: (p0 & u64(0xffffffff)) | (mid << u64(32)),
+    }
+}
+
+/** *The top 128 bits of the 192-bit product `a`·`b` (the low 64 dropped). */
+fn mul_top(a: Wide, b: u64) -> Wide {
+    let high = mul_wide(a.hi, b)
+    let low = mul_wide(a.lo, b)
+    let lo = wrapping_add(high.lo, low.hi)
+    let carry = if lo < high.lo { u64(1) } else { u64(0) }
+    return Wide { hi: high.hi + carry, lo: lo }
+}
+
+/** *The number of leading zero bits of `x`, which is not 0. */
+fn leading_zeros(x: u64) -> int {
+    let mut n = 0
+    let mut v = x
+    if (v >> u64(32)) == u64(0) {
+        n += 32
+        v = v << u64(32)
+    }
+    if (v >> u64(48)) == u64(0) {
+        n += 16
+        v = v << u64(16)
+    }
+    if (v >> u64(56)) == u64(0) {
+        n += 8
+        v = v << u64(8)
+    }
+    if (v >> u64(60)) == u64(0) {
+        n += 4
+        v = v << u64(4)
+    }
+    if (v >> u64(62)) == u64(0) {
+        n += 2
+        v = v << u64(2)
+    }
+    if (v >> u64(63)) == u64(0) {
+        n += 1
+    }
+    return n
+}
+
+/** *floor(n·log10(2)), exact for |n| < 2600. */
+fn floor_log10_pow2(n: int) -> int {
+    if n >= 0 {
+        return (n * 78913) / 262144
+    }
+    return 0 - ((0 - n) * 78913 + 262143) / 262144
+}
+
+/** *10^q for q in -351..350: a coarse power times a fine one. The coarse */
+/** *power is under 1 unit short, the product drops under 1 more unit, and */
+/** *normalizing may double the first: under 3 units in all. */
+fn pow10(q: int) -> Pow10 {
+    let j = if q >= 0 { q / 27 } else { 0 - (26 - q) / 27 }
+    let r = q - 27 * j
+    let c = Wide { hi: COARSE_HI[j + 13], lo: COARSE_LO[j + 13] }
+    let ce = COARSE_EXP[j + 13]
+    if r == 0 {
+        return Pow10 { m: c, exp: ce }
+    }
+    let f = FINE[r]
+    let high = mul_wide(c.hi, f)
+    let low = mul_wide(c.lo, f)
+    let mid = wrapping_add(high.lo, low.hi)
+    let top = high.hi + (if mid < high.lo { u64(1) } else { u64(0) })
+    let e = ce + FINE_EXP[r]
+    if (top >> u64(63)) != u64(0) {
+        return Pow10 { m: Wide { hi: top, lo: mid }, exp: e + 64 }
+    }
+    return Pow10 {
+        m: Wide { hi: (top << u64(1)) | (mid >> u64(63)), lo: (mid << u64(1)) | (low.lo >> u64(63)) },
+        exp: e + 63,
+    }
+}
+
+/** *Whether the fraction `(hi, lo)` under a cut, with exact value in */
+/** *[f, f + 4), may lie on either side of the half `(half_hi, 0)`. */
+fn near_half(hi: u64, lo: u64, half_hi: u64) -> bool {
+    return (hi == half_hi && lo == u64(0)) || (hi == half_hi - u64(1) && lo > u64(0xfffffffffffffffb))
+}
+
+/** *Whether the fraction `(hi, lo)` is over the half `(half_hi, 0)`. */
+fn over_half(hi: u64, lo: u64, half_hi: u64) -> bool {
+    return hi > half_hi || (hi == half_hi && lo > u64(0))
+}
+
+// --- Big: the exact path ---------------------------------------------------
+
+
+/** *`b` times `f` (under 2^31), in place. Limbs are base 1e9, low first. */
+fn big_mul_small(b: &mut []u64, f: u64) {
+    let mut carry = u64(0)
+    for i in 0..b.len {
+        let t = b[i] * f + carry
+        b[i] = t % u64(1000000000)
+        carry = t / u64(1000000000)
+    }
+    while carry != u64(0) {
+        push(b, carry % u64(1000000000))
+        carry = carry / u64(1000000000)
+    }
+}
+
+/** *`b` times `base`^`k`, `base` 2 or 5, in place. */
+fn big_mul_pow(b: &mut []u64, base: u64, k: int) {
+    // 5^13 and 2^29 are the largest powers under 2^31.
+    let step = if base == u64(5) { u64(1220703125) } else { u64(536870912) }
+    let chunk = if base == u64(5) { 13 } else { 29 }
+    let mut left = k
+    while left >= chunk {
+        big_mul_small(b, step)
+        left -= chunk
+    }
+    let mut rest = u64(1)
+    while left > 0 {
+        rest = rest * base
+        left -= 1
+    }
+    if rest != u64(1) {
+        big_mul_small(b, rest)
+    }
+}
+
+fn big_of(v: u64) -> []u64 {
+    let mut b = []u64 {}
+    let mut rest = v
+    while rest != u64(0) {
+        push(b, rest % u64(1000000000))
+        rest = rest / u64(1000000000)
+    }
+    return b
+}
+
+/** *-1, 0 or 1 as `a` is under, equal to or over `b`. */
+fn big_cmp(a: &[]u64, b: &[]u64) -> int {
+    if a.len != b.len {
+        return if a.len < b.len { -1 } else { 1 }
+    }
+    let mut i = a.len - 1
+    while i >= 0 {
+        if a[i] != b[i] {
+            return if a[i] < b[i] { -1 } else { 1 }
+        }
+        i -= 1
+    }
+    return 0
+}
+
+/** *The decimal digits of `b` (0..9, most significant first, no leading zero). */
+fn big_digits(b: &[]u64) -> []u8 {
+    let mut out = []u8 {}
+    if b.len == 0 {
+        push(out, u8(0))
+        return out
+    }
+    let mut top = [20]u8 { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
+    let first = decimal.fill(&mut top, b[b.len - 1], false)
+    for k in first..20 {
+        push(out, top[k] - u8(48))
+    }
+    let mut i = b.len - 2
+    while i >= 0 {
+        let mut v = b[i]
+        let at = out.len
+        for k in 0..9 {
+            push(out, u8(0))
+        }
+        for k in 0..9 {
+            out[at + 8 - k] = u8(v % u64(10))
+            v = v / u64(10)
+        }
+        i -= 1
+    }
+    return out
+}
+
+/** *`m`·2^`e` rounded to `precision` digits from its exact decimal digits, */
+/** *half to even. */
+fn round_exact(m: u64, e: int, precision: int) -> Rounded {
+    let mut n = big_of(m)
+    let mut k = 0
+    if e >= 0 {
+        big_mul_pow(&mut n, u64(2), e)
+    } else {
+        big_mul_pow(&mut n, u64(5), 0 - e)
+        k = 0 - e
+    }
+    let dig = big_digits(&n)
+    let mut exp10 = dig.len - 1 - k
+    let mut digits = u64(0)
+    let take = if dig.len < precision { dig.len } else { precision }
+    for i in 0..take {
+        digits = digits * u64(10) + u64(dig[i])
+    }
+    for i in take..precision {
+        digits = digits * u64(10)
+    }
+    if dig.len > precision {
+        let d = dig[precision]
+        let mut up = d > u8(5)
+        if d == u8(5) {
+            let mut rest = false
+            for i in (precision + 1)..dig.len {
+                if dig[i] != u8(0) {
+                    rest = true
+                    break
+                }
+            }
+            up = rest || (digits % u64(2)) == u64(1)
+        }
+        if up {
+            digits += u64(1)
+            if digits == TEN[precision] {
+                digits = TEN[precision - 1]
+                exp10 += 1
+            }
+        }
+    }
+    return Rounded { digits: digits, exp10: exp10 }
+}
+
+// --- To text ---------------------------------------------------------------
+
+/** *A finite, nonzero `bits` rounded to `precision` (1..17) significant */
+/** *digits: the fast product, or the exact path when the bits under the */
+/** *last digit are too near a half to decide. */
+fn round_to(bits: u64, precision: int) -> Rounded {
+    let biased = i32((bits >> u64(52)) & u64(0x7ff))
+    let frac = bits & u64(0xfffffffffffff)
+    let m = if biased != 0 { frac | u64(0x10000000000000) } else { frac }
+    let e = if biased != 0 { biased - 1075 } else { -1074 }
+    let lz = leading_zeros(m)
+    let big_m = m << u64(lz)
+    let e2 = e - lz
+    // v is in [2^(e2+63), 2^(e2+64)), so its first digit's exponent is this
+    // or one more.
+    let mut exp10 = floor_log10_pow2(e2 + 63)
+    for attempt in 0..2 {
+        let p = pow10(precision - 1 - exp10)
+        let r = mul_top(p.m, big_m)
+        // r's last bit is 2^(e2 + p.exp + 64); `cut` bits of r.hi are fraction.
+        let cut = 0 - (e2 + p.exp + 64) - 64
+        if cut < 2 || cut > 63 {
+            break
+        }
+        let mut digits = r.hi >> u64(cut)
+        if digits >= TEN[precision] {
+            exp10 += 1
+            continue
+        }
+        let frac_hi = r.hi & ((u64(1) << u64(cut)) - u64(1))
+        let half_hi = u64(1) << u64(cut - 1)
+        if near_half(frac_hi, r.lo, half_hi) {
+            break
+        }
+        if over_half(frac_hi, r.lo, half_hi) {
+            digits += u64(1)
+            if digits == TEN[precision] {
+                digits = TEN[precision - 1]
+                exp10 += 1
+            }
+        }
+        return Rounded { digits: digits, exp10: exp10 }
+    }
+    return round_exact(m, e, precision)
+}
+
+/** *Write `c` at `out[at]`; returns the index after it. */
+fn put(out: &mut [32]u8, at: int, c: u8) -> int {
+    out[at] = c
+    return at + 1
+}
+
+/** *`v` as C's `%.<precision>g` into `out`; returns the length. `precision` */
+/** *is clamped to 1..17, where every double is exact. */
+fn format(v: f64, precision_wanted: int, out: &mut [32]u8) -> int {
+    let precision = if precision_wanted < 1 { 1 } else if precision_wanted > 17 { 17 } else { precision_wanted }
+    let bits = bits_of(v)
+    let mut o = 0
+    let magnitude = bits & u64(0x7fffffffffffffff)
+    if magnitude > u64(0x7ff0000000000000) {
+        o = put(out, o, u8('n'))
+        o = put(out, o, u8('a'))
+        return put(out, o, u8('n'))
+    }
+    if (bits >> u64(63)) != u64(0) {
+        o = put(out, o, u8('-'))
+    }
+    if magnitude == u64(0x7ff0000000000000) {
+        o = put(out, o, u8('i'))
+        o = put(out, o, u8('n'))
+        return put(out, o, u8('f'))
+    }
+    if magnitude == u64(0) {
+        return put(out, o, u8('0'))
+    }
+    let r = round_to(magnitude, precision)
+    // The digits without trailing zeros, at `dig[first..20]`.
+    let mut digits = r.digits
+    while digits % u64(10) == u64(0) {
+        digits = digits / u64(10)
+    }
+    let mut dig = [20]u8 { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
+    let first = decimal.fill(&mut dig, digits, false)
+    let len = 20 - first
+    let x = r.exp10
+    if x < -4 || x >= precision {
+        o = put(out, o, dig[first])
+        if len > 1 {
+            o = put(out, o, u8('.'))
+            for i in (first + 1)..20 {
+                o = put(out, o, dig[i])
+            }
+        }
+        o = put(out, o, u8('e'))
+        o = put(out, o, if x < 0 { u8('-') } else { u8('+') })
+        let ax = if x < 0 { 0 - x } else { x }
+        if ax >= 100 {
+            o = put(out, o, u8(48 + ax / 100))
+        }
+        o = put(out, o, u8(48 + ax / 10 % 10))
+        return put(out, o, u8(48 + ax % 10))
+    }
+    if x >= 0 {
+        for i in 0..(x + 1) {
+            o = put(out, o, if i < len { dig[first + i] } else { u8('0') })
+        }
+        if len > x + 1 {
+            o = put(out, o, u8('.'))
+            for i in (x + 1)..len {
+                o = put(out, o, dig[first + i])
+            }
+        }
+        return o
+    }
+    o = put(out, o, u8('0'))
+    o = put(out, o, u8('.'))
+    for i in 0..(0 - x - 1) {
+        o = put(out, o, u8('0'))
+    }
+    for i in first..20 {
+        o = put(out, o, dig[i])
+    }
+    return o
+}
+
+
+/** *`v` as C's `%.<precision>g`: `text(0.1, 17)` is `0.10000000000000001`. */
+fn text(v: f64, precision: int) -> string {
+    let mut out = [32]u8 { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
+    let len = format(v, precision, &mut out)
+    return text_of(&out, len)
+}
+
+/** *`v` with 15 significant digits (`%.15g`): what `"{{x}}"` and */
+/** *`println(x)` write for a float. */
+fn of_float(v: f64) -> string {
+    return text(v, 15)
+}
+
+/** *`of_float(v)` to stdout; nothing is allocated. */
+fn write(v: f64) {
+    let mut out = [32]u8 { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
+    let len = format(v, 15, &mut out)
+    write_text(&out, len, false)
+}
+
+/** *`of_float(v)` to stderr. */
+fn ewrite(v: f64) {
+    let mut out = [32]u8 { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
+    let len = format(v, 15, &mut out)
+    write_text(&out, len, true)
+}
+
+/** *The fewest of 15, 16 or 17 significant digits that read back as */
+/** *exactly `v`: `0.1` is `"0.1"`, and every finite value round-trips. */
+fn shortest(v: f64) -> string {
+    let bits = bits_of(v)
+    let magnitude = bits & u64(0x7fffffffffffffff)
+    if magnitude != u64(0) && magnitude < u64(0x7ff0000000000000) {
+        for precision in 15..17 {
+            let r = round_to(magnitude, precision)
+            if decimal_bits(r.digits, r.exp10 - precision + 1) == magnitude {
+                return text(v, precision)
+            }
+        }
+    }
+    return text(v, 17)
+}
+
+// --- From text -------------------------------------------------------------
+
+/** *`r` / 2^`cut` rounded to nearest, for `cut` in 65..127, or -1 when */
+/** *the exact value may lie on either side of a half. It is in */
+/** *`[r, r + 4)` when `slack_hi` is 0, else in `[r, r + slack_hi·2^64)`. */
+fn round_cut(r: Wide, cut: int, slack_hi: u64) -> i64 {
+    let in_hi = u64(cut - 64)
+    let frac_hi = r.hi & ((u64(1) << in_hi) - u64(1))
+    let half_hi = u64(1) << (in_hi - u64(1))
+    let doubt = if slack_hi == u64(0) {
+        near_half(frac_hi, r.lo, half_hi)
+    } else {
+        frac_hi <= half_hi && frac_hi + slack_hi + u64(1) > half_hi
+    }
+    if doubt {
+        return i64(-1)
+    }
+    let kept = r.hi >> in_hi
+    return i64(if over_half(frac_hi, r.lo, half_hi) { kept + u64(1) } else { kept })
+}
+
+/** *The bits of the double nearest the exact value of `r`·2^`low`, which */
+/** *is under `slack_hi` short (see `round_cut`), `r` in [2^126, 2^128); */
+/** *-1 when that cannot be decided. */
+fn bits_of_product(r: Wide, low: int, slack_hi: u64) -> i64 {
+    let top = if (r.hi >> u64(63)) != u64(0) { 127 } else { 126 }
+    if low + top + 1023 >= 1 {
+        // Normal: keep the top 53 bits.
+        let cut = top - 52
+        let m = round_cut(r, cut, slack_hi)
+        if m < i64(0) {
+            return m
+        }
+        let mut mantissa = u64(m)
+        let mut biased = low + cut + 52 + 1023
+        if mantissa == u64(0x20000000000000) {
+            mantissa = u64(0x10000000000000)
+            biased += 1
+        }
+        if biased >= 2047 {
+            return i64(u64(0x7ff0000000000000))
+        }
+        return i64((u64(biased) << u64(52)) | (mantissa & u64(0xfffffffffffff)))
+    }
+    // Subnormal: the last bit kept is 2^-1074, and the bits are the count of
+    // them (2^52 of them is the least normal, which the same bits spell).
+    // At 129 or more, the exact value is under 2^128 units, at most half of
+    // 2^-1074: 0.
+    let cut = -1074 - low
+    if cut > 128 {
+        return i64(0)
+    }
+    if cut == 128 {
+        return i64(-1)
+    }
+    return round_cut(r, cut, slack_hi)
+}
+
+/** *The top 64 bits of 10^q (see `pow10`) and their exponent: one product */
+/** *instead of two, under 5 units short. */
+fn pow10_top(q: int) -> Pow10 {
+    let j = if q >= 0 { q / 27 } else { 0 - (26 - q) / 27 }
+    let r = q - 27 * j
+    let c = COARSE_HI[j + 13]
+    let ce = COARSE_EXP[j + 13] + 64
+    if r == 0 {
+        return Pow10 { m: Wide { hi: c, lo: u64(0) }, exp: ce }
+    }
+    let p = mul_wide(c, FINE[r])
+    let e = ce + FINE_EXP[r]
+    if (p.hi >> u64(63)) != u64(0) {
+        return Pow10 { m: Wide { hi: p.hi, lo: u64(0) }, exp: e + 64 }
+    }
+    return Pow10 { m: Wide { hi: (p.hi << u64(1)) | (p.lo >> u64(63)), lo: u64(0) }, exp: e + 63 }
+}
+
+/** *The bits of the double nearest `w`·10^`exp10` (`w` > 0, `exp10` in */
+/** *-351..350), or -1 when the products cannot decide it. A 64-bit power */
+/** *first, which settles all but about 1 in 100; then the 128-bit one. */
+fn approx_bits(w: u64, exp10: int) -> i64 {
+    let lz = leading_zeros(w)
+    let big_w = w << u64(lz)
+    let quick = pow10_top(exp10)
+    let first = bits_of_product(mul_wide(quick.m.hi, big_w), quick.exp - lz, u64(5))
+    if first >= i64(0) {
+        return first
+    }
+    let p = pow10(exp10)
+    return bits_of_product(mul_top(p.m, big_w), p.exp + 64 - lz, u64(0))
+}
+
+/** *The number of decimal digits of `w` (1 for 0). */
+fn digit_count(w: u64) -> int {
+    let mut n = 1
+    while n < 20 && w >= TEN[n] {
+        n += 1
+    }
+    return n
+}
+
+/** *The bits of the double nearest the exact `w`·10^`exp10` (no sign). */
+fn decimal_bits(w: u64, exp10: int) -> u64 {
+    if w == u64(0) {
+        return u64(0)
+    }
+    if w < u64(0x10000000000000) << u64(1) && exp10 >= -22 && exp10 <= 22 {
+        // Clinger: both operands exact, so one correctly rounded operation.
+        let f = f64(w)
+        return bits_of(if exp10 < 0 { f / EXACT[0 - exp10] } else { f * EXACT[exp10] })
+    }
+    // `pow10` spans -351..350; past it, w (under 10^20) is 0 or infinity.
+    if exp10 > 350 {
+        return u64(0x7ff0000000000000)
+    }
+    if exp10 < -351 {
+        return u64(0)
+    }
+    let fast = approx_bits(w, exp10)
+    if fast >= i64(0) {
+        return u64(fast)
+    }
+    let mut dig = []u8 {}
+    let mut d = [20]u8 { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
+    let first = decimal.fill(&mut d, w, false)
+    for k in first..20 {
+        push(dig, d[k] - u8(48))
+    }
+    return exact_bits(&dig, exp10, false)
+}
+
+/** *Compare D·10^`e10` (a little more when `sticky`) with c·2^`e2`. */
+fn compare_decimal_binary(dig: &[]u8, e10: int, sticky: bool, c: u64, e2: int) -> int {
+    let mut left = []u64 {}
+    let mut i = 0
+    while i < dig.len {
+        let take = if dig.len - i < 9 { dig.len - i } else { 9 }
+        let mut part = u64(0)
+        let mut scale = u64(1)
+        for k in 0..take {
+            part = part * u64(10) + u64(dig[i + k])
+            scale = scale * u64(10)
+        }
+        big_mul_small(&mut left, scale)
+        if left.len == 0 && part != u64(0) {
+            push(left, part)
+        } else if part != u64(0) {
+            // Add `part` (under 1e9) with carry.
+            let mut carry = part
+            let mut at = 0
+            while carry != u64(0) {
+                if at == left.len {
+                    push(left, u64(0))
+                }
+                let t = left[at] + carry
+                left[at] = t % u64(1000000000)
+                carry = t / u64(1000000000)
+                at += 1
+            }
+        }
+        i += take
+    }
+    let mut right = big_of(c)
+    let a2 = e10 - e2
+    if a2 >= 0 {
+        big_mul_pow(&mut left, u64(2), a2)
+    } else {
+        big_mul_pow(&mut right, u64(2), 0 - a2)
+    }
+    if e10 >= 0 {
+        big_mul_pow(&mut left, u64(5), e10)
+    } else {
+        big_mul_pow(&mut right, u64(5), 0 - e10)
+    }
+    let cmp = big_cmp(&left, &right)
+    return if cmp == 0 && sticky { 1 } else { cmp }
+}
+
+/** *The bits of the double nearest D·10^`e10` (D the digits `dig`, 0..9, */
+/** *no leading zero; a little more when `sticky`): a first guess in double */
+/** *arithmetic, then a walk to the double whose rounding interval holds it, */
+/** *comparing against the exact midpoints. */
+fn exact_bits(dig: &[]u8, e10: int, sticky: bool) -> u64 {
+    let nd = dig.len
+    let mut lead = u64(0)
+    let nl = if nd < 19 { nd } else { 19 }
+    for i in 0..nl {
+        lead = lead * u64(10) + u64(dig[i])
+    }
+    let mut a = f64(lead)
+    let mut sc = e10 + (nd - nl)
+    while sc > 0 {
+        let st = if sc > 22 { 22 } else { sc }
+        a = a * EXACT[st]
+        sc -= st
+    }
+    while sc < 0 {
+        let st = if sc < -22 { 22 } else { 0 - sc }
+        a = a / EXACT[st]
+        sc += st
+    }
+    let mut u = bits_of(a) & u64(0x7fffffffffffffff)
+    if u >= u64(0x7ff0000000000000) {
+        u = u64(0x7fefffffffffffff)
+    }
+    for iter in 0..4096 {
+        let ex = i32(u >> u64(52))
+        let m = (u & u64(0xfffffffffffff)) | (if ex != 0 { u64(0x10000000000000) } else { u64(0) })
+        let e = if ex != 0 { ex - 1075 } else { -1074 }
+        // The upper midpoint, (2m + 1)·2^(e - 1).
+        let cu = compare_decimal_binary(dig, e10, sticky, u64(2) * m + u64(1), e - 1)
+        if cu > 0 || (cu == 0 && (m & u64(1)) != u64(0)) {
+            if u == u64(0x7fefffffffffffff) {
+                return u64(0x7ff0000000000000)
+            }
+            u += u64(1)
+            continue
+        }
+        if u == u64(0) {
+            break
+        }
+        // The lower midpoint: half the gap below, narrower at a power of two.
+        let cl = if m == u64(0x10000000000000) && ex > 1 {
+            compare_decimal_binary(dig, e10, sticky, u64(4) * m - u64(1), e - 2)
+        } else {
+            compare_decimal_binary(dig, e10, sticky, u64(2) * m - u64(1), e - 1)
+        }
+        if cl < 0 || (cl == 0 && (m & u64(1)) != u64(0)) {
+            u -= u64(1)
+            continue
+        }
+        break
+    }
+    return u
+}
+
+/** *ASCII lower case of `c`. */
+fn lower(c: u8) -> u8 {
+    return if c >= u8('A') && c <= u8('Z') { c + u8(32) } else { c }
+}
+
+/** *Whether `s[at..]` starts with `word` (lower case), in any case. */
+fn starts_with_word(s: string, at: int, word: string) -> bool {
+    if s.len - at < word.len {
+        return false
+    }
+    for k in 0..word.len {
+        if lower(u8(s[at + k])) != u8(word[k]) {
+            return false
+        }
+    }
+    return true
+}
+
+/** *The digit `s[k]` stands for, or over 9 when it is not one. */
+fn digit_at(s: string, k: int) -> u64 {
+    return wrapping_sub(u64(s[k]), u64(48))
+}
+
+/** *The exponent `e[+-]digits` at `s[at..]`, or 0 when there is none; past */
+/** *100000 it stops growing (any such power is 0 or infinity). */
+fn exponent_at(s: string, at: int) -> int {
+    if at + 1 >= s.len || (s[at] != 'e' && s[at] != 'E') {
+        return 0
+    }
+    let mut k = at + 1
+    let negative = s[k] == '-'
+    if s[k] == '-' || s[k] == '+' {
+        k += 1
+    }
+    let mut x = 0
+    for j in k..s.len {
+        let d = digit_at(s, j)
+        if d > u64(9) {
+            break
+        }
+        if x < 100000 {
+            x = x * 10 + i32(d)
+        }
+    }
+    return if negative { 0 - x } else { x }
+}
+
+/** *Read a decimal `digits[.digits][e[+-]digits]` from `s[at..]`, keeping */
+/** *up to `cap` significant digits: the first 19 in `w` and, when `cap` is */
+/** *over 19, every one in `dig` too. Leading zeros are not significant. */
+fn scan(s: string, at: int, cap: int, dig: &mut []u8) -> Scan {
+    let mut w = u64(0)
+    let mut count = 0
+    let mut exp10 = 0
+    let mut sticky = false
+    let mut any = false
+    let mut fraction = false
+    let mut i = s.len
+    for k in at..s.len {
+        let d = digit_at(s, k)
+        if d > u64(9) {
+            if s[k] == '.' && !fraction {
+                fraction = true
+                continue
+            }
+            i = k
+            break
+        }
+        any = true
+        if count == 0 && d == u64(0) {
+            if fraction {
+                exp10 -= 1
+            }
+            continue
+        }
+        if count < cap {
+            if count < 19 {
+                w = w * u64(10) + d
+            }
+            if cap > 19 {
+                push(dig, u8(d))
+            }
+            count += 1
+            if fraction {
+                exp10 -= 1
+            }
+            continue
+        }
+        // Past `cap`: only its place and whether it is zero count.
+        if !fraction {
+            exp10 += 1
+        }
+        if d != u64(0) {
+            sticky = true
+        }
+    }
+    if any {
+        exp10 += exponent_at(s, i)
+    }
+    return Scan { w: w, count: count, exp10: exp10, sticky: sticky, any: any }
+}
+
+/** *The double nearest the decimal at the start of `s`, as C's `strtod`: */
+/** *`[+-]digits[.digits][e[+-]digits]`, or `inf`, `infinity` or `nan` in */
+/** *any case, after an optional sign. No number is 0. */
+fn parse(s: string) -> f64 {
+    let mut at = 0
+    if at < s.len && (s[at] == '-' || s[at] == '+') {
+        at += 1
+    }
+    let sign = if at > 0 && s[0] == '-' { u64(1) << u64(63) } else { u64(0) }
+    // The common case first: at most 19 digits in all, so `w` is exact
+    // (leading zeros add nothing to it) and no digit is kept. Past 19 it
+    // may wrap, and is then not used.
+    let mut w = u64(0)
+    let mut end = s.len
+    for k in at..s.len {
+        let d = wrapping_sub(u64(s[k]), u64(48))
+        if d > u64(9) {
+            end = k
+            break
+        }
+        w = wrapping_add(wrapping_mul(w, u64(10)), d)
+    }
+    let whole = end - at
+    let mut fraction = 0
+    if end < s.len && s[end] == '.' {
+        let from = end + 1
+        end = s.len
+        for k in from..s.len {
+            let d = wrapping_sub(u64(s[k]), u64(48))
+            if d > u64(9) {
+                end = k
+                break
+            }
+            w = wrapping_add(wrapping_mul(w, u64(10)), d)
+        }
+        fraction = end - from
+    }
+    if whole + fraction == 0 {
+        if starts_with_word(s, at, "inf") {
+            return of_bits(sign | u64(0x7ff0000000000000))
+        }
+        if starts_with_word(s, at, "nan") {
+            return of_bits(u64(0x7ff8000000000000))
+        }
+        return f64(0.0)
+    }
+    let digits = whole + fraction
+    if digits <= 19 {
+        return of_bits(sign | decimal_bits(w, exponent_at(s, end) - fraction))
+    }
+    let mut none = []u8 {}
+    let first = scan(s, at, 19, &mut none)
+    // The first 19 significant digits; `exp10` counts the rest.
+    let lead = first.w
+    let e10 = first.exp10
+    if !first.sticky {
+        return of_bits(sign | decimal_bits(lead, e10))
+    }
+    // Digits past the 19th: the value is in (w, w + 1)·10^e10, or exactly
+    // w·10^e10 when they were all zero. When both ends give one double,
+    // that is it.
+    if lead != u64(0) {
+        let n = digit_count(lead)
+        if e10 + n > 310 {
+            return of_bits(sign | u64(0x7ff0000000000000))
+        }
+        if e10 + n >= -324 {
+            let low = approx_bits(lead, e10)
+            if low >= i64(0) && approx_bits(lead + u64(1), e10) == low {
+                return of_bits(sign | u64(low))
+            }
+        }
+    }
+    let mut dig = []u8 {}
+    let full = scan(s, at, 800, &mut dig)
+    let mut nd = dig.len
+    let mut e = full.exp10
+    while nd > 0 && dig[nd - 1] == u8(0) {
+        pop(dig)
+        nd -= 1
+        e += 1
+    }
+    if nd == 0 {
+        return of_bits(sign)
+    }
+    if nd + e > 310 {
+        return of_bits(sign | u64(0x7ff0000000000000))
+    }
+    if nd + e < -326 {
+        return of_bits(sign)
+    }
+    return of_bits(sign | exact_bits(&dig, e, full.sticky))
+}

@@ -1125,7 +1125,7 @@ fn is_place_path(n: int) -> bool {
 fn is_ffi_mod(name: string) -> bool {
     return name == "zeus" || name == "zeusbase" || name == "http" || name == "fmt" || name == "maya" ||
         name == "platform" || name == "sys" || name == "net" || name == "async" || name == "thread" ||
-        name == "buf" || name == "conv" || name == "str" || name == "decimal" || name == "key"
+        name == "buf" || name == "conv" || name == "str" || name == "decimal" || name == "key" || name == "floattext"
 }
 
 /** *Outside `LOAM_STD_DIR`, a bodyless fn is a C seam too. */

@@ -690,7 +690,7 @@ fn int_bits(t: int) -> int {
 
 /** *`"a {{n}} b"`: every part's bytes, then one exact allocation they are */
 /** *copied into. An integer's digits go onto the stack through */
-/** *`std:decimal`'s `fill`; a float is a temporary `str_of_float`, released */
+/** *`std:decimal`'s `fill`; a float is a temporary `std:floattext` text, released */
 /** *after the copy; a bool is `true` / `false`. */
 fn interp(x: &Inst) {
     let n = x.nargs
@@ -705,7 +705,7 @@ fn interp(x: &Inst) {
         return
     }
     if n == 1 && t0 != NO_TYPE && types.TYPES[t0].kind == TK.Float {
-        w("{{lv(x.dst)}} = loam_str_of_float({{lv(arg_of(x, 0))}});\n")
+        w("{{lv(x.dst)}} = loam_floattext_of_float((double)({{lv(arg_of(x, 0))}}));\n")
         return
     }
     let mut ptrs = []string {}
@@ -724,7 +724,7 @@ fn interp(x: &Inst) {
             push(ptrs, "(const char *)_id{{k}} + _if{{k}}")
             push(lens, "(int64_t)(20 - _if{{k}})")
         } else if kind == TK.Float {
-            w("loam_str _is{{k}} = loam_str_of_float({{v}}); ")
+            w("loam_str _is{{k}} = loam_floattext_of_float((double)({{v}})); ")
             push(ptrs, "_is{{k}}.ptr")
             push(lens, "_is{{k}}.len")
         } else if kind == TK.Bool {
@@ -3127,6 +3127,17 @@ fn const_init(e: int) {
                 }
                 w(".{{cid(ast.init_name(e, k))}} = ")
                 const_init(kids[k])
+            }
+            w(" }")
+            break
+        case Kind.ArrayLit:
+            let elems = ast.NODES[e].kids
+            w("{ ")
+            for k in 0..elems.len {
+                if k > 0 {
+                    w(", ")
+                }
+                const_init(elems[k])
             }
             w(" }")
             break

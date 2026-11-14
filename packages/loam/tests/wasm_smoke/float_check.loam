@@ -1,0 +1,52 @@
+// `std:floattext` against the host libc: reads the answers float_diff.c
+// wrote (the path is the first argument) and checks every one. Run by
+// `nob`'s wasm_float stanza.
+import "std:conv"
+import "std:floattext"
+import "std:fmt"
+import "std:str"
+import "std:sys"
+
+fn main() {
+    let lines = str.split(sys.read_file(sys.args()[1]), "\n")
+    let mut checks = 0
+    let mut bad = 0
+    for i in 0..lines.len {
+        let parts = str.split(lines[i], " ")
+        if parts.len == 20 && parts[0] == "F" {
+            let v = floattext.of_bits(conv.parse_u64(parts[1]).val)
+            for p in 1..18 {
+                checks += 1
+                let got = floattext.text(v, p)
+                if got != parts[p + 1] {
+                    bad += 1
+                    if bad <= 10 {
+                        fmt.println("text", parts[1], p, "libc", parts[p + 1], "loam", got)
+                    }
+                }
+            }
+            checks += 1
+            let got = floattext.shortest(v)
+            if got != parts[19] {
+                bad += 1
+                if bad <= 10 {
+                    fmt.println("shortest", parts[1], "libc", parts[19], "loam", got)
+                }
+            }
+        } else if parts.len == 3 && parts[0] == "P" {
+            checks += 1
+            let got = floattext.bits_of(floattext.parse(parts[1]))
+            let want = conv.parse_u64(parts[2]).val
+            if got != want {
+                bad += 1
+                if bad <= 10 {
+                    fmt.println("parse", parts[1], "libc", want, "loam", got)
+                }
+            }
+        }
+    }
+    fmt.println("{{checks}} checks, {{bad}} mismatches")
+    if bad != 0 || checks == 0 {
+        sys.exit(1)
+    }
+}

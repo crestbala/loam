@@ -186,31 +186,10 @@ static inline void loam_fmt_write(loam_str s) {
     loam_write_bytes(s.ptr, (size_t)s.len);
 }
 
-static inline loam_str loam_fmt_ftoa(char buf[64], double v) {
-    int n = snprintf(buf, 64, "%.15g", v);
-    if (n < 0) n = 0;
-    if (n > 63) n = 63;
-    loam_str s;
-    s.ptr = buf;
-    s.len = (int64_t)n;
-    return s;
-}
-
-static inline void loam_fmt_write_float(double v) {
-    char buf[64];
-    loam_str s = loam_fmt_ftoa(buf, v);
-    loam_write_bytes(s.ptr, (size_t)s.len);
-}
-
 /* The stderr twins of the writers above, for `fmt.eprintln` / `fmt.ewrite`:
    diagnostics must not mix with output a program sends to stdout. */
 static inline void loam_fmt_ewrite(loam_str s) {
     if (!s.ptr || s.len <= 0) return;
-    loam_ewrite_bytes(s.ptr, (size_t)s.len);
-}
-static inline void loam_fmt_ewrite_float(double v) {
-    char buf[64];
-    loam_str s = loam_fmt_ftoa(buf, v);
     loam_ewrite_bytes(s.ptr, (size_t)s.len);
 }
 
@@ -1108,15 +1087,6 @@ static inline int64_t loam_now_ms(void) {
 static inline int64_t loam_heap_used(void) { return 0; }
 #endif
 
-static inline loam_str loam_str_of_float(double v) {
-    char buf[64];
-    loam_str s = loam_fmt_ftoa(buf, v);
-    char *p = loam_str_bytes(s.len);
-    memcpy(p, s.ptr, (size_t)s.len);
-    p[s.len] = 0;
-    return loam_str_owned(p, s.len);
-}
-
 /* Takes ownership of `b` (IR_CALL steals []int). Trailing NUL for C hosts. */
 static inline loam_str loam_string_from_bytes(loam_vec b) {
     int64_t n = b.len > 0 ? b.len : 0;
@@ -1195,42 +1165,6 @@ static inline loam_str loam_buf_to_string(const loam_vec *b) {
     return loam_str_copy((const char *)b->ptr, b->len);
 }
 
-/* --- std:conv — the float halves (the integer halves are Loam) -------------
-   Shortest of %.15g / %.16g / %.17g that reads back to the same double, so
-   0.1 prints as "0.1" and every finite value round-trips exactly. On wasm,
-   `snprintf` and `strtod` are the exact ones in zeus_wasm_libc.c. */
-static inline loam_str loam_conv_f64_to_str(double v) {
-    char buf[40];
-    int prec;
-    for (prec = 15; prec <= 17; prec++) {
-        snprintf(buf, sizeof buf, "%.*g", prec, v);
-        if (prec == 17 || strtod(buf, NULL) == v) break;
-    }
-    return loam_str_copy(buf, (int64_t)strlen(buf));
-}
-
-/** `%.17g`: the spelling generated C uses for a float constant. */
-static inline loam_str loam_conv_f64_to_g17(double v) {
-    char buf[40];
-    snprintf(buf, sizeof buf, "%.17g", v);
-    return loam_str_copy(buf, (int64_t)strlen(buf));
-}
-
-static inline loam_str loam_conv_f64_to_g6(double v) {
-    char buf[40];
-    snprintf(buf, sizeof buf, "%g", v);
-    return loam_str_copy(buf, (int64_t)strlen(buf));
-}
-
-/** `strtod` over text `std:conv` already validated as a decimal float. */
-static inline double loam_conv_strtod(loam_str s) {
-    char buf[512];
-    if (!s.ptr || s.len <= 0 || s.len >= (int64_t)sizeof buf) return 0.0;
-    memcpy(buf, s.ptr, (size_t)s.len);
-    buf[s.len] = 0;
-    return strtod(buf, NULL);
-}
-
 /* `std:key` reads a float's bytes for its content key. A value conversion
    would round (`1.5 as u32` is 1); only `memcpy` sees the raw bytes. */
 static inline uint32_t loam_conv_f32_bits(float v) {
@@ -1239,10 +1173,29 @@ static inline uint32_t loam_conv_f32_bits(float v) {
     return out;
 }
 
-static inline uint64_t loam_conv_f64_bits(double v) {
+/* std:floattext: a double's bits both ways, and the text it made on the
+   stack, `d[0..len]`. */
+static inline uint64_t loam_floattext_bits_of(double v) {
     uint64_t out = 0;
     memcpy(&out, &v, sizeof out);
     return out;
+}
+static inline double loam_floattext_of_bits(uint64_t u) {
+    double out = 0;
+    memcpy(&out, &u, sizeof out);
+    return out;
+}
+static inline int64_t loam_floattext_text_len(int32_t len) {
+    if (len < 0 || len > 32) loam_panic("floattext", 0, "text out of range");
+    return (int64_t)len;
+}
+static inline loam_str loam_floattext_text_of(const uint8_t *d, int32_t len) {
+    return loam_str_copy((const char *)d, loam_floattext_text_len(len));
+}
+static inline void loam_floattext_write_text(const uint8_t *d, int32_t len, bool to_err) {
+    int64_t n = loam_floattext_text_len(len);
+    if (to_err) loam_ewrite_bytes((const char *)d, (size_t)n);
+    else loam_write_bytes((const char *)d, (size_t)n);
 }
 
 /** The operating system: "macos" | "linux" | "windows" | "ios" | "android" |

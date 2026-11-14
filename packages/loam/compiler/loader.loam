@@ -1264,17 +1264,33 @@ fn load(path: string) -> bool {
     typecheck.STD_DIR = std_dir()
     discover(path)
     PARSER.value_key = false
+    PARSER.uses_float = false
     if !load_module(path, stem_of(path)) {
         return false
     }
-    // `__value_key(x)` (Zeus `Each`) lowers to `std:key`: loaded only when a
-    // module calls it, so no other program parses or checks it. The entry
-    // module stays last in init order.
+    // Two std modules are loaded only when a program needs them, so no other
+    // program parses or checks them: `std:key`, which `__value_key(x)` (Zeus
+    // `Each`) lowers to, and `std:floattext`, which a float's text and
+    // parsing lower to (needed only where a float literal or type appears).
+    // `std:key` goes first: it may bring floats with it.
+    if PARSER.value_key && !load_on_demand(path, "key", "std:key") {
+        return false
+    }
+    if PARSER.uses_float && !load_on_demand(path, "floattext", "std:floattext") {
+        return false
+    }
+    return true
+}
+
+/** *Load `spec` as an implicit import of the entry module `path`, after the */
+/** *rest; the entry module stays last in init order. Already loaded, it is */
+/** *only named. */
+fn load_on_demand(path: string, alias: string, spec: string) -> bool {
     let root = typecheck.MODS[0].root
-    if !PARSER.value_key || imports_spec(root, "std:key") {
+    if imports_spec(root, spec) {
         return true
     }
-    let im = implicit_import("key", "std:key", ast.INFO[root].loc)
+    let im = implicit_import(alias, spec, ast.INFO[root].loc)
     push(ast.NODES[root].kids, im)
     let ip = resolve_import(path, im)
     if ip.len == 0 {
@@ -1283,8 +1299,11 @@ fn load(path: string) -> bool {
     ast.EXTRA[ast.ex_mut(im)].sname = ip
     ast.EXTRA[ast.ex_mut(im)].has_sname = true
     let before = typecheck.MODS.len
-    if !load_module(ip, "key") {
+    if !load_module(ip, alias) {
         return false
+    }
+    if typecheck.MODS.len == before {
+        return true
     }
     // Ranks stay a permutation: the modules just loaded took ranks
     // `before..len`, after the entry's `before - 1`; the entry moves last.

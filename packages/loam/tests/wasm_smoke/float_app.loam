@@ -1,5 +1,5 @@
-// Floats print and parse the same on wasm as natively: the wasm libc's `%g`
-// and `strtod` are exact (zeus_wasm_libc.c, wasm-float). Run both ways by
+// Floats print and parse the same on wasm as natively: both are
+// `std:floattext`, plain Loam with no libc under it. Run both ways by
 // `nob`'s wasm_float stanza, which requires identical output.
 import "std:conv"
 import "std:fmt"

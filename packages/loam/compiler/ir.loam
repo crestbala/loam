@@ -1066,7 +1066,7 @@ fn lower_println(n: int) -> int {
         if tk(t) == TK.Bool {
             w = if to_err { "loam_fmt_ewrite_bool" } else { "loam_fmt_write_bool" }
         } else if tk(t) == TK.Float {
-            w = if to_err { "loam_fmt_ewrite_float" } else { "loam_fmt_write_float" }
+            w = if to_err { "loam_floattext_ewrite" } else { "loam_floattext_write" }
         }
         emit_named_call(w, []int { v }, types.ty_void(), loc)
     }
@@ -1493,6 +1493,19 @@ fn static_data(e: int) -> bool {
             return false
         }
         let kids = ast.NODES[e].kids
+        for i in 0..kids.len {
+            if !static_data(kids[i]) {
+                return false
+            }
+        }
+        return true
+    }
+    // A fixed array of plain data (a table): every element, written out.
+    if k == Kind.ArrayLit && tk(ast.NODES[e].ty) == TK.Array {
+        let kids = ast.NODES[e].kids
+        if kids.len == 0 || i64(kids.len) != types.TYPES[ast.NODES[e].ty].array_len {
+            return false
+        }
         for i in 0..kids.len {
             if !static_data(kids[i]) {
                 return false

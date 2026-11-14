@@ -40,6 +40,10 @@ struct Parser {
     /** *A `__value_key(..)` call was parsed (kept across modules): the */
     /** *loader then loads `std:key`, which it lowers to. */
     value_key: bool,
+    /** *A float literal, or the word `float`, `f32` or `f64`, was read (kept */
+    /** *across modules): no float can exist without one, and the loader */
+    /** *then loads `std:floattext`, which float text lowers to. */
+    uses_float: bool,
 }
 
 /** *What `take_docs` found: C's NULL is `has` false. */
@@ -71,6 +75,7 @@ fn parser_new(src: string) -> Parser {
         hidden_id: 0,
         file: 0,
         value_key: false,
+        uses_float: false,
     }
 }
 
@@ -95,6 +100,11 @@ fn tloc(p: &Parser, t: Token) -> Loc {
 }
 
 fn bump(p: &mut Parser) {
+    if !p.uses_float && (p.cur.kind == Tok.Float || (p.cur.kind == Tok.Ident && (p.cur.len == 3 || p.cur.len == 5) &&
+        (lexer.word_is(&p.lx, p.cur.start, p.cur.len, "f64") || lexer.word_is(&p.lx, p.cur.start, p.cur.len, "f32") ||
+        lexer.word_is(&p.lx, p.cur.start, p.cur.len, "float")))) {
+        p.uses_float = true
+    }
     p.prev = p.cur
     p.cur = p.peek
     p.peek = lexer.next(&mut p.lx)
