@@ -503,8 +503,9 @@ straight to libc, so no C shim.
       `wasm_smoke`, `wasm_float`, `wasm_trap`, `lsp`, `ownership_asan`,
       `android_project`, `cost`, `fresh_cache` green, each run alone.
       **Runtime: 8,699 → 8,540** (−159).
-- [ ] R2.3 Process: `exec`, `spawn` / `wait` and the spawn table, `env`,
-      `exit`, `os`, `arch`, `cpu_count`. In steps: R2.3a target facts in the
+- [x] R2.3 Process: `exec`, `spawn` / `wait` and the spawn table, `env`,
+      `exit`, `os`, `arch`, `cpu_count`. Done 2026-11-14 (8,540 → 8,286
+      lines). In steps: R2.3a target facts in the
       compiler, R2.3b `os` / `arch` / `cpu_count` / `target`, R2.3c `env` /
       `env_set` / `exit`, R2.3d `exec`, R2.3e `spawn` / `wait`.
 - [x] R2.3a `#[os]` tells macOS, iOS and Android apart, and `#[arch]` picks
@@ -609,6 +610,34 @@ straight to libc, so no C shim.
       `compile_fail` (164), `http`; the 8 stanzas plus `wasm_trap`;
       `cross-check.sh` Linux 123/123 and Windows 111/111 on both CPUs.
       **Runtime: 8,448 → 8,389** (−59).
+- [x] R2.3e `spawn` / `wait` in Loam. Done 2026-11-14. The spawn table
+      is a module `[]i64` (pid or process handle per slot, `0` free; a
+      handle is slot + 1), and the slot search, the argument packing and the
+      Windows quoting (`CommandLineToArgvW` rules) are Loam. `waitpid` /
+      `_spawnvp` / `_cwait` are raw bindings, and the status decode is the
+      `WIFEXITED` bit math from R2.3d (a signal is `-1` here, as the C had
+      it). Three shims are left, 25 lines in all. `loam_sys_argv_fill` lays
+      a `char **` over Loam-owned `[]i64` slots, so C allocates nothing (8
+      bytes a slot, so any pointer width fits; Loam never reads them).
+      `loam_sys_spawnp` exists because `environ` is a variable no binding can
+      name. `loam_sys_errno` lets `waitpid` retry on `EINTR` (4 on Linux and
+      macOS) and nothing else; a blind retry would spin on `ECHILD`. The
+      old C made one `malloc` per argument plus a `calloc`; this makes four
+      Loam buffers per spawn. Checks: `sys_spawn` unchanged; a probe
+      (256-child limit with a 257th refused, bad handles, double wait, a
+      signal-killed child, slot reuse, 200 arguments, an empty argument, an
+      empty argv) is identical to HEAD with 0 leaks. The Windows quoting,
+      copied into a scratch program, matches HEAD's `loam_win_quote` byte
+      for byte on 17 edge cases (empty, spaces, tabs, quotes, trailing and
+      inner backslash runs, `C:\Program Files\x\`). Benchmark vs HEAD's C,
+      medians of 7 rounds (process start dominates, ±5–10% per round):
+      serial `/usr/bin/true` spawn+wait ×500 470 vs 467 ms (+0.6%), 64 in
+      flight ×512 110 vs 107 (+3%), 200 arguments ×300 285 vs 283 (+0.7%),
+      all inside the noise. Seed 5,076,827 → 5,097,807 bytes, seed = stage 1
+      = stage 2. Suite: `sys_spawn`, `sys_exec`, `sys`, `os_`,
+      `compile_fail` (164), `thread_spawn`, `async_await`, `http`; the 8
+      stanzas plus `wasm_trap`; `cross-check.sh` Linux 123/123 and Windows
+      111/111 on both CPUs. **Runtime: 8,389 → 8,286** (−103).
 - [ ] R2.4 stdin: `read_stdin` / `read_line` buffering.
 - [ ] R2.5 `watch_*` bookkeeping over kqueue / inotify / Win32 bindings.
 - [ ] R2.6 Win32 paths through the same bindings; the Windows CI job is green.
