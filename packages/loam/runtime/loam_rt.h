@@ -34,11 +34,6 @@ static inline ssize_t writev(int fd, const struct iovec *iov, int n) {
     }
     return total;
 }
-/* `_pclose` / `_cwait` hand back the exit code itself, not a wait status. */
-#define WIFEXITED(st) 1
-#define WEXITSTATUS(st) (st)
-#define popen _popen
-#define pclose _pclose
 #define lstat stat
 #define mkdir(path, mode) _mkdir(path)
 #else
@@ -1236,11 +1231,6 @@ static inline loam_str loam_sys_arg(int64_t i) {
    `is_dir` / `realpath` / `dir_count` / `dir_entry` / `remove_path` /
    `write_bytes` / `mtime` / `stamp` answer from Loam `#[os("wasm")]` variants
    in `std/sys.loam` now (R2.2), so the stubs are gone. */
-static inline loam_str loam_sys_exec(loam_str cmd) {
-    (void)cmd;
-    return (loam_str){"", 0};
-}
-static inline int64_t loam_sys_exec_status(void) { return 1; }
 /* `sys.mkdir` / `sys.rename` / `sys.cwd` answer from Loam `#[os("wasm")]`
    variants too (R2.2): nothing is created, renamed, or listed. */
 static inline int64_t loam_sys_spawn(const loam_vec *argv) {
@@ -1278,8 +1268,6 @@ static inline int64_t loam_sys_watch_close(int64_t fd) {
 #include <sys/wait.h>
 #endif
 
-LOAM_RT_STATE int loam_sys_last_status LOAM_RT_INIT(1);
-
 /* The process's command line, handed over by the generated entry before any
    other statement runs (`emit_main_args` in codegen_c.c). Zero on iOS and
    Android, where the host owns `main` and passes nothing. */
@@ -1313,55 +1301,8 @@ static inline loam_str loam_sys_arg(int64_t i) {
 /* `sys.write_file` / `sys.write_bytes` live in `std/sys.loam` too (R2.2):
    same stdio bindings, one `fwrite` of the text or the buffer. */
 
-static inline loam_str loam_sys_exec(loam_str cmd) {
-    char cbuf[8192];
-    FILE *p;
-    size_t cap = 4096;
-    size_t n = 0;
-    char *out;
-    int st;
-    const size_t max_out = 262144;
-    if (!cmd.ptr || cmd.len <= 0 || cmd.len >= 8191) {
-        loam_sys_last_status = 1;
-        return (loam_str){"", 0};
-    }
-    memcpy(cbuf, cmd.ptr, (size_t)cmd.len);
-    cbuf[cmd.len] = 0;
-    p = popen(cbuf, "r");
-    if (!p) {
-        loam_sys_last_status = 1;
-        return (loam_str){"", 0};
-    }
-    out = (char *)loam_new(cap, "sys_exec", 0);
-    for (;;) {
-        size_t r;
-        if (n + 512 >= cap) {
-            size_t ncap = cap * 2;
-            char *nbuf;
-            if (ncap > max_out + 512) ncap = max_out + 512;
-            nbuf = (char *)loam_new(ncap, "sys_exec", 0);
-            memcpy(nbuf, out, n);
-            free(out);
-            out = nbuf;
-            cap = ncap;
-        }
-        if (n >= max_out) break;
-        r = fread(out + n, 1, 512, p);
-        n += r;
-        if (r < 512) break;
-    }
-    st = pclose(p);
-    if (st == -1) loam_sys_last_status = 1;
-    else if (WIFEXITED(st)) loam_sys_last_status = WEXITSTATUS(st);
-    else loam_sys_last_status = 1;
-    {
-        loam_str r = loam_str_copy(out, (int64_t)n);
-        free(out);
-        return r;
-    }
-}
-
-static inline int64_t loam_sys_exec_status(void) { return loam_sys_last_status; }
+/* `sys.exec` / `sys.exec_status` live in `std/sys.loam` (R2.3d): raw
+   `popen` / `fread` / `pclose`, the wait status decoded in Loam. */
 
 /* The development-host seam (`std:host`): hand the process to a `zeli serve` host
    that loads the app as a shared image. Declared here because that is where a

@@ -1,0 +1,21 @@
+// `sys.exec` runs a command through the shell and captures its stdout;
+// `exec_status` is its exit code, `1` before any run and when nothing could
+// start (an empty command, or one of 8191 bytes or more). Only commands that
+// mean the same in `sh` and `cmd.exe`, so the fixture runs on Windows too.
+import "std:fmt"
+import "std:str"
+import "std:sys"
+
+fn main() {
+    fmt.println(sys.exec_status())
+    let out = sys.exec("echo hi")
+    fmt.println(str.trim(out), sys.exec_status())
+    fmt.println(sys.exec("exit 3").len, sys.exec_status())
+    fmt.println(sys.exec("exit 0").len, sys.exec_status())
+    fmt.println(sys.exec("").len, sys.exec_status())
+    let mut long = "echo "
+    while long.len < 8191 {
+        long = "{{long}}x"
+    }
+    fmt.println(sys.exec(long).len, sys.exec_status())
+}

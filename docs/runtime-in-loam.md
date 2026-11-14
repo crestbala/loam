@@ -585,6 +585,30 @@ straight to libc, so no C shim.
       `os_`, `exit`, `compile_fail` (164), `http`; the 8 stanzas plus
       `wasm_trap`; `cross-check.sh` Linux 122/122 and Windows 110/110 on both
       CPUs. **Runtime: 8,479 → 8,448** (−31).
+- [x] R2.3d `exec` / `exec_status` in Loam. Done 2026-11-14. Raw `popen`
+      / `fread` / `pclose` (`_popen` / `_pclose` on Windows, as variants), the
+      status in a module `let` (`1` until a run). `WIFEXITED` / `WEXITSTATUS`
+      are macros, so their bits are spelled in Loam (exited when the low
+      seven bits are clear, the code in the next byte; the same on Linux and
+      macOS); Windows `_pclose` hands back the code itself. Same limits as
+      the C: an empty command or one of 8191+ bytes gives status `1`, and
+      output is read in 512-byte `fread`s up to 256 KiB. A full chunk is one
+      `push_bytes`, only the last short one goes byte by byte, and
+      `string_from_bytes` takes over the buffer where the C copied it once
+      more at the end. Windows' `WIFEXITED` / `WEXITSTATUS` / `popen` /
+      `pclose` compat defines go with it. A probe of 12 cases (output, exit
+      3 / 255 / 127, a signal, empty, 8191 bytes, 300 KB against the cap, an
+      exact 1024, NUL bytes, stderr) is byte-identical to HEAD's C, with 0
+      leaks. New fixture `compile_pass/sys_exec` (commands meaning the same in
+      `sh` and `cmd.exe`, so it also runs on Windows; HEAD's C prints the
+      same). Benchmark vs HEAD's C, 3 rounds (process start dominates and is
+      noisy, ±60 ms per round): `exec("true")` ×300 626–663 vs 623–750 ms, a
+      256 KiB `cat` ×100 316–334 vs 312–352, `echo` ×300 632–684 vs 623–736.
+      The ranges overlap fully. Seed 5,071,275 → 5,076,827 bytes, seed =
+      stage 1 = stage 2. Suite: `sys_exec`, `sys`, `fs`, `os_`,
+      `compile_fail` (164), `http`; the 8 stanzas plus `wasm_trap`;
+      `cross-check.sh` Linux 123/123 and Windows 111/111 on both CPUs.
+      **Runtime: 8,448 → 8,389** (−59).
 - [ ] R2.4 stdin: `read_stdin` / `read_line` buffering.
 - [ ] R2.5 `watch_*` bookkeeping over kqueue / inotify / Win32 bindings.
 - [ ] R2.6 Win32 paths through the same bindings; the Windows CI job is green.

@@ -292,12 +292,95 @@ fn c_fwrite(p: string, size: i64, n: i64, f: i64) -> i64 {}
 #[c("fclose")]
 fn c_fclose(f: i64) -> i32 {}
 
+/** *Exit code of the last `exec`; `1` until one runs, and when it could not. */
+let mut last_status: int = 1
+
 /** *Run `cmd` via the shell; capture stdout (redirect `2>&1` to include stderr). */
-/** *Native only; wasm returns empty. `exec_status` is the exit code. */
-fn exec(cmd: string) -> string {}
+/** *Native only; wasm returns empty. `exec_status` is the exit code. Output */
+/** *past 256 KiB is cut off. */
+fn exec(cmd: string) -> string {
+    return exec_os(cmd)
+}
 
 /** *Exit code of the last `exec` (`1` if it could not start). */
-fn exec_status() -> int {}
+fn exec_status() -> int {
+    return last_status
+}
+
+/** *Native `exec`: `popen`, 512-byte `fread`s up to the cap, `pclose`, the */
+/** *C's shape. A full chunk is one `push_bytes`; only the last, short one */
+/** *goes byte by byte. */
+#[os("posix", "windows")]
+fn exec_os(cmd: string) -> string {
+    if cmd.len == 0 || cmd.len >= 8191 {
+        last_status = 1
+        return ""
+    }
+    let p = c_popen(cmd, "r")
+    if p == 0 {
+        last_status = 1
+        return ""
+    }
+    let mut out = []u8 {}
+    let chunk = buf.with_len(512)
+    while out.len < 262144 {
+        let r = int(c_fread(chunk, 1, 512, p))
+        if r == 512 {
+            buf.push_bytes(&mut out, &chunk)
+            continue
+        }
+        for i in 0..r {
+            push(out, chunk[i])
+        }
+        break
+    }
+    last_status = exit_code(c_pclose(p))
+    return string_from_bytes(out)
+}
+
+/** *No processes on wasm: nothing runs, and the status stays `1`. */
+#[os("wasm")]
+fn exec_os(cmd: string) -> string {
+    return ""
+}
+
+/** *A `pclose` wait status as an exit code: `WIFEXITED` / `WEXITSTATUS` are */
+/** *macros, so their bits are spelled here (the same on Linux and macOS): */
+/** *exited when the low seven bits are clear, the code in the next byte. A */
+/** *signal or a failed `pclose` is `1`. */
+#[os("posix")]
+fn exit_code(st: i32) -> int {
+    if st == -1 || (st & 127) != 0 {
+        return 1
+    }
+    return int((st >> 8) & 255)
+}
+
+/** *Windows `_pclose` hands back the exit code itself. */
+#[os("windows")]
+fn exit_code(st: i32) -> int {
+    return if st == -1 { 1 } else { int(st) }
+}
+
+/** *`popen` straight from libc: a `FILE*` as an `i64`, or `0`. */
+#[os("posix")]
+#[c("popen")]
+fn c_popen(cmd: string, mode: string) -> i64 {}
+
+/** *The Windows CRT spells it `_popen`. */
+#[os("windows")]
+#[c("_popen")]
+fn c_popen(cmd: string, mode: string) -> i64 {}
+
+/** *`pclose` straight from libc: the child's wait status, or `-1`. */
+#[os("posix")]
+#[c("pclose")]
+fn c_pclose(f: i64) -> i32 {}
+
+/** *The Windows CRT spells it `_pclose`. */
+#[os("windows")]
+#[c("_pclose")]
+fn c_pclose(f: i64) -> i32 {}
 
 /** *`1` if stdout is a terminal, so output may be redrawn in place. A child of */
 /** *`exec` cannot tell, its stdout being the capture pipe. Wasm returns `0`. */
