@@ -248,12 +248,26 @@ fn family() -> string {
 }
 ```
 
-Targets are `apple`, `linux`, `windows`, `wasm`, and `posix` (the union of
-apple, linux, and other Unix; Android counts as `linux`, iOS as `apple`).
+Targets are `macos`, `ios`, `apple` (both), `linux`, `android`, `windows`,
+`wasm`, and `posix` (every Apple and Linux target plus other Unix). `linux`
+includes Android, as `apple` includes iOS; name `macos` or `android` to tell
+them apart. `#[arch(...)]` picks by CPU the same way, with `x86_64`,
+`aarch64`, `wasm32`, and `other`, and a variant may carry both:
+
+```loam
+#[os("apple")]
+#[arch("aarch64")]
+fn chip() -> string {
+    return "apple silicon"
+}
+```
+
 Attributes stack, so `#[os("posix")]` sits beside `#[c("getpid")]` on one fn.
 A bodyless runtime hook must be every variant or none (wrap a hook in a fn
-instead); overlapping masks, mismatched signatures, and a plain second fn of
-the same name are all compile errors.
+instead). Two variants overlap when they share an OS and a CPU, so an
+`#[arch("aarch64")]` variant and an `#[os("macos")]` one clash. Overlaps,
+mismatched signatures, and a plain second fn of the same name are all
+compile errors.
 
 ### Compile time
 

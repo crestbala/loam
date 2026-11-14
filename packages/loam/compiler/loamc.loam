@@ -1139,10 +1139,11 @@ fn client_c_ok() -> bool {
             if ast.NODES[d].kind != Kind.Fn || codegen.c_sym_of(d).len == 0 || !dce.keep(d) {
                 continue
             }
-            // An `#[os]` variant for other targets is not built here (8:
-            // wasm); and std binds only libc, which iOS and Android have.
+            // An `#[os]` / `#[arch]` variant for other targets is not built
+            // here; and std binds only libc, which iOS and Android have.
             let mask = typecheck.os_mask(d)
-            if (TARGET_WASM && mask != 0 && (mask & 8) == 0) || (!TARGET_WASM && typecheck.MODS[m].is_std) {
+            let off_wasm = (ast.target_os(mask) & ast.OS_WASM) == 0 || (ast.target_arch(mask) & ast.ARCH_WASM32) == 0
+            if (TARGET_WASM && mask != 0 && off_wasm) || (!TARGET_WASM && typecheck.MODS[m].is_std) {
                 continue
             }
             fmt.eprintln("{{typecheck.MODS[m].path}}:{{ast.INFO[d].loc.line}}: error: #[c] fn '{{ast.INFO[d].name}}' is reachable, and C runs only on native builds. Keep it behind #[server] or out of this target")

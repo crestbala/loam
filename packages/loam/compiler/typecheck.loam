@@ -5226,7 +5226,8 @@ fn decl_name(d: int) -> string {
     return ""
 }
 
-/** *A fn's `#[os(...)]` targets (`parser.OS_*` bits), 0 for every target. */
+/** *A fn's `#[os(...)]` / `#[arch(...)]` targets (`ast.OS_*` and `ast.ARCH_*` */
+/** *bits), 0 for every target. */
 fn os_mask(d: int) -> int {
     if d == NONE || kind(d) != Kind.Fn {
         return 0
@@ -5251,8 +5252,6 @@ fn check_duplicate_decls(m: int) {
     // declaration: comparing each name with every earlier one (as C does)
     // is quadratic in the module, and the compiler's own modules are big.
     let mut first = map.with_cap(ds.len * 2, -1)
-    // The targets an `#[os]` name already has a variant for.
-    let mut os_seen = map.new(0)
     for i in 0..ds.len {
         let a = decl_name(ds[i])
         if a.len == 0 {
@@ -5261,11 +5260,19 @@ fn check_duplicate_decls(m: int) {
         let j = map.get(&mut first, map.key_str(a))
         let mask = os_mask(ds[i])
         if j >= 0 && mask != 0 && os_mask(ds[j]) != 0 {
-            let seen = map.get(&mut os_seen, map.key_str(a))
-            if (seen & mask) != 0 {
-                err(ast.INFO[ds[i]].loc, "'{{a}}' already has an #[os] variant for one of these targets (first at line {{ast.INFO[ds[j]].loc.line}})")
+            // Pairwise: an OS-only and an arch-only variant may cover
+            // different slices, so a union of masks would not say.
+            let mut clash = NONE
+            for k in 0..OS_DECLS.len {
+                let v = OS_DECLS[k]
+                if os_primary(v) == ds[j] && ast.targets_overlap(os_mask(v), mask) {
+                    clash = v
+                    break
+                }
+            }
+            if clash != NONE {
+                err(ast.INFO[ds[i]].loc, "'{{a}}' already has an #[os] / #[arch] variant for one of these targets (line {{ast.INFO[clash].loc.line}})")
             } else {
-                map.put(&mut os_seen, map.key_str(a), seen | mask)
                 map.put(&mut OS_PRIMARY, map.key_int(ds[i]), ds[j])
                 push(OS_DECLS, ds[i])
             }
@@ -5274,7 +5281,6 @@ fn check_duplicate_decls(m: int) {
         } else {
             map.put(&mut first, map.key_str(a), i)
             if mask != 0 {
-                map.put(&mut os_seen, map.key_str(a), mask)
                 map.put(&mut OS_PRIMARY, map.key_int(ds[i]), ds[i])
                 push(OS_DECLS, ds[i])
             }

@@ -1,0 +1,15 @@
+// An `#[arch]` variant and an `#[os]` variant clash where they meet: macOS
+// on aarch64 is both.
+#[arch("aarch64")]
+fn name() -> string {
+    return "a"
+}
+
+#[os("macos")]
+fn name() -> string {
+    return "b"
+}
+
+fn main() {
+    name()
+}

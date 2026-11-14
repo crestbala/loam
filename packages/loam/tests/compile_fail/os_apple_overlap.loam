@@ -1,0 +1,14 @@
+// `apple` is macOS and iOS, so it clashes with an `ios` variant.
+#[os("apple")]
+fn name() -> string {
+    return "a"
+}
+
+#[os("ios")]
+fn name() -> string {
+    return "b"
+}
+
+fn main() {
+    name()
+}

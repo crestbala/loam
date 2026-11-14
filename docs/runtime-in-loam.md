@@ -504,7 +504,34 @@ straight to libc, so no C shim.
       `android_project`, `cost`, `fresh_cache` green, each run alone.
       **Runtime: 8,699 → 8,540** (−159).
 - [ ] R2.3 Process: `exec`, `spawn` / `wait` and the spawn table, `env`,
-      `exit`, `os`, `arch`, `cpu_count`.
+      `exit`, `os`, `arch`, `cpu_count`. In steps: R2.3a target facts in the
+      compiler, R2.3b `os` / `arch` / `cpu_count` / `target`, R2.3c `env` /
+      `env_set` / `exit`, R2.3d `exec`, R2.3e `spawn` / `wait`.
+- [x] R2.3a `#[os]` tells macOS, iOS and Android apart, and `#[arch]` picks
+      by CPU. Done 2026-11-14. `sys.os()` answers `ios` / `android` and
+      `cpu_count` is `1` there, and `arch()` needs the CPU, none of which a
+      variant could say. This is Rust's `cfg(target_os)` / `cfg(target_arch)`
+      shape. `#[os]` gains `macos`, `ios`, `android` (`apple` = macOS + iOS,
+      `linux` = Linux + Android, `posix` = both plus other Unix);
+      `#[arch("x86_64" | "aarch64" | "wasm32" | "other")]` is new, and a
+      variant may carry both. OS bits sit low and arch bits high in the one
+      `numb` mask; the constants moved to `ast.loam`, so codegen and loamc
+      lose their bare `19` / `8`. Overlap is pairwise (a shared OS *and* CPU),
+      since an OS-only and an arch-only variant cover different slices.
+      Codegen tests the plain `__APPLE__` / `__linux__` macro when a mask
+      names both halves, so every existing variant emits byte-identical C
+      (the compiler's own `#if` set matches the seed's exactly); split halves
+      add `LOAM_IOS` / `__ANDROID__` / `LOAM_ANDROID` tests. Fixtures:
+      `compile_pass/os_arch_variants` (checked against `sys.os()` /
+      `sys.arch()`, so it holds on every host), `compile_fail/arch_overlap`,
+      `arch_unknown`, `os_apple_overlap`. Compile speed: the compiler emitting
+      itself, 40 alternating runs, min 157.9 vs 157.1 ms and median 159.3 vs
+      158.5 ms against HEAD (+0.5%, noise; it also compiles its own new code).
+      loamc 1,832,456 vs 1,831,608 (+848), seed 5,035,141 → 5,053,218 bytes,
+      seed = stage 1 = stage 2. Suite: `os_`, `arch_`, `compile_fail` (164),
+      `c_ffi`, `grammar-check`; `selfhost_seed`, `wasm_smoke`, `wasm_float`,
+      `wasm_trap`, `lsp`, `ownership_asan`, `android_project`, `cost`,
+      `fresh_cache` green. **Runtime: 8,540** (unchanged: compiler only).
 - [ ] R2.4 stdin: `read_stdin` / `read_line` buffering.
 - [ ] R2.5 `watch_*` bookkeeping over kqueue / inotify / Win32 bindings.
 - [ ] R2.6 Win32 paths through the same bindings; the Windows CI job is green.

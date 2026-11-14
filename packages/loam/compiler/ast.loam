@@ -258,6 +258,44 @@ const M_EPRINTLN: int = 2048
 /** *captured). A mark, so the test is one load, not a scan of every global. */
 const M_GLOBAL_VAR: int = 4096
 
+/** *`#[os(...)]` bits (on a Fn's `numb`): which targets a variant is for. */
+const OS_MACOS: int = 1
+const OS_LINUX: int = 2
+const OS_WINDOWS: int = 4
+const OS_WASM: int = 8
+/** *Any other Unix (BSD, ...): not Apple, Linux, Windows or wasm. */
+const OS_OTHER: int = 16
+const OS_IOS: int = 32
+const OS_ANDROID: int = 64
+/** *Every OS bit: a mask with none of them is for every OS. */
+const OS_ALL: int = 127
+
+/** *`#[arch(...)]` bits, above the OS bits in the same `numb`. */
+const ARCH_X86_64: int = 128
+const ARCH_AARCH64: int = 256
+const ARCH_WASM32: int = 512
+/** *Any other CPU. */
+const ARCH_OTHER: int = 1024
+/** *Every arch bit: a mask with none of them is for every CPU. */
+const ARCH_ALL: int = 1920
+
+/** *A mask's OS bits; none set means every OS. */
+fn target_os(mask: int) -> int {
+    let os = mask & OS_ALL
+    return if os != 0 { os } else { OS_ALL }
+}
+
+/** *A mask's arch bits; none set means every CPU. */
+fn target_arch(mask: int) -> int {
+    let arch = mask & ARCH_ALL
+    return if arch != 0 { arch } else { ARCH_ALL }
+}
+
+/** *Two variant masks share a target: some OS and some CPU in both. */
+fn targets_overlap(a: int, b: int) -> bool {
+    return (target_os(a) & target_os(b)) != 0 && (target_arch(a) & target_arch(b)) != 0
+}
+
 /** *A diagnostic: where, and what. */
 struct Diag {
     loc: Loc,

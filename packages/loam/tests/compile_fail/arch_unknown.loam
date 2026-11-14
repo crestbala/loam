@@ -1,0 +1,9 @@
+// `#[arch]` names x86_64, aarch64, wasm32 or other.
+#[arch("mips")]
+fn name() -> string {
+    return "a"
+}
+
+fn main() {
+    name()
+}
