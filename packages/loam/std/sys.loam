@@ -1382,17 +1382,22 @@ fn cwd_os() -> string {
 fn c_getcwd(buf: []u8, n: i64) -> i64 {}
 
 /** *Open a filesystem watcher, for the paths `watch_add` is then given. Returns a */
-/** *handle (> 0), or `0` when this host has no kernel watcher — macOS and the */
-/** *BSDs do, wasm and Linux do not yet. */
-fn watch_open() -> int {}
+/** *handle (> 0), or `0` when this host has no kernel watcher: macOS and iOS */
+/** *have kqueue and Linux has inotify; Windows, Android, wasm and other Unix */
+/** *poll instead. */
+fn watch_open() -> int {
+    return watch_open_os()
+}
 
 /** *Watch one path — a directory or a file — under `handle`. Returns a */
-/** *registration id (> 0), which is also a descriptor the caller closes with */
-/** *`watch_close`. `0` when the path cannot be opened. */
+/** *registration id (> 0) the caller closes with `watch_close`. `0` when the */
+/** *path cannot be watched. */
 /** */
 /** *The id is the caller's to keep: the mapping from id back to path is the */
-/** *caller's business, because the watcher itself holds no state. */
-fn watch_add(handle: int, path: string) -> int {}
+/** *caller's business. */
+fn watch_add(handle: int, path: string) -> int {
+    return watch_add_os(handle, path)
+}
 
 /** *Wait for one change, and return the id of the watcher that fired — or `0` */
 /** *when nothing happened in time. */
@@ -1404,7 +1409,305 @@ fn watch_add(handle: int, path: string) -> int {}
 /** *A file fires when its contents change. A directory fires when an entry inside */
 /** *it is added, removed or renamed — so a caller that wants the *name* of a new */
 /** *file has to list the directory it was handed. */
-fn watch_next(handle: int, timeout_ms: int) -> int {}
+fn watch_next(handle: int, timeout_ms: int) -> int {
+    return watch_next_os(handle, timeout_ms)
+}
 
-/** *Close a descriptor from `watch_open` or `watch_add`. Returns `0`. */
-fn watch_close(fd: int) -> int {}
+/** *Close a handle from `watch_open` or an id from `watch_add`. Returns `0`. */
+fn watch_close(fd: int) -> int {
+    return watch_close_os(fd)
+}
+
+// --- kqueue (macOS, iOS) ------------------------------------------------
+//
+// One `kevent` per call and no state: the id is the watched path's own
+// descriptor. `struct kevent` is 32 bytes on Apple's 64-bit targets: ident
+// (8), filter (2), flags (2), fflags (4), data (8), udata (8), so it is four
+// `i64` slots, the second holding filter, flags and fflags little-endian.
+
+/** *macOS / iOS: a kqueue, or `0`. */
+#[os("apple")]
+fn watch_open_os() -> int {
+    let kq = c_kqueue()
+    return if kq < 0 { 0 } else { int(kq) }
+}
+
+/** *Open `path` and register it with the queue; its descriptor is the id. */
+/** *`O_CLOEXEC` keeps it out of the `sh` children `sys.exec` spawns. Not */
+/** *`NOTE_ATTRIB`: a write also changes the metadata, which kqueue reports */
+/** *as a second, later event, waking a reload twice for one save. */
+#[os("apple")]
+fn watch_add_os(handle: int, path: string) -> int {
+    if handle <= 0 || path.len == 0 || path.len >= 4096 {
+        return 0
+    }
+    // O_RDONLY | O_CLOEXEC (0x1000000 in Apple's fcntl.h).
+    let fd = c_open_watched(path, 16777216)
+    if fd < 0 {
+        return 0
+    }
+    // EVFILT_VNODE (-4, as u16 0xfffc), EV_ADD | EV_CLEAR (0x21) and
+    // NOTE_WRITE | NOTE_DELETE | NOTE_RENAME (0x23), laid out as above.
+    let change = []i64 { i64(fd), i64(35) * i64(4294967296) + i64(33) * i64(65536) + i64(65532), i64(0), i64(0) }
+    if c_kevent_add(i32(handle), change, 1, i64(0), 0, i64(0)) < 0 {
+        c_close(fd)
+        return 0
+    }
+    return int(fd)
+}
+
+/** *The id whose vnode fired, or `0`: one event per call, so the caller */
+/** *batches a burst. */
+#[os("apple")]
+fn watch_next_os(handle: int, timeout_ms: int) -> int {
+    if handle <= 0 {
+        return 0
+    }
+    if kevent_slots.len == 0 {
+        kevent_slots = []i64 { i64(0), i64(0), i64(0), i64(0) }
+        timespec_slots = []i64 { i64(0), i64(0) }
+    }
+    let mut n = 0
+    if timeout_ms < 0 {
+        n = int(c_kevent_block(i32(handle), i64(0), 0, kevent_slots, 1, i64(0)))
+    } else {
+        timespec_slots[0] = i64(timeout_ms / 1000)
+        timespec_slots[1] = i64(timeout_ms % 1000) * i64(1000000)
+        n = int(c_kevent_wait(i32(handle), i64(0), 0, kevent_slots, 1, timespec_slots))
+    }
+    return if n <= 0 { 0 } else { int(kevent_slots[0]) }
+}
+
+/** *`watch_next`'s event and timeout, kept between calls (a drain asks */
+/** *thousands of times); workers cannot reach `sys`, so nothing shares them. */
+let mut kevent_slots: []i64 = []i64 {}
+let mut timespec_slots: []i64 = []i64 {}
+
+/** *A queue and an id are both descriptors. */
+#[os("apple")]
+fn watch_close_os(fd: int) -> int {
+    if fd > 0 {
+        c_close(i32(fd))
+    }
+    return 0
+}
+
+/** *`kqueue` straight from libc. */
+#[os("apple")]
+#[c("kqueue")]
+fn c_kqueue() -> i32 {}
+
+/** *`open(path, flags)` straight from libc (no mode: nothing is created). */
+#[os("apple")]
+#[c("open")]
+fn c_open_watched(path: string, flags: i32) -> i32 {}
+
+/** *`kevent` registering one change (no event list, no timeout: `0` is NULL). */
+#[os("apple")]
+#[c("kevent")]
+fn c_kevent_add(kq: i32, changes: []i64, n: i32, events: i64, nevents: i32, timeout: i64) -> i32 {}
+
+/** *`kevent` waiting for one event at most `timeout` (a `struct timespec`). */
+#[os("apple")]
+#[c("kevent")]
+fn c_kevent_wait(kq: i32, changes: i64, n: i32, events: []i64, nevents: i32, timeout: []i64) -> i32 {}
+
+/** *`kevent` waiting for one event with no timeout (NULL). */
+#[os("apple")]
+#[c("kevent")]
+fn c_kevent_block(kq: i32, changes: i64, n: i32, events: []i64, nevents: i32, timeout: i64) -> i32 {}
+
+/** *`close` straight from libc. */
+#[os("posix")]
+#[c("close")]
+fn c_close(fd: i32) -> i32 {}
+
+// --- inotify (Linux) -----------------------------------------------------
+//
+// inotify names a watch by a small number inside its handle, not by a
+// descriptor of its own, so an id here packs both: handle * 2^20 + watch.
+// `watch_close` can then tell an id from a handle (ids are >= 2^20) and needs
+// no table. One `read` can bring several events; the ones not yet returned
+// wait in `watch_queue_*`, so `watch_next` still answers one per call, and a
+// repeat of an id already waiting is dropped, as kqueue's EV_CLEAR folds it.
+
+/** *Two to the twentieth: the stride between handles in an inotify id. */
+const WATCH_STRIDE: int = 1048576
+
+/** *Events read but not returned yet: the handle and the id of each. */
+let mut watch_queue_handles: []int = []int {}
+let mut watch_queue_ids: []int = []int {}
+
+/** *Linux: an inotify descriptor (`IN_CLOEXEC`), or `0`. */
+#[os("linux")]
+fn watch_open_os() -> int {
+    let fd = c_inotify_init1(524288)
+    // An id must fit `int`: handle * 2^20 stays below 2^31.
+    if fd >= 2048 {
+        c_close(fd)
+        return 0
+    }
+    return if fd < 0 { 0 } else { int(fd) }
+}
+
+/** *Watch `path`: its contents changed (`IN_MODIFY`), it went away */
+/** *(`IN_DELETE_SELF`, `IN_MOVE_SELF`), or an entry inside it came, went or */
+/** *moved (`IN_CREATE`, `IN_DELETE`, `IN_MOVED_FROM`, `IN_MOVED_TO`) — what */
+/** *the kqueue variant reports for a file and a directory alike. */
+#[os("linux")]
+fn watch_add_os(handle: int, path: string) -> int {
+    if handle <= 0 || path.len == 0 || path.len >= 4096 {
+        return 0
+    }
+    let mask = u32(2) | u32(1024) | u32(2048) | u32(256) | u32(512) | u32(64) | u32(128)
+    let wd = c_inotify_add_watch(i32(handle), path, mask)
+    if wd <= 0 || int(wd) >= WATCH_STRIDE {
+        return 0
+    }
+    return handle * WATCH_STRIDE + int(wd)
+}
+
+/** *The next waiting id of `handle`, else one `poll` for up to `timeout_ms` */
+/** *and one `read` of whatever arrived. */
+#[os("linux")]
+fn watch_next_os(handle: int, timeout_ms: int) -> int {
+    if handle <= 0 {
+        return 0
+    }
+    let waiting = watch_take(handle)
+    if waiting != 0 {
+        return waiting
+    }
+    // `struct pollfd`: fd (4 bytes), events = POLLIN (2), revents (2).
+    let fds = []i64 { i64(handle) + i64(1) * i64(4294967296) }
+    if c_poll(fds, i64(1), i32(timeout_ms)) <= 0 {
+        return 0
+    }
+    let bytes = buf.with_len(4096)
+    let n = int(c_read(i32(handle), bytes, i64(4096)))
+    // `struct inotify_event`: wd (4), mask (4), cookie (4), len (4), name.
+    let mut at = 0
+    while n > 0 && at + 16 <= n {
+        let wd = le32(bytes, at)
+        let mask = le32(bytes, at + 4)
+        // IN_IGNORED (0x8000): the watch is gone, nothing changed.
+        if wd > 0 && (mask & 32768) == 0 {
+            watch_queue(handle, handle * WATCH_STRIDE + wd)
+        }
+        at = at + 16 + le32(bytes, at + 12)
+    }
+    return watch_take(handle)
+}
+
+/** *An id drops its watch; a handle closes, and its waiting events go. */
+#[os("linux")]
+fn watch_close_os(fd: int) -> int {
+    if fd >= WATCH_STRIDE {
+        c_inotify_rm_watch(i32(fd / WATCH_STRIDE), i32(fd % WATCH_STRIDE))
+        watch_forget(fd, false)
+    } else if fd > 0 {
+        c_close(i32(fd))
+        watch_forget(fd, true)
+    }
+    return 0
+}
+
+/** *Little-endian 32 bits of `b` at `at`, as the kernel wrote them (the */
+/** *values read here are small and positive). */
+#[os("linux")]
+fn le32(b: []u8, at: int) -> int {
+    return int(b[at]) | (int(b[at + 1]) << 8) | (int(b[at + 2]) << 16) | (int(b[at + 3] & u8(127)) << 24)
+}
+
+/** *Queue `id` under `handle`, unless it is already waiting. */
+#[os("linux")]
+fn watch_queue(handle: int, id: int) {
+    for i in 0..watch_queue_ids.len {
+        if watch_queue_ids[i] == id {
+            return
+        }
+    }
+    push(watch_queue_handles, handle)
+    push(watch_queue_ids, id)
+}
+
+/** *The first waiting id of `handle`, removed, or `0`. */
+#[os("linux")]
+fn watch_take(handle: int) -> int {
+    let mut found = 0
+    let mut handles = []int {}
+    let mut ids = []int {}
+    for i in 0..watch_queue_ids.len {
+        if found == 0 && watch_queue_handles[i] == handle {
+            found = watch_queue_ids[i]
+        } else {
+            push(handles, watch_queue_handles[i])
+            push(ids, watch_queue_ids[i])
+        }
+    }
+    watch_queue_handles = handles
+    watch_queue_ids = ids
+    return found
+}
+
+/** *Drop the waiting events of one id, or (`handle`) of a whole handle. */
+#[os("linux")]
+fn watch_forget(fd: int, handle: bool) {
+    let mut handles = []int {}
+    let mut ids = []int {}
+    for i in 0..watch_queue_ids.len {
+        let gone = if handle { watch_queue_handles[i] == fd } else { watch_queue_ids[i] == fd }
+        if !gone {
+            push(handles, watch_queue_handles[i])
+            push(ids, watch_queue_ids[i])
+        }
+    }
+    watch_queue_handles = handles
+    watch_queue_ids = ids
+}
+
+/** *`inotify_init1` straight from libc. */
+#[os("linux")]
+#[c("inotify_init1")]
+fn c_inotify_init1(flags: i32) -> i32 {}
+
+/** *`inotify_add_watch` straight from libc: a watch number, or `-1`. */
+#[os("linux")]
+#[c("inotify_add_watch")]
+fn c_inotify_add_watch(fd: i32, path: string, mask: u32) -> i32 {}
+
+/** *`inotify_rm_watch` straight from libc. */
+#[os("linux")]
+#[c("inotify_rm_watch")]
+fn c_inotify_rm_watch(fd: i32, wd: i32) -> i32 {}
+
+/** *`poll` straight from libc (`nfds_t` is 8 bytes on Linux). */
+#[os("linux")]
+#[c("poll")]
+fn c_poll(fds: []i64, n: i64, timeout_ms: i32) -> i32 {}
+
+// --- no kernel watcher ---------------------------------------------------
+
+/** *Windows, Android, wasm and other Unix: no watcher, so a caller polls. */
+#[os("windows", "android", "wasm", "other")]
+fn watch_open_os() -> int {
+    return 0
+}
+
+/** *No watcher: nothing is watched. */
+#[os("windows", "android", "wasm", "other")]
+fn watch_add_os(handle: int, path: string) -> int {
+    return 0
+}
+
+/** *No watcher: nothing fires. */
+#[os("windows", "android", "wasm", "other")]
+fn watch_next_os(handle: int, timeout_ms: int) -> int {
+    return 0
+}
+
+/** *No watcher: nothing to close. */
+#[os("windows", "android", "wasm", "other")]
+fn watch_close_os(fd: int) -> int {
+    return 0
+}

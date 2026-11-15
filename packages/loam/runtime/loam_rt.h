@@ -1233,23 +1233,6 @@ static inline loam_str loam_sys_arg(int64_t i) {
    in `std/sys.loam` now (R2.2), so the stubs are gone. */
 /* `sys.mkdir` / `sys.rename` / `sys.cwd` answer from Loam `#[os("wasm")]`
    variants too (R2.2): nothing is created, renamed, or listed. */
-/* No filesystem, so nothing to watch: a caller sees "no watcher here" rather
-   than an empty event stream, which would be a reload that never fires. */
-static inline int64_t loam_sys_watch_open(void) { return 0; }
-static inline int64_t loam_sys_watch_add(int64_t h, loam_str path) {
-    (void)h;
-    (void)path;
-    return 0;
-}
-static inline int64_t loam_sys_watch_next(int64_t h, int64_t timeout_ms) {
-    (void)h;
-    (void)timeout_ms;
-    return 0;
-}
-static inline int64_t loam_sys_watch_close(int64_t fd) {
-    (void)fd;
-    return 0;
-}
 #else
 #ifndef _WIN32
 #include <sys/wait.h>
@@ -1351,12 +1334,6 @@ int loam_sys_stat(const char *path, int64_t *out) {
 }
 #endif
 
-static int loam_sys_cpath(loam_str path, char *buf, size_t cap) {
-    if (!path.ptr || path.len <= 0 || (size_t)path.len + 1 > cap) return 1;
-    memcpy(buf, path.ptr, (size_t)path.len);
-    buf[path.len] = 0;
-    return 0;
-}
 
 /* `sys.mtime` / `sys.stamp` live in `std/sys.loam` too (R2.2): the same five-
    slot `loam_sys_stat` shim, read as numbers and (for `stamp`) formatted in
@@ -1557,99 +1534,9 @@ static inline loam_vec loam_sys_read_fd(int64_t fd, int64_t n) {
     return v;
 }
 
-/* --- sys.watch_*: the kernel half of change-driven reload ---
-
-   kqueue is libc on macOS and the BSDs, so this needs no framework and no change
-   to a link line. The seam is four one-syscall functions that hold no state: a
-   descriptor in, a descriptor or a number out. Which paths are watched, which
-   descriptor is which path, what a change means and how a burst is coalesced is
-   policy, and it lives in Loam where it can be read and tested as source.
-
-   A file fires when its contents change; a directory fires when an entry inside
-   it is added, removed or renamed. Neither alone is enough for a reload — a
-   directory event misses an in-place write, a file event misses a new file — so
-   a caller watches both and lists a directory it was handed. */
-#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
-#include <fcntl.h>
-#include <sys/event.h>
-
-static inline int64_t loam_sys_watch_open(void) {
-    int kq = kqueue();
-    return kq < 0 ? 0 : (int64_t)kq;
-}
-
-/* Open `path` and register it with the queue, returning that descriptor as the
-   registration id — so the caller owns the id-to-path mapping and closing an id
-   is just `watch_close`. Each watched file costs a descriptor; `O_CLOEXEC` keeps
-   them out of the `sh` children `sys.exec` spawns. */
-static inline int64_t loam_sys_watch_add(int64_t h, loam_str path) {
-    struct kevent ch;
-    char buf[4096];
-    int fd;
-    if (h <= 0) return 0;
-    if (loam_sys_cpath(path, buf, sizeof buf)) return 0;
-    fd = open(buf, O_RDONLY | O_CLOEXEC);
-    if (fd < 0) return 0;
-    /* Deliberately not NOTE_ATTRIB: a write also changes the file's metadata, and
-       kqueue reports that as a second, later event, which would wake a reload
-       twice for one save. A pure metadata change is not a source change anyway,
-       and NOTE_WRITE already covers a same-length rewrite in place, which
-       NOTE_EXTEND would have missed. */
-    EV_SET(&ch, (unsigned)fd, EVFILT_VNODE, EV_ADD | EV_CLEAR,
-           NOTE_WRITE | NOTE_DELETE | NOTE_RENAME, 0, NULL);
-    if (kevent((int)h, &ch, 1, NULL, 0, NULL) < 0) {
-        close(fd);
-        return 0;
-    }
-    return (int64_t)fd;
-}
-
-/* The id whose vnode fired, or 0 when nothing happened in time. One event per
-   call, so a caller blocks for the first event of a burst and then drains the
-   rest; the events of a save are few, and this keeps the batching in Loam.
-   `timeout_ms` follows `poll(2)`: negative blocks, 0 returns at once, positive
-   waits that long. */
-static inline int64_t loam_sys_watch_next(int64_t h, int64_t timeout_ms) {
-    struct kevent ev;
-    struct timespec ts, *tsp;
-    int n;
-    if (h <= 0) return 0;
-    if (timeout_ms < 0) {
-        tsp = NULL;
-    } else {
-        ts.tv_sec = (time_t)(timeout_ms / 1000);
-        ts.tv_nsec = (long)((timeout_ms % 1000) * 1000000L);
-        tsp = &ts;
-    }
-    n = kevent((int)h, NULL, 0, &ev, 1, tsp);
-    if (n <= 0) return 0;
-    return (int64_t)ev.ident;
-}
-
-static inline int64_t loam_sys_watch_close(int64_t fd) {
-    if (fd > 0) close((int)fd);
-    return 0;
-}
-#else
-/* No kernel watcher here yet: Linux would want inotify, a second implementation
-   of the same four calls. `watch_open` reports 0 and a caller polls instead, so
-   nothing is silently blind — it is just slower. */
-static inline int64_t loam_sys_watch_open(void) { return 0; }
-static inline int64_t loam_sys_watch_add(int64_t h, loam_str path) {
-    (void)h;
-    (void)path;
-    return 0;
-}
-static inline int64_t loam_sys_watch_next(int64_t h, int64_t timeout_ms) {
-    (void)h;
-    (void)timeout_ms;
-    return 0;
-}
-static inline int64_t loam_sys_watch_close(int64_t fd) {
-    (void)fd;
-    return 0;
-}
-#endif
+/* `sys.watch_*` live in `std/sys.loam` (R2.5): kqueue on macOS / iOS and
+   inotify on Linux, as raw bindings; everywhere else `watch_open` is 0 and a
+   caller polls. */
 #endif
 
 /* --- typed handle cells -------------------------------------------------
