@@ -402,4 +402,3 @@ fn engine_fb_h() -> int {
 fn engine_fb_at(i: int) -> int {
     return scene.fb_at(i)
 }
-

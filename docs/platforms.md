@@ -32,10 +32,12 @@ same set for all four targets from a macOS machine — the quick local check,
 no runner needed. Each fixture links what the driver adds: `runtime/net.c`
 for std:net and every `#![c_source]` / `#![c_link]` of it and its packages.
 
-**Known gap: `std:net` on Windows.** `runtime/net.c` is BSD sockets plus the
-platform TLS, with no Winsock/SChannel port, so the `http` / `net` fixtures
-are listed and skipped there. The compiler needs no networking, so this is
-outside the self-hosting work.
+**Known gap: `std:net` on Windows.** TCP is Loam over BSD socket bindings
+(R5.1) with no Winsock port yet, so on Windows every TCP call answers `-1`
+and TLS (SecureTransport, macOS only) is unavailable. Every fixture links
+there; the ones that open sockets are left out of the Windows run
+(`tools/win-bundle.sh`). The compiler needs no networking, so this is outside
+the self-hosting work.
 
 ## C compilers
 

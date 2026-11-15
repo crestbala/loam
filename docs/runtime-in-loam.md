@@ -180,7 +180,7 @@ safely today:
   | a2. Plain-data struct returns, and `&mut S` out-parameters | the `[]i64` slot layouts of `stat` (R2.2), `kevent` (R2.5), `task_info` / `getrusage`; `GetColor`-style returns |
   | b. `#[c]` on a module `let`: an extern C global | `loam_sys_spawnp` (exists only for `environ`), `stdout` |
   | c. `#[os]` / `#[arch]` on structs and consts | per-OS layouts (`stat`, `rusage`) written once per target, not as offsets |
-  | d. Variadic bindings (numbers and strings only) | wrappers over `open` / `fcntl` / `ioctl` and the arm64 Apple variadic ABI trap |
+  | d. Variadic bindings (numbers and strings only): `#[c("fcntl", "variadic after 2")]`. **Done with R5.1.** | wrappers over `open` / `fcntl` / `ioctl` and the arm64 Apple variadic ABI trap |
   | e. Explicit C-callable exports and env-less fn pointers | callback shims (`qsort`-style, run loops, library callbacks) |
   | f. Typed `objc_msgSend` bindings and selectors (`std:objc`) | the Cocoa and UIKit hosts (`mac.m`, `ios.m`, maya's `hosts/mac.m`; R7) |
 
@@ -219,7 +219,7 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       `wasm_inc`), hosts 4,871, vendored 346,122 (sqlite, monocypher, raygui
       and the generated tree-sitter parser).
 - [x] R0.2 The budget: `RUNTIME_LINE_BUDGET` in `nob.loam`, set at 9,939
-      and lowered by each step since (now **6,248**, after R4.6).
+      and lowered by each step since (now **5,813**, after R5.1).
       `nob trusted` and the unfiltered `nob test` fail if `runtime/` grows
       past it. Each step below lowers it to its new count in the same
       change.
@@ -1165,8 +1165,86 @@ done, so every R3 step is checked by `thread_tsan`).
 
 **R5. Net** (`net.c`, `net_rt.h`).
 
-- [ ] R5.1 Socket and `poll` bindings; the connection state, buffering,
-      timeouts and non-blocking connect in Loam.
+- [x] R5.1 Socket and `poll` bindings; the connection state, buffering,
+      timeouts and non-blocking connect in Loam. Done 2026-11-15. First, §4
+      feature d: `#[c("sym", "variadic after N")]` declares the first N
+      parameters and passes the rest through C's `...`. The binding's call
+      casts to `ret (*)(fixed..., ...)`, so `cc` applies the real variadic
+      ABI (on Apple arm64 the varargs go on the stack, where a fixed-arity
+      call leaves them in registers the callee never reads). Each call shape
+      is its own binding (`fcntl(fd, F_GETFD)` and `fcntl(fd, F_SETFD, x)`);
+      N may equal the parameter count. A variadic parameter must be a type
+      `...` reads unchanged: `i32`, `u32`, `i64`, `u64`, `f64`, `string` or a
+      buffer, never `f32`, `bool`, a narrow int or a struct, which C
+      promotes. The second argument is a string, so the grammar and
+      tree-sitter are unchanged. Then `std:net`'s TCP is Loam over raw
+      bindings (`socket`, `connect`, `bind`, `listen`, `accept`, `recv`,
+      `poll`, `setsockopt`, `getsockopt`, `getsockname`, `fcntl`, `close`):
+      IPv4 parsing (as `inet_pton`), `localhost` for connects, a `struct
+      sockaddr_in` as a 16-byte `[]u8` per OS (Apple's length byte first),
+      a `pollfd` as two `i32`s, close-on-exec and `O_NONBLOCK` through the
+      variadic `fcntl`, `SO_NOSIGPIPE` / `MSG_NOSIGNAL`, the 5 s accept read
+      timeout, the non-blocking connect's `EINPROGRESS` rule, `EINTR`
+      retries, the would-block flag, the 60 s poll cap, and the growing poll
+      set. Reads `recv` into one reused 64 KiB buffer and copy out only the
+      bytes read (new core hook `buf.prefix_to_string`, 4 lines), where the
+      C `malloc`'d 64 KiB per read. `poll` binds per OS (`nfds_t` is 32 bits
+      on Apple, 64 on Linux). Two pieces stay C. `send_at` is one `send`
+      from an offset into a string: Loam has no pointer into a string, and a
+      `#[c]` string argument would copy the rest on every resume, which is
+      quadratic for a large body (the R1.3 rule for core byte movement). The
+      macOS TLS client stays too (R5.2 needs §4 a2 and e), and Loam reaches
+      it through seven `tls_handle_*` ops for a handle at or above
+      `TLS_BASE`, called only from `#[os("apple")]` code, so Linux and wasm
+      link none. Every cell starts empty, so a program that imports `http`
+      only to parse allocates nothing at start-up. Windows: TCP answers `-1`
+      in Loam and `net.c` compiles to its stubs, so every fixture now links
+      there (`cross-check.sh` drops its skip list; `win-bundle.sh` still
+      leaves out the 12 that open sockets, now found by a kept `tcp_` /
+      `tls_` fn, since a module's globals ship with every importer).
+      `c_layouts` gains `sockaddr_in`, `pollfd`, `socklen_t`, `nfds_t`,
+      `timeval` and every socket, `fcntl` and `errno` constant, per OS.
+      **Bugs found on the way:** a first draft packed the address into an
+      `i32`, which panicked for any address from 128.0.0.0 up, and polled fd
+      `-1` for a closed TLS handle (HEAD answers 1 at once, through
+      `POLLNVAL`). HEAD's `tcp_send` never set `tcp_wouldblock`, against its
+      doc; it does now. Helpers that call bindings must be `#[os("posix")]`
+      too, or the wasm build sees undeclared calls (`wasm_smoke` builds no
+      net app, so this check was a wasm build of `zeus_async_rpc`).
+      Checks: a probe of 15 address strings, bad ports, refused blocking and
+      non-blocking connects, `so_error`, send offsets, would-block, peek,
+      poll timeouts, a 200-entry poll set, EOF, bad fds, a stale TLS handle,
+      zero sizes and a 256 KiB non-blocking transfer prints what HEAD's C
+      prints, with 0 leaks and clean ASan+UBSan. HTTPS (sync and async)
+      against a live host works. Fixtures: `c_ffi` calls a `va_arg` C fn
+      (ints, a double, a string) and libc `fcntl` (without the variadic
+      shape the `va_arg` call hangs on Apple arm64: the count is garbage);
+      `compile_fail/c_attr_variadic_count`, `_type`, `_shape`.
+      Benchmark vs HEAD (release `-O1`, 7 rounds, ms): 100k request/reply
+      round trips 1,803–1,996 vs 1,792–1,982; 1 GiB in 64 KiB writes
+      399–424 vs 391–439, and 4 GiB retires 5.93 vs 5.94 G instructions
+      (the time is all `recvfrom` / `sendto`); a 1,000-entry poll set
+      ×2,000 117–125 vs 118–124; 2,000 connect+accept+close 85–100 vs
+      86–106. Self-emit 180.0 vs 181.1 ms (min of 10). Binaries (new vs
+      HEAD): tiny `fmt.println(42)` 33,688 vs 33,696; `http_parse` `__text`
+      +96 bytes (net's `__init` of empty cells); `http_listen` `__text`
+      151,504 vs 144,600 (+4.8%, mostly `cc` inlining the now-static std fns
+      into the server loop) and its file +16 KiB (one page); `zeli` `__text`
+      509,224 vs 504,440 (+0.9%). Follow-up: DCE keeps every module `let`
+      initializer, so a module's globals and `__init` ship with every
+      importer; dropping unreferenced pure globals would remove even those
+      96 bytes. Seed 5,134,758 → 5,155,152 bytes, seed = stage 1 = stage 2.
+      Suite: `compile_pass` (710), `compile_fail` (168), `zeus` (455),
+      `golden` (135), `http` (39), `net_`, `c_ffi`, `buf`; `selfhost_seed`,
+      `wasm_smoke`, `wasm_trap`, `wasm_float`, `android_project`, `lsp`,
+      `ownership_asan`, `cost`, `fresh_cache`, `modules`, `loader_cases`,
+      `thread_tsan`, `serve_native`, `serve_boot`, `serve_build`,
+      `server_split`, `watch`, `c_layouts` and the lint stanzas green;
+      `cross-check.sh` Linux 125/125 and Windows 125/125 (was 113 + 12
+      skipped) on both CPUs. The Linux socket calls are link-checked and
+      layout-checked here; they first run on the Linux CI job.
+      **Runtime: 6,248 → 5,813** (−435: `net.c` 1,295 → 862, `net_rt.h`
+      51 → 42, `loam_rt.h` +7).
 - [ ] R5.2 TLS: SecureTransport as `#[c]` bindings on macOS, and a binding
       for Linux and Windows.
 

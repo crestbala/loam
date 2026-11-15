@@ -1159,6 +1159,13 @@ static inline loam_str loam_buf_to_string(const loam_vec *b) {
     return loam_str_copy((const char *)b->ptr, b->len);
 }
 
+/* `buf.prefix_to_string(b, n)`: the first `n` bytes (clamped to the length)
+   as a string, one exact copy. For a buffer the kernel filled part of. */
+static inline loam_str loam_buf_prefix_to_string(const loam_vec *b, int64_t n) {
+    if (!b || !b->ptr || n <= 0) return (loam_str){"", 0};
+    return loam_str_copy((const char *)b->ptr, n < b->len ? n : b->len);
+}
+
 /* `buf.with_len(n)`: one allocation of `n` zeroed bytes, for a buffer C fills
    (`fread`, `getcwd`), instead of a push loop's check per byte. The spare
    byte keeps `string_from_bytes` copy-free when `n` is a power of two. */

@@ -2231,6 +2231,23 @@ fn parse_target_attr(p: &mut Parser, attr: string) -> int {
     return mask
 }
 
+/** *N in `"variadic after N"`, or `-1` when `shape` is not that. */
+fn variadic_fixed_of(shape: string) -> int {
+    let prefix = "variadic after "
+    if shape.len <= prefix.len || shape.len > prefix.len + 2 || !str.starts_with(shape, prefix) {
+        return -1
+    }
+    let mut n = 0
+    for i in prefix.len..shape.len {
+        let c = shape[i]
+        if c < '0' || c > '9' {
+            return -1
+        }
+        n = n * 10 + int(c - '0')
+    }
+    return n
+}
+
 const FN_ASYNC: int = 1
 const FN_TEST: int = 2
 const FN_SERVER: int = 4
@@ -2271,6 +2288,8 @@ fn parse_program(p: &mut Parser) -> int {
         let mut is_server = false
         let mut c_sym = ""
         let mut has_c_sym = false
+        // A variadic binding's fixed parameter count, plus one; 0 if not.
+        let mut c_fixed = 0
         let mut os_mask = 0
         let mut attr_failed = false
         let mut dir_seen = false
@@ -2321,6 +2340,26 @@ fn parse_program(p: &mut Parser) -> int {
                 }
                 c_sym = tok_unescaped(p, p.prev)
                 has_c_sym = true
+                if eat(p, Tok.Comma) {
+                    // `"variadic after N"`: C declares the first N parameters
+                    // and takes the rest through `...` (fcntl, ioctl, open).
+                    if !eat(p, Tok.String) {
+                        error(p, "#[c] second argument must be the string \"variadic after N\"")
+                        attr_failed = true
+                        break
+                    }
+                    let shape = tok_unescaped(p, p.prev)
+                    let fixed = variadic_fixed_of(shape)
+                    if fixed < 1 {
+                        if !p.had_error {
+                            diag(p, tloc(p, p.prev), clip95("#[c] second argument must be \"variadic after N\" (N >= 1), not \"{{shape}}\""))
+                            p.had_error = true
+                        }
+                        attr_failed = true
+                        break
+                    }
+                    c_fixed = fixed + 1
+                }
                 consume(p, Tok.Rparen, "expected ) after #[c symbol")
             } else {
                 error(p, clip95("unknown attribute '{{attr}}'"))
@@ -2389,7 +2428,7 @@ fn parse_program(p: &mut Parser) -> int {
                 if is_server {
                     bits = bits | FN_SERVER
                 }
-                ast.NODES[f].op = bits
+                ast.NODES[f].op = bits | (c_fixed << ast.FN_C_FIXED_SHIFT)
                 ast.EXTRA[ast.ex_mut(f)].text = c_sym
                 ast.EXTRA[ast.ex_mut(f)].has_text = has_c_sym
                 ast.EXTRA[ast.ex_mut(f)].numb = os_mask

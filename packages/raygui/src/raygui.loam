@@ -101,13 +101,34 @@ fn c_gui_toggle(bounds: Bounds, text: string, active: []bool) -> i32 {}
 #[c("GuiCheckBox")]
 fn c_gui_check_box(bounds: Bounds, text: string, checked: []bool) -> i32 {}
 #[c("GuiSlider")]
-fn c_gui_slider(bounds: Bounds, left: string, right: string, value: []f32, lo: f32, hi: f32) -> i32 {}
+fn c_gui_slider(
+    bounds: Bounds,
+    left: string,
+    right: string,
+    value: []f32,
+    lo: f32,
+    hi: f32
+) -> i32 {}
 #[c("GuiProgressBar")]
-fn c_gui_progress_bar(bounds: Bounds, left: string, right: string, value: []f32, lo: f32, hi: f32) -> i32 {}
+fn c_gui_progress_bar(
+    bounds: Bounds,
+    left: string,
+    right: string,
+    value: []f32,
+    lo: f32,
+    hi: f32
+) -> i32 {}
 #[c("GuiSpinner")]
 fn c_gui_spinner(bounds: Bounds, text: string, value: []i32, lo: i32, hi: i32, edit: bool) -> i32 {}
 #[c("GuiValueBox")]
-fn c_gui_value_box(bounds: Bounds, text: string, value: []i32, lo: i32, hi: i32, edit: bool) -> i32 {}
+fn c_gui_value_box(
+    bounds: Bounds,
+    text: string,
+    value: []i32,
+    lo: i32,
+    hi: i32,
+    edit: bool
+) -> i32 {}
 #[c("GuiComboBox")]
 fn c_gui_combo_box(bounds: Bounds, text: string, active: []i32) -> i32 {}
 #[c("GuiListView")]
@@ -188,7 +209,10 @@ fn frame_cap() -> int {
 }
 
 fn plat_init(title: string, w: int, h: int, fps: int) {
-    headless_run = if env_on("RAYGUI_HEADLESS") || env_on("ZEUS_HEADLESS") || env_on("LOAM_HEADLESS") || !window_host() { 1 } else { 0 }
+    headless_run = if env_on("RAYGUI_HEADLESS") ||
+        env_on("ZEUS_HEADLESS") ||
+        env_on("LOAM_HEADLESS") ||
+        !window_host() { 1 } else { 0 }
     frames_drawn = 0
     if headless_run != 0 {
         headless_frames = frame_cap()
@@ -388,8 +412,17 @@ fn plat_checkbox(x: int, y: int, w: int, h: int, text: string, checked: &mut int
     return int(r)
 }
 
-fn plat_slider(x: int, y: int, w: int, h: int, left: string, right: string,
-               value: &mut float, lo: float, hi: float) -> int {
+fn plat_slider(
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    left: string,
+    right: string,
+    value: &mut float,
+    lo: float,
+    hi: float
+) -> int {
     if !window_open {
         return 0
     }
@@ -399,8 +432,17 @@ fn plat_slider(x: int, y: int, w: int, h: int, left: string, right: string,
     return int(r)
 }
 
-fn plat_progress(x: int, y: int, w: int, h: int, left: string, right: string,
-                 value: &mut float, lo: float, hi: float) -> int {
+fn plat_progress(
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    left: string,
+    right: string,
+    value: &mut float,
+    lo: float,
+    hi: float
+) -> int {
     if !window_open {
         return 0
     }
@@ -410,8 +452,17 @@ fn plat_progress(x: int, y: int, w: int, h: int, left: string, right: string,
     return int(r)
 }
 
-fn plat_spinner(x: int, y: int, w: int, h: int, text: string, value: &mut int,
-                lo: int, hi: int, edit: int) -> int {
+fn plat_spinner(
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    text: string,
+    value: &mut int,
+    lo: int,
+    hi: int,
+    edit: int
+) -> int {
     if !window_open {
         return 0
     }
@@ -421,8 +472,17 @@ fn plat_spinner(x: int, y: int, w: int, h: int, text: string, value: &mut int,
     return int(r)
 }
 
-fn plat_value_box(x: int, y: int, w: int, h: int, text: string, value: &mut int,
-                  lo: int, hi: int, edit: int) -> int {
+fn plat_value_box(
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    text: string,
+    value: &mut int,
+    lo: int,
+    hi: int,
+    edit: int
+) -> int {
     if !window_open {
         return 0
     }
@@ -444,8 +504,15 @@ fn plat_combo(x: int, y: int, w: int, h: int, text: string, active: &mut int) ->
 }
 
 /** *List view. `text` items are separated by `;`. `scroll`/`active` are in/out. */
-fn plat_listview(x: int, y: int, w: int, h: int, text: string,
-                 scroll: &mut int, active: &mut int) -> int {
+fn plat_listview(
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    text: string,
+    scroll: &mut int,
+    active: &mut int
+) -> int {
     if !window_open {
         return 0
     }
@@ -583,26 +650,62 @@ fn checkbox(x: int, y: int, w: int, h: int, text: string, checked: &mut int) -> 
 }
 
 /** *Draggable slider over `lo..hi`, writing `value`. */
-fn slider(x: int, y: int, w: int, h: int, left: string, right: string,
-          value: &mut float, lo: float, hi: float) -> int {
+fn slider(
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    left: string,
+    right: string,
+    value: &mut float,
+    lo: float,
+    hi: float
+) -> int {
     return plat_slider(x, y, w, h, left, right, value, lo, hi)
 }
 
 /** *Progress bar reading `value` over `lo..hi`. */
-fn progress(x: int, y: int, w: int, h: int, left: string, right: string,
-            value: &mut float, lo: float, hi: float) -> int {
+fn progress(
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    left: string,
+    right: string,
+    value: &mut float,
+    lo: float,
+    hi: float
+) -> int {
     return plat_progress(x, y, w, h, left, right, value, lo, hi)
 }
 
 /** *Spinner over `lo..hi`, writing `value`. `edit = 1` opens the text field. */
-fn spinner(x: int, y: int, w: int, h: int, text: string, value: &mut int,
-           lo: int, hi: int, edit: int) -> int {
+fn spinner(
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    text: string,
+    value: &mut int,
+    lo: int,
+    hi: int,
+    edit: int
+) -> int {
     return plat_spinner(x, y, w, h, text, value, lo, hi, edit)
 }
 
 /** *Numeric value box; `edit = 1` opens the text field. */
-fn value_box(x: int, y: int, w: int, h: int, text: string, value: &mut int,
-             lo: int, hi: int, edit: int) -> int {
+fn value_box(
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    text: string,
+    value: &mut int,
+    lo: int,
+    hi: int,
+    edit: int
+) -> int {
     return plat_value_box(x, y, w, h, text, value, lo, hi, edit)
 }
 
@@ -612,7 +715,14 @@ fn combo(x: int, y: int, w: int, h: int, text: string, active: &mut int) -> int 
 }
 
 /** *Scrollable list view; `text` items separated by `;`, `scroll`/`active` in/out. */
-fn listview(x: int, y: int, w: int, h: int, text: string,
-            scroll: &mut int, active: &mut int) -> int {
+fn listview(
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    text: string,
+    scroll: &mut int,
+    active: &mut int
+) -> int {
     return plat_listview(x, y, w, h, text, scroll, active)
 }

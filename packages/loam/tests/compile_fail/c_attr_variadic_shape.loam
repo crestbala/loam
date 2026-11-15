@@ -1,0 +1,7 @@
+// The second #[c] argument is only "variadic after N".
+#[c("fcntl", "varargs 2")]
+fn c_fcntl(fd: i32, cmd: i32, arg: i32) -> i32 {}
+
+fn main() {
+    let _ = c_fcntl(0, 1, 0)
+}

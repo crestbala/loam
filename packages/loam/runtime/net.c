@@ -1,15 +1,15 @@
-/* net.c — POSIX TCP trampolines for `std/net.loam` (`loam_net_*`).
+/* net.c — the C under `std/net.loam` (`loam_net_*`).
  *
- * Blocking ops (connect/read/write/…), non-blocking ops for the async
- * transport (`tcp_nb_connect` / `tcp_poll` / `tcp_send` / `tcp_so_error`),
- * and — wasm only — async fetch slots (`fetch_issue` / `fetch_ready` /
- * `fetch_take`) whose XHR completes in JS and lands per frame.
+ * TCP is Loam since R5.1 (raw libc bindings in `std/net.loam`). What is left:
  *
- * macOS also gets a blocking TLS client (`loam_net_tls_connect`,
- * SecureTransport): the returned handle drives `tcp_write` / `tcp_read` /
- * `tcp_close` exactly like a plain socket, so `packages/http/src/http.loam` runs an HTTPS
- * request over the same read path as HTTP. Wasm keeps browser TLS (nothing
- * to add); other hosts return -1.
+ * - `send_at`: one `send` from an offset into a string (Loam has no pointer
+ *   into a string, and a `#[c]` string argument would copy it).
+ * - macOS: the TLS client (SecureTransport, R5.2). Its handle is
+ *   `TLS_BASE + slot`, so `std:net` hands any handle at or above `TLS_BASE`
+ *   to the `tls_handle_*` ops here and HTTPS runs over the same read path as
+ *   HTTP.
+ * - wasm: the browser bridges (fetch slots, WebSocket, streams), whose XHRs
+ *   complete in JS and land per frame. Native builds answer them as stubs.
  */
 #include "net_rt.h"
 #include <stdint.h>
@@ -304,13 +304,8 @@ loam_str loam_net_fetch_take(void) {
     return (loam_str){ .ptr = "", .len = 0 };
 }
 
-int64_t loam_net_tcp_connect(loam_str host, int64_t port) {
-    (void)host;
-    (void)port;
-    return -1;
-}
-
-/* Browser TLS: the wasm fetch/ws bridges never speak TLS themselves. */
+/* Browser TLS: the wasm fetch/ws bridges never speak TLS themselves. TCP
+   itself is `std:net` Loam, whose wasm variants answer without C. */
 int64_t loam_net_tls_connect(loam_str host, int64_t port) {
     (void)host;
     (void)port;
@@ -328,97 +323,6 @@ int64_t loam_net_tls_nb_ready(int64_t fd) {
     return -1;
 }
 
-int64_t loam_net_tcp_wouldblock(void) { return 0; }
-
-int64_t loam_net_tcp_nb_connect(loam_str host, int64_t port) {
-    (void)host;
-    (void)port;
-    return -1;
-}
-
-int64_t loam_net_tcp_poll(int64_t fd, int64_t want, int64_t ms) {
-    (void)fd;
-    (void)want;
-    (void)ms;
-    return -1;
-}
-
-int64_t loam_net_tcp_send(int64_t fd, loam_str data, int64_t off) {
-    (void)fd;
-    (void)data;
-    (void)off;
-    return -1;
-}
-
-int64_t loam_net_tcp_so_error(int64_t fd) {
-    (void)fd;
-    return 1;
-}
-
-int64_t loam_net_tcp_write(int64_t fd, loam_str data) {
-    (void)fd;
-    (void)data;
-    return -1;
-}
-
-loam_str loam_net_tcp_read(int64_t fd, int64_t max) {
-    (void)fd;
-    (void)max;
-    return (loam_str){ .ptr = "", .len = 0 };
-}
-
-void loam_net_tcp_close(int64_t fd) { (void)fd; }
-
-int64_t loam_net_tcp_listen(int64_t port) {
-    (void)port;
-    return -1;
-}
-
-int64_t loam_net_tcp_listen_on(loam_str host, int64_t port) {
-    (void)host;
-    (void)port;
-    return -1;
-}
-
-int64_t loam_net_tcp_nonblock(int64_t fd) {
-    (void)fd;
-    return -1;
-}
-
-void loam_net_tcp_poll_clear(void) {}
-
-int64_t loam_net_tcp_poll_add(int64_t fd, int64_t want) {
-    (void)fd;
-    (void)want;
-    return -1;
-}
-
-int64_t loam_net_tcp_poll_wait(int64_t ms) {
-    (void)ms;
-    return -1;
-}
-
-int64_t loam_net_tcp_poll_ready(int64_t i) {
-    (void)i;
-    return 0;
-}
-
-int64_t loam_net_tcp_accept(int64_t fd) {
-    (void)fd;
-    return -1;
-}
-
-int64_t loam_net_tcp_bound_port(int64_t fd) {
-    (void)fd;
-    return 0;
-}
-
-loam_str loam_net_tcp_peek(int64_t fd, int64_t max) {
-    (void)fd;
-    (void)max;
-    return (loam_str){ .ptr = "", .len = 0 };
-}
-
 loam_str loam_net_fetch_rpc(loam_str path, loam_str body) {
     char *buf;
     int32_t n;
@@ -434,16 +338,11 @@ loam_str loam_net_fetch_rpc(loam_str path, loam_str body) {
     return out;
 }
 
-#elif defined(_WIN32)
-
-/* No Windows port yet: the file defines nothing there. The drivers link it
-   for any program that loads `std:net` or the http package, and many of
-   those only parse or encode and never call `loam_net_*`; they link as
-   usual. A program that does open a socket fails to link, naming the
-   missing `loam_net_*` symbol. */
-
 #else
 
+/* Windows has no socket port yet: `std:net`'s TCP answers -1 there in Loam,
+   and only the TLS and bridge stubs below are compiled. */
+#if !defined(_WIN32)
 #include <unistd.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -453,26 +352,30 @@ loam_str loam_net_fetch_rpc(loam_str path, loam_str body) {
 #include <arpa/inet.h>
 #include <errno.h>
 
-/* The latest read or send would have blocked, on a TLS handle or a plain socket. */
-static int g_tls_wouldblock;
-
-/* Every socket is close-on-exec: a child the program spawns (a downloader, a
-   shell) must not inherit the listener, or the port stays bound after the
-   server exits and connections queue on it with nobody accepting. */
-static void net_cloexec(int fd) {
-    int fl = fcntl(fd, F_GETFD, 0);
-    if (fl >= 0) (void)fcntl(fd, F_SETFD, fl | FD_CLOEXEC);
+/* One `send` of `data[off..]`: the bytes sent, or -1 with `errno` set for
+   `std:net` to read. Bounds are Loam's; this only moves the bytes, so a
+   string is never copied to reach the kernel. */
+int64_t loam_net_send_at(int64_t fd, loam_str data, int64_t off, int64_t flags) {
+    if (fd < 0 || off < 0 || off > data.len || !data.ptr) return -1;
+    return (int64_t)send((int)fd, data.ptr + off, (size_t)(data.len - off), (int)flags);
 }
+#endif
 
 #if defined(__APPLE__)
 #include <netdb.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <Security/SecureTransport.h>
 
-/* Blocking TLS client (SecureTransport). Each conn is a slot in `g_tls`; its
-   handle is TLS_BASE + slot, far above any raw fd, so `tcp_write` / `tcp_read`
-   / `tcp_close` can dispatch on it and the Loam HTTP client treats a TLS conn
-   exactly like a plain socket. */
+/* Every socket is close-on-exec: a child the program spawns must not inherit
+   it, or the port stays bound after the program exits. */
+static void net_cloexec(int fd) {
+    int fl = fcntl(fd, F_GETFD, 0);
+    if (fl >= 0) (void)fcntl(fd, F_SETFD, fl | FD_CLOEXEC);
+}
+
+/* TLS client (SecureTransport). Each conn is a slot in `g_tls`; its handle
+   is TLS_BASE + slot, far above any raw fd, so `std:net` sends a handle at
+   or above it here and the HTTP client treats a TLS conn like a socket. */
 #define TLS_SLOTS 8
 #define TLS_BASE 0x40000000
 
@@ -485,252 +388,16 @@ typedef struct {
 } TlsConn;
 
 static TlsConn g_tls[TLS_SLOTS];
-static int tls_slot_of(int64_t fd);
-#endif
+/* The latest TLS read or send would have blocked. */
+static int g_tls_wouldblock;
 
-#if defined(__APPLE__) && defined(__clang__)
+#if defined(__clang__)
 /* SecureTransport is deprecated in favor of Network.framework, but it is the
    only synchronous TLS API on macOS and matches this blocking-socket design. */
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 #endif
 
-int64_t loam_net_tcp_connect(loam_str host, int64_t port) {
-    char name[256];
-    int fd;
-    struct sockaddr_in sa;
-    if (port <= 0 || port > 65535 || host.len <= 0 || host.len >= 256 || !host.ptr)
-        return -1;
-    memcpy(name, host.ptr, (size_t)host.len);
-    name[host.len] = '\0';
-    fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) return -1;
-    net_cloexec(fd);
-    memset(&sa, 0, sizeof sa);
-    sa.sin_family = AF_INET;
-    sa.sin_port = htons((uint16_t)port);
-    if (inet_pton(AF_INET, name, &sa.sin_addr) != 1) {
-        if (strcmp(name, "localhost") == 0)
-            sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-        else {
-            close(fd);
-            return -1;
-        }
-    }
-    int yes = 1;
-#ifdef SO_NOSIGPIPE
-    (void)setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof yes);
-#else
-    (void)yes;
-#endif
-    if (connect(fd, (struct sockaddr *)&sa, sizeof sa) != 0) {
-        close(fd);
-        return -1;
-    }
-    return (int64_t)fd;
-}
-
-int64_t loam_net_tcp_write(int64_t fd, loam_str data) {
-    size_t len;
-    size_t off;
-    if (fd < 0) return -1;
-#if defined(__APPLE__)
-    {
-        int slot = tls_slot_of(fd);
-        if (slot >= 0) {
-            len = data.len > 0 ? (size_t)data.len : 0;
-            if (len == 0) return 0;
-            if (!data.ptr) return -1;
-            off = 0;
-            while (off < len) {
-                size_t n = 0;
-                OSStatus st = SSLWrite(g_tls[slot].ctx, data.ptr + off, len - off, &n);
-                if (st != 0 || n == 0) return -1;
-                off += n;
-            }
-            return (int64_t)off;
-        }
-    }
-#endif
-    len = data.len > 0 ? (size_t)data.len : 0;
-    if (len == 0) return 0;
-    if (!data.ptr) return -1;
-    off = 0;
-    while (off < len) {
-        ssize_t n;
-#if defined(MSG_NOSIGNAL)
-        n = send((int)fd, data.ptr + off, len - off, MSG_NOSIGNAL);
-#else
-        n = write((int)fd, data.ptr + off, len - off);
-#endif
-        if (n <= 0) return -1;
-        off += (size_t)n;
-    }
-    return (int64_t)off;
-}
-
-loam_str loam_net_tcp_read(int64_t fd, int64_t max) {
-    char *p;
-    if (fd < 0 || max <= 0) return (loam_str){ .ptr = "", .len = 0 };
-    if (max > 65536) max = 65536;
-#if defined(__APPLE__)
-    {
-        int slot = tls_slot_of(fd);
-        if (slot >= 0) {
-            size_t got = 0;
-            OSStatus st;
-            p = (char *)malloc((size_t)max + 1);
-            if (!p) return (loam_str){ .ptr = "", .len = 0 };
-            g_tls_wouldblock = 0;
-            st = SSLRead(g_tls[slot].ctx, p, (size_t)max, &got);
-            if (st == errSSLWouldBlock) {
-                g_tls_wouldblock = 1;
-                free(p);
-                return (loam_str){ .ptr = "", .len = 0 };
-            }
-            if (got > 0) {
-                loam_str r = loam_str_copy(p, (int64_t)got);
-                free(p);
-                return r;
-            }
-            free(p);
-            return (loam_str){ .ptr = "", .len = 0 };
-        }
-    }
-#endif
-    p = (char *)malloc((size_t)max + 1);
-    if (!p) return (loam_str){ .ptr = "", .len = 0 };
-    {
-        ssize_t n = read((int)fd, p, (size_t)max);
-        g_tls_wouldblock = n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK);
-        if (n <= 0) {
-            free(p);
-            return (loam_str){ .ptr = "", .len = 0 };
-        }
-        {
-            loam_str r = loam_str_copy(p, (int64_t)n);
-            free(p);
-            return r;
-        }
-    }
-}
-
-void loam_net_tcp_close(int64_t fd) {
-    if (fd < 0) return;
-#if defined(__APPLE__)
-    {
-        int slot = tls_slot_of(fd);
-        if (slot >= 0) {
-            SSLContextRef ctx = g_tls[slot].ctx;
-            int rfd = g_tls[slot].fd;
-            (void)SSLClose(ctx); /* best-effort close_notify */
-            g_tls[slot].used = 0;
-            CFRelease(ctx);
-            if (rfd >= 0) close(rfd);
-            return;
-        }
-    }
-#endif
-    close((int)fd);
-}
-
-static int64_t listen_addr(uint32_t addr, int64_t port) {
-    int fd;
-    struct sockaddr_in sa;
-    int one = 1;
-    uint16_t p = 0;
-    if (port > 0 && port < 65536) p = (uint16_t)port;
-    fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) return -1;
-    net_cloexec(fd);
-    (void)setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
-    memset(&sa, 0, sizeof sa);
-    sa.sin_family = AF_INET;
-    sa.sin_addr.s_addr = addr;
-    sa.sin_port = htons(p);
-    if (bind(fd, (struct sockaddr *)&sa, sizeof sa) != 0) {
-        close(fd);
-        return -1;
-    }
-    if (listen(fd, 128) != 0) {
-        close(fd);
-        return -1;
-    }
-    return (int64_t)fd;
-}
-
-int64_t loam_net_tcp_listen(int64_t port) {
-    return listen_addr(htonl(INADDR_LOOPBACK), port);
-}
-
-int64_t loam_net_tcp_listen_on(loam_str host, int64_t port) {
-    char text[16];
-    struct in_addr addr;
-    if (host.len <= 0 || host.len >= (int64_t)sizeof text) return -1;
-    memcpy(text, host.ptr, (size_t)host.len);
-    text[host.len] = 0;
-    if (inet_pton(AF_INET, text, &addr) != 1) return -1;
-    return listen_addr(addr.s_addr, port);
-}
-
-int64_t loam_net_tcp_nonblock(int64_t fd) {
-    int flags;
-    if (fd < 0) return -1;
-    flags = fcntl((int)fd, F_GETFL, 0);
-    if (flags < 0 || fcntl((int)fd, F_SETFL, flags | O_NONBLOCK) != 0) return -1;
-    return 0;
-}
-
-int64_t loam_net_tcp_accept(int64_t fd) {
-    int c;
-    struct timeval tv;
-    if (fd < 0) return -1;
-    c = accept((int)fd, NULL, NULL);
-    if (c < 0) return -1;
-    net_cloexec(c);
-    tv.tv_sec = 5;
-    tv.tv_usec = 0;
-    (void)setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
-#ifdef SO_NOSIGPIPE
-    {
-        int yes = 1;
-        (void)setsockopt(c, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof yes);
-    }
-#endif
-    return (int64_t)c;
-}
-
-int64_t loam_net_tcp_bound_port(int64_t fd) {
-    struct sockaddr_in sa;
-    socklen_t n = sizeof sa;
-    if (fd < 0) return 0;
-    memset(&sa, 0, sizeof sa);
-    if (getsockname((int)fd, (struct sockaddr *)&sa, &n) != 0) return 0;
-    return (int64_t)ntohs(sa.sin_port);
-}
-
-loam_str loam_net_tcp_peek(int64_t fd, int64_t max) {
-    char *p;
-    ssize_t n;
-    if (fd < 0 || max <= 0) return (loam_str){ .ptr = "", .len = 0 };
-    if (max > 65536) max = 65536;
-    p = (char *)malloc((size_t)max + 1);
-    if (!p) return (loam_str){ .ptr = "", .len = 0 };
-    n = recv((int)fd, p, (size_t)max, MSG_PEEK);
-    if (n <= 0) {
-        free(p);
-        return (loam_str){ .ptr = "", .len = 0 };
-    }
-    {
-        loam_str r = loam_str_copy(p, (int64_t)n);
-        free(p);
-        return r;
-    }
-}
-
-#if defined(__APPLE__)
-
-/* --- Blocking TLS client (SecureTransport) --- */
 
 /* IO callbacks: SecureTransport drives the raw socket itself. The fd rides
    in the connection ref. EAGAIN maps to errSSLWouldBlock so a handshake on a
@@ -995,11 +662,94 @@ int64_t loam_net_tls_nb_ready(int64_t fd) {
     return -1;
 }
 
-int64_t loam_net_tcp_wouldblock(void) { return g_tls_wouldblock; }
+/* --- TLS handle ops for `std:net` (only ever called with a handle) --- */
+
+int64_t loam_net_tls_handle_write(int64_t fd, loam_str data) {
+    int slot = tls_slot_of(fd);
+    size_t len, off = 0;
+    if (slot < 0) return -1;
+    len = data.len > 0 ? (size_t)data.len : 0;
+    if (len == 0) return 0;
+    if (!data.ptr) return -1;
+    while (off < len) {
+        size_t n = 0;
+        OSStatus st = SSLWrite(g_tls[slot].ctx, data.ptr + off, len - off, &n);
+        if (st != 0 || n == 0) return -1;
+        off += n;
+    }
+    return (int64_t)off;
+}
+
+int64_t loam_net_tls_handle_send(int64_t fd, loam_str data, int64_t off) {
+    int slot = tls_slot_of(fd);
+    size_t got = 0;
+    OSStatus st;
+    g_tls_wouldblock = 0;
+    if (slot < 0 || off < 0 || off > data.len || !data.ptr) return -1;
+    if (off == data.len) return 0;
+    st = SSLWrite(g_tls[slot].ctx, data.ptr + off, (size_t)(data.len - off), &got);
+    if (st == errSSLWouldBlock) {
+        g_tls_wouldblock = 1;
+        return 0;
+    }
+    if (st != noErr) return -1;
+    return (int64_t)got;
+}
+
+loam_str loam_net_tls_handle_read(int64_t fd, int64_t max) {
+    int slot = tls_slot_of(fd);
+    size_t got = 0;
+    OSStatus st;
+    char *p;
+    g_tls_wouldblock = 0;
+    if (slot < 0 || max <= 0) return (loam_str){ .ptr = "", .len = 0 };
+    p = (char *)malloc((size_t)max + 1);
+    if (!p) return (loam_str){ .ptr = "", .len = 0 };
+    st = SSLRead(g_tls[slot].ctx, p, (size_t)max, &got);
+    if (st == errSSLWouldBlock) g_tls_wouldblock = 1;
+    if (st == errSSLWouldBlock || got == 0) {
+        free(p);
+        return (loam_str){ .ptr = "", .len = 0 };
+    }
+    {
+        loam_str r = loam_str_copy(p, (int64_t)got);
+        free(p);
+        return r;
+    }
+}
+
+void loam_net_tls_handle_close(int64_t fd) {
+    int slot = tls_slot_of(fd);
+    SSLContextRef ctx;
+    int rfd;
+    if (slot < 0) return;
+    ctx = g_tls[slot].ctx;
+    rfd = g_tls[slot].fd;
+    (void)SSLClose(ctx); /* best-effort close_notify */
+    g_tls[slot].used = 0;
+    CFRelease(ctx);
+    if (rfd >= 0) close(rfd);
+}
+
+int64_t loam_net_tls_handle_socket(int64_t fd) {
+    int slot = tls_slot_of(fd);
+    return slot < 0 ? -1 : (int64_t)g_tls[slot].fd;
+}
+
+int64_t loam_net_tls_handle_handshaking(int64_t fd) {
+    int slot = tls_slot_of(fd);
+    return slot < 0 ? 1 : (int64_t)(g_tls[slot].hs != 0);
+}
+
+int64_t loam_net_tls_handle_would_block(void) { return g_tls_wouldblock; }
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
 
 #else
 
-/* No SecureTransport/OpenSSL on this host: TLS is unavailable. */
+/* No TLS library bound on this host: TLS is unavailable. */
 int64_t loam_net_tls_connect(loam_str host, int64_t port) {
     (void)host;
     (void)port;
@@ -1017,186 +767,7 @@ int64_t loam_net_tls_nb_ready(int64_t fd) {
     return -1;
 }
 
-int64_t loam_net_tcp_wouldblock(void) { return g_tls_wouldblock; }
-
 #endif
-
-/* --- Async transport (UI never blocks): non-blocking connect + poll. --- */
-
-/* Non-blocking connect. Returns a non-blocking fd that is either connected
-   already or connecting in the background, or -1 on immediate failure. After
-   `tcp_poll(fd, 2, ...)` reports ready, `tcp_so_error(fd)` says whether the
-   connect actually succeeded. */
-int64_t loam_net_tcp_nb_connect(loam_str host, int64_t port) {
-    char name[256];
-    int fd, rc, flags;
-    struct sockaddr_in sa;
-    if (port <= 0 || port > 65535 || host.len <= 0 || host.len >= 256 || !host.ptr)
-        return -1;
-    memcpy(name, host.ptr, (size_t)host.len);
-    name[host.len] = '\0';
-    fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) return -1;
-    net_cloexec(fd);
-    flags = fcntl(fd, F_GETFL, 0);
-    if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) != 0) {
-        close(fd);
-        return -1;
-    }
-    memset(&sa, 0, sizeof sa);
-    sa.sin_family = AF_INET;
-    sa.sin_port = htons((uint16_t)port);
-    if (inet_pton(AF_INET, name, &sa.sin_addr) != 1) {
-        if (strcmp(name, "localhost") == 0)
-            sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-        else {
-            close(fd);
-            return -1;
-        }
-    }
-    {
-        int yes = 1;
-#ifdef SO_NOSIGPIPE
-        (void)setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof yes);
-#else
-        (void)yes;
-#endif
-    }
-    rc = connect(fd, (struct sockaddr *)&sa, sizeof sa);
-    if (rc != 0 && errno != EINPROGRESS && errno != EINTR && errno != EALREADY) {
-        close(fd);
-        return -1;
-    }
-    return (int64_t)fd;
-}
-
-/* Single-fd poll. `want`: 1 = readable, 2 = writable. `ms`: timeout
-   (0 = immediate). Returns 1 when ready (including HUP/ERR so the caller can
-   observe EOF or a failed connect), 0 on timeout, -1 on error. */
-int64_t loam_net_tcp_poll(int64_t fd, int64_t want, int64_t ms) {
-    struct pollfd p;
-    int ev, rc;
-    if (fd < 0) return -1;
-#if defined(__APPLE__)
-    {
-        int slot = tls_slot_of(fd);
-        if (slot >= 0) fd = (int64_t)g_tls[slot].fd;
-    }
-#endif
-    if (ms < 0) ms = 0;
-    if (ms > 60000) ms = 60000;
-    p.fd = (int)fd;
-    p.events = (want == 2) ? POLLOUT : POLLIN;
-    p.revents = 0;
-    for (;;) {
-        rc = poll(&p, 1, (int)ms);
-        if (rc >= 0) break;
-        if (errno != EINTR) return -1;
-    }
-    if (rc == 0) return 0;
-    if (p.revents & (POLLERR | POLLNVAL)) return 1;
-    if (p.revents & POLLHUP) return 1;
-    if (p.revents & (POLLIN | POLLOUT)) return 1;
-    return 0;
-}
-
-/* A set of sockets to wait on at once: `tcp_poll_clear`, one `tcp_poll_add` per
-   socket, `tcp_poll_wait`, then `tcp_poll_ready` by the index `add` returned.
-   One set per process, for the thread that runs a server. */
-static struct pollfd *g_poll;
-static int g_poll_n;
-static int g_poll_cap;
-
-void loam_net_tcp_poll_clear(void) { g_poll_n = 0; }
-
-int64_t loam_net_tcp_poll_add(int64_t fd, int64_t want) {
-    if (g_poll_n == g_poll_cap) {
-        int cap = g_poll_cap ? g_poll_cap * 2 : 64;
-        struct pollfd *grown = (struct pollfd *)realloc(g_poll, (size_t)cap * sizeof *grown);
-        if (!grown) return -1;
-        g_poll = grown;
-        g_poll_cap = cap;
-    }
-    g_poll[g_poll_n].fd = (int)fd;
-    g_poll[g_poll_n].events = (want == 2) ? POLLOUT : POLLIN;
-    g_poll[g_poll_n].revents = 0;
-    return (int64_t)g_poll_n++;
-}
-
-int64_t loam_net_tcp_poll_wait(int64_t ms) {
-    int rc;
-    if (ms < 0) ms = 0;
-    if (ms > 60000) ms = 60000;
-    for (;;) {
-        rc = poll(g_poll, (nfds_t)g_poll_n, (int)ms);
-        if (rc >= 0) return (int64_t)rc;
-        if (errno != EINTR) return -1;
-    }
-}
-
-int64_t loam_net_tcp_poll_ready(int64_t i) {
-    if (i < 0 || i >= g_poll_n) return 0;
-    return g_poll[i].revents != 0;
-}
-
-/* One non-blocking send of `data[off..]`. Returns bytes written (> 0),
-   0 when the socket would block (poll for writable, then resume), -1 on
-   error. Offsets past the end are an error; an empty remainder writes 0. */
-int64_t loam_net_tcp_send(int64_t fd, loam_str data, int64_t off) {
-    ssize_t n;
-    size_t left;
-    if (fd < 0) return -1;
-    if (off < 0 || !data.ptr || off > data.len) return -1;
-    left = (size_t)(data.len - off);
-    if (left == 0) return 0;
-#if defined(__APPLE__)
-    {
-        int slot = tls_slot_of(fd);
-        if (slot >= 0) {
-            size_t got = 0;
-            OSStatus st;
-            g_tls_wouldblock = 0;
-            st = SSLWrite(g_tls[slot].ctx, data.ptr + off, left, &got);
-            if (st == errSSLWouldBlock) {
-                g_tls_wouldblock = 1;
-                return 0;
-            }
-            if (st != noErr) return -1;
-            return (int64_t)got;
-        }
-    }
-#endif
-    for (;;) {
-#if defined(MSG_NOSIGNAL)
-        n = send((int)fd, data.ptr + off, left, MSG_NOSIGNAL);
-#else
-        n = send((int)fd, data.ptr + off, left, 0);
-#endif
-        if (n >= 0) return (int64_t)n;
-        if (errno == EINTR) continue;
-        if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
-        return -1;
-    }
-}
-
-/* Socket error after a non-blocking connect polled writable: 0 = connected,
-   otherwise the errno the connect failed with. */
-int64_t loam_net_tcp_so_error(int64_t fd) {
-    int err = 0;
-    socklen_t n = sizeof err;
-    if (fd < 0) return 1;
-#if defined(__APPLE__)
-    {
-        int slot = tls_slot_of(fd);
-        if (slot >= 0) {
-            if (g_tls[slot].hs != 0) return 1;
-            fd = (int64_t)g_tls[slot].fd;
-        }
-    }
-#endif
-    if (getsockopt((int)fd, SOL_SOCKET, SO_ERROR, &err, &n) != 0) return 1;
-    return (int64_t)err;
-}
 
 /* Async fetch is wasm-only (browser XHR). Native: issue fails, nothing is
    ever ready, take returns empty. */
@@ -1287,9 +858,5 @@ loam_str loam_net_fetch_rpc(loam_str path, loam_str body) {
     (void)body;
     return (loam_str){ .ptr = "", .len = 0 };
 }
-
-#if defined(__APPLE__) && defined(__clang__)
-#pragma clang diagnostic pop
-#endif
 
 #endif

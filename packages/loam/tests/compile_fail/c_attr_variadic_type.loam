@@ -1,0 +1,8 @@
+// C's `...` promotes an `f32` to a `double` and an `i8` to an `int`, so the
+// callee's `va_arg` would read another type than the binding passes.
+#[c("printf", "variadic after 1")]
+fn c_printf(fmt: string, x: f32) -> i32 {}
+
+fn main() {
+    let _ = c_printf("%f\n", f32(1.5))
+}

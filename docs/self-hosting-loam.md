@@ -1449,8 +1449,10 @@ doc:**
    refuses any gitlink without a `.gitmodules` entry. In the same change,
    `selfhost.yml` runs on every pull request that targets `master` (it ran
    only for `feat/self-hosting`, which is merged), still never on push.
-10. `std:net` has no Windows port (`runtime/net.c` defines nothing on
-    `_WIN32`). The 12 networking fixtures are skipped on Windows. R5 needs it.
+10. `std:net` has no Windows port. Since R5.1 (runtime-in-loam.md) its TCP
+    is Loam and answers `-1` on Windows, so every fixture links there; the
+    12 that open sockets are left out of the Windows run. R5 needs a
+    Winsock port.
 
 **Extensions, not part of the self-hosting claim:**
 

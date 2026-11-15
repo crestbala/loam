@@ -58,3 +58,18 @@ int32_t c_ffi_flip(_Bool *flags, int32_t n) {
     }
     return set;
 }
+
+// A variadic C fn: `count` fixed, then that many `int64_t`s, a `double` and a
+// string through `...`. Called as fixed-arity, Apple arm64 would read the
+// varargs from the stack where the caller never put them.
+#include <stdarg.h>
+int64_t c_ffi_vsum(int32_t count, ...) {
+    va_list ap;
+    int64_t sum = 0;
+    va_start(ap, count);
+    for (int32_t i = 0; i < count; i++) sum += va_arg(ap, int64_t);
+    sum += (int64_t)(va_arg(ap, double) * 10);
+    sum += (int64_t)strlen(va_arg(ap, const char *));
+    va_end(ap);
+    return sum;
+}

@@ -5531,6 +5531,23 @@ fn c_plain_struct(t: int) -> bool {
     return true
 }
 
+/** *A type C's `...` reads as itself: no default promotion changes it, so */
+/** *the callee's `va_arg` type is the binding's. Narrower ints, `f32` and */
+/** *`bool` promote, and a struct by value is not portable through `...`. */
+fn c_variadic_type(t: int) -> bool {
+    if t == NO_TYPE {
+        return false
+    }
+    if tk(t) == TK.String || tk(t) == TK.Vec {
+        return true
+    }
+    if !c_scalar_type(t) {
+        return false
+    }
+    let bits = types.TYPES[t].bits
+    return (types.is_float_kind(t) && bits == 64) || (!types.is_float_kind(t) && (bits == 32 || bits == 64))
+}
+
 fn c_param_type(t: int) -> bool {
     if t == NO_TYPE {
         return false
@@ -5573,6 +5590,15 @@ fn check_c_fn(d: int) {
         for k in 0..ps.len {
             if !c_param_type(ps[k]) {
                 err(x.loc, "#[c] fn '{{name}}': parameter {{k + 1}} has a type C cannot take (use a number, bool, string, [] of numbers or bools, or a struct of numbers and bools)")
+            }
+        }
+        let fixed = ast.c_variadic_fixed(d)
+        if fixed > ps.len {
+            err(x.loc, "#[c] fn '{{name}}' is variadic after {{fixed}} parameters but has only {{ps.len}}")
+        }
+        for k in 0..ps.len {
+            if fixed >= 0 && k >= fixed && !c_variadic_type(ps[k]) {
+                err(x.loc, "#[c] fn '{{name}}': variadic parameter {{k + 1}} must be an i32, u32, i64, u64, f64, string or [] buffer (what C's `...` reads unchanged)")
             }
         }
         let ret = types.TYPES[ft].ret
