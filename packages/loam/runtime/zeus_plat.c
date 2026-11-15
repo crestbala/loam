@@ -175,21 +175,20 @@ int64_t loam_zeus_sig_gen(int64_t id) {
     return g_cells[id].gen;
 }
 
-static int64_t sig_slot_zero(void);
-
 /* Captured-`let mut` (state) signals: `signal(0)`-style decls inside a
    rebuild scope must be recycled and freed like every other signal, or a
    chart refit leaks a slot per captured mutable (zone strips, bar heights,
-   ...). sig_slot_zero recycles freed ids and records the scope owner, so
-   arena teardown (release_sigs) frees them with the rest of the subtree. */
-Signal loam_zeus_signal(int64_t value) {
-    Signal s;
+   ...). `sig_slot_ensure` grows the tables for a Loam-reserved id and
+   records the scope owner, so arena teardown (release_sigs) frees them
+   with the rest of the subtree. */
+static void sig_slot_ensure(int64_t id);
+Signal loam_zeus_signal(int64_t id, int64_t value) {
     int32_t v32 = (int32_t)value;
     loam_arena_ensure();
-    s.id = sig_slot_zero();
-    ((int32_t *)loam_arena_sigs.ptr)[s.id] = v32;
-    loam_zeus_sig_bind(s.id, &v32, (int64_t)sizeof(v32), LOAM_HANDLE_KEY_INT);
-    return s;
+    sig_slot_ensure(id);
+    ((int32_t *)loam_arena_sigs.ptr)[id] = v32;
+    loam_zeus_sig_bind(id, &v32, (int64_t)sizeof(v32), LOAM_HANDLE_KEY_INT);
+    return (Signal){ (uint32_t)id };
 }
 
 int64_t loam_zeus_get(Signal sig) {
@@ -214,66 +213,45 @@ int64_t loam_runtime_sig_gen(int64_t id) {
     return loam_zeus_sig_gen(id);
 }
 
-int64_t loam_runtime_sig_alloc_zero(void) {
-    return loam_zeus_sig_alloc_zero();
+int64_t loam_runtime_sig_alloc_zero(int64_t id) {
+    return loam_zeus_sig_alloc_zero(id);
 }
 
-/* Freed signal slots, recycled by the allocators below. An id is freed only
-   when nothing reachable from the live tree can reference it (subtree
-   teardown), so recycling never aliases a live signal. */
-static int64_t *g_free_sigs;
-static size_t g_nfree_sigs;
-static size_t g_cfree_sigs;
+/* R4.1a: freed ids recycle through Loam's `arena.free_sigs`; the C free-list
+   is gone. An id is freed only when nothing reachable from the live tree
+   can reference it (subtree teardown), so recycling never aliases a live
+   signal. */
 
-static void free_sig_push(int64_t id) {
-    if (g_nfree_sigs == g_cfree_sigs) {
-        size_t nc = g_cfree_sigs ? g_cfree_sigs * 2 : 64;
-        int64_t *next = (int64_t *)realloc(g_free_sigs, nc * sizeof(int64_t));
-        if (!next) {
-            fprintf(stderr, "zeus: out of memory\n");
-            abort();
-        }
-        g_free_sigs = next;
-        g_cfree_sigs = nc;
-    }
-    g_free_sigs[g_nfree_sigs++] = id;
-}
-
-static int64_t free_sig_pop(void) {
-    if (g_nfree_sigs <= 0) return -1;
-    return g_free_sigs[--g_nfree_sigs];
-}
-
-/* Reserve a slot: recycle a freed id or append a fresh one (mirror 0).
-   Allocations made while a rebuild scope is open are recorded against the
-   scope node so the loam teardown can free them. */
-static int64_t sig_slot_zero(void) {
-    int64_t id;
+/* Ensure the cell table and the arena mirror both cover `id` (reserved by
+   Loam's `arena.sig_reserve`), zeroing the mirror. Allocations made while a
+   rebuild scope is open are recorded against the scope node so the loam
+   teardown can free them. R4.1a: the id comes from Loam; C only grows. */
+static void sig_slot_ensure(int64_t id) {
     int32_t zero = 0;
     loam_arena_ensure();
-    id = free_sig_pop();
+    cell_grow(id);
+    while (id >= loam_arena_sigs.len) {
+        loam_vec_push(&loam_arena_sigs, &zero, sizeof(int32_t), __FILE__, __LINE__);
+    }
     if (id >= 0) {
         ((int32_t *)loam_arena_sigs.ptr)[id] = 0;
-    } else {
-        loam_vec_push(&loam_arena_sigs, &zero, sizeof(int32_t), __FILE__, __LINE__);
-        id = loam_arena_sigs.len - 1;
     }
     if (loam_arena_scope_node > 0) {
         loam_arena_record_sig(loam_arena_scope_node, (int32_t)id);
     }
-    return id;
 }
 
-int64_t loam_zeus_sig_alloc_int(int64_t value) {
+int64_t loam_zeus_sig_alloc_int(int64_t id, int64_t value) {
     int32_t v32 = (int32_t)value;
-    int64_t id = sig_slot_zero();
+    sig_slot_ensure(id);
     ((int32_t *)loam_arena_sigs.ptr)[id] = v32;
     loam_zeus_sig_bind(id, &v32, sizeof(v32), LOAM_HANDLE_KEY_INT);
     return id;
 }
 
-int64_t loam_zeus_sig_alloc_zero(void) {
-    return sig_slot_zero();
+int64_t loam_zeus_sig_alloc_zero(int64_t id) {
+    sig_slot_ensure(id);
+    return id;
 }
 
 void loam_zeus_sig_free(int64_t id) {
@@ -295,7 +273,8 @@ void loam_zeus_sig_free(int64_t id) {
     g_cells[id].owns_vec = 0;
     g_cells[id].drop = NULL;
     g_cells[id].key = 0;
-    free_sig_push(id);
+    /* R4.1a: the id returns to Loam's free-list (`arena.sig_release`,
+       called by the `sig_free` wrapper); C only releases the cell. */
 }
 
 void loam_runtime_sig_free(int64_t id) {
