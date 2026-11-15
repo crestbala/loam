@@ -1572,28 +1572,19 @@ static inline void loam_fut_store(int64_t id, const void *val, size_t sz, uint32
 }
 
 #ifdef __wasm32__
-/* `zeus_js_now_ms` and `zeus_js_heap_used` are declared with their import
-   attributes near `loam_now_ms` above; only the async helpers are added here. */
-static inline int64_t loam_async_now_ms(void) { return loam_now_ms(); }
-static inline void loam_async_sleep(int64_t ms) {
-    int64_t t0 = loam_async_now_ms();
-    while (loam_async_now_ms() - t0 < ms) {
+/* `std:async` binds `clock_gettime` / `nanosleep` itself on native (`#[c]`);
+   wasm binds no libc, so the two wasm bridges live here (like `sys.wasm_exit`
+   bridges `abort`): the clock is the `zeus_js_now_ms` host import
+   (`loam_now_ms`, above), and the sleep is its spin. */
+static inline int64_t loam_async_wasm_now_ms(void) { return loam_now_ms(); }
+static inline void loam_async_wasm_sleep(int64_t ms) {
+    int64_t t0 = loam_now_ms();
+    while (loam_now_ms() - t0 < ms) {
     }
 }
 #else
-static inline int64_t loam_async_now_ms(void) {
-    struct timespec ts;
-    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
-    return (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000);
-}
-static inline void loam_async_sleep(int64_t ms) {
-    struct timespec req;
-    if (ms <= 0) return;
-    req.tv_sec = (time_t)(ms / 1000);
-    req.tv_nsec = (long)(ms % 1000) * 1000000L;
-    while (nanosleep(&req, &req) != 0 && errno == EINTR) {
-    }
-}
+/* Native binds `clock_gettime` / `nanosleep` through `#[c]` in `std:async`;
+   nothing of the clock or sleep remains in C. */
 #endif
 
 /* --- thread + channel: std/thread.loam. The ABI is a detached pthread and a ---
@@ -3825,6 +3816,19 @@ loam_str loam_cost_bucket(int32_t f);
 void loam_cost_report(void);
 bool loam_check(loam_str path);
 void loam_usage(void);
+static int64_t loam_async_now_ms(void);
+#if defined(__APPLE__) || defined(__linux__) || defined(_WIN32) || (!defined(__APPLE__) && !defined(__linux__) && !defined(_WIN32) && !defined(__wasm32__))
+static int64_t loam_async_now_ms_os(void);
+#endif
+#if defined(__wasm32__)
+static int64_t loam_async_now_ms_os(void);
+#endif
+#if defined(__APPLE__)
+static int32_t loam_async_c_clock_monotonic(void);
+#endif
+#if defined(__linux__) || defined(_WIN32) || (!defined(__APPLE__) && !defined(__linux__) && !defined(_WIN32) && !defined(__wasm32__))
+static int32_t loam_async_c_clock_monotonic(void);
+#endif
 static void loam_buf_push_int(loam_vec * b, int32_t n);
 static void loam_buf_push_i64(loam_vec * b, int64_t n);
 static int32_t loam_decimal_fill(uint8_t * out, uint64_t magnitude, bool negative);
@@ -5103,6 +5107,14 @@ static inline loam_str loam_csym_str(const char *p) {
     b[n] = 0;
     return loam_str_owned(b, n);
 }
+#if defined(__APPLE__) || defined(__linux__) || defined(_WIN32) || (!defined(__APPLE__) && !defined(__linux__) && !defined(_WIN32) && !defined(__wasm32__))
+extern void loam_async_c_clock_gettime__csym(void) LOAM_CSYM("clock_gettime");
+static int32_t loam_async_c_clock_gettime(int32_t clk, loam_vec ts) {
+    int32_t _r = ((int32_t (*)(int32_t, void *))(void *)loam_async_c_clock_gettime__csym)(clk, ts.ptr);
+    loam_vec_drop(&ts);
+    return _r;
+}
+#endif
 #if (defined(__APPLE__) && !defined(LOAM_IOS)) || (defined(__linux__) && !defined(__ANDROID__) && !defined(LOAM_ANDROID))
 extern void loam_sys_c_sysconf__csym(void) LOAM_CSYM("sysconf");
 static int64_t loam_sys_c_sysconf(int32_t name) {
@@ -5554,12 +5566,12 @@ bb2:;
     return _l14;
 }
 
-#line 270 "async.loam"
+#line 357 "async.loam"
 Future loam_async_future__string(loam_str init) {
     int32_t _l9;
     Future _l10;
 bb0:;
-#line 271
+#line 358
     _l9 = loam_fut_push(&init, sizeof(loam_str), 624101530u);
     _l10 = (Future){ .id = _l9 };
     return _l10;
@@ -8074,13 +8086,13 @@ void loam_async__init(void) {
     loam_vec _l6 = {0};
     loam_vec _l7 = {0};
 bb0:;
-#line 70 "async.loam"
+#line 157 "async.loam"
     _l5 = loam_vec_new();
     loam_async_timers = loam_vec_retain(&_l5);
-#line 72
+#line 159
     _l6 = loam_vec_new();
     loam_async_spawns = loam_vec_retain(&_l6);
-#line 73
+#line 160
     _l7 = loam_vec_new();
     loam_async_steps = loam_vec_retain(&_l7);
 #line 39
@@ -8470,8 +8482,8 @@ bb0:;
     _l44 = ((loam_str){(const char *)"loam_key_push_f64", 17});
     _l45 = ((loam_str){(const char *)"loam_key_push_addr", 18});
 #line 32
-    _l46 = ((loam_str){(const char *)"loam_async_now_ms", 17});
-    _l47 = ((loam_str){(const char *)"loam_async_sleep", 16});
+    _l46 = ((loam_str){(const char *)"loam_async_now_ms_os", 20});
+    _l47 = ((loam_str){(const char *)"loam_async_sleep_os", 19});
 #line 33
     _l48 = ((loam_str){(const char *)"loam_wrapping_add", 17});
     _l49 = ((loam_str){(const char *)"loam_wrapping_shr", 17});
@@ -170245,6 +170257,115 @@ bb0:;
     return;
 }
 
+#line 66 "async.loam"
+static int64_t loam_async_now_ms(void) {
+    int64_t _l5;
+bb0:;
+#line 67
+    _l5 = loam_async_now_ms_os();
+    return _l5;
+}
+
+#if defined(__APPLE__) || defined(__linux__) || defined(_WIN32) || (!defined(__APPLE__) && !defined(__linux__) && !defined(_WIN32) && !defined(__wasm32__))
+#line 72
+static int64_t loam_async_now_ms_os(void) {
+    int64_t _l5;
+    int64_t _l6;
+    loam_vec _l7 = {0};
+    loam_vec _l8;
+    int32_t _l9;
+    int32_t _l10;
+    int32_t _l11;
+    bool _l12;
+    int64_t _l13;
+    int32_t _l14;
+    int32_t _l15;
+    int64_t _l16;
+    int64_t _l17;
+    int64_t _l18;
+    int32_t _l19;
+    int32_t _l20;
+    int64_t _l21;
+    int64_t _l22;
+    int64_t _l23;
+    int64_t _l24;
+bb0:;
+#line 73
+    _l5 = 0;
+    _l6 = 0;
+    _l7 = loam_vec_new();
+    loam_vec_push(&_l7, &_l5, sizeof(int64_t), "async.loam", 73);
+    loam_vec_push(&_l7, &_l6, sizeof(int64_t), "async.loam", 73);
+    _l8 = loam_vec_move(&_l7);
+#line 74
+    _l10 = loam_async_c_clock_monotonic();
+        {
+        loam_vec_retain(&_l8);
+    _l9 = loam_async_c_clock_gettime(_l10, _l8);
+    }
+    _l11 = 0;
+    _l12 = (_l9 != _l11);
+    if (_l12) goto bb1; else goto bb2;
+bb1:;
+#line 75
+    _l13 = 0;
+    loam_vec_drop(&_l8);
+    loam_vec_drop(&_l7);
+    return _l13;
+bb2:;
+#line 77
+    _l14 = 0;
+    _l15 = _l8.len;
+    (void)loam_idx(_l14, _l15, "async.loam", 77);
+    _l16 = ((int64_t *)(_l8.ptr))[_l14];
+    _l17 = 1000;
+    _l18 = loam_mul_i64(_l16, _l17, "async.loam", 77);
+    _l19 = 1;
+    _l20 = _l8.len;
+    (void)loam_idx(_l19, _l20, "async.loam", 77);
+    _l21 = ((int64_t *)(_l8.ptr))[_l19];
+    _l22 = 1000000;
+    _l23 = loam_div_i64(_l21, _l22, "async.loam", 77);
+    _l24 = loam_add_i64(_l18, _l23, "async.loam", 77);
+    loam_vec_drop(&_l8);
+    loam_vec_drop(&_l7);
+    return _l24;
+}
+
+#endif
+#if defined(__wasm32__)
+#line 84
+static int64_t loam_async_now_ms_os(void) {
+    int64_t _l5;
+bb0:;
+#line 85
+    _l5 = loam_async_wasm_now_ms();
+    return _l5;
+}
+
+#endif
+#if defined(__APPLE__)
+#line 95
+static int32_t loam_async_c_clock_monotonic(void) {
+    int32_t _l5;
+bb0:;
+#line 96
+    _l5 = 6;
+    return _l5;
+}
+
+#endif
+#if defined(__linux__) || defined(_WIN32) || (!defined(__APPLE__) && !defined(__linux__) && !defined(_WIN32) && !defined(__wasm32__))
+#line 101
+static int32_t loam_async_c_clock_monotonic(void) {
+    int32_t _l5;
+bb0:;
+#line 102
+    _l5 = 1;
+    return _l5;
+}
+
+#endif
 #line 49 "packages/loam/compiler/loamc.loam"
 bool loam_env_on(loam_str name) {
     loam_str _l12;

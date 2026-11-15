@@ -29,7 +29,7 @@ let WORKER_SEAM_OK: []string = []string {
     "loam_floattext_text_of", "loam_floattext_write_text",
     "loam_key_push_vec_tag", "loam_key_push_str", "loam_decimal_push_int",
     "loam_decimal_push_u64", "loam_key_push_f32", "loam_key_push_f64", "loam_key_push_addr",
-    "loam_async_now_ms", "loam_async_sleep",
+    "loam_async_now_ms_os", "loam_async_sleep_os",
     "loam_wrapping_add", "loam_wrapping_shr", "loam_wrapping_shl",
     "loam_wrapping_or", "loam_wrapping_and", "loam_saturating_add",
 }

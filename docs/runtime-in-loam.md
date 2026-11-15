@@ -736,7 +736,18 @@ straight to libc, so no C shim.
 **R3. Async and threads** (lands with T1, [threads.md](threads.md); T1 is
 done, so every R3 step is checked by `thread_tsan`).
 
-- [ ] R3.1 The future table in Loam, keeping S0's typed cells.
+- [x] R3.1a Clock and sleep through raw bindings. Done 2026-11-15.
+      `async.now_ms` / `sleep` are Loam over `#[c]` `clock_gettime` /
+      `nanosleep` (posix + Windows, via `[]i64` out-words; EINTR retried on
+      the Loam side) with `#[os("wasm")]` Loam wrappers over two header
+      bridges (`loam_async_wasm_now_ms/sleep`, over the `zeus_js_now_ms`
+      import — a `#[c]` binding cannot reach a wasm build at all, and
+      `#[os]` variants must be bodyless hook or Loam body together). The
+      worker allowlist names the new seam (`loam_async_now_ms_os` /
+      `sleep_os`); all 14 thread/async `compile_fail` fixtures still reject.
+      `async_*`, `thread_*`, forge traps (messages byte-identical), 5-way
+      TSan, wasm32 `trap_app` green. **Runtime: 8,077 → 8,068** (−9).
+- [ ] R3.1b The future table in Loam, keeping S0's typed cells.
 - [ ] R3.2 The channel queues in Loam; mutex, condition variable and thread
       start are `#[c]` pthread bindings, which a thread worker may call.
 

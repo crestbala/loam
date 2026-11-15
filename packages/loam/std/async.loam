@@ -60,12 +60,99 @@ struct Future<T> {
 }
 
 /** *Monotonic milliseconds (host clock). i64: epoch millis overflow i32 in ~24 */
-/** *days (§3.6). Bodyless: `loam_async_now_ms`. */
-fn now_ms() -> i64 {}
+/** *days (§3.6). Native: `clock_gettime(CLOCK_MONOTONIC)` through one raw */
+/** *binding (a two-slot `[]i64` carries the `struct timespec`, as the `pollfd` */
+/** *in `sys.watch_next_os` carries a struct); wasm: the JS clock. */
+fn now_ms() -> i64 {
+    return now_ms_os()
+}
+
+/** *Native `now_ms`: two C words, `sec` then `nsec`, out of `clock_gettime`. */
+#[os("posix", "windows")]
+fn now_ms_os() -> i64 {
+    let mut ts = []i64 { 0, 0 }
+    if c_clock_gettime(c_clock_monotonic(), ts) != 0 {
+        return 0
+    }
+    return ts[0] * 1000 + ts[1] / 1000000
+}
+
+/** *No libc clock on wasm: the JS host clock, through a header bridge (a */
+/** *`#[c]` binding cannot reach a wasm build at all; a bodyless `#[os]` hook */
+/** *resolves to C like `sys.wasm_exit` does). */
+#[os("wasm")]
+fn now_ms_os() -> i64 {
+    return wasm_now_ms()
+}
+
+/** *The wasm `now_ms` bridge in `loam_rt.h` (over the `zeus_js_now_ms` host */
+/** *import), like `sys.wasm_exit` bridges `abort`. */
+#[os("wasm")]
+fn wasm_now_ms() -> i64 {}
+
+/** *CLOCK_MONOTONIC on the Darwin clocks (macOS, iOS): 6. */
+#[os("apple")]
+fn c_clock_monotonic() -> i32 {
+    return 6
+}
+
+/** *CLOCK_MONOTONIC on Linux, Android, other Unix and Windows: 1. */
+#[os("linux", "android", "other", "windows")]
+fn c_clock_monotonic() -> i32 {
+    return 1
+}
+
+/** *`clock_gettime` straight from libc: `sec` then `nsec` through a two-slot */
+/** *`[]i64` (see `sys.watch_next_os`'s `pollfd` for the shape). `0` on */
+/** *success, as before. */
+#[os("posix", "windows")]
+#[c("clock_gettime")]
+fn c_clock_gettime(clk: i32, ts: []i64) -> i32 {}
 
 /** *Block the calling thread for `ms`. Console/headless only — never in UI */
-/** *code; use `after` there. Bodyless: `loam_async_sleep_ms`. */
-fn sleep(ms: int) {}
+/** *code; use `after` there. Native: `nanosleep` with EINTR retry, through one */
+/** *raw binding; wasm: the JS spin. */
+fn sleep(ms: int) {
+    sleep_os(ms)
+}
+
+/** *Native `sleep`: whole `ms` even when a signal interrupts the wait. */
+#[os("posix", "windows")]
+fn sleep_os(ms: int) {
+    if ms <= 0 {
+        return
+    }
+    let mut req = []i64 { i64(ms / 1000), i64(ms % 1000) * 1000000 }
+    let mut rem = []i64 { 0, 0 }
+    while c_nanosleep(req, rem) != 0 && c_sleep_errno() == 4 {
+        req[0] = rem[0]
+        req[1] = rem[1]
+    }
+}
+
+/** *`nanosleep` straight from libc: two words each way (`sec`, `nsec`), `0` */
+/** *when the whole wait elapsed. EINTR is 4 on Linux and macOS, and Windows */
+/** *sleeps through `nanosleep` the same way (its shim returns EINTR likewise). */
+#[os("posix", "windows")]
+#[c("nanosleep")]
+fn c_nanosleep(req: []i64, rem: []i64) -> i32 {}
+
+/** *The calling thread's `errno`, so the retry above only repeats on EINTR. */
+/** *`sys` keeps its own `c_errno`; a `#[c]` fn is private to its module, so */
+/** *`async` binds the same symbol itself. */
+#[os("posix", "windows")]
+#[c("loam_sys_errno")]
+fn c_sleep_errno() -> i32 {}
+
+/** *No libc sleep on wasm: the same JS spin the runtime busy-waited. */
+#[os("wasm")]
+fn sleep_os(ms: int) {
+    wasm_sleep(i64(ms))
+}
+
+/** *The wasm `sleep` bridge in `loam_rt.h` (a spin on the JS clock). */
+#[os("wasm")]
+fn wasm_sleep(ms: i64) {}
 
 let mut timers: []Timer = []Timer {}
 let mut next_tid: int = 1
