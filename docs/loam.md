@@ -282,6 +282,21 @@ What `loam` does about that:
 - `ZEUS_HEADLESS=1` (tests) skips Cocoa and uses `-O0` on generated C.
 - GUI builds use `-O1` on generated C, not `-O2` (same overflow checks,
   much less optimizer work).
+- `LOAM_SHARD=<dir>` builds any native program's C as cached units: the
+  shared prelude becomes one precompiled header, the bodies are cut at
+  content-defined points (so an edit moves few cuts), each unit's object is
+  cached under `<dir>` by its text, and only the changed units recompile, in
+  parallel. Needs clang (`-include-pch`); with gcc it builds the one file.
+  `./nob.sh build` builds the compiler and every tool this way, under
+  `bin/.shard/<tool>`: a no-op is 0.07 s, an edit to std about 1 s, an edit
+  to the compiler 1.5–2 s, a cold build 7.5 s (it was 40 s as one file per
+  tool). A sharded compiler loses some cross-unit inlining and runs about 6%
+  slower, so `LOAM_WHOLE=1 ./nob.sh build` builds one optimized unit per
+  tool, as the seed and `selfhost_seed` always do.
+- On macOS, the first launch of every new executable costs about 0.25 s
+  (the system scans it), and builds and tests launch hundreds. Adding your
+  terminal under System Settings → Privacy & Security → Developer Tools
+  exempts the programs it starts.
 
 Set `LOAM_TIME=1` to print `check` / `codegen` / `cc` timings on stderr. Set `LOAM_PROGRESS=<file>`
 to have each step appended to that file as it starts, for a tool drawing progress; this

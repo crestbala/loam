@@ -16,7 +16,9 @@
 #      regenerates it when it can no longer build the current sources).
 #   2. bin/loamc0 builds bin/loamc from packages/loam/compiler/loamc.loam, the
 #      current compiler. Its `.fresh` cache makes this a no-op until a source,
-#      std, the runtime or the seed changes.
+#      std, the runtime or the seed changes; its C builds as cached units
+#      under bin/.shard/ (LOAM_SHARD), so an edit recompiles only what moved.
+#      LOAM_WHOLE=1 builds every tool as one optimized unit instead.
 #   3. bin/loamc builds bin/nob from nob.loam.
 #
 # The compiler finds std and the runtime from its own path (<root>/bin/loamc),
@@ -59,6 +61,9 @@ fi
   unset ZEUS_HEADLESS LOAM_HEADLESS MAYA_HEADLESS LOAM_DEV LOAM_DEBUG ZEUS_MEM_STATS \
     LOAM_LINK_EXTRA LOAM_BATCH LOAM_SHARD LOAM_HOST LOAM_SERVER_SPLIT LOAM_NO_DCE LOAM_HOME
   [ -n "${CC:-}" ] || [ "$c_compiler" = cc ] || export CC="$c_compiler"
+  # The compiler's C as cached units, so an edit recompiles only what it
+  # touched, in parallel. LOAM_WHOLE=1 builds one optimized unit instead.
+  [ -n "${LOAM_WHOLE:-}" ] || export LOAM_SHARD="$ROOT/bin/.shard/loamc"
   ./bin/loamc0 packages/loam/compiler/loamc.loam -o bin/loamc >/dev/null
 )
 
@@ -71,7 +76,11 @@ if [ "$on_windows" = 1 ]; then
 fi
 
 if [ ! -x bin/nob ] || [ nob.loam -nt bin/nob ] || [ bin/loamc -nt bin/nob ]; then
-  ./bin/loamc nob.loam -o bin/nob
+  if [ -n "${LOAM_WHOLE:-}" ]; then
+    ./bin/loamc nob.loam -o bin/nob
+  else
+    LOAM_SHARD="$ROOT/bin/.shard/nob" ./bin/loamc nob.loam -o bin/nob
+  fi
 fi
 
 exec ./bin/nob "$@"
