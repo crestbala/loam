@@ -1,0 +1,25 @@
+// `sys.mkdir` (`-p`), `sys.realpath` and `sys.cwd` answer the same way on
+// every native target: absolute, `/`-separated (Windows' `\` turned to `/`),
+// and `""` for what does not exist. A relative scratch directory, since not
+// every OS has `/tmp`; removed at the end.
+import "std:fmt"
+import "std:str"
+import "std:sys"
+
+fn no_backslash(p: string) -> bool {
+    return str.index_of(p, "\\") < 0
+}
+
+fn main() {
+    let d = "loam_sys_paths_scratch"
+    sys.remove_path(d)
+    fmt.println(sys.mkdir("{{d}}/a/b"), sys.mkdir("{{d}}/a/b"), sys.mkdir("{{d}}/a"), sys.is_dir("{{d}}/a/b"))
+    sys.write_file("{{d}}/a/f.txt", "x")
+    let real = sys.realpath("{{d}}/a/b/../f.txt")
+    let cwd = sys.cwd()
+    fmt.println(sys.is_abs(real), no_backslash(real), str.ends_with(real, "/loam_sys_paths_scratch/a/f.txt"))
+    fmt.println(sys.is_abs(cwd), no_backslash(cwd), str.starts_with(real, cwd))
+    fmt.println(sys.realpath("{{d}}/missing").len, sys.realpath("").len)
+    sys.remove_path(d)
+    fmt.println(sys.exists(d))
+}

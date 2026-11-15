@@ -35,7 +35,6 @@ static inline ssize_t writev(int fd, const struct iovec *iov, int n) {
     return total;
 }
 #define lstat stat
-#define mkdir(path, mode) _mkdir(path)
 #else
 #include <sys/uio.h>
 #endif
@@ -1401,22 +1400,9 @@ void loam_dir_free(char **names, int64_t n) {
 /* `sys.exists` / `sys.is_dir` live in `std/sys.loam` too (R2.2): the same
    `loam_sys_stat` shim, read as numbers. */
 
-/* `sys.realpath` lives in `std/sys.loam` too (R2.2): posix binds `realpath(3)`
-   straight from libc into a 4096-byte Loam buffer; Windows keeps its
-   `_fullpath` quirk behind a hook with the same shape (NULL on a miss). */
-#ifdef _WIN32
-char *loam_sys_realpath_win(const char *path, char *resolved);
-#ifdef LOAM_RT_DEFINE_JMP
-char *loam_sys_realpath_win(const char *path, char *resolved) {
-    struct stat st;
-    char *c;
-    if (!_fullpath(resolved, path, 4096)) return NULL;
-    for (c = resolved; *c; c++)
-        if (*c == '\\') *c = '/';
-    return stat(resolved, &st) == 0 ? resolved : NULL;
-}
-#endif
-#endif
+/* `sys.realpath`, `sys.cwd` and `sys.mkdir` live in `std/sys.loam` (R2.2,
+   R2.6): raw `realpath` / `getcwd` / `mkdir`, and on Windows `_fullpath` /
+   `_getcwd` / `_mkdir`, the `/` fix in Loam. */
 
 /* `sys.dir_count` / `sys.dir_entry` live in `std/sys.loam` too (R2.2): one
    listing per call through the same shims, freed at once; the sort is Loam.
@@ -1438,54 +1424,9 @@ int loam_sys_lstat(const char *path, int64_t *out) {
 /* `sys.remove_path` lives in `std/sys.loam` too (R2.2): the `lstat`-and-
    -recurse walk in Loam — a linked directory removes the link, never its
    target — over raw `remove` / `rmdir` bindings. */
-/* `sys.mkdir` lives in `std/sys.loam` too (R2.2): the `-p` walk in Loam, one
-   `mkdir` per level. The shim hands back `errno` itself, so no message text
-   crosses (and `EEXIST` is 17 on every target here: POSIX, macOS, Windows). */
-int loam_sys_mkdir_one(const char *path);
-int loam_sys_mkdir_errno(void);
-#ifdef LOAM_RT_DEFINE_JMP
-static int loam_sys_mkdir_last;
-int loam_sys_mkdir_one(const char *path) {
-    if (!path) return -1;
-    if (mkdir(path, 0755) != 0) {
-        loam_sys_mkdir_last = errno;
-        return -1;
-    }
-    loam_sys_mkdir_last = 0;
-    return 0;
-}
-int loam_sys_mkdir_errno(void) {
-    return loam_sys_mkdir_last;
-}
-#endif
-
-/* `sys.mkdir` lives in `std/sys.loam` too (R2.2): the `-p` walk there. */
-
 /* `sys.rename` lives in `std/sys.loam` too (R2.2): POSIX replaces the target,
    and the Loam side removes-then-retries for Windows, like the C did. */
 
-/* `sys.cwd` lives in `std/sys.loam` too (R2.2): `getcwd` into a Loam buffer,
-   trimmed at the first NUL. The slash fix stays in C on Windows (below).
-   Declared here, defined once in the owning unit (see `loam_sys_strerror`
-   above): the `#[c]` wrapper references it as a symbol. */
-char *loam_sys_getcwd(char *buf, size_t n);
-#ifdef LOAM_RT_DEFINE_JMP
-#ifdef _WIN32
-char *loam_sys_getcwd(char *buf, size_t n) {
-    char *p = _getcwd(buf, n);
-    if (p) {
-        /* Paths are `/` on the Loam side (every Win32 file API accepts it). */
-        for (char *c = p; *c; c++)
-            if (*c == '\\') *c = '/';
-    }
-    return p;
-}
-#else
-char *loam_sys_getcwd(char *buf, size_t n) {
-    return getcwd(buf, n);
-}
-#endif
-#endif
 
 /* `sys.spawn` / `sys.wait` live in `std/sys.loam` (R2.3e): the spawn table
    and the Windows quoting are Loam, over raw `waitpid` / `_spawnvp` /

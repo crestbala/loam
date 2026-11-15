@@ -711,8 +711,27 @@ straight to libc, so no C shim.
       `watch_close` ×2000 18–19 vs 17–19 ms. The dead `loam_sys_cpath`
       helper goes with it. Seed 5,098,988 → 5,095,924 bytes, seed = stage 1
       = stage 2. **Runtime: 8,249 → 8,136** (−113).
-- [ ] R2.6 Win32 paths through the same bindings, and a `ReadDirectoryChangesW`
-      watcher; the Windows CI job is green.
+- [x] R2.6a Win32 paths through the same bindings. Done 2026-11-15. The
+      last path hooks go: Windows `realpath` is raw `_fullpath` (which makes a
+      path absolute without touching the disk) with the `/` fix and the
+      existence check in Loam; `cwd` is raw `getcwd` on posix and `_getcwd`
+      on Windows (its size is an `int`, so it has its own exact signature),
+      the `/` fix in Loam; `mkdir -p` binds raw `mkdir` / `_mkdir` and reads
+      `EEXIST` through R2.3e's `c_errno`, which drops the mkdir errno shim
+      and the Windows `#define mkdir`. `writev` (core output) and the
+      `stat` / `lstat` layout shims stay. A POSIX probe (`mkdir -p` over
+      existing levels, over a file, `/`, `""`, a 300-byte path past the
+      wrapper's stack buffer; `realpath` through `..`, missing and empty;
+      `cwd`) is identical to HEAD's C. New fixture `compile_pass/sys_paths`
+      prints the same on every OS (absolute, `/`-separated, `""` for what
+      does not exist, from a relative scratch directory since Windows has no
+      `/tmp`), so the Windows CI job runs the Windows path code natively; it
+      links for both Windows CPUs with `-Wall`, no warnings, and HEAD's C
+      prints the same. `cross-check.sh` Linux 124/124 and Windows 112/112 on
+      both CPUs; the 8 stanzas plus `wasm_trap` green. Seed 5,095,924 →
+      5,098,656 bytes, seed = stage 1 = stage 2. **Runtime: 8,136 → 8,077**
+      (−59).
+- [ ] R2.6b A `ReadDirectoryChangesW` watcher; the Windows CI job is green.
 
 **R3. Async and threads** (lands with T1, [threads.md](threads.md)).
 
