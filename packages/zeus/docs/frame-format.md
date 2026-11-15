@@ -13,11 +13,11 @@ Decoders that exist today:
 
 | Host | Decoder |
 |---|---|
-| C, Objective-C, JNI (macOS, iOS, Android, Linux) | `zeus_replay` in `packages/loam/runtime/zeus_plat.c`, into a `ZeusDraw` callback table |
+| C, Objective-C, JNI (macOS, iOS, Android, Linux) | `present` in `packages/zeus/src/zeuscore/replay.loam`, into a `ZeusDraw` callback table (one-line forwarders in `zeus_plat.c`) |
 | Browser | `decodeFrame` in `hosts/web/loader.js`, straight from wasm memory into Canvas2D |
-| Tests | `runtime.trace_draw` (prints every call), and the Deno smoke test `hosts/web/wasm_smoke.ts` |
+| Tests | `replay.trace_draw` (prints every call), and the Deno smoke test `hosts/web/wasm_smoke.ts` |
 
-A new host can bind a `ZeusDraw` and let `zeus_replay` decode, or take the
+A new host can bind a `ZeusDraw` and let `replay.loam` decode, or take the
 buffer whole with `zeus_bind_frame(sink)` and decode it itself.
 
 ## Layout

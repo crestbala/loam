@@ -9,6 +9,7 @@ import "metrics.loam"
 import "platform.loam"
 import "svgpath.loam"
 import "runtime.loam"
+import "replay.loam"
 
 // Fields grouped by width, widest first, so the 8-byte-aligned `text` slice
 // does not force padding between 4-byte ints (Phase 11). `text` is empty for
@@ -540,7 +541,7 @@ fn present() {
     frame_head[3] = frame_n
     frame_head[4] = frame_ns
     frame_head[5] = frame_np
-    platform.plat_frame(frame_head, frame_ops, frame_strs, frame_path)
+    replay.present(frame_head, frame_ops, frame_strs, frame_path)
 }
 
 

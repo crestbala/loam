@@ -7,7 +7,7 @@
      `paint`. `head` points at 8 int32: version stride n ops ns strs np path,
      the last of each pair a pointer; `strs` is `ns` (ptr, len) pairs. Pure: it
      reads `buffer` and calls `paint`, so a test can drive it with a recorder.
-     The guards match `zeus_replay` in zeus_plat.c. Returns the op count, or -1
+     The guards match `present` in zeuscore/replay.loam. Returns the op count, or -1
      for a version this decoder does not know. */
   const FRAME_VERSION = 1;
   /* On a Mac, ctrl-click is the secondary click. */
