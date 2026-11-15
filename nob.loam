@@ -2760,6 +2760,54 @@ fn ig_ownership_asan() {
     ok("ownership asan (Box contents and module-let temporaries: ASan clean, no leaks)")
 }
 
+/** *The thread runtime under ThreadSanitizer (threads.md T1): the thread */
+/** *fixtures and a stress program, built with `-fsanitize=thread` (the */
+/** *runtime's channel, mutex and refcount C is in the program's own C, so it */
+/** *is instrumented), all at once, each run once. Any report, a failed run, */
+/** *or `thread_stress` printing other than its golden fails. A host whose */
+/** *compiler or kernel cannot run TSan at all skips rather than fails. */
+fn ig_thread_tsan() {
+    mark("thread tsan")
+    let probe_c = tmpf("tsan_probe.c")
+    let probe = tmpf("tsan_probe")
+    write_text(probe_c, "int main(void) { return 0; }\n")
+    let p = sys.exec("cc -fsanitize=thread {{shq(probe_c)}} -o {{shq(probe)}} 2>&1 && {{shq(probe)}} 2>&1")
+    if sys.exec_status() != 0 {
+        skip("thread tsan (this C compiler or kernel cannot run ThreadSanitizer: {{trim(p)}})")
+        return
+    }
+    let names = []string { "thread_stress", "thread_chan", "thread_busy", "thread_spawn_mod", "async_await_stress" }
+    // One shell line per fixture, all in the background: build, run, keep
+    // stdout, stderr and the exit code apart.
+    let mut script = "cd {{shq(ROOT)}}; "
+    for i in 0..names.len {
+        let src = "{{TESTS}}/compile_pass/{{names[i]}}.loam"
+        let bin = tmpf("tsan_{{names[i]}}")
+        script = cat(script, "( LOAM_LINK_EXTRA='-O1 -g -fsanitize=thread' {{shq(LOAMC)}} {{shq(src)}} -o {{shq(bin)}} > {{shq(bin)}}.log 2>&1 && TSAN_OPTIONS='halt_on_error=1 exitcode=66' {{shq(bin)}} > {{shq(bin)}}.out 2> {{shq(bin)}}.err; echo $? > {{shq(bin)}}.rc ) & ")
+    }
+    sh(cat(script, "wait"))
+    for i in 0..names.len {
+        let bin = tmpf("tsan_{{names[i]}}")
+        let err = sys.read_file("{{bin}}.err")
+        if contains_str(err, "unexpected memory mapping") {
+            skip("thread tsan (this kernel's memory layout is one TSan cannot run under)")
+            return
+        }
+        let rc = trim(sys.read_file("{{bin}}.rc"))
+        if rc != "0" || contains_str(err, "ThreadSanitizer") {
+            bad("thread tsan: {{names[i]}} (exit {{rc}})", if err.len > 0 { err } else { sys.read_file("{{bin}}.log") })
+            return
+        }
+    }
+    let want = "{{TESTS}}/compile_pass/thread_stress.expected"
+    let diff_path = tmpf("tsan_thread_stress.diff")
+    if !diff_log(want, tmpf("tsan_thread_stress.out"), diff_path) {
+        bad("thread tsan (thread_stress output differs from its golden)", diff_path)
+        return
+    }
+    ok("thread tsan ({{names.len}} thread programs under ThreadSanitizer, no reports)")
+}
+
 /** *Floats: `std:floattext` gives the host libc's `%.<p>g` and `strtod` */
 /** *answers (float_diff.c writes them, float_check.loam checks them), and a */
 /** *program printing and parsing floats writes the same bytes as a wasm */
@@ -2952,6 +3000,8 @@ fn stanza_dispatch(name: string) -> bool {
         ig_loader_cases()
     } else if name == "android_project" {
         ig_android_project()
+    } else if name == "thread_tsan" {
+        ig_thread_tsan()
     } else if name == "ownership_asan" {
         ig_ownership_asan()
     } else if name == "selfhost_seed" {
@@ -3008,6 +3058,7 @@ fn stanza_names() -> []string {
     push(v, "fresh_cache")
     push(v, "android_project")
     push(v, "ownership_asan")
+    push(v, "thread_tsan")
     push(v, "loader_cases")
     push(v, "wasm_float")
     return v
@@ -3072,7 +3123,7 @@ fn pool_stanzas(names: []string, limit_s: int) -> int {
 /** *app. The wasm module's entry points, the server/client split, and the */
 /** *language server all sit next to the compiler. */
 fn host_stanzas() -> []string {
-    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "design_lint", "api_freeze", "modules", "fresh_cache", "android_project", "ownership_asan", "loader_cases", "wasm_float" }
+    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "design_lint", "api_freeze", "modules", "fresh_cache", "android_project", "ownership_asan", "thread_tsan", "loader_cases", "wasm_float" }
 }
 
 /** *How long one stanza may run before its pool kills it. `selfhost_seed` */

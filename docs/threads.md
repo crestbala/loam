@@ -38,18 +38,31 @@ deleted) / `compiler/threadcheck.loam` and `runtime/loam_rt.h`:
   The HTTP server is one thread.
 - There is no join and no thread handle. A caller learns a worker is done
   only from a message, or from `thread.running()` for all workers at once.
-- No sanitizer has checked the runtime's thread code. The 15 thread
-  fixtures prove what the checker refuses, not that the channel and
-  refcount C is race-free.
+- ThreadSanitizer checks the runtime's thread code on every `nob test`
+  (`thread_tsan`, T1), but only on the paths five programs exercise: the
+  thread fixtures prove what the checker refuses, and TSan only sees the
+  interleavings a run happens to produce.
 - No mutexes or atomics in the language. This is deliberate: channels plus
   the Send rule are the whole model, and that stays.
 
 ## Plan, smallest first
 
-- [ ] **T1. ThreadSanitizer stanza.** Build the thread fixtures and a small
-      stress program (N workers, M messages each, strings in both
-      directions) with `-fsanitize=thread`, and fail on any report. It is
-      cheap (seconds) and covers the C that the Send proof trusts.
+- [x] **T1. ThreadSanitizer stanza.** Done 2026-11-15. `thread_tsan` (a
+      host stanza, so every `nob test` runs it) builds `thread_stress`
+      (new: 8 workers × 400 jobs, strings both ways plus a struct channel,
+      every send / recv / try_* and both condition-variable waits),
+      `thread_chan`, `thread_busy`, `thread_spawn_mod` and
+      `async_await_stress` with `-fsanitize=thread`, all at once, and fails
+      on any report, a non-zero exit, or `thread_stress` output that
+      differs from its golden. The runtime's channel, mutex and refcount C
+      is in each program's own C, so it is instrumented (the binaries call
+      TSan's read and atomic hooks). A host that cannot run TSan at all (no
+      runtime, or a Linux kernel layout TSan rejects) reports `skip`, not a
+      failure. Proven to bite: a planted race in a `#![c_source]` file and,
+      in a scratch copy of the runtime, a blocking `recv` with its lock
+      removed are both reported (`data race ... loam_thread_recv__string`).
+      Today's runtime: no reports. 1.0 s warm, 2.4 s cold; the suite stays
+      at 9 s.
 - [ ] **T2. Send a `[]T` by move.** `send(c, v)` already consumes `v` in
       borrowck. Make a vec of Send elements Send when it is *moved* into a
       channel or a capture: the runtime takes the buffer if its refcount is
