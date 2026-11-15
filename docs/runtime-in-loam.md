@@ -788,6 +788,15 @@ done, so every R3 step is checked by `thread_tsan`).
       Loam boundary — and Loam cannot lay out `pthread_mutex_t` /
       `pthread_cond_t`. Everything movable (tables, keys, clock/sleep) is
       Loam; the rest is the sync core TSan checks every run.
+- [ ] R3.2b Pthread calls as `#[c]` bindings. Scoped 2026-11-16: no further
+      C moves without breaking atomicity or the worker proof. The sections
+      must hold the mutex across `cond_wait` (one C unit); the ring math
+      needs head/count/cap under that same lock; splitting either across a
+      Loam boundary reintroduces exactly the races TSan gates. The
+      `#[c]`-visible surface (tab-lock shims, `block_alloc`, section entry
+      points) is already the minimal binding shape; turning the section
+      *bodies* into `#[c]` calls would just rename C, not move logic.
+      Closed as analyzed — no code change.
 
 **R4. Zeus platform** (`zeus_plat.c`, `zeus_rt.h`).
 
