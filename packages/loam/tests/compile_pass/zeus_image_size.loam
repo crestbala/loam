@@ -1,0 +1,41 @@
+// Intrinsic image sizes: data URIs, remote URLs, and a local file. The
+// numbers are the header parser's (headless, no host hook).
+import "std:fmt"
+import "std:sys"
+import "zeus"
+import "zeus:zeuscore/imagesize"
+
+fn show(label: string, src: string) {
+    let mut width = 0
+    let mut height = 0
+    imagesize.measure(src, &mut width, &mut height)
+    fmt.println(label, width, height)
+}
+
+fn main() {
+    show(
+        "png",
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mO4o6YGAAMKASneDRr/AAAAAElFTkSuQmCC",
+    )
+    show("gif", "data:image/gif;base64,R0lGODlhAgADAA==")
+    show("jpeg", "data:image/jpeg;base64,/9j//gAEAAD/wAALCAAFAAQBAREA")
+    show("jpeg2", "data:image/jpeg;base64,/9j/wgALCAAHAAYBAREA")
+    show("vp8", "data:image/webp;base64,UklGRgAAAABXRUJQVlA4IAAAAAAAAACdASoIAAkA")
+    show("vp8l", "data:image/webp;base64,UklGRgAAAABXRUJQVlA4TAAAAAAvCYACAAAAAAAA")
+    show("vp8x", "data:image/webp;base64,UklGRgAAAABXRUJQVlA4WAAAAAAAAAAACwAADAAA")
+    show("trunc", "data:image/png;base64,iVBORw0KGgo=")
+    show("garbage", "data:application/octet-stream;base64,SEVMTE8hISE=")
+    show("empty", "")
+    show("http", "http://example.com/a.png")
+    show("https", "https://example.com/a.png")
+    show("missing", "/tmp/loam-r44-missing-image")
+    let png = string_from_bytes([]u8 {
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 2,
+        0, 0, 0, 144, 119, 83, 222, 0, 0, 0, 12, 73, 68, 65, 84, 120, 218, 99, 184, 163, 166, 6, 0,
+        3, 10, 1, 41, 222, 13, 26, 255, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+    })
+    let path = "/tmp/loam-r44-px.png"
+    fmt.println("write", sys.write_file(path, png))
+    show("file", path)
+    show("fileurl", "file:///tmp/loam-r44-px.png")
+}

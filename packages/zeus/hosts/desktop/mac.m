@@ -1910,6 +1910,7 @@ static int host_load_image(void) {
     ZEUS_BIND(insert, "loam_zeus_engine_insert");
     ZEUS_BIND(marked, "loam_zeus_engine_marked");
     ZEUS_BIND(picked_image, "loam_zeus_engine_picked_image");
+    ZEUS_BIND(media_picked, "loam_zeus_engine_media_picked");
     ZEUS_BIND(context_click, "loam_zeus_engine_context_click");
     ZEUS_BIND(window_drag_at, "loam_zeus_engine_window_drag_at");
     if (!zeus_app_api.layout || !zeus_app_api.paint) {

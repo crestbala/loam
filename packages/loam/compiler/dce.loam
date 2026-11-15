@@ -50,7 +50,8 @@ fn c_roots(module_name: string) -> []string {
             "engine_layout_gen", "engine_signals_dump", "engine_state_load", "engine_a11y_activate",
             "engine_a11y_focus", "engine_focus_id", "engine_focus_captures_text", "engine_key",
             "engine_key_ev", "engine_key_up", "engine_set_mods", "engine_insert", "engine_marked",
-            "engine_picked_image", "engine_context_click", "engine_window_drag_at", "engine_recover",
+            "engine_picked_image", "engine_media_picked", "engine_context_click",
+            "engine_window_drag_at", "engine_recover",
             "engine_trap_seq", "get", "set", "signal",
         }
     }

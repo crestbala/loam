@@ -85,6 +85,10 @@ static char *dup_ys(loam_str s) {
     return p;
 }
 
+/* Defined with the frame forwarders. Image and media hooks above them use it. */
+static char *cstr_in(loam_str s, char *buf, size_t cap);
+static void cstr_done(char *p, char *buf);
+
 static void measure_default(const char *s, int64_t px, int64_t *w, int64_t *h) {
     size_t n = s ? strlen(s) : 0;
     if (px < 8) px = 8;
@@ -117,160 +121,18 @@ static loam_str pick_dup(const char *src) {
     return loam_str_copy(src, src ? (int64_t)strlen(src) : 0);
 }
 
-/* ---- intrinsic image size fallback ------------------------------------
-   The host reports the size of a decoded image (remote loads answer a frame
-   later). When it has nothing yet — headless layout, a host without the
-   hook, or a source it has not decoded — parse the container header of the
-   common web formats. Layout only needs the aspect ratio to give a
-   widthless `Image` its height, so a best-effort read of the first bytes is
-   enough; 0 means "unknown", which leaves the box exactly as it was. */
-
-static uint32_t be32(const unsigned char *p) {
-    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3];
-}
-static uint32_t le16(const unsigned char *p) {
-    return (uint32_t)p[0] | ((uint32_t)p[1] << 8);
-}
-static uint32_t be16(const unsigned char *p) {
-    return ((uint32_t)p[0] << 8) | p[1];
-}
-
-static int parse_jpeg(const unsigned char *p, size_t n, int64_t *w, int64_t *h) {
-    size_t i = 2;
-    while (i + 9 <= n) {
-        unsigned m;
-        if (p[i] != 0xFF) {
-            i++;
-            continue;
-        }
-        m = p[i + 1];
-        if (m == 0xFF || m == 0x00) {
-            i++;
-            continue;
-        }
-        if (m == 0xD8 || m == 0x01 || (m >= 0xD0 && m <= 0xD7)) {
-            i += 2;
-            continue;
-        }
-        if (m == 0xD9 || m == 0xDA) return 0; /* end / start of scan, no SOF */
-        /* SOF0..SOF15 hold the frame size; C4 (Huffman), C8, CC do not. */
-        if (m >= 0xC0 && m <= 0xCF && m != 0xC4 && m != 0xC8 && m != 0xCC) {
-            *h = (int64_t)be16(p + i + 5);
-            *w = (int64_t)be16(p + i + 7);
-            return *w > 0 && *h > 0;
-        }
-        i += 2 + be16(p + i + 2);
+/* The header parse lives in `zeuscore/imagesize.loam`. This only asks the
+   host hook, and leaves both sides 0 when the host has not registered one. */
+void loam_zeus_plat_image_size(loam_str src, int32_t *w, int32_t *h) {
+    int64_t host_w = 0, host_h = 0;
+    if (plat_image_size_fn) {
+        char stack_buf[256];
+        char *text = cstr_in(src, stack_buf, sizeof stack_buf);
+        plat_image_size_fn(text, &host_w, &host_h);
+        cstr_done(text, stack_buf);
     }
-    return 0;
-}
-
-static int parse_image(const unsigned char *p, size_t n, int64_t *w, int64_t *h) {
-    if (n >= 24 && !memcmp(p, "\x89PNG\r\n\x1a\n", 8)) {
-        *w = (int64_t)be32(p + 16);
-        *h = (int64_t)be32(p + 20);
-        return *w > 0 && *h > 0;
-    }
-    if (n >= 10 && (!memcmp(p, "GIF87a", 6) || !memcmp(p, "GIF89a", 6))) {
-        *w = (int64_t)le16(p + 6);
-        *h = (int64_t)le16(p + 8);
-        return *w > 0 && *h > 0;
-    }
-    if (n >= 4 && p[0] == 0xFF && p[1] == 0xD8) return parse_jpeg(p, n, w, h);
-    if (n >= 30 && !memcmp(p, "RIFF", 4) && !memcmp(p + 8, "WEBP", 4)) {
-        const unsigned char *q = p + 20;
-        if (!memcmp(p + 12, "VP8X", 4)) { /* extended: 24-bit le canvas - 1 */
-            *w = (int64_t)(q[4] | (q[5] << 8) | ((uint32_t)q[6] << 16)) + 1;
-            *h = (int64_t)(q[7] | (q[8] << 8) | ((uint32_t)q[9] << 16)) + 1;
-            return 1;
-        }
-        if (!memcmp(p + 12, "VP8 ", 4)) { /* lossy: start code, 14-bit dims */
-            if (q[3] != 0x9D || q[4] != 0x01 || q[5] != 0x2A) return 0;
-            *w = (int64_t)(le16(q + 6) & 0x3FFF);
-            *h = (int64_t)(le16(q + 8) & 0x3FFF);
-            return *w > 0 && *h > 0;
-        }
-        if (!memcmp(p + 12, "VP8L", 4) && n >= 25 && q[0] == 0x2F) { /* lossless */
-            uint32_t bits = (uint32_t)q[1] | ((uint32_t)q[2] << 8) | ((uint32_t)q[3] << 16) |
-                            ((uint32_t)q[4] << 24);
-            *w = (int64_t)(bits & 0x3FFF) + 1;
-            *h = (int64_t)((bits >> 14) & 0x3FFF) + 1;
-            return 1;
-        }
-    }
-    return 0;
-}
-
-static int b64_val(int c) {
-    if (c >= 'A' && c <= 'Z') return c - 'A';
-    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
-    if (c >= '0' && c <= '9') return c - '0' + 52;
-    if (c == '+') return 62;
-    if (c == '/') return 63;
-    return -1;
-}
-
-/* 1 when `p` is a prefix of `s`; stops at `p`'s end, so a shorter `s` cannot
-   be read past its terminator. */
-static int is_prefix(const char *s, const char *p) {
-    while (*p) {
-        if (*s != *p) return 0;
-        s++;
-        p++;
-    }
-    return 1;
-}
-
-/* Base64 body of a `data:` URI → the first `cap` decoded bytes. */
-static size_t data_head(const char *uri, unsigned char *out, size_t cap) {
-    const char *p = uri;
-    size_t n = 0;
-    unsigned acc = 0;
-    int bits = 0;
-    while (*p) {
-        if (is_prefix(p, "base64,")) {
-            p += 7;
-            break;
-        }
-        p++;
-    }
-    if (!*p) return 0;
-    for (; *p && n < cap; p++) {
-        int v = b64_val((unsigned char)*p);
-        if (v < 0) continue;
-        acc = (acc << 6) | (unsigned)v;
-        bits += 6;
-        if (bits >= 8) {
-            bits -= 8;
-            out[n++] = (unsigned char)((acc >> bits) & 0xFF);
-        }
-    }
-    return n;
-}
-
-/* Best-effort size of a `data:` URI or a local file (never a remote URL).
-   wasm has no filesystem and decodes through its own loader hook, so only
-   the inline-`data:` path is compiled there. */
-static int parse_source(const char *src, int64_t *w, int64_t *h) {
-    unsigned char buf[4096];
-    size_t n = 0;
-    if (!src || !src[0]) return 0;
-    if (is_prefix(src, "data:")) {
-        n = data_head(src, buf, sizeof buf);
-    }
-#ifndef __wasm32__
-    else {
-        FILE *f;
-        const char *path = src;
-        if (is_prefix(src, "http://") || is_prefix(src, "https://")) return 0;
-        if (is_prefix(src, "file://")) path = src + 7;
-        f = fopen(path, "rb");
-        if (!f) return 0;
-        n = fread(buf, 1, sizeof buf, f);
-        fclose(f);
-    }
-#endif
-    if (n == 0) return 0;
-    return parse_image(buf, n, w, h);
+    if (w) *w = (int32_t)host_w;
+    if (h) *h = (int32_t)host_h;
 }
 
 loam_str loam_zeus_plat_pick_image(int32_t *w, int32_t *h) {
@@ -281,16 +143,6 @@ loam_str loam_zeus_plat_pick_image(int32_t *w, int32_t *h) {
     if (w) *w = (int32_t)lw;
     if (h) *h = (int32_t)lh;
     return pick_dup(buf);
-}
-
-void loam_zeus_plat_image_size(loam_str src, int32_t *w, int32_t *h) {
-    char *p = dup_ys(src);
-    int64_t lw = 0, lh = 0;
-    if (plat_image_size_fn) plat_image_size_fn(p, &lw, &lh);
-    if (lw <= 0 || lh <= 0) parse_source(p, &lw, &lh);
-    free(p);
-    if (w) *w = (int32_t)lw;
-    if (h) *h = (int32_t)lh;
 }
 
 void zeus_picked_image(const char *src, int64_t w, int64_t h) {
@@ -1304,232 +1156,17 @@ loam_str loam_platform_plat_clipboard_last(void) {
     return loam_str_copy(clip_last, (int64_t)strlen(clip_last));
 }
 
-/* ---- media playback (`plat_media_*`) ------------------------------------
-   The host plays; this file only routes. Codes match `zeus_media.loam`:
-   cmd 1 play, 2 pause, 3 seek ms, 4 rate %, 5 volume %, 6 mute, 7 loop,
-   8 close; get 1 position ms, 2 duration ms, 3 state, 4/5 video size,
-   6 buffered end ms, 7 picks so far. State 0 empty, 1 loading, 2 paused,
-   3 playing, 4 ended, 5 error, 6 waiting for data.
-
-   The web keeps its players and its pick result in JS (an import per verb).
-   A native host registers a `ZeusMedia` table; with none (headless, Linux,
-   iOS, Android) a null player stands in so the UI's state logic still runs. */
-#define MEDIA_SLOTS 8
-
-#ifdef __wasm32__
-__attribute__((import_module("zeus"), import_name("media_open")))
-int32_t zeus_js_media_open(int32_t slot, const char *src);
-__attribute__((import_module("zeus"), import_name("media_cmd")))
-void zeus_js_media_cmd(int32_t slot, int32_t cmd, int32_t value);
-__attribute__((import_module("zeus"), import_name("media_get")))
-int32_t zeus_js_media_get(int32_t slot, int32_t what);
-__attribute__((import_module("zeus"), import_name("media_text")))
-int32_t zeus_js_media_text(int32_t slot, int32_t what, char *out, int32_t cap);
-__attribute__((import_module("zeus"), import_name("media_pick")))
-void zeus_js_media_pick(void);
-__attribute__((import_module("zeus"), import_name("fullscreen")))
-int32_t zeus_js_fullscreen(int32_t on);
-#endif
-
+/* Media state (the null player, the pick queue, fullscreen) lives in
+   `zeuscore/mediastate.loam`. This file only stores the host table and
+   forwards each callback. `zeus_media_picked` copies both C strings and
+   lets Loam decide whether to redraw. */
 static ZeusMedia media_host;
-static int64_t null_state[MEDIA_SLOTS];
-static int64_t null_pos[MEDIA_SLOTS];
-static int64_t null_full;
-/* One published pick, plus a queue. A drop of several files used to overwrite
-   the single slot, so only the last survived. `media_picks` publishes the next
-   queued file once the current one has been read (or once the app has already
-   been told the current count and ignored it). */
-#define PICK_Q 64
-static int64_t picked_seq;
-static int64_t picked_told = -1;
-static int picked_taken;
-static char *picked_text;
-static char *pick_q[PICK_Q];
-static int pick_q_n;
 
 void zeus_set_media(ZeusMedia media) { media_host = media; }
 
-static char *pack_pick(const char *name, const char *src) {
-    size_t a = name ? strlen(name) : 0, b = src ? strlen(src) : 0;
-    char *p = (char *)malloc(a + b + 2);
-    if (!p) return NULL;
-    if (a) memcpy(p, name, a);
-    p[a] = '\n';
-    if (b) memcpy(p + a + 1, src, b);
-    p[a + 1 + b] = 0;
-    return p;
-}
-
-static void publish_pick(char *owned, int redraw) {
-    free(picked_text);
-    picked_text = owned;
-    picked_seq++;
-    picked_taken = 0;
-    if (redraw && plat_redraw) plat_redraw();
-}
-
-static void promote_pick(void) {
-    char *p;
-    if (pick_q_n <= 0) return;
-    p = pick_q[0];
-    pick_q_n--;
-    if (pick_q_n > 0) memmove(pick_q, pick_q + 1, (size_t)pick_q_n * sizeof(char *));
-    publish_pick(p, 0);
-}
-
 void zeus_media_picked(const char *name, const char *src) {
-    char *p = pack_pick(name, src);
-    if (!p) return;
-    if (!picked_text) {
-        publish_pick(p, 1);
-        return;
-    }
-    if (pick_q_n < PICK_Q) {
-        pick_q[pick_q_n++] = p;
-        return;
-    }
-    free(p);
-}
-
-static int media_slot_ok(int64_t slot) { return slot >= 0 && slot < MEDIA_SLOTS; }
-
-int64_t loam_platform_plat_media_open(int64_t slot, loam_str src) {
-    char *p;
-    int64_t r = 0;
-    if (!media_slot_ok(slot) || slot == 0) return 0;
-    p = dup_ys(src);
-#ifdef __wasm32__
-    r = zeus_js_media_open((int32_t)slot, p);
-#else
-    if (media_host.open) {
-        r = media_host.open(slot, p);
-    } else {
-        null_state[slot] = p[0] ? 2 : 0;
-        null_pos[slot] = 0;
-        r = p[0] ? 1 : 0;
-    }
-#endif
-    free(p);
-    return r;
-}
-
-void loam_platform_plat_media_cmd(int64_t slot, int64_t cmd, int64_t value) {
-    if (!media_slot_ok(slot)) return;
-#ifdef __wasm32__
-    zeus_js_media_cmd((int32_t)slot, (int32_t)cmd, (int32_t)value);
-#else
-    if (media_host.cmd) {
-        media_host.cmd(slot, cmd, value);
-        return;
-    }
-    if (null_state[slot] == 0) return;
-    if (cmd == 1) null_state[slot] = 3;
-    else if (cmd == 2) null_state[slot] = 2;
-    else if (cmd == 3) null_pos[slot] = value < 0 ? 0 : value;
-    else if (cmd == 8) null_state[slot] = 0;
-#endif
-}
-
-int64_t loam_platform_plat_media_get(int64_t slot, int64_t what) {
-    if (!media_slot_ok(slot)) return 0;
-#ifdef __wasm32__
-    return zeus_js_media_get((int32_t)slot, (int32_t)what);
-#else
-    if (what == 7) {
-        /* Advance only when the app has read this file, or has already been
-           told its count and left it (a start-up snapshot). Otherwise the
-           first unread file would be skipped. */
-        if (pick_q_n > 0 && (picked_taken || picked_told == picked_seq))
-            promote_pick();
-        picked_told = picked_seq;
-        return picked_seq;
-    }
-    if (media_host.get) return media_host.get(slot, what);
-    if (what == 1) return null_pos[slot];
-    if (what == 3) return null_state[slot];
-    return 0;
-#endif
-}
-
-loam_str loam_platform_plat_media_text(int64_t slot, int64_t what) {
-    char buf[4096];
-    size_t n;
-    buf[0] = 0;
-#ifdef __wasm32__
-    {
-        int32_t got = zeus_js_media_text((int32_t)slot, (int32_t)what, buf, (int32_t)sizeof buf);
-        if (got < 0) got = 0;
-        if (got >= (int32_t)sizeof buf) got = (int32_t)sizeof buf - 1;
-        buf[got] = 0;
-    }
-#else
-    if (what == 1) {
-        picked_taken = 1;
-        if (picked_text) {
-            strncpy(buf, picked_text, sizeof buf - 1);
-            buf[sizeof buf - 1] = 0;
-        }
-    } else if (media_host.text && media_slot_ok(slot)) {
-        media_host.text(slot, what, buf, (int)sizeof buf);
-        buf[sizeof buf - 1] = 0;
-    }
-#endif
-    n = strlen(buf);
-    return loam_str_copy(buf, (int64_t)n);
-}
-
-void loam_platform_plat_media_dropped(loam_str name, loam_str src) {
-    char *n = dup_ys(name);
-    char *s = dup_ys(src);
-    zeus_media_picked(n, s);
-    free(n);
-    free(s);
-}
-
-void loam_platform_plat_media_pick(void) {
-#ifdef __wasm32__
-    zeus_js_media_pick();
-#else
-    if (media_host.pick) media_host.pick();
-#endif
-}
-
-void loam_platform_plat_media_pick_audio(void) {
-#ifdef __wasm32__
-    zeus_js_media_pick();
-#else
-    if (media_host.pick_audio) media_host.pick_audio();
-    else if (media_host.pick) media_host.pick();
-#endif
-}
-
-int64_t loam_platform_plat_media_voice(int64_t what, loam_str src, loam_str out) {
-#ifdef __wasm32__
-    (void)what;
-    (void)src;
-    (void)out;
-    return 0;
-#else
-    char *s, *o;
-    int64_t started = 0;
-    if (!media_host.voice) return 0;
-    s = dup_ys(src);
-    o = dup_ys(out);
-    if (s && o) started = media_host.voice(what, s, o);
-    free(s);
-    free(o);
-    return started;
-#endif
-}
-
-int64_t loam_platform_plat_fullscreen(int64_t on) {
-#ifdef __wasm32__
-    return zeus_js_fullscreen((int32_t)on);
-#else
-    if (media_host.fullscreen) return media_host.fullscreen(on);
-    if (on >= 0) null_full = on ? 1 : 0;
-    return null_full;
-#endif
+    loam_zeus_engine_media_picked(loam_str_copy(name, name ? (int64_t)strlen(name) : 0),
+                                  loam_str_copy(src, src ? (int64_t)strlen(src) : 0));
 }
 
 /* 1 when shortcuts follow Apple conventions (⌘ rather than Ctrl): macOS and
@@ -2305,3 +1942,165 @@ void loam_replay_draw_path(const loam_vec *path, int32_t start, int32_t n, int32
 }
 #undef ZD
 
+
+/* --- media host forwarders (`zeuscore/mediastate.loam`) -------------------
+   One call each, no player state. Strings are NUL-terminated in a stack
+   buffer when they fit (`cstr_in`). Wasm uses the same JS imports the old
+   `plat_media_*` functions did. */
+#ifdef __wasm32__
+__attribute__((import_module("zeus"), import_name("media_open")))
+int32_t zeus_js_media_open(int32_t slot, const char *src);
+__attribute__((import_module("zeus"), import_name("media_cmd")))
+void zeus_js_media_cmd(int32_t slot, int32_t cmd, int32_t value);
+__attribute__((import_module("zeus"), import_name("media_get")))
+int32_t zeus_js_media_get(int32_t slot, int32_t what);
+__attribute__((import_module("zeus"), import_name("media_text")))
+int32_t zeus_js_media_text(int32_t slot, int32_t what, char *out, int32_t cap);
+__attribute__((import_module("zeus"), import_name("media_pick")))
+void zeus_js_media_pick(void);
+__attribute__((import_module("zeus"), import_name("fullscreen")))
+int32_t zeus_js_fullscreen(int32_t on);
+#endif
+
+int32_t loam_mediastate_media_host_caps(void) {
+#ifdef __wasm32__
+    return 256;
+#else
+    int32_t bits = 0;
+    if (media_host.open) bits |= 1;
+    if (media_host.cmd) bits |= 2;
+    if (media_host.get) bits |= 4;
+    if (media_host.text) bits |= 8;
+    if (media_host.pick) bits |= 16;
+    if (media_host.pick_audio) bits |= 32;
+    if (media_host.voice) bits |= 64;
+    if (media_host.fullscreen) bits |= 128;
+    return bits;
+#endif
+}
+
+int32_t loam_imagesize_image_host_bound(void) {
+    return plat_image_size_fn ? 1 : 0;
+}
+
+loam_vec loam_imagesize_read_head(loam_str path, int32_t cap) {
+#ifdef __wasm32__
+    (void)path;
+    (void)cap;
+    return loam_vec_new();
+#else
+    loam_vec out = loam_vec_new();
+    char stack_buf[4096];
+    char *text;
+    FILE *file;
+    size_t got;
+    if (cap <= 0) return out;
+    text = cstr_in(path, stack_buf, sizeof stack_buf);
+    file = fopen(text, "rb");
+    cstr_done(text, stack_buf);
+    if (!file) return out;
+    loam_vec_reserve(&out, (int64_t)cap, 1, "imagesize.read_head", 0);
+    got = fread(out.ptr, 1, (size_t)cap, file);
+    fclose(file);
+    out.len = (int64_t)got;
+    return out;
+#endif
+}
+
+int32_t loam_mediastate_host_open(int32_t slot, loam_str src) {
+    char stack_buf[256];
+    char *text = cstr_in(src, stack_buf, sizeof stack_buf);
+    int32_t opened = 0;
+#ifdef __wasm32__
+    opened = zeus_js_media_open(slot, text);
+#else
+    if (media_host.open) opened = (int32_t)media_host.open((int64_t)slot, text);
+#endif
+    cstr_done(text, stack_buf);
+    return opened;
+}
+
+void loam_mediastate_host_cmd(int32_t slot, int32_t command, int32_t value) {
+#ifdef __wasm32__
+    zeus_js_media_cmd(slot, command, value);
+#else
+    if (media_host.cmd) media_host.cmd((int64_t)slot, (int64_t)command, (int64_t)value);
+#endif
+}
+
+int32_t loam_mediastate_host_get(int32_t slot, int32_t what) {
+#ifdef __wasm32__
+    return zeus_js_media_get(slot, what);
+#else
+    if (!media_host.get) return 0;
+    return (int32_t)media_host.get((int64_t)slot, (int64_t)what);
+#endif
+}
+
+loam_str loam_mediastate_host_text(int32_t slot, int32_t what) {
+    char buffer[4096];
+    buffer[0] = 0;
+#ifdef __wasm32__
+    {
+        int32_t got = zeus_js_media_text(slot, what, buffer, (int32_t)sizeof buffer);
+        if (got < 0) got = 0;
+        if (got >= (int32_t)sizeof buffer) got = (int32_t)sizeof buffer - 1;
+        buffer[got] = 0;
+    }
+#else
+    if (media_host.text) {
+        media_host.text((int64_t)slot, (int64_t)what, buffer, (int)sizeof buffer);
+        buffer[sizeof buffer - 1] = 0;
+    }
+#endif
+    return loam_str_copy(buffer, (int64_t)strlen(buffer));
+}
+
+void loam_mediastate_host_pick(void) {
+#ifdef __wasm32__
+    zeus_js_media_pick();
+#else
+    if (media_host.pick) media_host.pick();
+#endif
+}
+
+void loam_mediastate_host_pick_audio(void) {
+#ifdef __wasm32__
+    zeus_js_media_pick();
+#else
+    if (media_host.pick_audio) media_host.pick_audio();
+#endif
+}
+
+int32_t loam_mediastate_host_voice(int32_t what, loam_str src, loam_str out_path) {
+#ifdef __wasm32__
+    (void)what;
+    (void)src;
+    (void)out_path;
+    return 0;
+#else
+    char src_buf[256], out_buf[256];
+    char *src_text, *out_text;
+    int32_t started = 0;
+    if (!media_host.voice) return 0;
+    src_text = cstr_in(src, src_buf, sizeof src_buf);
+    out_text = cstr_in(out_path, out_buf, sizeof out_buf);
+    started = (int32_t)media_host.voice((int64_t)what, src_text, out_text);
+    cstr_done(src_text, src_buf);
+    cstr_done(out_text, out_buf);
+    return started;
+#endif
+}
+
+int32_t loam_mediastate_host_fullscreen(int32_t on) {
+#ifdef __wasm32__
+    return zeus_js_fullscreen(on);
+#else
+    if (!media_host.fullscreen) return 0;
+    return (int32_t)media_host.fullscreen((int64_t)on);
+#endif
+}
+
+void loam_mediastate_host_redraw(void) {
+    if (plat_redraw) plat_redraw();
+}

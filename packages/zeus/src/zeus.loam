@@ -95,6 +95,7 @@
 
 import "zeuscore/geometry.loam"
 import "zeuscore/platform.loam"
+import "zeuscore/mediastate.loam"
 import "zeuscore/runtime.loam"
 import "zeuscore/memory.loam"
 import "zeuscore/arena.loam"
@@ -1991,4 +1992,10 @@ fn engine_picked_image(src: string, w: int, h: int) {
         pick_w = Signal { id: 0 }
         pick_h = Signal { id: 0 }
     }
+}
+
+/** *A picker or a drop produced one file. The queue and the redraw live in */
+/** *`mediastate`. */
+fn engine_media_picked(name: string, src: string) {
+    mediastate.picked(name, src)
 }
