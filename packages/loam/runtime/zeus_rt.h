@@ -341,15 +341,16 @@ int32_t loam_runtime_intern_kind_mismatch_count(void);
 int32_t loam_runtime_intern_live_count(void);
 void loam_runtime_edit_reset(int64_t slot);
 void loam_runtime_intern_free(int64_t id);
-/* Recoverable trap (`zeus.Boundary`): "" on success, else the panic message. */
-loam_str loam_runtime_boundary(loam_fn build);
-/* Guarded handler invoke: "" when `id` returned, else the panic message. */
-loam_str loam_runtime_guard_fn(int64_t id);
-/* The last panic's message (static storage). */
-loam_str loam_runtime_trap_msg(void);
-/* Boundary `seq` trapped during a previous instance's startup (wasm restart):
-   its message, or "". `zeus_boundary_preset_add` records one. */
-loam_str loam_runtime_boundary_preset(int64_t seq);
+/* Recoverable-trap kernel. The policy (which slot, the preset table) is
+   `zeuscore/runtime.loam`. These are the calls it cannot make itself. */
+loam_str loam_runtime_trap_guard(loam_fn build);
+int32_t loam_runtime_intern_limit(void);
+int32_t loam_runtime_slot_bits(int32_t id);
+void loam_runtime_note_kind_mismatch(int32_t id, int32_t want, int32_t got);
+loam_str loam_runtime_guard_slot(int32_t id);
+loam_str loam_runtime_panic_text(void);
+/* Startup preset, filled by the web loader before `main`. */
+void loam_runtime_preset_store(int32_t seq, loam_str msg);
 void zeus_boundary_preset_add(int32_t seq, const char *msg, size_t n);
 /* Router history mirror (host back stack). */
 void loam_platform_plat_history_push(loam_str path);

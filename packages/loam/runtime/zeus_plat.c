@@ -1282,16 +1282,20 @@ static void intern_fn_reset(void) {
 /* Refuse a call through a signature the slot was not interned with. Counted,
    and said out loud the first few times: a guard that hides a real aliasing
    bug is worse than the bug, and silence here would be easy to miss. */
-static int intern_kind_matches(int id, int want) {
-    if ((int)click_fns[id].kind == want) return 1;
+static void note_kind_mismatch(int id, int want, int got) {
     intern_kind_mismatches++;
     if (intern_kind_reported < 8) {
         intern_kind_reported++;
         fprintf(stderr,
                 "zeus: interned handler %d invoked as kind %d but interned as kind %d"
                 " — refusing the call\n",
-                id, want, (int)click_fns[id].kind);
+                id, want, got);
     }
+}
+
+static int intern_kind_matches(int id, int want) {
+    if ((int)click_fns[id].kind == want) return 1;
+    note_kind_mismatch(id, want, (int)click_fns[id].kind);
     return 0;
 }
 
@@ -1532,66 +1536,49 @@ int zeus_focus_captures_text(void) {
 
 /* --- recoverable traps (zeus.Boundary) ---
 
-   The arm is a runtime verb now (`loam_trap_guard` in loam_rt.h), so this seam
-   is one line. It used to carry the setjmp arm plus a copy of the trap-state
-   contract in a comment, which made Zeuss the owner of a language-runtime
-   facility. The verb is generic: any library that wants a recoverable region
-   calls the same one. On wasm it runs the body unprotected: a trap unwinds to
-   the host, which calls `zeus_recover` (see `engine_recover`). */
-loam_str loam_runtime_boundary(loam_fn build) {
+   The policy is `zeuscore/runtime.loam`. This is the arm, the intern-table
+   reads it needs, and the panic buffer. `setjmp` stays in `loam_trap_guard`
+   (loam_rt.h) until R6.2. On wasm that verb runs the body unprotected. */
+
+loam_str loam_runtime_trap_guard(loam_fn build) {
     return loam_trap_guard(build);
 }
 
-/* Invoke interned void handler `id` under a trap arm: "" when it returned, else
-   the panic message. A handler or effect inside a `Boundary` runs through this,
-   so a trap swaps that boundary to its fallback instead of killing the app. */
-loam_str loam_runtime_guard_fn(int64_t id) {
-    loam_str none = { "", 0, 0 };
-    if (id <= 0 || id >= nclick_fns) return none;
-    if (!click_fns[id].h.fn) return none;
-    if (!intern_kind_matches((int)id, ZEUS_FN_VOID)) return none;
+int32_t loam_runtime_intern_limit(void) {
+    return nclick_fns;
+}
+
+int32_t loam_runtime_slot_bits(int32_t id) {
+    return (click_fns[id].h.fn ? 1 : 0) | ((int32_t)click_fns[id].kind << 8);
+}
+
+void loam_runtime_note_kind_mismatch(int32_t id, int32_t want, int32_t got) {
+    note_kind_mismatch(id, want, got);
+}
+
+loam_str loam_runtime_guard_slot(int32_t id) {
     return loam_trap_guard(click_fns[id].h);
 }
 
-/* Boundaries a previous wasm instance trapped in during startup, pre-seeded
-   by the loader before `zeus_start`. Kept here rather than in Loam because
-   module globals are initialised when `main` starts. */
-#define ZEUS_BND_PRESETS 16
-static int32_t g_bnd_pre_seq[ZEUS_BND_PRESETS];
-static loam_str g_bnd_pre_msg[ZEUS_BND_PRESETS];
-static int g_bnd_pre_n;
-
-void zeus_boundary_preset_add(int32_t seq, const char *msg, size_t n) {
-    char *p;
-    if (g_bnd_pre_n >= ZEUS_BND_PRESETS) return;
-    p = (char *)malloc(n + 1);
-    if (!p) return;
-    if (n) memcpy(p, msg, n);
-    p[n] = 0;
-    g_bnd_pre_seq[g_bnd_pre_n] = seq;
-    g_bnd_pre_msg[g_bnd_pre_n].ptr = p;
-    g_bnd_pre_msg[g_bnd_pre_n].len = (int64_t)n;
-    g_bnd_pre_msg[g_bnd_pre_n].own = 0;
-    g_bnd_pre_n++;
-}
-
-loam_str loam_runtime_boundary_preset(int64_t seq) {
-    loam_str none = { "", 0, 0 };
-    int i;
-    for (i = 0; i < g_bnd_pre_n; i++) {
-        if (g_bnd_pre_seq[i] == (int32_t)seq) return g_bnd_pre_msg[i];
-    }
-    return none;
-}
-
-/* The message of the last panic (empty before any). Static storage: copy it
-   before another panic can overwrite it. */
-loam_str loam_runtime_trap_msg(void) {
+loam_str loam_runtime_panic_text(void) {
     loam_str msg;
     msg.ptr = loam_jmp_msg;
     msg.len = (int64_t)strlen(loam_jmp_msg);
     msg.own = 0;
     return msg;
+}
+
+void zeus_boundary_preset_add(int32_t seq, const char *msg, size_t n) {
+    loam_str owned;
+    if (!msg) {
+        msg = "";
+        n = 0;
+    }
+    /* The parameter is borrowed: the store retains what it keeps, and drops
+       nothing. Release the temporary here, including the one past the cap. */
+    owned = loam_str_copy(msg, (int64_t)n);
+    loam_runtime_preset_store(seq, owned);
+    loam_str_release(&owned);
 }
 
 /* Router host entry points. A build that never imports `std:router` has no

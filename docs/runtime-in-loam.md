@@ -190,7 +190,7 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       `wasm_inc`), hosts 4,871, vendored 346,122 (sqlite, monocypher, raygui
       and the generated tree-sitter parser).
 - [x] R0.2 The budget: `RUNTIME_LINE_BUDGET` in `nob.loam`, set at 9,939
-      and lowered by each step since (now **7,216**, after R4.4).
+      and lowered by each step since (now **7,204**, after R4.3).
       `nob trusted` and the unfiltered `nob test` fail if `runtime/` grows
       past it. Each step below lowers it to its new count in the same
       change.
@@ -896,7 +896,42 @@ done, so every R3 step is checked by `thread_tsan`).
       `server_split`, `modules` green; `zeus_plat.c` builds for x86_64
       glibc / aarch64 musl Linux with `-Wall`, no warnings.
       **Runtime: 7,612 → 7,410** (−202).
-- [ ] R4.3 Recoverable traps (needs R6.2's trap path).
+- [x] R4.3 Recoverable traps. Done 2026-11-15. The arm stays in
+      `loam_rt.h` until R6.2 (`loam_trap_guard`, `setjmp`, `loam_jmp_msg`).
+      What moved is the policy. `guard_fn` decides in Loam: an id outside
+      the intern table, a slot with no function, and a slot of another
+      signature are `""`, and only the last of those is counted and logged.
+      `boundary` and `trap_msg` are the same calls they were. The wasm
+      restart table is 16 Loam slots (`preset_seq`, `preset_text`,
+      `preset_count`), constant initializers, so `__init` does not write
+      them and a store from the web loader before `main` is still there.
+      `preset_store` is a DCE c_root of `runtime` (only
+      `zeus_boundary_preset_add` calls it). C keeps the intern-table
+      storage, the mismatch counter and its stderr line, and one-line
+      forwarders: the arm, the slot bits, the panic-buffer view, and the
+      preset add (copy, call, release — the string parameter is borrowed
+      and the store retains what it keeps). A preset read retains the
+      slot, so the text survives the caller dropping its copy. Fixture
+      `zeus_trap_guard` was printed by HEAD's compiler (`ZEUS_HEADLESS=1`)
+      before the port and still matches. Benchmark vs HEAD, release
+      `-O1`, no Cocoa host, 2,000,000 calls, 5 rounds (ms, new vs HEAD).
+      A void handler that returns: guard 487–501 vs 485–494, boundary
+      477–501 vs 477–479; the medians are 489 vs 486 and 479 vs 477,
+      and the sums are 0.
+      Binaries (new vs HEAD): tiny `fmt.println(42)` 33,688 both, gallery
+      2,079,160 vs 2,078,960 (+200), greeninfer 1,071,912 vs 1,071,704
+      (+208). ASan+UBSan on the fixture and on a pre-main preset probe
+      (first match, empty message, embedded NUL, a `{{` in the text, the
+      16-cap): stdout matches, sanitizer stderr empty. Seed 5,132,477 →
+      5,133,189 bytes, seed = stage 1 = stage 2. Suite: zeus batch (296,
+      including the 59 draw goldens), `compile_fail` (164); `wasm_smoke`,
+      `wasm_trap`, `wasm_float`, `ownership_asan`, `android_project`,
+      `cost`, `lsp`, `fresh_cache`, `arena_lint`, `api_freeze`,
+      `one_surface`, `stale_capture`, `server_split`, `modules`,
+      `design_lint`, `loader_cases`, `thread_tsan` green; `zeus_plat.c`
+      builds for x86_64 glibc / aarch64 musl Linux with `-Wall`, no
+      warnings; wasm32 `zeus_cell` warning-free.
+      **Runtime: 7,216 → 7,204** (−12).
 - [x] R4.4 Image sizes and media state. Done 2026-11-15.
       `zeuscore/imagesize.loam` reads a PNG, GIF, JPEG (SOF scan, including
       progressive SOF2) or WebP (VP8X, VP8, VP8L) header. A `data:` URI

@@ -1,0 +1,28 @@
+// Recoverable traps through the runtime seam: a handler that returns, one
+// that panics, ids the table refuses, and a build under the same arm. The
+// numbers are HEAD's C seam (headless). A preset with nothing seeded is empty.
+import "std:fmt"
+import "zeus"
+import "zeus:zeuscore/runtime"
+
+fn main() {
+    let ok_id = runtime.intern_fn(fn() {})
+    let bad_id = runtime.intern_fn(fn() {
+        let a = []int { 1 }
+        let x = a[4]
+        fmt.println(x)
+    })
+    let quiet = runtime.guard_fn(ok_id)
+    fmt.println("quiet", quiet.len)
+    let caught = runtime.guard_fn(bad_id)
+    fmt.println("caught", caught)
+    fmt.println("zero", runtime.guard_fn(0).len)
+    fmt.println("miss", runtime.guard_fn(80).len)
+    fmt.println("pre", runtime.boundary_preset(1).len)
+    let built = runtime.boundary(fn() { panic("boundary-boom") })
+    fmt.println("built", built)
+    fmt.println("msg", runtime.trap_msg())
+    let clean = runtime.boundary(fn() {})
+    fmt.println("clean", clean.len)
+    fmt.println("after", runtime.trap_msg().len)
+}
