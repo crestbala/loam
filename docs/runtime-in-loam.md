@@ -766,8 +766,12 @@ done, so every R3 step is checked by `thread_tsan`).
       (`clock_gettime`, `nanosleep`, `loam_sys_errno`) are allowlisted for
       workers (module-private to `std:async`, so only the wrappers name
       them). Probe: a worker that sleeps then sends, drained on the UI.
-- [ ] R3.2 The channel queues in Loam; mutex, condition variable and thread
-      start are `#[c]` pthread bindings, which a thread worker may call.
+- [x] R3.2 The channel queues in Loam; mutex, condition variable and thread
+      start stay C by the §2 rule (lock and condvar calls stay in the core).
+      Done 2026-11-16 via R3.2a below: the table and S0 keys are Loam, the
+      per-op sections stay one atomic C unit each. Turning the section
+      *bodies* into `#[c]` calls would just rename C, not move logic
+      (closed as analyzed — no code change).
 - [x] R3.2a The channel id table and S0 keys in Loam. Done 2026-11-16.
       `ch_slots` (`cookie` + `key`) in `std:thread` under a C table lock
       (`loam_ch_tab_mtx`, beside `loam_thread_mtx` — the lock itself stays
@@ -781,22 +785,14 @@ done, so every R3 step is checked by `thread_tsan`).
       inert (`memset` zero-fill stays, over the Loam table's ids). 5-way
       TSan clean, forge traps byte-identical, worker-sleep probe green.
       A channel-free binary links no table. **Runtime: 7,994 → 7,981** (−13).
-- [x] R3 done. The six `do_*` sections, `block_alloc`, the tab-lock shims,
-      spawn/entry/`running` stay C by the §2 rule (lock and condvar calls
-      stay in the core): each section is an atomic lock+wait+memcpy+signal
-      unit — `cond_wait` must hold the mutex, so it cannot split across a
-      Loam boundary — and Loam cannot lay out `pthread_mutex_t` /
-      `pthread_cond_t`. Everything movable (tables, keys, clock/sleep) is
-      Loam; the rest is the sync core TSan checks every run.
-- [ ] R3.2b Pthread calls as `#[c]` bindings. Scoped 2026-11-16: no further
-      C moves without breaking atomicity or the worker proof. The sections
-      must hold the mutex across `cond_wait` (one C unit); the ring math
-      needs head/count/cap under that same lock; splitting either across a
-      Loam boundary reintroduces exactly the races TSan gates. The
-      `#[c]`-visible surface (tab-lock shims, `block_alloc`, section entry
-      points) is already the minimal binding shape; turning the section
-      *bodies* into `#[c]` calls would just rename C, not move logic.
-      Closed as analyzed — no code change.
+- [x] R3.2b Pthread calls as `#[c]` bindings. Scoped 2026-11-16: no further
+      C moves without breaking atomicity or the worker proof — folded into
+      the R3.2 item above. The sections must hold the mutex across
+      `cond_wait` (one C unit); the ring math needs head/count/cap under
+      that same lock; splitting either across a Loam boundary reintroduces
+      exactly the races TSan gates. The `#[c]`-visible surface (tab-lock
+      shims, `block_alloc`, section entry points) is already the minimal
+      binding shape. Closed as analyzed — no code change.
 
 **R4. Zeus platform** (`zeus_plat.c`, `zeus_rt.h`).
 
@@ -810,6 +806,12 @@ done, so every R3 step is checked by `thread_tsan`).
       byte-identical, wasm32 `trap_app` warning-free. **Runtime: 7,981 →
       7,961** (−20).
 - [ ] R4.1b The signal byte store as a `[]u8` arena with S0's typed cells.
+      Staged, not landed: `memory.loam` declares the Loam cell shell and the
+      `rt_mem_*` `#[c]` bindings (by-value `[]u8`, as `c_fread`), and C
+      provides `loam_platform_rt_mem_*` — but no caller routes signal bytes
+      through them yet (`zeus_cell` exercises the shell over the C cells).
+      The remaining cut is codegen lowering `__sig_*` byte moves through the
+      Loam arena, R3.1b-style.
 - [ ] R4.2 Frame and trace logic.
 - [ ] R4.3 Recoverable traps (needs R6.2's trap path).
 - [ ] R4.4 Image sizes and media state.
