@@ -6,12 +6,13 @@
 
 import "platform.loam"
 import "runtime.loam"
+import "sigcells.loam"
 
 let mut stack: []int = []int {}
 let mut fn_ids: []int = []int {}
 let mut node_ids: []int = []int {}
 /* Dependency edges, an indexed pool. Edge `e` says effect `e_eff[e]` read
-   signal `e_sig[e]`; `e_gen[e]` is the generation `runtime.sig_gen` reported when
+   signal `e_sig[e]`; `e_gen[e]` is the generation `sigcells.gen` reported when
    it was recorded (a lazy memo compares it against the live one to skip a
    recompute whose inputs did not move — the check-clean pass). Every edge is
    on two doubly linked lists — its signal's readers and its effect's inputs —
@@ -575,7 +576,7 @@ fn note_read(signal_id: int) {
             e = e_en[e]
         }
     }
-    edge_add(signal_id, effect_id, runtime.sig_gen(signal_id))
+    edge_add(signal_id, effect_id, sigcells.gen(signal_id))
     /* A new edge onto a signal an effect writes: read the derived value only
        after the producer has recomputed it. */
     if signal_id < produced_by.len {
@@ -1027,7 +1028,7 @@ fn inputs_changed(effect_id: int) -> int {
         let mut e = eff_head[effect_id]
         while e >= 0 {
             any = 1
-            if runtime.sig_gen(e_sig[e]) != e_gen[e] {
+            if sigcells.gen(e_sig[e]) != e_gen[e] {
                 changed = 1
             }
             e = e_en[e]

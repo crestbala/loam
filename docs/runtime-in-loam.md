@@ -190,7 +190,7 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       `wasm_inc`), hosts 4,871, vendored 346,122 (sqlite, monocypher, raygui
       and the generated tree-sitter parser).
 - [x] R0.2 The budget: `RUNTIME_LINE_BUDGET` in `nob.loam`, set at 9,939
-      and lowered by each step since (now **8,700**, after R1.4).
+      and lowered by each step since (now **7,612**, after R4.1b).
       `nob trusted` and the unfiltered `nob test` fail if `runtime/` grows
       past it. Each step below lowers it to its new count in the same
       change.
@@ -805,13 +805,56 @@ done, so every R3 step is checked by `thread_tsan`).
       `zeus_state`, signal fixtures, both drop goldens, forge trap
       byte-identical, wasm32 `trap_app` warning-free. **Runtime: 7,981 →
       7,961** (−20).
-- [ ] R4.1b The signal byte store as a `[]u8` arena with S0's typed cells.
-      Staged, not landed: `memory.loam` declares the Loam cell shell and the
-      `rt_mem_*` `#[c]` bindings (by-value `[]u8`, as `c_fread`), and C
-      provides `loam_platform_rt_mem_*` — but no caller routes signal bytes
-      through them yet (`zeus_cell` exercises the shell over the C cells).
-      The remaining cut is codegen lowering `__sig_*` byte moves through the
-      Loam arena, R3.1b-style.
+- [x] R4.1b The signal byte store as a `[]u8` arena with S0's typed cells.
+      Done 2026-11-15. `zeuscore/sigcells.loam` (a leaf module: `arena`,
+      `track` and `flow` all read it) holds every value in one `[]u8` and a
+      `SigCell` slot per id (offset, capacity, bound width, generation, S0
+      key, and what the bytes own). Codegen lowers `__sig_push` / `load` /
+      `store` to `sigcells.bind_at` / `load_at` / `cmp_at`, which return an
+      offset, then one `memcpy` against `loam_sigcells_bytes.ptr` with no
+      Loam call in between (R3.1b's shape, minus the retain/drop of the
+      arena). The S0 check is Loam, same message. Freeing a cell that owns a
+      string, a list or a struct with owned leaves goes through
+      `loam_sigcells_payload_drop`, which codegen emits as a switch over its
+      own release hooks: the cell records the kind and the hook *id*, so no C
+      function pointer is kept in Loam. Ids, the `int` mirror, scope records
+      and the int paths (`sig_new_int`, `state_get`, `store_sig`) are
+      `arena.loam`; the C `Signal` handle keeps three one-line trampolines
+      in `zeus_rt.h` (R4.5 removes them). A slot keeps its bytes across a
+      free, so a recycled id reuses them; a wider bind moves it to the end of
+      the arena, and since a slot's capacity only grows, the bytes left
+      behind are bounded. Deleted: the `ZeusCell` table and every
+      `loam_zeus_sig_*` fn, the `runtime.sig_*` hooks, and the staged
+      `rt_mem_*` bindings, which were never wired up and were a safety hole
+      anyway (a raw pointer as an `int`, unchecked offsets).
+      **Bugs found on the way:** UBSan flagged misaligned in-place releases
+      (byte offsets, where `malloc` had aligned the C cells), so every cell
+      now starts 8-aligned. DCE's mark for captured-`let mut` state sat
+      inside the `Call` branch and never fired; it is now its own check.
+      `arena.sig_reserve` now runs `ensure()` first, so a captured `let mut`
+      that is a program's first signal can never get id 0 (the null signal).
+      A wasm-only helper (`history_path`) is now under `#ifdef __wasm32__`,
+      which removes the Linux `-Wunused-function` warning in `zeus_plat.c`.
+      An `int` push now binds once (the C bound it twice and counted 2
+      generations). Benchmark vs HEAD's C, release `-O1`, 2M set+get each
+      (ms, 5 rounds, steady): `int` 97 → 70, `string` 163 → 85, struct with
+      a string 164 → 79, `[]int` 156 → 80, `float` 99 → 65, 200k fresh
+      signals 15 → 8. Headless `-O0` builds are 30–40% slower (out-of-line
+      bounds checks and struct copies through `memcpy`; tracking still
+      dominates there). A probe of strings, string lists, owning structs
+      and int lists, freed and recycled 200k times: same output as HEAD,
+      flat RSS (4.2 vs 4.4 MB), 0 leaks, ASan/UBSan clean. Binaries (new vs
+      HEAD): tiny int program 33,688 vs 33,696, greeninfer 1,046,312 vs
+      1,045,272 (+0.1%; one inline `memcpy` per signal site), counter
+      1,011,160 vs 1,010,024; compile time within noise. Seed 5,123,474 →
+      5,128,304 bytes, seed = stage 1 = stage 2. Suite: `zeus` (445),
+      `golden` (135), `signal`, `drop`, `handle` (forge traps unchanged),
+      `state`, `each`, `async`, `thread`; `wasm_smoke`, `wasm_trap`,
+      `wasm_float`, `ownership_asan`, `android_project`, `cost`, `lsp`,
+      `fresh_cache`, `arena_lint`, `api_freeze`, `one_surface`,
+      `stale_capture`, `server_split`, `modules` green; Zeus C compiles for
+      x86_64 glibc / aarch64 musl Linux with `-Wall`, no warnings.
+      **Runtime: 7,961 → 7,612** (−349).
 - [ ] R4.2 Frame and trace logic.
 - [ ] R4.3 Recoverable traps (needs R6.2's trap path).
 - [ ] R4.4 Image sizes and media state.

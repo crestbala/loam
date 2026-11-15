@@ -30,40 +30,17 @@ void loam_zeus_raw_init(void);
 void loam_zeus_open_window(loam_str title, int32_t width, int32_t height);
 void loam_zeus_raw_run(void);
 
-Signal loam_zeus_signal(int64_t id, int64_t value);
-/* Signal slot allocation with free-list reuse (arena compaction). The int
-   form writes the int mirror slot; the zero form reserves a placeholder slot
-   for a typed payload the caller binds afterwards. R4.1a: the id is reserved
-   by Loam (`arena.sig_reserve`) and passed in; C only ensures the tables. */
-int64_t loam_zeus_sig_alloc_int(int64_t id, int64_t value);
-int64_t loam_zeus_sig_alloc_zero(int64_t id);
-void loam_zeus_sig_free(int64_t id);
-int64_t loam_zeus_get(Signal sig);
-void loam_zeus_set(Signal sig, int64_t value);
-
-/* Typed cells: `key` is the value type's key, as the generated C spells it
-   (typed handle cells in loam_rt.h). The first bind records it; every later
-   bind, load and change test must pass the same key, or the handle was forged
-   at another type and the call panics. A cell no bind has reached loads as
-   zeros at any type. */
-/* The key of `int` (`int32_t`), for the runtime's own int-signal paths. */
-#define LOAM_HANDLE_KEY_INT 3226083260u
-void loam_zeus_sig_bind(int64_t id, const void *src, int64_t n, uint32_t key);
-/* Bind an owned `loam_str` payload: the cell keeps a reference and releases it
-   when the cell dies (see zeus_plat.c). */
-void loam_zeus_sig_bind_str(int64_t id, const void *src, int64_t n, uint32_t key);
-/* Bind a `loam_vec` handle: the cell keeps a reference and drops it (elements
-   through `rel`) when the cell is freed. */
-void loam_zeus_sig_bind_vec(int64_t id, const void *src, int64_t n, int64_t esz, loam_elem_fn rel,
-                            uint32_t key);
-/* Bind a struct that owns strings / lists: `drop` releases them when the cell
-   is freed. */
-void loam_zeus_sig_bind_owned(int64_t id, const void *src, int64_t n, loam_elem_fn drop,
-                              uint32_t key);
-void loam_zeus_sig_load(int64_t id, void *dst, int64_t n, uint32_t key);
-int64_t loam_zeus_sig_changed(int64_t id, const void *src, int64_t n, uint32_t key);
-int64_t loam_zeus_sig_sized(int64_t id, int64_t n);
-int64_t loam_zeus_sig_gen(int64_t id);
+/* Captured `let mut int` state (the compiler lowers it to these three): one
+   line each over the Loam signal store (`zeuscore/arena.loam`, R4.1b), here
+   only because the generated code passes the C `Signal` handle. */
+int32_t loam_arena_sig_new_int(int32_t id, int32_t value);
+int32_t loam_arena_state_get(int32_t id);
+void loam_arena_store_sig(int32_t id, int32_t value);
+static inline Signal loam_zeus_signal(int64_t id, int64_t value) {
+    return (Signal){ (uint32_t)loam_arena_sig_new_int((int32_t)id, (int32_t)value) };
+}
+static inline int64_t loam_zeus_get(Signal sig) { return loam_arena_state_get((int32_t)sig.id); }
+static inline void loam_zeus_set(Signal sig, int64_t value) { loam_arena_store_sig((int32_t)sig.id, (int32_t)value); }
 
 Node loam_zeus_bind(Node label, Signal sig);
 Node loam_zeus_bind_n(Node label, int32_t n);
@@ -335,10 +312,6 @@ loam_str loam_runtime_invoke_str_fn(int64_t id);
    signature. Zero is the contract; see the kind guard in zeus_plat.c. */
 int32_t loam_runtime_intern_kind_mismatch_count(void);
 int32_t loam_runtime_intern_live_count(void);
-void loam_runtime_sig_bind_int(int64_t id, int64_t value);
-int64_t loam_runtime_sig_gen(int64_t id);
-int64_t loam_runtime_sig_alloc_zero(int64_t id);
-void loam_runtime_sig_free(int64_t id);
 void loam_runtime_edit_reset(int64_t slot);
 void loam_runtime_intern_free(int64_t id);
 /* Recoverable trap (`zeus.Boundary`): "" on success, else the panic message. */

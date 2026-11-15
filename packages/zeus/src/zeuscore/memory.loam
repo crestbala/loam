@@ -21,29 +21,9 @@ import "arena.loam"
 // machinery: the type is a compile-time property of the call site, and what is
 // left for the engine is only the bookkeeping that is *not* typed.
 //
-// What used to live in C: a `ZeusCell` array with `malloc`/`memcpy`/`free`, a
-// per-slot `owns_str` flag, a free-list of reusable ids, and the generation
-// counter. All of that was policy, and it is now here. C keeps only the
-// language runtime's allocator, reached through the four `rt_mem_*` bindings —
-// untyped, and naming no widget, no signal, and no Zeus concept.
-
-/** *Allocate `n` bytes. Never returns 0 for a positive `n`. */
-#[c("loam_platform_rt_mem_new")]
-fn rt_mem_new(n: int) -> int {}
-/** *Release a buffer from `rt_mem_new`. Safe on 0. */
-#[c("loam_platform_rt_mem_free")]
-fn rt_mem_free(p: int) {}
-/** *Write the bytes of `src` at `offset` in the buffer. By value: the call */
-/** *shares the buffer (one refcount bump, no byte copy); C only reads. */
-#[c("loam_platform_rt_mem_write")]
-fn rt_mem_write(p: int, offset: int, src: []u8) {}
-/** *Read `n` bytes at `offset` into `dst`. By value: the call shares the */
-/** *caller's buffer, which C fills; the caller keeps the bytes. */
-#[c("loam_platform_rt_mem_read")]
-fn rt_mem_read(p: int, offset: int, n: int, dst: []u8) {}
-/** *1 when the `src` bytes equal those at `offset`. By value, as above. */
-#[c("loam_platform_rt_mem_eq")]
-fn rt_mem_eq(p: int, offset: int, src: []u8) -> int {}
+// The bytes themselves live in `sigcells.loam`, a `[]u8` arena with S0's
+// typed cells (R4.1b); the free-list of reusable ids is `arena.free_sigs`.
+// No C is left under a cell.
 
 /** *A signal's storage, as the engine sees it: the id of the cell holding the */
 /** *value, plus the two facts that have no type. */

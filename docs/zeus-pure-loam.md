@@ -23,11 +23,12 @@ Measured, not asserted.
 | Reactive core (`signal`/`effect`/`computed`/`scope`/`batch`/context) | `zeusbase.loam` + `zeuscore/track.loam` | Loam (as before) |
 | **Signal payload store, six kinds, lifetime, change detection** | `zeuscore/memory.loam` | ✅ **landed this branch** |
 | **Runtime verbs (trap guard, clock, heap, env, alloc counter)** | `loam_rt.h` | ✅ **landed this branch** |
-| **Signal id allocation, free list, `sigs` mirror growth** | `zeus_plat.c` | ❌ **still C** — a Loam version was written and removed as dead code |
-| **Cell ABI the compiler emits (`loam_zeus_sig_*`)** | `zeus_plat.c` + `codegen_c.c` | ❌ **still C** |
+| **Signal id allocation, free list, `sigs` mirror growth** | `zeuscore/arena.loam` | ✅ Loam (R4.1a, R4.1b in [runtime-in-loam.md](runtime-in-loam.md)) |
+| **Cell byte store the compiler emits against** | `zeuscore/sigcells.loam` + `codegen.loam` | ✅ Loam (R4.1b): a `[]u8` arena with S0 keys; codegen moves the bytes with one `memcpy` per access |
 
 `ZeusCell` (the `malloc`'d per-signal buffer, free list, and `owns_str` flag) is
-**still in `zeus_plat.c`**. Two attempts to remove it are recorded below.
+gone from `zeus_plat.c` (R4.1b, 2026-11-15). The two earlier attempts are
+recorded below.
 
 ## 2. What landed this branch
 
@@ -173,17 +174,18 @@ sit on the C path.
 |---|---|---|
 | 1 | **Land the dual-emit cell ABI** (attempt 1) | the design is settled; needs its own verified pass |
 | 2 | **Find the `memo_state` break** (attempt 2's blocker) | narrow: instrument the four early returns in `memo_recompute` and see which fires |
-| 3 | Remove `ZeusCell` from `zeus_plat.c` | follows 1 and 2 |
+| 3 | ~~Remove `ZeusCell` from `zeus_plat.c`~~ | done 2026-11-15 (R4.1b), by the `sigcells` arena instead of the dual-emit ABI |
 | 4 | Interning table in Loam over `loam_env_copy` | needs 1 |
 | 5 | Edit machine in Loam over `[]u8` + `std:unicode` | the host text ABI must use `int32_t` for an out-array |
 | 6 | Key chords in Loam | — |
 | 7 | Rename `platform.loam` → `bindings.loam` with `bnd_*` | — |
 | 8 | Enforcement gate in `nob test` | reject library C that is not a host loop or an ABI trampoline |
 
-`runtime.sig_free` is the one piece that genuinely belongs in C: releasing a payload
-by id needs the bound type, and the type is a compile-time property of the call
-site that bound it. Everything else about a signal cell is policy, and policy
-belongs in Loam.
+Releasing a payload by id needs the bound type, which is a compile-time
+property of the call site that bound it. R4.1b settles it without runtime C:
+the cell records the payload's kind and its release hook *id* (plain ints), and
+codegen emits `loam_sigcells_payload_drop`, a switch over its own release hooks.
+No C function pointer is stored in Loam.
 
 
 

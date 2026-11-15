@@ -1,5 +1,5 @@
 // runtime — the engine's C runtime builtins: text-edit buffers, the key
-// interned handler thunks, signal cells, recoverable traps and allocation
+// interned handler thunks, recoverable traps and allocation
 // counters. Bodyless `fn`s, like `platform.loam`, but these are
 // implemented once in `packages/loam/runtime/zeus_plat.c` and
 // are identical on every target. A host never implements any of them; the
@@ -52,17 +52,6 @@ fn intern_kind_mismatch_count() -> int {}
 /** *Live rows in the shared interned-handler table. A streaming list or a */
 /** *re-running scope must recycle handlers, not grow this. Exposed for tests. */
 fn intern_live_count() -> int {}
-fn sig_bind_int(id: int, value: int) {}
-/** *Every `sig_bind_*` bumps the cell's generation; `sig_gen` reads it */
-/** *back. `computed<T>` records the generation of each input it reads, so a lazy */
-/** *memo can tell whether an input's *value* moved before it recomputes. */
-fn sig_gen(id: int) -> int {}
-/** *Reserving a signal slot with no value bound yet. `computed<T>` needs an */
-/** *output cell for a `T` it cannot name a default for; the first pull binds it. */
-fn sig_alloc_zero() -> int {}
-/** *Free a signal slot: release its cell, zero its int mirror, and make the */
-/** *id reusable. No-op for ids that are already free. */
-fn sig_free(id: int) {}
 /** *Drop the text buffer of an edit slot so a rebuilt input never shows a */
 /** *dead input's contents. */
 fn edit_reset(slot: int) {}

@@ -7,6 +7,7 @@ import "logs.loam"
 import "nodes.loam"
 import "platform.loam"
 import "runtime.loam"
+import "sigcells.loam"
 import "track.loam"
 import "style.loam"
 import "std:fmt"
@@ -18,7 +19,7 @@ let mut sigs: []int = []int {}
 /** *Per-signal: 1 when a write can move geometry without an effect marking */
 /** *layout on its behalf (a node's `show` / `visible` predicate, or a number a */
 /** *bound label measures, reads the signal straight from layout). Grown lazily */
-/** *to `sigs.len` — the C signal allocators own `sigs` and are not mirrored. */
+/** *to `sigs.len`. */
 let mut affects_layout: []int = []int {}
 let mut root_id: int = 0
 let mut win_w: int = 640
@@ -132,6 +133,9 @@ fn sig_release(id: int) {
 /** *Reserve a signal id: recycle a freed one, else append a fresh slot (the */
 /** *caller zeroes the mirror). Returns -1 never — the stack grows. */
 fn sig_reserve() -> int {
+    // Before the first reserve, so id 0 (the null signal) is never handed
+    // out: a captured `let mut` may be the program's first signal.
+    ensure()
     if free_sigs.len > 0 {
         let id = free_sigs[free_sigs.len - 1]
         pop(free_sigs)
@@ -141,31 +145,68 @@ fn sig_reserve() -> int {
     return sigs.len - 1
 }
 
-/** *Reserve + ensure a signal slot: the Loam half of allocation (R4.1a). The */
-/** *id recycles through `free_sigs`; C (`c_sig_alloc_zero`) only ensures its */
-/** *cell table and zeroes the arena mirror. */
-fn sig_alloc() -> int {
+/** *Make slot `id` usable: its cell exists, its int mirror is 0, and a */
+/** *signal made while a rebuild scope is open is filed under the scope node, */
+/** *so teardown frees it with the subtree (captured `let mut` state, zone */
+/** *strips, bar heights: a chart refit must not leak a slot per signal). */
+fn sig_slot_ensure(id: int) {
     ensure()
-    let id = sig_reserve()
-    c_sig_alloc_zero(id)
+    if id < 0 {
+        return
+    }
+    sigcells.grow(id)
+    while id >= sigs.len {
+        push(sigs, 0)
+    }
+    sigs[id] = 0
+    if scope_node > 0 {
+        record_sig(scope_node, id)
+    }
+}
+
+/** *A reserved id with nothing bound yet (`__sig_push` of a non-`int`: the */
+/** *generated code binds the value next). */
+fn sig_new_zero(id: int) -> int {
+    sig_slot_ensure(id)
     return id
 }
 
-/** *The C cell-ensure for a Loam-reserved id. Module-private, like every */
-/** *`#[c]` binding: callers use `sig_alloc` / `sig_free_cell`. */
-#[c("loam_zeus_sig_alloc_zero")]
-fn c_sig_alloc_zero(id: int) -> int {}
+/** *A reserved id bound to an `int`, mirror and cell both. */
+fn sig_new_int(id: int, value: int) -> int {
+    sig_slot_ensure(id)
+    if id >= 0 {
+        sigs[id] = value
+        sigcells.bind_int(id, value)
+    }
+    return id
+}
 
-/** *Free a signal slot: release its C cell, then recycle the id. The Loam */
-/** *half of `sig_free` (R4.1a). */
+/** *Reserve + ensure a signal slot. The id recycles through `free_sigs`. */
+fn sig_alloc() -> int {
+    let id = sig_reserve()
+    sig_slot_ensure(id)
+    return id
+}
+
+/** *Free a signal slot: release its cell (and what its value owns), zero the */
+/** *mirror, then recycle the id. */
 fn sig_free_cell(id: int) {
-    c_sig_free(id)
+    if sigcells.free(id) != 0 && id < sigs.len {
+        sigs[id] = 0
+    }
     sig_release(id)
 }
 
-/** *The C cell release (bytes, ownership refs, mirror zero, key clear). */
-#[c("loam_zeus_sig_free")]
-fn c_sig_free(id: int) {}
+/** *A captured `let mut int` read (`zeus_rt.h`'s `loam_zeus_get`): tracked, */
+/** *and S0-checked like any `int` load. */
+fn state_get(id: int) -> int {
+    ensure()
+    track.note_read(id)
+    if id < 0 || id >= sigs.len || sigcells.int_ok(id) == 0 {
+        return 0
+    }
+    return sigs[id]
+}
 
 /* Ids freed by the current drop_children pass: effect teardown runs once per
    subtree (track.free_nodes_effects) instead of once per node — per-node
@@ -2755,7 +2796,7 @@ fn store_sig(id: int, value: int) {
         }
     }
     sigs[id] = value
-    runtime.sig_bind_int(id, value)
+    sigcells.bind_int(id, value)
     note_write(id)
 }
 
@@ -2924,7 +2965,7 @@ fn store_sig_paint(id: int, value: int) {
         return
     }
     sigs[id] = value
-    runtime.sig_bind_int(id, value)
+    sigcells.bind_int(id, value)
     let ran0 = track.runs
     let pw0 = prop_writes
     let lay0 = prop_layout
