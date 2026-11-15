@@ -32,3 +32,29 @@ static int calls;
 void c_ffi_tick(void) { calls++; }
 
 int32_t c_ffi_calls(void) { return calls; }
+
+// Plain-data structs by value: the shape of raylib's `Rectangle` and `Color`.
+// Fields of mixed width, a bool, and a nested struct, so a wrong layout or a
+// struct passed by pointer gives a wrong answer.
+typedef struct { float x, y, width, height; } CFfiRect;
+typedef struct { uint8_t r, g, b, a; } CFfiRgba;
+typedef struct { CFfiRect rect; CFfiRgba tint; _Bool on; int64_t id; double weight; } CFfiItem;
+
+double c_ffi_area(CFfiRect r) { return (double)r.width * r.height + r.x - r.y; }
+
+int64_t c_ffi_rgba(CFfiRgba c) { return ((int64_t)c.r << 24) | (c.g << 16) | (c.b << 8) | c.a; }
+
+int64_t c_ffi_item(int32_t base, CFfiItem item, int32_t after) {
+    return base + (int64_t)c_ffi_area(item.rect) + c_ffi_rgba(item.tint) % 1000 + (item.on ? 100 : 0) +
+           item.id + (int64_t)(item.weight * 4) + after;
+}
+
+// A `bool *` C writes in place: the shape of raygui's `GuiCheckBox`.
+int32_t c_ffi_flip(_Bool *flags, int32_t n) {
+    int32_t set = 0;
+    for (int32_t i = 0; i < n; i++) {
+        flags[i] = !flags[i];
+        set += flags[i];
+    }
+    return set;
+}

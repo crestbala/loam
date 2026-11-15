@@ -1123,7 +1123,7 @@ fn is_place_path(n: int) -> bool {
 
 /** *Bodyless fns in these modules are the link boundary. */
 fn is_ffi_mod(name: string) -> bool {
-    return name == "zeus" || name == "zeusbase" || name == "http" || name == "fmt" || name == "maya" ||
+    return name == "zeus" || name == "zeusbase" || name == "http" || name == "fmt" ||
         name == "platform" || name == "sys" || name == "net" || name == "async" || name == "thread" ||
         name == "buf" || name == "conv" || name == "str" || name == "decimal" || name == "key" || name == "floattext"
 }
@@ -5511,14 +5511,35 @@ fn c_scalar_type(t: int) -> bool {
     return types.is_numeric(t) && types.TYPES[t].bits <= 64
 }
 
+/** *A struct C can take by value: every field a number, a bool, or such a */
+/** *struct. Its C layout is C's for the same fields in the same order, so it */
+/** *passes as the library's own struct does (raylib's `Rectangle`, `Color`). */
+fn c_plain_struct(t: int) -> bool {
+    if t == NO_TYPE || tk(t) != TK.Struct {
+        return false
+    }
+    let fts = types.TYPES[t].field_types
+    if fts.len == 0 {
+        return false
+    }
+    for f in 0..fts.len {
+        let ft = fts[f]
+        if !(tk(ft) == TK.Bool || c_scalar_type(ft) || c_plain_struct(ft)) {
+            return false
+        }
+    }
+    return true
+}
+
 fn c_param_type(t: int) -> bool {
     if t == NO_TYPE {
         return false
     }
-    if tk(t) == TK.Bool || tk(t) == TK.String || c_scalar_type(t) {
+    if tk(t) == TK.Bool || tk(t) == TK.String || c_scalar_type(t) || c_plain_struct(t) {
         return true
     }
-    return tk(t) == TK.Vec && c_scalar_type(types.TYPES[t].elem)
+    // A buffer C reads or writes in place: its element pointer.
+    return tk(t) == TK.Vec && (c_scalar_type(types.TYPES[t].elem) || tk(types.TYPES[t].elem) == TK.Bool)
 }
 
 /** *A `#[c("sym")]` fn: a C name and a signature C can use. */
@@ -5551,7 +5572,7 @@ fn check_c_fn(d: int) {
         let ps = types.TYPES[ft].params
         for k in 0..ps.len {
             if !c_param_type(ps[k]) {
-                err(x.loc, "#[c] fn '{{name}}': parameter {{k + 1}} has a type C cannot take (use a number, bool, string, or [] of numbers)")
+                err(x.loc, "#[c] fn '{{name}}': parameter {{k + 1}} has a type C cannot take (use a number, bool, string, [] of numbers or bools, or a struct of numbers and bools)")
             }
         }
         let ret = types.TYPES[ft].ret

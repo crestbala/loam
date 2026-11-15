@@ -1051,7 +1051,7 @@ fn test() -> int {
 /** *Which batch `src` builds in. The two batches exist because a program's imports */
 /** *choose its link line and build flags, so a fixture without Zeus should not get */
 /** *them from a neighbour. "alone" is for what cannot share a program at all: maya */
-/** *and raygui take over the link, and an app with a `runtime/` directory has C */
+/** *and raygui bring their own C and link flags, and an app with a `runtime/` directory has C */
 /** *seams the driver only finds beside its entry file. */
 fn class_of(src: string) -> string {
     let text = sys.read_file(src)
@@ -2808,6 +2808,74 @@ fn ig_thread_tsan() {
     ok("thread tsan ({{names.len}} thread programs under ThreadSanitizer, no reports)")
 }
 
+/** *The C layouts and constants Loam bindings transcribe by hand, checked */
+/** *against the real headers: a probe of `_Static_assert`s on `sizeof`, */
+/** *`offsetof` and the constants, compiled (not linked) for this machine and, */
+/** *with zig, for x86_64 glibc and aarch64 musl Linux. A field transcribed */
+/** *wrong fails here instead of corrupting memory (docs/runtime-in-loam.md §4). */
+/** *The probe is generated, so no C file lives in the tree for it. */
+fn ig_c_layouts() {
+    mark("c layouts")
+    let probe_c = tmpf("c_layouts.c")
+    let mut p = "#include <stddef.h>\n#include <stdint.h>\n#include <unistd.h>\n#include <time.h>\n"
+    p = cat(p, "#define AT(T, f, o) _Static_assert(offsetof(T, f) == (o), #T \".\" #f \" is at \" #o)\n")
+    p = cat(p, "#define SIZE(T, n) _Static_assert(sizeof(T) == (n), \"sizeof \" #T \" is \" #n)\n")
+    p = cat(p, "#define FITS(T, words) _Static_assert(sizeof(T) <= (words) * 8, #T \" fits \" #words \" words\")\n")
+    p = cat(p, "#define IS(c, v) _Static_assert((c) == (v), #c \" is \" #v)\n")
+    // std:async: `struct timespec` as two `i64` words; std:sys `cpu_count`.
+    p = cat(p, "SIZE(struct timespec, 16); AT(struct timespec, tv_nsec, 8);\n")
+    p = cat(p, "#if defined(__APPLE__)\nIS(CLOCK_MONOTONIC, 6); IS(_SC_NPROCESSORS_ONLN, 58);\n")
+    // std:sys watch: `struct kevent` in four `i64` words, and its flags.
+    p = cat(p, "#include <sys/event.h>\n#include <fcntl.h>\n#include <mach/mach.h>\n")
+    p = cat(p, "SIZE(struct kevent, 32); AT(struct kevent, filter, 8); AT(struct kevent, flags, 10);\n")
+    p = cat(p, "AT(struct kevent, fflags, 12); AT(struct kevent, data, 16); AT(struct kevent, udata, 24);\n")
+    p = cat(p, "IS(EVFILT_VNODE, -4); IS(EV_ADD | EV_CLEAR, 0x21); IS(NOTE_WRITE | NOTE_DELETE | NOTE_RENAME, 0x23);\n")
+    p = cat(p, "IS(O_RDONLY | O_CLOEXEC, 0x1000000);\n")
+    // raygui's RAM probe: `task_vm_info` in 47 `i64` words.
+    p = cat(p, "IS(TASK_VM_INFO, 22); IS(TASK_VM_INFO_COUNT, 93); FITS(task_vm_info_data_t, 47);\n")
+    p = cat(p, "AT(task_vm_info_data_t, phys_footprint, 144);\n")
+    p = cat(p, "#elif defined(__linux__)\nIS(CLOCK_MONOTONIC, 1); IS(_SC_NPROCESSORS_ONLN, 84);\n")
+    // std:sys watch: `struct inotify_event` and the watch mask.
+    p = cat(p, "#include <sys/inotify.h>\n#include <sys/resource.h>\n")
+    p = cat(p, "SIZE(struct inotify_event, 16); AT(struct inotify_event, mask, 4); AT(struct inotify_event, len, 12);\n")
+    p = cat(p, "IS(IN_CLOEXEC, 524288); IS(IN_IGNORED, 32768);\n")
+    p = cat(p, "IS(IN_MODIFY | IN_DELETE_SELF | IN_MOVE_SELF | IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO, 2 | 1024 | 2048 | 256 | 512 | 64 | 128);\n")
+    // raygui's RAM probe: `struct rusage` in 34 `i64` words.
+    p = cat(p, "FITS(struct rusage, 34); AT(struct rusage, ru_maxrss, 32); IS(RUSAGE_SELF, 0);\n#endif\n")
+    // raygui's `Bounds` and `Rgba8`, when raylib's header is here.
+    p = cat(p, "#if __has_include(<raylib.h>)\n#include <raylib.h>\n")
+    p = cat(p, "SIZE(Rectangle, 16); AT(Rectangle, y, 4); AT(Rectangle, width, 8); AT(Rectangle, height, 12);\n")
+    p = cat(p, "SIZE(Color, 4); AT(Color, g, 1); AT(Color, b, 2); AT(Color, a, 3);\n#endif\n")
+    write_text(probe_c, p)
+    let raylib = trim(sys.exec("pkg-config --cflags raylib 2>/dev/null || { test -d /opt/homebrew/opt/raylib/include && echo -I/opt/homebrew/opt/raylib/include; }"))
+    let mut targets = []string { "" }
+    sys.exec("command -v zig >/dev/null 2>&1")
+    if sys.exec_status() == 0 {
+        push(targets, "x86_64-linux-gnu")
+        push(targets, "aarch64-linux-musl")
+    }
+    let mut names = "native"
+    for i in 0..targets.len {
+        let compiler = if targets[i].len == 0 { "cc" } else { "zig cc -target {{targets[i]}}" }
+        let target = if targets[i].len == 0 { "native" } else { targets[i] }
+        // zig cannot `-fsyntax-only`, so each target compiles one object and
+        // deletes it.
+        let obj = tmpf("c_layouts.{{target}}.o")
+        let out = sys.exec("{{compiler}} -c -std=gnu11 {{raylib}} {{shq(probe_c)}} -o {{shq(obj)}} 2>&1")
+        let status = sys.exec_status()
+        sys.remove_path(obj)
+        if status != 0 {
+            bad("c layouts: a transcribed layout differs from the headers ({{target}})", out)
+            return
+        }
+        if i > 0 {
+            names = "{{names}}, {{targets[i]}}"
+        }
+    }
+    let with_raylib = if raylib.len > 0 { ", raylib" } else { "" }
+    ok("c layouts (timespec, kevent, task_vm_info, inotify_event, rusage{{with_raylib}}: {{names}})")
+}
+
 /** *Floats: `std:floattext` gives the host libc's `%.<p>g` and `strtod` */
 /** *answers (float_diff.c writes them, float_check.loam checks them), and a */
 /** *program printing and parsing floats writes the same bytes as a wasm */
@@ -3002,6 +3070,8 @@ fn stanza_dispatch(name: string) -> bool {
         ig_android_project()
     } else if name == "thread_tsan" {
         ig_thread_tsan()
+    } else if name == "c_layouts" {
+        ig_c_layouts()
     } else if name == "ownership_asan" {
         ig_ownership_asan()
     } else if name == "selfhost_seed" {
@@ -3061,6 +3131,7 @@ fn stanza_names() -> []string {
     push(v, "thread_tsan")
     push(v, "loader_cases")
     push(v, "wasm_float")
+    push(v, "c_layouts")
     return v
 }
 
@@ -3123,7 +3194,7 @@ fn pool_stanzas(names: []string, limit_s: int) -> int {
 /** *app. The wasm module's entry points, the server/client split, and the */
 /** *language server all sit next to the compiler. */
 fn host_stanzas() -> []string {
-    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "design_lint", "api_freeze", "modules", "fresh_cache", "android_project", "ownership_asan", "thread_tsan", "loader_cases", "wasm_float" }
+    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "design_lint", "api_freeze", "modules", "fresh_cache", "android_project", "ownership_asan", "thread_tsan", "loader_cases", "wasm_float", "c_layouts" }
 }
 
 /** *How long one stanza may run before its pool kills it. `selfhost_seed` */
@@ -3218,7 +3289,7 @@ fn grammar() -> int {
 // deletes the C, so the runtime can only shrink. The target is zero.
 
 /** *Lines allowed under `packages/loam/runtime/`. Lower it when a step lands. */
-let RUNTIME_LINE_BUDGET: int = 7066
+let RUNTIME_LINE_BUDGET: int = 6248
 
 /** *The group a tracked C file belongs to, or `""` for C that is not shipped. */
 fn trusted_group(path: string) -> string {
@@ -3228,13 +3299,20 @@ fn trusted_group(path: string) -> string {
     if starts_with(path, "packages/loam/runtime/") {
         return "runtime"
     }
-    if starts_with(path, "packages/zeus/hosts/") {
-        return "hosts"
-    }
     if contains_str(path, "/vendor/") || starts_with(path, "packages/tooling/tree-sitter-loam/src/") {
         return "vendored"
     }
-    // The seed and the test fixtures are generated or test-only.
+    // A package's native host (the Zeus hosts, `maya/src/hosts/mac.m`).
+    if starts_with(path, "packages/") && contains_str(path, "/hosts/") {
+        return "hosts"
+    }
+    // Any other C a package or an example compiles (`#![c_source]` shims, an
+    // app's `runtime/`): trusted all the same, so moving C out of the
+    // runtime never hides it.
+    if starts_with(path, "packages/") || starts_with(path, "examples/") {
+        return "bindings"
+    }
+    // The seed is generated.
     return ""
 }
 
@@ -3266,8 +3344,8 @@ fn trusted_runtime_lines(verbose: bool) -> int {
         fmt.println("nob: trusted: git ls-files failed")
         return -1
     }
-    let groups = []string { "runtime", "hosts", "vendored" }
-    let mut group_totals = []int { 0, 0, 0 }
+    let groups = []string { "runtime", "hosts", "bindings", "vendored" }
+    let mut group_totals = []int { 0, 0, 0, 0 }
     let paths = split_lines(listed)
     for g in 0..groups.len {
         if verbose {

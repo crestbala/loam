@@ -1,7 +1,11 @@
 // `maya` — small 3D/2D engine (raylib-shaped, not raylib-heavy).
 //
 // Build a retained scene, then `maya.run()`. Scene, tracer, and 2D map
-// live in Loam (`mayacore/`). C is the host event loop and present.
+// live in Loam (`mayacore/`), and so do the draw order (`engine_present`)
+// and the RGBA frame. C is only the Cocoa window, the event loop and the
+// draw primitives (`hosts/mac.m`): it calls the int-only `engine_*` exports,
+// and Loam calls it through the `#[os("macos")] #[c]` bindings below, so no
+// other target compiles or links it.
 //
 // Example (3D sphere):
 // ```
@@ -28,8 +32,12 @@
 //
 // `MAYA_HEADLESS=1` / `ZEUS_HEADLESS=1`: one frame, then exit.
 
+#![c_source("hosts/mac.m", "-x", "objective-c", "-fobjc-arc")]
+#![c_link("-framework", "Cocoa")]
 import "mayacore/math.loam"
 import "mayacore/scene.loam"
+import "std:async"
+import "std:sys"
 
 /** *Integer 3D vector. Unit 1024 = 1.0 world. */
 struct Vec3 {
@@ -48,10 +56,138 @@ struct Body {
     id: int,
 }
 
-fn plat_run() {}
-fn plat_headless() -> int {}
+// --- host ------------------------------------------------------------------
+
+/** *Open the Cocoa window (`hosts/mac.m`). */
+#[os("macos")]
+#[c("maya_mac_window")]
 fn plat_window(title: string, w: int, h: int) {}
-fn plat_now_ms() -> i64 {}
+
+/** *No window host off macOS: such a build is always headless. */
+#[os("ios", "linux", "android", "windows", "wasm", "other")]
+fn plat_window(title: string, w: int, h: int) {
+    return
+}
+
+/** *Run the Cocoa event loop until the window closes. */
+#[os("macos")]
+#[c("maya_mac_run")]
+fn plat_run() {}
+
+#[os("ios", "linux", "android", "windows", "wasm", "other")]
+fn plat_run() {
+    return
+}
+
+// What the Cocoa host draws a frame with, called from `engine_present`.
+#[os("macos")]
+#[c("maya_mac_stars")]
+fn host_stars() {}
+#[os("macos")]
+#[c("maya_mac_clear")]
+fn host_clear() {}
+#[os("macos")]
+#[c("maya_mac_ring")]
+fn host_ring(cx: int, cy: int, r: int) {}
+#[os("macos")]
+#[c("maya_mac_disc")]
+fn host_disc(x: int, y: int, r: int, rgb: int, glow: int) {}
+#[os("macos")]
+#[c("maya_mac_label")]
+fn host_label(text: string, x: int, y: int, r: int) {}
+#[os("macos")]
+#[c("maya_mac_hud")]
+fn host_hud(text: string) {}
+#[os("macos")]
+#[c("maya_mac_blit")]
+fn host_blit(rgba: []u8, w: int, h: int) {}
+
+/** *Draw the current frame through the Cocoa host: the 2D map (stars, orbit */
+/** *rings around the sun, discs, names) or the traced 3D frame, then the HUD. */
+#[os("macos")]
+fn engine_present() {
+    if scene.is_map() != 0 {
+        present_map()
+        host_hud(scene.hud_text())
+        return
+    }
+    let frame = scene.fb_rgba()
+    if frame.len == 0 {
+        host_clear()
+        return
+    }
+    host_blit(frame, scene.fb_w(), scene.fb_h())
+    host_hud(scene.hud_text())
+}
+
+/** *No window host off macOS, so nothing to present. */
+#[os("ios", "linux", "android", "windows", "wasm", "other")]
+fn engine_present() {
+    return
+}
+
+#[os("macos")]
+fn present_map() {
+    host_stars()
+    let n = scene.sprite_count()
+    let mut cx = 0
+    let mut cy = 0
+    for i in 0..n {
+        if scene.sprite_is_sun(i) != 0 {
+            cx = scene.sprite_x(i)
+            cy = scene.sprite_y(i)
+            break
+        }
+    }
+    for i in 0..n {
+        let orbit = scene.sprite_orbit_r(i)
+        if orbit > 1 {
+            host_ring(cx, cy, orbit)
+        }
+    }
+    for i in 0..n {
+        let x = scene.sprite_x(i)
+        let y = scene.sprite_y(i)
+        let r = scene.sprite_r(i)
+        host_disc(x, y, r, scene.sprite_rgb(i), scene.sprite_is_sun(i))
+        let label = scene.sprite_name(i)
+        if label.len > 0 {
+            host_label(label, x, y, r)
+        }
+    }
+}
+
+#[os("ios", "linux", "android", "windows", "wasm", "other")]
+fn present_map() {
+    return
+}
+
+/** *An environment flag set to `1`. */
+fn env_on(name: string) -> bool {
+    let v = sys.env(name)
+    return v.len > 0 && v[0] == '1'
+}
+
+/** *1 when no window opens: `MAYA_HEADLESS`, `ZEUS_HEADLESS` or */
+/** *`LOAM_HEADLESS` is `1`. */
+#[os("macos")]
+fn plat_headless() -> int {
+    if env_on("MAYA_HEADLESS") || env_on("ZEUS_HEADLESS") || env_on("LOAM_HEADLESS") {
+        return 1
+    }
+    return 0
+}
+
+/** *Every other target has no window host. */
+#[os("ios", "linux", "android", "windows", "wasm", "other")]
+fn plat_headless() -> int {
+    return 1
+}
+
+/** *Monotonic milliseconds. */
+fn plat_now_ms() -> i64 {
+    return async.now_ms()
+}
 
 /** *Build a `Vec3`. */
 fn vec3(x: int, y: int, z: int) -> Vec3 {
@@ -266,3 +402,4 @@ fn engine_fb_h() -> int {
 fn engine_fb_at(i: int) -> int {
     return scene.fb_at(i)
 }
+

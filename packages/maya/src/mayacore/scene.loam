@@ -1,6 +1,7 @@
 // Retained Maya scene: analytic-sphere tracer and top-down 2D map.
 
 import "math.loam"
+import "std:buf"
 
 struct Rec {
     used: int,
@@ -818,6 +819,44 @@ fn fb_at(i: int) -> int {
         return 0
     }
     return pix[i]
+}
+
+/** *The frame `fb_rgba` hands out, reused while its size stays the same. */
+let mut frame_rgba: []u8 = []u8 {}
+
+/** *The traced frame as RGBA bytes, `pix_w` x `pix_h`, alpha 255. Pixels */
+/** *past the end of `pix` are black, as `fb_at` reads them. The buffer is a */
+/** *local while it is filled (a store through a global reloads it per byte) */
+/** *and the masks keep each channel provably a byte, so the loop is as fast */
+/** *as the C one it replaced. */
+fn fb_rgba() -> []u8 {
+    if pix_w < 1 || pix_h < 1 {
+        return []u8 {}
+    }
+    let n = pix_w * pix_h
+    let mut out = frame_rgba
+    frame_rgba = []u8 {}
+    if out.len != n * 4 {
+        out = buf.with_len(n * 4)
+    }
+    let traced = if pix.len < n { pix.len } else { n }
+    for i in 0..traced {
+        let rgb = pix[i]
+        let at = i * 4
+        out[at] = u8((rgb >> 16) & 255)
+        out[at + 1] = u8((rgb >> 8) & 255)
+        out[at + 2] = u8(rgb & 255)
+        out[at + 3] = 255
+    }
+    for i in traced..n {
+        let at = i * 4
+        out[at] = 0
+        out[at + 1] = 0
+        out[at + 2] = 0
+        out[at + 3] = 255
+    }
+    frame_rgba = out
+    return out
 }
 
 fn to_u8(x: float) -> int {

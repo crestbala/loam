@@ -59,6 +59,7 @@ fn c_roots(module_name: string) -> []string {
         return []string {
             "engine_cam_orbit", "engine_cam_pan", "engine_cam_reset", "engine_fixed_update", "engine_frame",
             "engine_hud", "engine_input_key", "engine_cam_zoom", "engine_fb_at", "engine_fb_h", "engine_fb_w",
+            "engine_present",
             "engine_is_map", "engine_note_present", "engine_set_viewport", "engine_sprite_count",
             "engine_sprite_is_sun", "engine_sprite_name", "engine_sprite_orbit_r", "engine_sprite_r",
             "engine_sprite_rgb", "engine_sprite_x", "engine_sprite_y",

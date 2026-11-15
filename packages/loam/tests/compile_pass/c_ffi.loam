@@ -53,6 +53,43 @@ fn c_floor(x: f64) -> f64 {}
 #[c("c_ffi_missing")]
 fn missing() {}
 
+/** *C's `CFfiRect`: four `float`s, passed by value. */
+struct Rect {
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+}
+
+/** *C's `CFfiRgba`: four bytes. */
+struct Rgba {
+    r: u8,
+    g: u8,
+    b: u8,
+    a: u8,
+}
+
+/** *C's `CFfiItem`: nested structs, a bool, and padding before the `i64`. */
+struct Item {
+    rect: Rect,
+    tint: Rgba,
+    on: bool,
+    id: i64,
+    weight: f64,
+}
+
+#[c("c_ffi_area")]
+fn area(r: Rect) -> f64 {}
+
+#[c("c_ffi_rgba")]
+fn rgba(c: Rgba) -> i64 {}
+
+#[c("c_ffi_item")]
+fn item_sum(base: i32, item: Item, after: i32) -> i64 {}
+
+#[c("c_ffi_flip")]
+fn flip(flags: []bool, n: i32) -> i32 {}
+
 /** *Named like a runtime function: the wrapper has to be renamed, not collide. */
 #[c("strlen")]
 fn str_copy(s: string) -> i64 {}
@@ -95,6 +132,24 @@ fn main() {
     let before = addr(buffer)
     let _ = buffer.pop()
     expect(addr(buffer) == before, "[]T argument released")
+
+    let r = Rect { x: f32(3.0), y: f32(1.0), width: f32(2.5), height: f32(4.0) }
+    expect(area(r) == 12.0, "struct by value")
+    expect(rgba(Rgba { r: u8(1), g: u8(2), b: u8(3), a: u8(255) }) == 16909311, "byte struct by value")
+    let item = Item {
+        rect: r,
+        tint: Rgba { r: u8(0), g: u8(0), b: u8(3), a: u8(232) },
+        on: true,
+        id: i64(5000000000),
+        weight: 0.75,
+    }
+    // 7 + 12 + 1000 % 1000 + 100 + 5000000000 + 3 + 9
+    expect(item_sum(7, item, 9) == 5000000131, "nested struct with a bool, between scalars")
+    expect(r.width == f32(2.5), "struct argument is a copy")
+
+    let flags = []bool { true, false, false }
+    expect(flip(flags, 3) == 2, "[]bool into C")
+    expect(!flags[0] && flags[1] && flags[2], "[]bool written by C")
 
     let f = tick
     f()

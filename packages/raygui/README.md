@@ -29,11 +29,13 @@ Run the example: `./run.sh raygui` (needs `brew install raylib`).
 
 | Piece | Where | What |
 |---|---|---|
-| API + frame loop | `std/raygui.loam` | Bodyless `plat_*` hooks plus the public wrappers and the `init` / `open` / `begin` / `end` / `close` loop. |
-| Host seam | `packages/loam/runtime/raygui_plat.c` | Includes `RAYGUI_IMPLEMENTATION`, owns the raylib window, and converts each call (NUL-terminate a `loam_str`, mirror raygui's `bool *` state as `int *`). No widget logic. |
-| Declarations | `packages/loam/runtime/raygui_rt.h` | The `loam_raygui_plat_*` prototypes the generated C calls. |
-| Vendored header | `vendor/raygui.h` | raygui 4.0 (matches raylib 5.x). |
-| Link | `packages/loam/src/driver.c` | `import "raygui"` links the seam and raylib (`RAYLIB_PREFIX`, else `pkg-config raylib`, else Homebrew). |
+| API + frame loop | `src/raygui.loam` | The public wrappers and the `init` / `open` / `begin` / `end` / `close` loop; window state, the headless rule, the `RAYGUI_FRAMES` cap and the RAM probe (`task_info` on macOS, `getrusage` on Linux). |
+| Bindings | `src/raygui.loam` | `#[c]` fns straight to raylib and raygui: `Bounds` / `Rgba8` are `Rectangle` / `Color` passed by value, and the stateful controls share reused `[]bool` / `[]i32` / `[]f32` cells, so a frame allocates nothing. No C shim. |
+| Vendored header | `src/vendor/raygui.h` | raygui 4.0 (matches raylib 5.x), compiled as itself by `#![c_source("vendor/raygui.h", "-x", "c", "-DRAYGUI_IMPLEMENTATION", "pkg-config:raylib")]`. |
+| Link | `#![c_link("pkg-config:raylib")]` | raylib's flags from `RAYLIB_PREFIX`, else `pkg-config raylib`, else the Homebrew prefixes. |
+
+The transcribed layouts (`Rectangle`, `Color`, `task_vm_info`, `rusage`) are
+checked against the real headers by `nob integration c_layouts`.
 
 Immediate mode keeps **no** retained state in the library: the app holds the
 values (`let mut`) and re-issues every control each frame, which is why the

@@ -154,6 +154,35 @@ safely today:
     counter counts its lines as trusted code.
   - **Checked as C is.** Every `unsafe` module is fuzzed (S2) and
     ASan/UBSan-clean, and matches the C it replaces in speed (gate 2 below).
+- **`#[c]` that handles C completely, so no package writes a C file or a
+  header of its own** (set 2026-11-15). Rust has no C shims: `extern "C"`,
+  `#[repr(C)]` and checked layouts reach any C library. Loam's bindings grow
+  the same way, one feature per change, each landing with the C it deletes
+  (the "Essential" rule above). The rules that stay:
+  - **Bindings are trusted code.** A struct transcribed with the wrong
+    layout, or a buffer shorter than C expects, corrupts memory exactly as
+    the C did. Bindings stay module-private behind safe wrappers, count as
+    trusted in `nob trusted` and `check --ffi`, and every transcribed layout
+    is checked against the real headers by a `nob` stanza (`_Static_assert`
+    of `sizeof` / `offsetof` in a probe compile; `c_layouts`, since R4.6),
+    so no C ships and a wrong field still fails CI.
+  - **Some C has no symbol to bind.** Macros (`S_ISDIR`, `WIFEXITED`,
+    `mach_task_self()`), `static inline` header fns and C++ are rewritten in
+    Loam with per-OS constants (as R2.3d did). A header-only library is
+    vendored code, compiled as itself (`#![c_source("vendor/raygui.h",
+    "-x", "c", "-DRAYGUI_IMPLEMENTATION")]`), not wrapped in a shim.
+
+  The features, in order of the C each removes:
+
+  | Feature | Deletes |
+  |---|---|
+  | a1. Plain-data structs by value as `#[c]` parameters (every field a number, a bool or such a struct), and `[]bool` buffers. **Done with R4.6.** | the raygui shim (`Rectangle`, `Color`, `bool *`) |
+  | a2. Plain-data struct returns, and `&mut S` out-parameters | the `[]i64` slot layouts of `stat` (R2.2), `kevent` (R2.5), `task_info` / `getrusage`; `GetColor`-style returns |
+  | b. `#[c]` on a module `let`: an extern C global | `loam_sys_spawnp` (exists only for `environ`), `stdout` |
+  | c. `#[os]` / `#[arch]` on structs and consts | per-OS layouts (`stat`, `rusage`) written once per target, not as offsets |
+  | d. Variadic bindings (numbers and strings only) | wrappers over `open` / `fcntl` / `ioctl` and the arm64 Apple variadic ABI trap |
+  | e. Explicit C-callable exports and env-less fn pointers | callback shims (`qsort`-style, run loops, library callbacks) |
+  | f. Typed `objc_msgSend` bindings and selectors (`std:objc`) | the Cocoa and UIKit hosts (`mac.m`, `ios.m`, maya's `hosts/mac.m`; R7) |
 
 ## 5. Order and gates
 
@@ -190,7 +219,7 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       `wasm_inc`), hosts 4,871, vendored 346,122 (sqlite, monocypher, raygui
       and the generated tree-sitter parser).
 - [x] R0.2 The budget: `RUNTIME_LINE_BUDGET` in `nob.loam`, set at 9,939
-      and lowered by each step since (now **7,066**, after R4.5).
+      and lowered by each step since (now **6,248**, after R4.6).
       `nob trusted` and the unfiltered `nob test` fail if `runtime/` grows
       past it. Each step below lowers it to its new count in the same
       change.
@@ -1055,10 +1084,84 @@ done, so every R3 step is checked by `thread_tsan`).
       Windows 113/113 on both CPUs. Hosts grow 4,869 → 4,903 (+34: the cursor
       and string helpers, the reload stubs, the `fill_g` fix), so trusted C
       falls by 104 in all. **Runtime: 7,204 → 7,066** (−138).
-- [ ] R4.6 `maya_plat.c` and `raygui_plat.c`: the bridge logic moves to
+- [x] R4.6 `maya_plat.c` and `raygui_plat.c`: the bridge logic moves to
       `packages/maya` and `packages/raygui`; raylib calls become `#[c]`
       bindings of those packages. `maya_mac.m` moves to the maya package as
-      a host file.
+      a host file. Done 2026-11-15. The rule for the moved files: none
+      includes `loam_rt.h`, `zeus_rt.h` or any runtime header, and they cross
+      the boundary only with the plain `#[c]` ABI. No package has a shim.
+      **Maya:** `maya_mac.m` is `packages/maya/src/hosts/mac.m`, with no
+      Loam types: it calls int-only `engine_*` exports, and Loam calls its
+      primitives (`maya_mac_stars` / `clear` / `ring` / `disc` / `label` /
+      `hud` / `blit` / `window` / `run`) through `#[os("macos")] #[c]`
+      bindings. `maya.loam` names it in `#![c_source]` and links Cocoa with
+      `#![c_link]`. The draw order (`engine_present`, `present_map`), the
+      headless rule and the clock (`async.now_ms`) are Loam; other OSes get
+      `{ return }` variants (an empty body would be a bodyless hook).
+      `scene.fb_rgba` builds the RGBA frame where C called `fb_at` once per
+      pixel. **raygui:** `vendor/raygui.h` is compiled as itself
+      (`#![c_source("vendor/raygui.h", "-x", "c", "-DRAYGUI_IMPLEMENTATION",
+      "pkg-config:raylib")]`), and `raygui.loam` binds raylib and raygui
+      directly: `Bounds` / `Rgba8` are `Rectangle` / `Color` by value (§4 a1),
+      and the stateful controls share reused `[]bool` / `[]i32` / `[]f32`
+      cells. Window state, the headless rule, the `RAYGUI_FRAMES` cap (an
+      `atoi`-like `leading_int`, read once per run where C read it every
+      frame) and the guards are Loam, and `rgba8` replaces `GetColor`. The RAM
+      probe is Loam over raw bindings: on macOS `task_self_trap` (cached; it
+      is what the `mach_task_self()` macro reads) and `task_info(TASK_VM_INFO,
+      93)`, `phys_footprint` at word 18; on Linux `getrusage`, `ru_maxrss` at
+      word 4. Both kernel buffers are made once and reused.
+      **Compiler:** `#[c]` params may be plain-data structs (every field a
+      number, a bool or such a struct) and `[]bool`. `pkg-config:NAME` in
+      `#![c_source]` / `#![c_link]` expands to `NAME_PREFIX`, else
+      `pkg-config`, else the Homebrew prefixes; the object key hashes the
+      expanded flags. A module brings its C sources and link flags only if a
+      kept `#[c]` fn of it builds for this machine (`mask_builds_here`), so
+      Linux never compiles `hosts/mac.m`. The maya and raygui link special
+      cases, `raylib_flags`, `raygui_dir`, the `maya_rt.h` / `raygui_rt.h`
+      includes and the maya struct skip are deleted. `nob trusted` gains a
+      `bindings` group (package and example C outside `vendor/` and
+      `hosts/`), so greeninfer's 276 lines, which no group counted before,
+      are counted now; package `hosts/` files count as hosts. New stanza
+      `c_layouts`: a generated probe `_Static_assert`s every hand-transcribed
+      layout and constant (`timespec`, `kevent` and its flags, `task_vm_info`,
+      `inotify_event` and the watch mask, `rusage`, `CLOCK_MONOTONIC`,
+      `_SC_NPROCESSORS_ONLN`, raylib's `Rectangle` / `Color`) natively and,
+      with zig, for x86_64 glibc and aarch64 musl Linux (0.4 s; a wrong
+      offset fails on the target it belongs to).
+      **Bugs found on the way.** `maya_mac.m` leaked the HUD and sprite-name
+      strings every frame. The old raygui seam cut text at 128, 512 or 1,024
+      bytes; bindings pass the whole string. The first port of the RAM probe
+      built its 47-word buffer by `push` every frame (12% of a headless frame)
+      and the first `fb_rgba` stored through the global, which reloaded it
+      after every byte and checked each conversion (1.9x the C). Both were
+      fixed before landing, as below.
+      Checks: the solar and studio windows and the raygui example render as
+      HEAD's do (screenshots; only the animation clock differs); raygui
+      headless prints its 3 frames with flat RAM; with no `pkg-config` on
+      `PATH` it builds through `RAYLIB_PREFIX` and through the Homebrew
+      fallback; the emitted maya C compiles for x86_64 glibc and aarch64 musl
+      Linux with no `maya_mac` symbol, and `raygui.h` and the raygui
+      example's C compile for both. Fixtures: `compile_pass/c_ffi` passes
+      `Rect` / `Rgba` by value, a nested struct with a bool and padding
+      between scalars, and a `[]bool` C writes; `compile_fail/
+      c_attr_struct_param` rejects a struct with a `string` field.
+      Benchmark vs HEAD (release `-O1`, 5 rounds): raygui headless, 1M
+      frames, 1,517–1,525 vs 1,707–1,713 ms (−11%; RAM growth 96 vs 192 KB);
+      the RGBA frame, 960x600 x300, 332–346 vs 343–349 ms; the compiler
+      emitting itself, median of 10, 182.3 vs 183.4 ms (min 181.0 vs 181.1).
+      Binaries (new vs HEAD): tiny `fmt.println(42)` 33,688 both, raygui
+      example 90,648 vs 90,008 (+640), studio 96,904 vs 96,136 (+768), solar
+      97,128 vs 96,376 (+752): checked Loam where the C was. Seed 5,138,643 →
+      5,134,758 bytes, seed = stage 1 = stage 2. Suite: `compile_pass` (710),
+      `compile_fail` (165), `zeus` (455), `golden` (135), `maya`, `raygui`,
+      `c_ffi`, `language`; `selfhost_seed`, `wasm_smoke`, `wasm_trap`,
+      `wasm_float`, `android_project`, `lsp`, `ownership_asan`, `cost`,
+      `fresh_cache`, `modules`, `loader_cases`, `thread_tsan`,
+      `serve_native`, `c_layouts` green; `cross-check.sh` Linux 125/125 and
+      Windows 113/113 on both CPUs. Hosts 4,903 → 5,253 (+350: maya's host
+      moved in), bindings 276 (newly counted); trusted C outside vendored
+      code 11,969 → 11,777. **Runtime: 7,066 → 6,248** (−818).
 
 **R5. Net** (`net.c`, `net_rt.h`).
 
