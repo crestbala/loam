@@ -15,65 +15,122 @@
 # package (zeus, zui, maya, raygui) are skipped. Needs zig on PATH
 # (`brew install zig`). Each binary and object is deleted once its link is
 # checked; only zig's compile cache stays in out/cross/cache (`nob clean`).
+#
+# The work runs on every core (CROSS_JOBS to change it): each fixture's C is
+# emitted once (it is the same on every target), then every target × fixture
+# link is its own job, writing only files named after both.
 set -e
 ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
-command -v zig >/dev/null || { echo "cross-check: zig not found (brew install zig)" >&2; exit 2; }
-[ -x bin/loamc ] || ./nob.sh >/dev/null
 OUT="$ROOT/out/cross"
-mkdir -p "$OUT/cache"
 export ZIG_GLOBAL_CACHE_DIR="$OUT/cache" ZIG_LOCAL_CACHE_DIR="$OUT/cache"
-targets=${*:-"x86_64-linux-gnu aarch64-linux-gnu x86_64-windows-gnu aarch64-windows-gnu"}
 . "$ROOT/tools/fixture-deps.sh"
 
-cc_one() { # target c-file out fixture
-    # net.c is linked into every fixture: the drivers add it for any program
-    # that loads std:net or the http package, whether or not it calls it.
-    objs="$OUT/net-$1.o"; links=""; i=0
-    deps=$(deps_of "$4" | sort -u)
+# `cross-check.sh --link <target> <name> <fixture.loam>`: one job. Links
+# `$OUT/c/<name>.c` for <target> and leaves `$OUT/res/<target>/<name>`: empty
+# on success, the first error lines otherwise.
+if [ "${1:-}" = --link ]; then
+    t=$2 b=$3 f=$4
+    res="$OUT/res/$t/$b"
+    objs="$OUT/net-$t.o"; links=""; i=0
+    deps=$(deps_of "$f" | sort -u)
     IFS='
 '
     for dep in $deps; do
         IFS=' '
         dir=${dep%%|*}; rest=${dep#*|}; path=${rest%%|*}; flags=${rest#*|}
         if [ "$dir" = link ]; then links="$links $flags"; continue; fi
-        i=$((i+1)); o="$OUT/dep$i-$1.o"
-        e=$(zig cc -target "$1" -O1 -fno-sanitize=undefined -w -c "$dir/$path" $flags -o "$o" 2>&1 | grep -E "error" | head -3)
-        [ -n "$e" ] && { echo "$path: $e"; return; }
+        i=$((i+1)); o="$OUT/obj/$t-$b-dep$i.o"
+        # shellcheck disable=SC2086
+        e=$(zig cc -target "$t" -O1 -fno-sanitize=undefined -w -c "$dir/$path" $flags -o "$o" 2>&1 | grep -E "error" | head -3)
+        if [ -n "$e" ]; then
+            echo "$path: $e" > "$res"
+            rm -f "$OUT"/obj/"$t-$b"-dep*.o
+            exit 0
+        fi
         objs="$objs $o"
     done
     IFS=' '
-    zig cc -target "$1" -std=gnu99 -O1 -w -I packages/loam/runtime "$2" $objs -o "$3" $links 2>&1 | grep -E "error" | head -3
+    bin="$OUT/obj/$t-$b"
+    # shellcheck disable=SC2086
+    zig cc -target "$t" -std=gnu99 -O1 -w -I packages/loam/runtime "$OUT/c/$b.c" $objs -o "$bin" $links 2>&1 | grep -E "error" | head -3 > "$res" || true
     # Only "it links" is checked: drop what this link made (the binary, a
-    # Windows .pdb/.lib, the dep objects and the emitted C) right away.
-    rm -f "$3" "$3".* "$2" "$OUT"/dep*-"$1".o
-}
+    # Windows .pdb/.lib, the dep objects) right away.
+    rm -f "$bin" "$bin".* "$OUT"/obj/"$t-$b"-dep*.o
+    exit 0
+fi
 
+command -v zig >/dev/null || { echo "cross-check: zig not found (brew install zig)" >&2; exit 2; }
+[ -x bin/loamc ] || ./nob.sh >/dev/null
+targets=${*:-"x86_64-linux-gnu aarch64-linux-gnu x86_64-windows-gnu aarch64-windows-gnu"}
+jobs=${CROSS_JOBS:-$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)}
+rm -rf "$OUT/c" "$OUT/obj" "$OUT/res"
+mkdir -p "$OUT/cache" "$OUT/c" "$OUT/obj"
+for t in $targets; do mkdir -p "$OUT/res/$t"; done
+
+# 1. Each target's runtime/net.c object and each fixture's C, at once.
+for t in $targets; do
+    (
+        e=$(zig cc -target "$t" -O1 -fno-sanitize=undefined -w -I packages/loam/runtime -c packages/loam/runtime/net.c -o "$OUT/net-$t.o" 2>&1 | grep -E "error" | head -3)
+        if [ -n "$e" ]; then echo "$e" > "$OUT/res/$t.net"; fi
+    ) &
+done
+list="$OUT/fixtures"
+: > "$list"
+bin/loamc nob.loam --emit-c -o "$OUT/c/nob.c" >/dev/null && echo "nob nob.loam" >> "$list"
+for f in packages/loam/tests/compile_pass/*.loam; do
+    b=$(basename "$f" .loam)
+    echo "$b" | grep -qE "$skip" && continue
+    grep -qE "$gui" "$f" && continue
+    echo "$b $f"
+done > "$list.all"
+# A fixture the compiler cannot emit is left out, as before.
+# shellcheck disable=SC2016
+# (xargs appends each `name path` pair after `_ $OUT`: they are $2 and $3.)
+xargs -P "$jobs" -n 2 sh -c 'bin/loamc "$3" --emit-c -o "$1/c/$2.c" >/dev/null 2>&1 && echo "$2 $3"' _ "$OUT" < "$list.all" > "$list.ok" || true
+cat "$list.ok" >> "$list"
+wait
+
+# 2. Every target × fixture link. Known gap: runtime/net.c is BSD sockets +
+# platform TLS with no Windows port yet. Not needed to self-host; listed so
+# it stays visible.
+work="$OUT/work"
+: > "$work"
+for t in $targets; do
+    [ -e "$OUT/res/$t.net" ] && continue
+    while read -r b f; do
+        case $t in *windows*)
+            if [ "$b" != nob ] && grep -q 'loam_net_' "$OUT/c/$b.c"; then echo "$b" >> "$OUT/res/$t.gap"; continue; fi ;;
+        esac
+        echo "$t $b $f" >> "$work"
+    done < "$list"
+done
+xargs -P "$jobs" -n 3 sh "$ROOT/tools/cross-check.sh" --link < "$work"
+
+# 3. One line per target, as before.
 fail=0
 for t in $targets; do
-    n=0; bad=0; nogap=""
-    e=$(zig cc -target "$t" -O1 -fno-sanitize=undefined -w -I packages/loam/runtime -c packages/loam/runtime/net.c -o "$OUT/net-$t.o" 2>&1 | grep -E "error" | head -3)
-    [ -n "$e" ] && { echo "cross-check $t: runtime/net.c: $e"; fail=1; continue; }
-    bin/loamc nob.loam --emit-c -o "$OUT/nob.c" >/dev/null
-    e=$(cc_one "$t" "$OUT/nob.c" "$OUT/nob-$t" nob.loam)
-    [ -n "$e" ] && { echo "$t nob: $e"; bad=$((bad+1)); }
-    for f in packages/loam/tests/compile_pass/*.loam; do
-        b=$(basename "$f" .loam)
-        echo "$b" | grep -qE "$skip" && continue
-        grep -qE "$gui" "$f" && continue
-        bin/loamc "$f" --emit-c -o "$OUT/$b.c" >/dev/null 2>&1 || continue
-        # Known gap: runtime/net.c is BSD sockets + platform TLS with no Windows
-        # port yet. Not needed to self-host; listed so it stays visible.
-        case $t in *windows*)
-            if grep -q 'loam_net_' "$OUT/$b.c"; then nogap="$nogap $b"; continue; fi ;;
-        esac
-        n=$((n+1))
-        e=$(cc_one "$t" "$OUT/$b.c" "$OUT/$b-$t" "$f")
-        [ -n "$e" ] && { echo "$t $b: $e"; bad=$((bad+1)); }
+    if [ -e "$OUT/res/$t.net" ]; then
+        echo "cross-check $t: runtime/net.c: $(cat "$OUT/res/$t.net")"
+        fail=1
+        continue
+    fi
+    n=0; bad=0
+    for r in "$OUT/res/$t"/*; do
+        [ -e "$r" ] || continue
+        b=$(basename "$r")
+        [ "$b" = nob ] || n=$((n+1))
+        if [ -s "$r" ]; then
+            echo "$t $b: $(cat "$r")"
+            bad=$((bad+1))
+        fi
     done
-    rm -f "$OUT/net-$t.o"
     echo "cross-check $t: nob + $n fixtures, $bad failed"
-    [ -n "$nogap" ] && echo "  known gap, skipped (std:net has no Windows port):$nogap"
+    if [ -e "$OUT/res/$t.gap" ]; then
+        echo "  known gap, skipped (std:net has no Windows port): $(tr '\n' ' ' < "$OUT/res/$t.gap" | sed 's/ $//')"
+    fi
     [ "$bad" -eq 0 ] || fail=1
+    rm -f "$OUT/net-$t.o"
 done
+rm -rf "$OUT/c" "$OUT/obj" "$OUT/res" "$OUT/work" "$list" "$list.all" "$list.ok"
 exit $fail

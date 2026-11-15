@@ -16,6 +16,7 @@
 // module-level `let`: locals, literals and calls only. Moved from
 // `runtime/batch_run.c` (docs/runtime-in-loam.md, R1.2).
 
+import "std:async"
 import "std:fmt"
 import "std:str"
 import "std:sys"
@@ -161,6 +162,11 @@ fn serve() -> int {
         }
     }
 
+    // Each case's wall time goes to `<dir>/times` (label, tab, ms), so the next
+    // run can start the slowest first; `LOAM_SERVE_TIMES=1` also prints them.
+    let timed = sys.env("LOAM_SERVE_TIMES").len > 0
+    let mut started = []i64 {}
+    let mut times = ""
     let mut pids = []int {}
     let mut passed = ""
     let mut next = 0
@@ -178,6 +184,7 @@ fn serve() -> int {
                 break
             }
             push(pids, pid)
+            push(started, async.now_ms())
             next += 1
             running += 1
             continue
@@ -192,6 +199,11 @@ fn serve() -> int {
                 continue
             }
             let c = cases[i]
+            let ms = async.now_ms() - started[i]
+            times = "{{times}}{{c.label}}\t{{ms}}\n"
+            if timed {
+                fmt.eprintln("time {{ms}} ms {{c.label}}")
+            }
             if exited_zero(status[0]) && (c.want.len == 0 || same_file(c.want, "{{dir}}/{{c.id}}.out")) {
                 passed = "{{passed}}{{c.id}}\n"
                 fmt.eprintln("ok   {{c.label}}")
@@ -202,5 +214,6 @@ fn serve() -> int {
     if sys.write_file("{{dir}}/passed", passed) != 0 {
         return 1
     }
+    sys.write_file("{{dir}}/times", times)
     return 0
 }

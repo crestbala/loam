@@ -220,6 +220,15 @@ fn cc() -> []string {
     return CC
 }
 
+/** *The C compiler is clang (a shard build's precompiled header is clang's */
+/** *`-include-pch`; gcc would fail every unit and fall back). One probe. */
+fn cc_is_clang() -> bool {
+    // `CC` came as space-separated words; joined back, it is that command.
+    let cmd = str.join(cc(), " ")
+    let v = sys.exec("{{cmd}} --version 2>/dev/null")
+    return str.index_of(v, "clang") >= 0
+}
+
 /** *`cc()` then `args`, without the empty ones. */
 fn cc_argv(args: &[]string) -> []string {
     let mut argv = cc()
@@ -786,7 +795,9 @@ fn link_args(cpath: string, binpath: string, copt: &[]string, ld: string, extra_
             fmt.eprintln("loam: failed to compile the maya host")
             return false
         }
-        push_list(args, []string { ld, "-o", binpath, "-I{{rt}}", "-x", "c", cpath, "-x", "none" })
+        push_list(args, []string { ld, "-o", binpath, "-I{{rt}}" })
+        push_all(args, app_in)
+        push_list(args, []string { "-x", "none" })
         push_all(args, &objs)
         if on_mac() {
             push_list(args, []string { "-framework", "Cocoa" })
@@ -796,7 +807,10 @@ fn link_args(cpath: string, binpath: string, copt: &[]string, ld: string, extra_
         return true
     }
     if mods_use("http") || mods_use("net") {
-        push_list(args, []string { ld, "-o", binpath, "-I{{rt}}", "-x", "c", cpath, net_c })
+        push_list(args, []string { ld, "-o", binpath, "-I{{rt}}" })
+        push_all(args, app_in)
+        // `-x none`: net.c is compiled as what its name says.
+        push_list(args, []string { "-x", "none", net_c })
         if on_mac() {
             push_list(args, []string { "-framework", "Security", "-framework", "CoreFoundation" })
         }
@@ -819,11 +833,15 @@ fn link_args(cpath: string, binpath: string, copt: &[]string, ld: string, extra_
         }
         push_list(args, []string { ld, "-o", binpath, "-I{{rt}}", "-I{{raygui_dir()}}/vendor" })
         push_all(args, &rlib)
-        push_list(args, []string { "-x", "c", cpath, "-x", "none", obj_c, "-lm" })
+        push_all(args, app_in)
+        push_list(args, []string { "-x", "none", obj_c, "-lm" })
         push_all(args, extra_link)
         return true
     }
-    push_list(args, []string { ld, "-x", "c", cpath, "-o", binpath })
+    // The app's C: the file itself, or a shard build's cached objects.
+    push(args, ld)
+    push_all(args, app_in)
+    push_list(args, []string { "-o", binpath })
     push_all(args, extra_link)
     return true
 }
@@ -874,8 +892,8 @@ fn copt_flags() -> []string {
 // fixed size would move every later boundary when one fn grows, and every unit
 // after the edit would miss.
 
-const SHARD_MIN: int = 96000
-const SHARD_MAX: int = 384000
+const SHARD_MIN: int = 32000
+const SHARD_MAX: int = 128000
 const SHARD_CUT: u64 = 8
 
 /** *One unit still to compile: its source, its object, and the command */
@@ -2061,7 +2079,7 @@ fn main() {
     // `LOAM_SHARD=<cache dir>`: a development build in units, for the Zeus
     // link, the one that goes through `app_input`.
     let mut shard_dir = sys.env("LOAM_SHARD")
-    if !uses_zeus() || emit_c || test_mode || target_android || str.ends_with(binpath, ".dylib") {
+    if emit_c || test_mode || target_android || str.ends_with(binpath, ".dylib") || (shard_dir.len > 0 && !cc_is_clang()) {
         shard_dir = ""
     }
     // App-owned C seam: `runtime/<stem>_runtime.c` beside the entry file.

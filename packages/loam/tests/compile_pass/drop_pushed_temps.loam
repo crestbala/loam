@@ -2,7 +2,10 @@
 // retained by its new home and still dropped by its source. Each case here
 // used to leak one reference per iteration: 1 MB each, 60 times over against a
 // 24 MB allowance, so one leak per iteration fails even at half that size.
-// `sys.read_file` and `sys.exec` hand back owned strings, freed on drop.
+// `sys.read_file` hands back an owned string, freed on drop. Growth is the
+// process's own peak RSS (`getrusage`), read in-process: a leak raises the
+// peak by its size each round, while a case that frees keeps it where the
+// first round left it.
 // An element holding a `Box` is moved into the vec whole, and so is any
 // temporary: the slot takes the strings it holds as they are. The push
 // used to retain them on top, leaking a struct's string beside a `Box`.
@@ -42,16 +45,28 @@ fn push_boxed_temp(i: int) -> int {
     return rows[0].text.len + *rows[0].b
 }
 
+/** *`getrusage(RUSAGE_SELF)`: 34 slots holds every libc's `struct rusage` */
+/** *(musl's is the largest, 272 bytes); `ru_maxrss` is slot 4 on all of them. */
+#[os("posix")]
+#[c("getrusage")]
+fn c_getrusage(who: i32, out: []i64) -> i32 {}
+
+/** *Peak resident memory in MB: bytes on macOS, KiB on Linux. */
+#[os("posix")]
 fn rss_mb() -> int {
-    let t = str.trim(sys.exec("ps -o rss= -p $PPID"))
-    let mut n = 0
-    for i in 0..t.len {
-        let c = t[i]
-        if c >= 48 && c <= 57 {
-            n = n * 10 + (c - 48)
-        }
+    let mut slots = []i64 {}
+    for i in 0..34 {
+        push(slots, i64(0))
     }
-    return n / 1024
+    c_getrusage(0, slots)
+    let peak = slots[4]
+    return int(if sys.os() == "macos" { peak / i64(1048576) } else { peak / i64(1024) })
+}
+
+/** *No `getrusage` on Windows: growth reads as none there, as `ps` did. */
+#[os("windows", "wasm")]
+fn rss_mb() -> int {
+    return 0
 }
 
 fn grew(what: string, before: int) {

@@ -3013,7 +3013,11 @@ fn os_end(d: int) {
 fn emit_fn(d: int, is_main: bool, linkage: string) {
     let cn = fn_cname(d)
     let f = ir_fn_of(d)
-    shard_mark(cn)
+    // An `#[os]` variant was marked before its `#if` (see the module loop):
+    // a cut between the two would split the conditional across units.
+    if typecheck.os_mask(d) == 0 {
+        shard_mark(cn)
+    }
     line_directive(ast.INFO[d].loc.file, ast.INFO[d].loc.line)
     w(linkage)
     fn_sig(d, is_main)
@@ -3908,6 +3912,9 @@ fn emit_c() {
                     fn_sig(d, false)
                     w(" { loam_panic(\"<server>\", 0, \"server function excluded from client build\"); __builtin_unreachable(); }\n")
                     continue
+                }
+                if typecheck.os_mask(d) != 0 {
+                    shard_mark(fn_cname(d))
                 }
                 os_begin(d)
                 emit_fn(d, is_main, if is_main { "" } else { fn_linkage(m, d) })

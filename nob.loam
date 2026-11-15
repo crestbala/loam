@@ -434,49 +434,92 @@ let BUILD_MODE_VARS: []string = []string {
 /** *`bin/loamc`, in a clean build environment. The `.fresh` stamp beside `out` */
 /** *makes an unchanged rebuild a no-op. */
 fn build_loam_tool(src: string, out: string) -> bool {
+    sys.mkdir("{{BIN}}/.shard")
+    let log = "{{BIN}}/.shard/build-one.log"
+    sys.exec(tool_cmd(src, out, log))
+    let ok = sys.exec_status() == 0
+    if !ok {
+        fmt.write(sys.read_file(log))
+        fmt.println("nob: build failed: {{out}}")
+    }
+    sys.remove_path(log)
+    return ok
+}
+
+/** *` LOAM_SHARD=<dir>` for a tool's build: its C as cached units under */
+/** *`bin/.shard/<tool>`, so an edit recompiles only the units it touched, in */
+/** *parallel. One directory per tool, since a link prunes the objects it did */
+/** *not use. `LOAM_WHOLE=1` builds one optimized unit instead (benchmarks). */
+fn tool_shard(out: string) -> string {
+    if sys.env("LOAM_WHOLE").len > 0 {
+        return ""
+    }
+    // The tool's name: what follows the last `/` of `out`.
+    let mut cut = 0
+    for i in 0..out.len {
+        if out[i] == '/' {
+            cut = i + 1
+        }
+    }
+    let mut name = []u8 {}
+    for i in cut..out.len {
+        push(name, u8(out[i]))
+    }
+    let dir = shq("{{ROOT}}/bin/.shard/{{string_from_bytes(name)}}")
+    return " LOAM_SHARD={{dir}}"
+}
+
+/** *The shell command that builds the Loam program `src` into `out` in a */
+/** *clean build environment, its output into `log`. */
+fn tool_cmd(src: string, out: string, log: string) -> string {
     let mut env = "env"
     for i in 0..BUILD_MODE_VARS.len {
         env = cat(env, " -u {{BUILD_MODE_VARS[i]}}")
     }
-    let o = sys.exec("cd {{shq(ROOT)}} && {{env}} ./bin/loamc {{shq(src)}} -o {{shq(out)}} 2>&1")
-    if sys.exec_status() != 0 {
-        fmt.write(o)
-        fmt.println("nob: build failed: {{out}}")
-        return false
-    }
-    return true
+    env = cat(env, tool_shard(out))
+    return "cd {{shq(ROOT)}} && {{env}} ./bin/loamc {{shq(src)}} -o {{shq(out)}} > {{shq(log)}} 2>&1"
 }
 
 /** *`all` builds every tool but the compiler; `lsp` stops after the language */
 /** *server. `bin/loamc` is already there: nob.sh builds it from the seed */
 /** *before it starts `nob`, and rebuilds it when a compiler source changes. */
+/** *The tools do not depend on each other, so `all` builds them at once. */
 fn build(what: string) -> int {
     sys.mkdir(BIN)
 
-    // Every tool is a Loam program built by `bin/loamc`. `loam-lsp` is the
-    // compiler's front end behind JSON-RPC.
-    if !build_loam_tool("packages/loam/compiler/lsp.loam", "bin/loam-lsp") {
-        return 1
-    }
+    // `loam-lsp` is the compiler's front end behind JSON-RPC.
     if what == "lsp" {
-        return 0
+        return if build_loam_tool("packages/loam/compiler/lsp.loam", "bin/loam-lsp") { 0 } else { 1 }
     }
 
-    // `loam-fmt` works on tokens with its own lexer (it keeps comments).
-    if !build_loam_tool("packages/loam/compiler/loamfmt.loam", "bin/loam-fmt") {
-        return 1
-    }
-
-    // `zeli` is a Loam program, built by `bin/loamc`.
+    // `loam-fmt` works on tokens with its own lexer (it keeps comments);
+    // `zeli` is the app CLI, rebuilt only when it or the compiler changed.
+    let mut srcs = []string { "packages/loam/compiler/lsp.loam", "packages/loam/compiler/loamfmt.loam" }
+    let mut outs = []string { "bin/loam-lsp", "bin/loam-fmt" }
     if sys.exists("{{BIN}}/zeli") == 0 || is_newer("{{BIN}}/loamc", "{{BIN}}/zeli") || is_newer("{{ROOT}}/packages/zeus/cli/zeli.loam", "{{BIN}}/zeli") || is_newer("{{ROOT}}/packages/zeus/cli/chunks.loam", "{{BIN}}/zeli") {
         fmt.println("  loamc packages/zeus/cli/zeli.loam -> bin/zeli")
-        sys.exec("cd {{shq(ROOT)}} && ./bin/loamc packages/zeus/cli/zeli.loam -o bin/zeli")
-        if sys.exec_status() != 0 {
-            fmt.println("nob: zeli build failed")
-            return 1
-        }
+        push(srcs, "packages/zeus/cli/zeli.loam")
+        push(outs, "bin/zeli")
     }
-    return 0
+    sys.mkdir("{{BIN}}/.shard")
+    let mut handles = []int {}
+    let mut logs = []string {}
+    for i in 0..srcs.len {
+        let log = "{{BIN}}/.shard/build-{{i}}.log"
+        push(logs, log)
+        let argv = []string { "sh", "-c", tool_cmd(srcs[i], outs[i], log) }
+        push(handles, sys.spawn(&argv))
+    }
+    let mut failed = 0
+    for i in 0..handles.len {
+        if sys.wait(handles[i]) != 0 {
+            fmt.write(sys.read_file(logs[i]))
+            fmt.println("nob: build failed: {{outs[i]}}")
+            failed = failed + 1
+        }
+        sys.remove_path(logs[i])
+    }
+    return if failed > 0 { 1 } else { 0 }
 }
 
 // --- the test plan -------------------------------------------------------
@@ -648,12 +691,27 @@ fn pool(suite: string, jobs: []Job) -> int {
     sys.remove_path(res)
     sys.mkdir(res)
 
+    // `NOB_JOB_TIMES=1`: each job appends `<seconds> <desc>` to
+    // `<pool>.times`, to find the one that sets a pool's length.
+    let timed = sys.env("NOB_JOB_TIMES").len > 0
+    let clock = "perl -MTime::HiRes=time -e 'printf \"%.3f\", time'"
+    let times = "{{NOB}}/{{suite}}.times"
+    if timed {
+        sys.remove_path(times)
+    }
     let mut ids = []int {}
     for i in 0..n {
         let id = pad4(i)
-        let mut s = "#!/bin/sh\nRES={{shq(res)}}\n{\n"
+        let mut s = "#!/bin/sh\nRES={{shq(res)}}\n"
+        if timed {
+            s = cat(s, "T0=$({{clock}})\n")
+        }
+        s = cat(s, "{\n")
         s = cat(s, case_body(jobs[i], id))
         s = cat(s, "echo \"$st\" >\"$RES/{{id}}.status\"\n} >\"$RES/{{id}}.log\" 2>&1\ncat \"$RES/{{id}}.log\" >&2\n")
+        if timed {
+            s = cat(s, "echo \"$(perl -e \"printf '%.2f', $({{clock}}) - $T0\") {{jobs[i].kind}} {{jobs[i].desc}}\" >> {{shq(times)}}\n")
+        }
         sys.write_file("{{res}}/{{id}}.sh", s)
         let line = "{{res}}/{{id}}.sh\n"
         for k in 0..line.len {
@@ -1108,9 +1166,52 @@ fn serve_suite(class: string, files: []string) {
         }
     }
     let manifest = join(dir, "manifest")
-    sys.write_file(manifest, unlines(lines))
+    let times_path = suite_path(class, ".times")
+    sys.write_file(manifest, unlines(slowest_first(lines, sys.read_file(times_path))))
     let bin = suite_path(class, "")
     sh("LOAM_SERVE={{shq(manifest)}} LOAM_SERVE_JOBS={{JOBS}} {{shq(bin)}} 1>&2")
+    // This run's times order the next one.
+    let fresh = sys.read_file(join(dir, "times"))
+    if fresh.len > 0 {
+        sys.write_file(times_path, fresh)
+    }
+}
+
+/** *Manifest lines (`id`, tab, case, tab, label, ...) longest-running first, by */
+/** *the last run's `label<TAB>ms` lines, so the slow cases overlap the rest */
+/** *instead of trailing them. A case with no time yet goes first: it may be slow. */
+fn slowest_first(lines: []string, times: string) -> []string {
+    let rows = split_lines(times)
+    let mut labels = []string {}
+    let mut costs = []int {}
+    for i in 0..rows.len {
+        let f = split_tabs(rows[i])
+        if f.len >= 2 {
+            push(labels, f[0])
+            push(costs, int_of(f[1]))
+        }
+    }
+    let mut keyed = []int {}
+    for i in 0..lines.len {
+        let f = split_tabs(lines[i])
+        let at = if f.len >= 3 { index_of(labels, f[2]) } else { -1 }
+        push(keyed, if at >= 0 { costs[at] } else { 1000000000 })
+    }
+    // Insertion sort on the cost, descending; stable, so ties keep their order.
+    let mut out = lines
+    for i in 1..out.len {
+        let line = out[i]
+        let cost = keyed[i]
+        let mut j = i - 1
+        while j >= 0 && keyed[j] < cost {
+            out[j + 1] = out[j]
+            keyed[j + 1] = keyed[j]
+            j = j - 1
+        }
+        out[j + 1] = line
+        keyed[j + 1] = cost
+    }
+    return out
 }
 
 /** *The fixtures every full run compiles, whichever way it builds them. */
@@ -1136,13 +1237,15 @@ fn test_batched(t0: int) -> int {
     let mut plain = []string {}
     // Longest first: `xargs` starts jobs in order, so anything queued behind the
     // hundred quick rejections below would run after them, not beside the build.
+    // `fresh_cache` leads: a dozen builds in a row (~4 s), the longest job
+    // here, so the rest runs beside it instead of after it.
     let mut setup = []Job {
-        stanza_job("ir_zeus"), stanza_job("wasm_smoke"), stanza_job("wasm_trap"),
+        stanza_job("fresh_cache"), stanza_job("ir_zeus"), stanza_job("wasm_smoke"), stanza_job("wasm_trap"),
         stanza_job("suite_tests"), stanza_job("ir_plain"),
     }
     let hosts = host_stanzas()
     for i in 0..hosts.len {
-        if !starts_with(hosts[i], "wasm_") {
+        if !starts_with(hosts[i], "wasm_") && hosts[i] != "fresh_cache" {
             push(setup, stanza_job(hosts[i]))
         }
     }
@@ -1279,14 +1382,17 @@ fn ig_suite(class: string) {
     let mut files = suite_files(source)
     let log = suite_path(class, ".log")
     let bin = suite_path(class, "")
-    let shard = tmpf("shard")
+    // Both batches build as cached units, each in its own directory: a link
+    // prunes the objects it did not use, so a shared one would thrash.
+    let shard = tmpf("shard_{{class}}")
     let mut tries = 0
     while tries < 4 {
         tries += 1
-        let mut env = "LOAM_BATCH=1"
-        if class == "zeus" {
-            env = "LOAM_BATCH=1 LOAM_SHARD={{shq(shard)}}"
-        }
+        // Plain fixtures link no GUI host, so headless only meant `-O0` for
+        // them; built at `-O1` they run several times faster (the cached
+        // units make the optimizer a one-time cost).
+        let headless_off = if class == "plain" { "env -u ZEUS_HEADLESS -u LOAM_HEADLESS " } else { "" }
+        let env = "{{headless_off}}LOAM_BATCH=1 LOAM_SHARD={{shq(shard)}}"
         if sh("{{env}} {{shq(LOAMC)}} {{shq(source)}} -o {{shq(bin)}} > {{shq(log)}} 2>&1") {
             sys.write_file(suite_path(class, ".built"), unlines(files))
             ok("batch {{class}} ({{files.len}} fixtures, one binary)")
@@ -2637,7 +2743,7 @@ fn ig_ownership_asan() {
     let got = tmpf("ownership_asan.out")
     let log = tmpf("ownership_asan.log")
     let script = cat(
-        "LOAM_NO_FRESH=1 LOAM_LINK_EXTRA='-O0 -g -fsanitize=address' {{shq(LOAMC)}} {{shq(src)}} -o {{shq(asan_bin)}} >{{shq(log)}} 2>&1 || exit 1; ",
+        "LOAM_LINK_EXTRA='-O0 -g -fsanitize=address' {{shq(LOAMC)}} {{shq(src)}} -o {{shq(asan_bin)}} >{{shq(log)}} 2>&1 || exit 1; ",
         cat("if [ \"$(uname)\" = Linux ]; then export ASAN_OPTIONS=detect_leaks=1; fi; ",
             cat("{{shq(asan_bin)}} >{{shq(got)}} 2>>{{shq(log)}} || exit 1; ! grep -q Sanitizer {{shq(log)}} || exit 1; ",
                 cat("if [ \"$(uname)\" = Darwin ]; then {{shq(LOAMC)}} {{shq(src)}} -o {{shq(plain_bin)}} >>{{shq(log)}} 2>&1 || exit 1; ",
@@ -2664,7 +2770,17 @@ fn ig_wasm_float() {
     let gen = tmpf("float_diff")
     let cases = tmpf("float_cases.txt")
     let check = tmpf("float_check")
-    let o = sys.exec("cc -O2 -w {{shq(dir)}}/float_diff.c -o {{shq(gen)}} -lm 2>&1 && {{shq(gen)}} 20000 > {{shq(cases)}} && {{shq(LOAMC)}} {{shq(dir)}}/float_check.loam -o {{shq(check)}} >/dev/null 2>&1 && {{shq(check)}} {{shq(cases)}} 2>&1")
+    // The generator is deterministic: it and its 8 MB of cases are rebuilt
+    // only when `float_diff.c` changes, not on every run.
+    let src = "{{dir}}/float_diff.c"
+    if sys.exists(cases) == 0 || sys.exists(gen) == 0 || is_newer(src, gen) || is_newer(gen, cases) {
+        let g = sys.exec("cc -O2 -w {{shq(src)}} -o {{shq(gen)}} -lm 2>&1 && {{shq(gen)}} 20000 > {{shq(cases)}}.tmp && mv {{shq(cases)}}.tmp {{shq(cases)}}")
+        if sys.exec_status() != 0 {
+            bad("wasm float (case generator)", g)
+            return
+        }
+    }
+    let o = sys.exec("{{shq(LOAMC)}} {{shq(dir)}}/float_check.loam -o {{shq(check)}} >/dev/null 2>&1 && {{shq(check)}} {{shq(cases)}} 2>&1")
     if sys.exec_status() != 0 {
         bad("wasm float (std:floattext vs host libc)", o)
         return
