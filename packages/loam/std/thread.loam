@@ -80,6 +80,106 @@ fn chan<T>(cap: int, init: T) -> Chan<T> {
     return Chan { id: __ch_new(cap, init) }
 }
 
+// --- Channel table (R3.2): ids and S0 keys in Loam --------------------------
+// The id→channel map and the type keys live here; the per-channel sync block
+// (mutex, condvars, ring, counts) stays C-allocated, named by an `i64`
+// cookie (`boundary.md`: an `i64` carries any pointer). Every op is still
+// one atomic C section on the cookie — the table lock below orders the Loam
+// metadata against worker threads (TSan instruments the C lock calls, so the
+// happens-before edges hold; `thread_tsan` gates every step).
+//
+// Workers reach this table only through codegen-emitted C (the `__ch_*`
+// builtins lower to table calls, as `__fut_*` lower to `std:async`'s). A
+// worker that names the table or these fns from Loam source gets the usual
+// "touches module state" error — the AST-level proof is unchanged.
+
+/** *One channel: the C sync block's cookie and the payload type's S0 key. */
+struct ChanSlot {
+    cookie: i64,
+    key: i64,
+}
+
+/** *The id table: slot `id`'s sync block and key. Grows on `chan`. */
+let mut ch_slots: []ChanSlot = []ChanSlot {}
+
+/** *The table lock, straight from pthread: held across every table read and */
+/** *write below, so a worker fetching a cookie races nothing. The lock itself */
+/** *lives in C (`loam_ch_tab_mtx`, beside `loam_thread_mtx`): a Loam `[]u8` or */
+/** *`[]i64` would share its refcount across threads, and vec refcounts are */
+/** *not atomic — passing the lock as a Loam value races by construction */
+/** *(TSan caught exactly this). Zero-arg `#[c]` fns, so no Loam value crosses. */
+#[os("posix", "windows")]
+#[c("loam_ch_tab_lock")]
+fn c_ch_tab_lock() -> i32 {}
+
+/** *Release the table lock. */
+#[os("posix", "windows")]
+#[c("loam_ch_tab_unlock")]
+fn c_ch_tab_unlock() -> i32 {}
+
+/** *No locks on wasm: single-threaded, so lock and unlock are no-ops. */
+#[os("wasm")]
+fn c_ch_tab_lock() -> i32 {
+    return 0
+}
+
+/** *No locks on wasm. */
+#[os("wasm")]
+fn c_ch_tab_unlock() -> i32 {
+    return 0
+}
+
+/** *A new channel: clamp `cap`, allocate the C sync block, file it with its */
+/** *S0 key, and return the id codegen hands back as the `Chan`. */
+fn ch_alloc(cap: int, esz: int, key: i64) -> int {
+    let mut c = cap
+    if c < 1 {
+        c = 1
+    }
+    let cookie = c_ch_block_alloc(c, esz)
+    c_ch_tab_lock()
+    push(ch_slots, ChanSlot { cookie: cookie, key: key })
+    let id = ch_slots.len - 1
+    c_ch_tab_unlock()
+    return id
+}
+
+/** *The C sync block: mutex, condvars, ring and counts for `cap` slots of */
+/** *`esz` bytes. The cookie names it to every section call below. */
+#[os("posix", "windows")]
+#[c("loam_ch_block_alloc")]
+fn c_ch_block_alloc(cap: int, esz: int) -> i64 {}
+
+/** *No channels that block on wasm: the cookie is unused, the queues inert. */
+#[os("wasm")]
+fn c_ch_block_alloc(cap: int, esz: int) -> i64 {
+    return i64(0)
+}
+
+/** *Slot `id`'s cookie, or `0` when dead. Under the table lock, so a worker */
+/** *fetching it while another thread grows the table races nothing. A dead */
+/** *id is silent (the op no-ops, as the C table did); a live id with the */
+/** *wrong key panics — unless `key` is 0 (`ready` only reports a count). */
+fn ch_begin(id: int, key: i64) -> i64 {
+    c_ch_tab_lock()
+    let mut cookie = i64(0)
+    let mut want = i64(0)
+    let mut live = 0
+    if id >= 0 && id < ch_slots.len {
+        live = 1
+        cookie = ch_slots[id].cookie
+        want = ch_slots[id].key
+    }
+    c_ch_tab_unlock()
+    if live == 0 {
+        return i64(0)
+    }
+    if key != i64(0) && want != key {
+        panic("channel handle used at the wrong type")
+    }
+    return cookie
+}
+
 /** *Blocking send: waits while the channel is full. Workers use this to return */
 /** *results; the UI thread should use `try_send` (never block the UI thread). */
 fn send<T>(c: Chan<T>, v: T) {
