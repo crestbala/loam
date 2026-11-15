@@ -12,12 +12,18 @@ These are what a host has to provide. With only these, every app runs.
 | Need | How |
 |---|---|
 | Start-up | `zeus_set_platform(run, measure, redraw)` from a constructor: `run` owns the event loop, `measure` returns a string's width and line height at a pixel size, `redraw` asks for a frame |
-| A frame | each tick: `zeus_layout(w, h)`, `zeus_step(dt)`, then paint |
+| A frame | each tick: `loam_zeus_engine_layout(w, h)`, `loam_zeus_engine_step_dt(ms)`, then paint |
 | Paint | `zeus_paint(ctx, draw)` with a `ZeusDraw` table, or `zeus_bind_frame(sink)` to decode the frame buffer yourself (`docs/frame-format.md`) |
-| Input | `zeus_handle_click / hover / drag / mouseup`, `zeus_handle_scroll*`, `zeus_handle_key / key_up / text / marked` |
+| Input | `loam_zeus_engine_click / hover / drag / mouseup`, `loam_zeus_engine_scroll*`, `loam_zeus_engine_key_ev / key_up / insert / marked` |
 | View size | `zeus_set_window_size(w, h)`, and `zeus_window_opened()` once a window exists |
 
-`ZeusDraw` callbacks are optional one by one: `zeus_replay` falls back for any
+The `loam_zeus_engine_*` calls are the engine's Loam exports, called with no
+C layer in between. A `loam_str` argument is borrowed for the call, so a host
+may pass `(loam_str){ptr, len, 0}` over its own buffer (the engine copies what
+it keeps); a returned `loam_str` belongs to the host, which calls
+`loam_str_release` once it has read it.
+
+`ZeusDraw` callbacks are optional one by one: the replay (`zeuscore/replay.loam`) falls back for any
 NULL entry (`fill_a` → `fill`, `fill4` → one radius, `stroke` → four edge
 fills, `text_rot` → `text`), and skips what has no fallback (shadows,
 transforms, images, paths). A host can start with `fill`, `text`, `clip`,

@@ -2,8 +2,8 @@
  *
  * Node and Signal are typed handles (id + struct). The retained tree,
  * layout, paint, and hit-test live in packages/zeus/src/zeus.loam. Empty fns in that
- * file (plat_*, keyboard) map to the hooks below. Cocoa talks to the
- * engine through zeus_layout / zeus_paint / zeus_handle_*.
+ * file (plat_*, keyboard) map to the hooks below. Hosts call the engine's
+ * Loam exports (`loam_zeus_engine_*`) directly, and paint through zeus_paint.
  */
 #ifndef ZEUS_RT_H
 #define ZEUS_RT_H
@@ -30,23 +30,8 @@ void loam_zeus_raw_init(void);
 void loam_zeus_open_window(loam_str title, int32_t width, int32_t height);
 void loam_zeus_raw_run(void);
 
-/* Captured `let mut int` state (the compiler lowers it to these three): one
-   line each over the Loam signal store (`zeuscore/arena.loam`, R4.1b), here
-   only because the generated code passes the C `Signal` handle. */
-int32_t loam_arena_sig_new_int(int32_t id, int32_t value);
-int32_t loam_arena_state_get(int32_t id);
-void loam_arena_store_sig(int32_t id, int32_t value);
-static inline Signal loam_zeus_signal(int64_t id, int64_t value) {
-    return (Signal){ (uint32_t)loam_arena_sig_new_int((int32_t)id, (int32_t)value) };
-}
-static inline int64_t loam_zeus_get(Signal sig) { return loam_arena_state_get((int32_t)sig.id); }
-static inline void loam_zeus_set(Signal sig, int64_t value) { loam_arena_store_sig((int32_t)sig.id, (int32_t)value); }
-
 Node loam_zeus_bind(Node label, Signal sig);
 Node loam_zeus_bind_n(Node label, int32_t n);
-int zeus_handle_key_ev(int key, int mods);
-/* 1 while the focused node takes typed text, so a host routes keys to it. */
-int zeus_focus_captures_text(void);
 
 /* --- Platform hosts: zeus/desktop/mac.m, zeus/ios/ios.m, zeus/web/wasm.c --- */
 
@@ -151,7 +136,6 @@ void zeus_set_platform(void (*run)(void),
                       void (*redraw)(void));
 void zeus_set_pick_image(void (*pick)(char *out, int cap, int64_t *w, int64_t *h));
 void zeus_set_image_size(void (*size)(const char *src, int64_t *w, int64_t *h));
-void zeus_picked_image(const char *src, int64_t w, int64_t h);
 void zeus_bind_draw(ZeusDraw draw);
 
 /* Media playback seam. A native host registers one table; the web routes the
@@ -175,7 +159,6 @@ typedef struct {
     int64_t (*fullscreen)(int64_t on);
 } ZeusMedia;
 void zeus_set_media(ZeusMedia media);
-void zeus_media_picked(const char *name, const char *src);
 /* `zeuscore/mediastate.loam` and `imagesize.loam`: bodyless hooks. One bit of
    `media_host_caps` per non-NULL `ZeusMedia` callback, plus 256 on wasm.
    `read_head` is the file read behind an image header (empty on wasm). */
@@ -375,11 +358,17 @@ int64_t loam_runtime_alloc_count(void);
 void loam_platform_plat_set_insets(int64_t top, int64_t right, int64_t bottom,
                                   int64_t left);
 
-/* Loam engine entry points (packages/zeus/src/zeus.loam). Cocoa trampolines through these. */
+/* Loam engine entry points (packages/zeus/src/zeus.loam). Every host calls
+   these directly; there is no C layer in between. A `loam_str` argument is
+   borrowed for the call (a host may pass `(loam_str){ptr, len}` over its own
+   buffer: the engine copies what it keeps). A returned `loam_str` is the
+   host's: `loam_str_release` it once read. Points are in view coordinates,
+   and calls that answer an `int32_t` answer 1 when the view needs a redraw. */
 void loam_zeus_engine_layout(int32_t width, int32_t height);
 void loam_zeus_engine_paint(void);
 int32_t loam_zeus_engine_step(void);
-/* One host frame with the host-supplied delta (ms). `zeus_step(dt)` calls this. */
+/* One host frame with the host-supplied delta in ms (<= 0 means 16; capped
+   at 64). A host with a float `dt` in seconds passes `dt * 1000 + 0.5`. */
 int32_t loam_zeus_engine_step_dt(int32_t dt_ms);
 void loam_zeus_engine_set_reduced_motion(int32_t on);
 /* ms until the next async timer is due (0 = none; -1 = a spawn waits). */
@@ -391,16 +380,23 @@ int32_t loam_zeus_engine_trap_seq(void);
 int32_t loam_zeus_engine_click(int32_t x, int32_t y);
 /* What a finger grabs without pressing: 1 slider/thumb, 2 on_drag, 0 else. */
 int32_t loam_zeus_engine_grab(int32_t x, int32_t y);
+/* Secondary click (right button, ctrl-click, long press): the nearest
+   `on_context_menu` handler under the point runs. */
 int32_t loam_zeus_engine_context_click(int32_t x, int32_t y);
+/* 1 when a press at (x, y) lands on an app-drawn `TitleBar` and on no
+   control inside it, so the host moves the window. */
 int32_t loam_zeus_engine_window_drag_at(int32_t x, int32_t y);
 int32_t loam_zeus_engine_scroll(int32_t x, int32_t y, int32_t dx, int32_t dy);
 void loam_zeus_engine_scroll_latch(int32_t x, int32_t y);
+/* Discrete scroll (mouse notch, web line wheel): the delta, no momentum. */
 int32_t loam_zeus_engine_scroll_step(int32_t x, int32_t y, int32_t dx, int32_t dy);
+/* A mouse-wheel notch eased to its target (browser feel). */
 int32_t loam_zeus_engine_scroll_smooth(int32_t x, int32_t y, int32_t dx, int32_t dy);
 int32_t loam_zeus_engine_drag(int32_t x, int32_t y);
 int32_t loam_zeus_engine_hover(int32_t x, int32_t y);
 void loam_zeus_engine_mouseup(void);
 int32_t loam_zeus_engine_over_button(void);
+/* CSS cursor name under the pointer; "" or an unknown name = the arrow. */
 loam_str loam_zeus_engine_cursor(void);
 /* Visible semantic tree, one `depth\trole\tlabel` line per node (§2.3). */
 loam_str loam_zeus_engine_a11y_dump(void);
@@ -417,40 +413,26 @@ void loam_router_engine_open_url(loam_str url);
 void loam_router_engine_history_back(void);
 void loam_router_engine_chunks_done(int32_t index);
 void loam_router_engine_chunks_slow(int32_t index);
+/* 1 while the focused node takes typed text, so a host routes keys to it. */
 int32_t loam_zeus_engine_focus_captures_text(void);
 int32_t loam_zeus_engine_key(int32_t key);
+/* A key with its modifiers: the keymap first, then the focused node. */
 int32_t loam_zeus_engine_key_ev(int32_t key, int32_t mods);
+/* Key release, from hosts that deliver it: `on_key_up` fires. */
 int32_t loam_zeus_engine_key_up(int32_t key, int32_t mods);
 void loam_zeus_engine_set_mods(int32_t mods);
+/* UTF-8 into the focused input (IME commit, paste). */
 int32_t loam_zeus_engine_insert(loam_str text);
+/* IME composition overlay; "" clears the mark. */
 int32_t loam_zeus_engine_marked(loam_str text);
+/* The image a `pick_image` dialog chose (its path or URL, and its size);
+   the engine redraws. */
 void loam_zeus_engine_picked_image(loam_str src, int32_t w, int32_t h);
+/* A file a media pick chose, or one dropped on the window. */
 void loam_zeus_engine_media_picked(loam_str name, loam_str src);
 
-void zeus_layout(int64_t width, int64_t height);
-int zeus_step(float dt);
+/* Paint one frame into `draw` (with `ctx` passed to every callback). */
 void zeus_paint(void *ctx, ZeusDraw draw);
-int zeus_handle_click(int64_t x, int64_t y);
-/** Secondary click at a point: the nearest `on_context_menu` handler runs. */
-int zeus_handle_context_click(int64_t x, int64_t y);
-int zeus_handle_hover(int64_t x, int64_t y);
-int zeus_over_button(void);
-/** CSS cursor name under the pointer; "" or unknown = default arrow. */
-const char *zeus_cursor(void);
-int zeus_handle_key(int key);
-/** Key release. Hosts that deliver key-up call this; `on_key_up` fires. */
-int zeus_handle_key_up(int key, int mods);
-/** Insert UTF-8 into the focused input (IME commit, paste). */
-int zeus_handle_text(const char *utf8, int n);
-/** IME composition overlay; n = 0 clears the mark. */
-int zeus_handle_marked(const char *utf8, int n);
-int zeus_handle_scroll(int64_t x, int64_t y, int64_t dx, int64_t dy);
-/** Discrete scroll (mouse notch / web line wheel): delta only, no momentum. */
-int zeus_handle_scroll_step(int64_t x, int64_t y, int64_t dx, int64_t dy);
-/* Mouse-wheel notch eased to its target (browser feel). */
-int zeus_handle_scroll_smooth(int64_t x, int64_t y, int64_t dx, int64_t dy);
-int zeus_handle_drag(int64_t x, int64_t y);
-void zeus_handle_mouseup(void);
 const char *zeus_window_title(void);
 
 /** Live title updates: a host registers a callback so `plat_set_title` can
@@ -462,8 +444,6 @@ int64_t zeus_window_chrome(void);
 /** The host's title-bar box in points, written every frame under app-drawn
  *  chrome: bar height, the window buttons' room on the left, and on the right. */
 void zeus_set_titlebar_box(int64_t height, int64_t lead, int64_t trail);
-/** 1 when a press at (x, y) lands on a `TitleBar` and no control in it. */
-int zeus_window_drag_at(int64_t x, int64_t y);
 /** Clipboard writes (`plat_clipboard_write`): a desktop host registers the
  *  system pasteboard here. Unset, the runtime only remembers the text. */
 void zeus_set_clipboard_hook(void (*fn)(const char *));

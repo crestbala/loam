@@ -4,7 +4,8 @@ There is exactly one C runtime in the tree: **`loam_rt`** (`packages/loam/runtim
 included into generated C). No library gets a `*_rt.c` of its own as a place
 to hide protocol or widget logic. Zeus layout/paint/hit-test and http
 encode/dispatch live in Loam. Hosts (Cocoa / UIKit / Canvas / JNI) own the
-event loop and call back into `engine_*` trampolines.
+event loop and call the engine's Loam exports (`loam_zeus_engine_*`)
+directly, with no C layer in between.
 
 ## Convention
 
@@ -26,7 +27,10 @@ where they help (`each<T>`); they are not a substitute for a
 backend type parameter.
 
 The other direction: C calls compiled Loam as `loam_zeus_engine_paint`,
-`loam_http_dispatch`, and so on.
+`loam_http_dispatch`, and so on. A `string` parameter of such an export is
+borrowed for the call, so C may pass a `loam_str` view over its own buffer
+(`own = 0`); an export that keeps the text copies it. A returned `string` is
+the caller's to `loam_str_release`.
 
 ## Calling C libraries
 

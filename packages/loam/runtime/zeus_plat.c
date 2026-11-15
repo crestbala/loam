@@ -117,10 +117,6 @@ void zeus_set_blit(void *ctx, ZeusBlit fn) {
     blit_fn = fn;
 }
 
-static loam_str pick_dup(const char *src) {
-    return loam_str_copy(src, src ? (int64_t)strlen(src) : 0);
-}
-
 /* The header parse lives in `zeuscore/imagesize.loam`. This only asks the
    host hook, and leaves both sides 0 when the host has not registered one. */
 void loam_zeus_plat_image_size(loam_str src, int32_t *w, int32_t *h) {
@@ -142,12 +138,7 @@ loam_str loam_zeus_plat_pick_image(int32_t *w, int32_t *h) {
     if (plat_pick_image) plat_pick_image(buf, (int)sizeof buf, &lw, &lh);
     if (w) *w = (int32_t)lw;
     if (h) *h = (int32_t)lh;
-    return pick_dup(buf);
-}
-
-void zeus_picked_image(const char *src, int64_t w, int64_t h) {
-    loam_zeus_engine_picked_image(pick_dup(src), w, h);
-    if (plat_redraw) plat_redraw();
+    return loam_str_copy(buf, (int64_t)strlen(buf));
 }
 
 #ifdef LOAM_HOST_BUILD
@@ -1158,16 +1149,11 @@ loam_str loam_platform_plat_clipboard_last(void) {
 
 /* Media state (the null player, the pick queue, fullscreen) lives in
    `zeuscore/mediastate.loam`. This file only stores the host table and
-   forwards each callback. `zeus_media_picked` copies both C strings and
-   lets Loam decide whether to redraw. */
+   forwards each callback. A host reports a pick to the Loam export
+   `engine_media_picked`, which decides whether to redraw. */
 static ZeusMedia media_host;
 
 void zeus_set_media(ZeusMedia media) { media_host = media; }
-
-void zeus_media_picked(const char *name, const char *src) {
-    loam_zeus_engine_media_picked(loam_str_copy(name, name ? (int64_t)strlen(name) : 0),
-                                  loam_str_copy(src, src ? (int64_t)strlen(src) : 0));
-}
 
 /* 1 when shortcuts follow Apple conventions (⌘ rather than Ctrl): macOS and
    iOS builds, and a browser on an Apple platform. A headless run (snapshots,
@@ -1416,16 +1402,6 @@ const char *zeus_window_title(void) { return win_title ? win_title : ""; }
 int64_t zeus_window_width(void) { return win_w; }
 int64_t zeus_window_height(void) { return win_h; }
 
-void zeus_layout(int64_t width, int64_t height) {
-    loam_zeus_engine_layout(width, height);
-}
-
-int zeus_step(float dt) {
-    int32_t ms = (int32_t)(dt * 1000.0f + 0.5f);
-    if (ms <= 0) ms = 16;
-    return (int)loam_zeus_engine_step_dt(ms);
-}
-
 void zeus_bind_draw(ZeusDraw draw) {
     paint_ctx = NULL;
     paint_draw = draw;
@@ -1438,100 +1414,6 @@ void zeus_paint(void *ctx, ZeusDraw draw) {
     have_draw = 1;
     loam_zeus_engine_paint();
     have_draw = 0;
-}
-
-int zeus_handle_click(int64_t x, int64_t y) {
-    return (int)loam_zeus_engine_click(x, y);
-}
-
-/* 1 when a press at (x, y) should move the window: it lands on an app-drawn
-   `TitleBar` and on no control inside it. */
-int zeus_window_drag_at(int64_t x, int64_t y) {
-#ifdef LOAM_HOST_BUILD
-    if (!zeus_app_api.window_drag_at) return 0;
-#endif
-    return (int)loam_zeus_engine_window_drag_at((int32_t)x, (int32_t)y);
-}
-
-/* Secondary click (right button, ctrl-click, long press): runs the nearest
-   `on_context_menu` handler under the point. */
-int zeus_handle_context_click(int64_t x, int64_t y) {
-#ifdef LOAM_HOST_BUILD
-    /* An app image built before the entry existed has none to bind. */
-    if (!zeus_app_api.context_click) return 0;
-#endif
-    return (int)loam_zeus_engine_context_click(x, y);
-}
-
-int zeus_handle_hover(int64_t x, int64_t y) {
-    return (int)loam_zeus_engine_hover(x, y);
-}
-
-int zeus_over_button(void) { return (int)loam_zeus_engine_over_button(); }
-
-/* CSS cursor name under the pointer; "" or unknown = default arrow. */
-const char *zeus_cursor(void) {
-    static char buf[64];
-    loam_str s = loam_zeus_engine_cursor();
-    size_t n = s.len < 0 ? 0 : (size_t)s.len;
-    if (n > sizeof buf - 1) n = sizeof buf - 1;
-    if (n && s.ptr) memcpy(buf, s.ptr, n);
-    buf[n] = '\0';
-    return buf;
-}
-
-int zeus_handle_scroll(int64_t x, int64_t y, int64_t dx, int64_t dy) {
-    return (int)loam_zeus_engine_scroll(x, y, dx, dy);
-}
-
-/* Discrete scroll step (mouse wheel notch, web line/page wheel): applies the
- * delta without velocity, so the scroller never coasts past the click. */
-int zeus_handle_scroll_smooth(int64_t x, int64_t y, int64_t dx, int64_t dy) {
-    return (int)loam_zeus_engine_scroll_smooth(x, y, dx, dy);
-}
-
-int zeus_handle_scroll_step(int64_t x, int64_t y, int64_t dx, int64_t dy) {
-    return (int)loam_zeus_engine_scroll_step(x, y, dx, dy);
-}
-
-int zeus_handle_drag(int64_t x, int64_t y) {
-    return (int)loam_zeus_engine_drag(x, y);
-}
-
-void zeus_handle_mouseup(void) { loam_zeus_engine_mouseup(); }
-
-int zeus_handle_key(int key) {
-    return (int)loam_zeus_engine_key(key);
-}
-
-int zeus_handle_text(const char *utf8, int n) {
-    loam_str s;
-    if (!utf8) utf8 = "";
-    if (n < 0) n = (int)strlen(utf8);
-    s.ptr = utf8;
-    s.len = n;
-    return (int)loam_zeus_engine_insert(s);
-}
-
-int zeus_handle_marked(const char *utf8, int n) {
-    loam_str s;
-    if (!utf8) utf8 = "";
-    if (n < 0) n = (int)strlen(utf8);
-    s.ptr = utf8;
-    s.len = n;
-    return (int)loam_zeus_engine_marked(s);
-}
-
-int zeus_handle_key_up(int key, int mods) {
-    return (int)loam_zeus_engine_key_up(key, mods);
-}
-
-int zeus_handle_key_ev(int key, int mods) {
-    return (int)loam_zeus_engine_key_ev(key, mods);
-}
-
-int zeus_focus_captures_text(void) {
-    return (int)loam_zeus_engine_focus_captures_text();
 }
 
 /* --- recoverable traps (zeus.Boundary) ---

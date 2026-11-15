@@ -2631,7 +2631,9 @@ fn finish_proc_call(n: int, ft: int, named: int) -> int {
                 expect = NO_TYPE
             }
         }
-        let r = check_arg_ty(ast.NODES[n].kids[k], expect)
+        let kid = ast.NODES[n].kids[k]
+        let typed = k == 0 && (ast.INFO[n].marks & ast.M_RECV_TYPED) != 0 && ast.NODES[kid].ty != NO_TYPE
+        let r = if typed { Arg { node: kid, ty: ast.NODES[kid].ty } } else { check_arg_ty(kid, expect) }
         ast.NODES[n].kids[k] = r.node
         let at = r.ty
         if nt > 0 {
@@ -3404,6 +3406,9 @@ fn check_call(n: int, expect: int) -> int {
                     ast.INFO[recv].place_mut != 0 && method_recv_matches(f, recv_ty) {
                     recv_arg = wrap_addr(recv, 1)
                 }
+            }
+            if recv_arg == recv && recv != NONE && kind(recv) == Kind.Call && recv_ty != NO_TYPE {
+                ast.INFO[n].marks = ast.INFO[n].marks | ast.M_RECV_TYPED
             }
             let mut na = []int { recv_arg }
             let old = ast.NODES[n].kids

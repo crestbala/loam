@@ -109,6 +109,7 @@ import "zeuscore/track.loam"
 import "zeuscore/style.loam"
 import "std:async"
 import "std:fmt"
+import "std:str"
 import "std:sys"
 import "zeus_constants.loam"
 import "structs.loam"
@@ -658,17 +659,17 @@ fn engine_key_up(key: int, mods: int) -> int {
     return input.key_handlers(key, mods, 1)
 }
 
-// --- engine trampolines ---
-/** *Cocoa calls these through zeus_plat.c (`loam_zeus_engine_*`). Do not use */
-/** *from app code; use `App`, clicks, and signals instead. */
+// --- engine entry points ---
+/** *Hosts call these directly (`loam_zeus_engine_*`, declared in zeus_rt.h). */
+/** *Do not use from app code; use `App`, clicks, and signals instead. */
 
 fn engine_paint() {
     arena.damage_frame_begin()
     scene.paint()
 }
 
-/** *One host frame with its own delta. `zeus_step(delta_ms)` in the runtime passes the */
-/** *delta here; the cap keeps a backgrounded app from jumping when it wakes. */
+/** *One host frame with its own delta in ms, which each host passes here; */
+/** *the cap keeps a backgrounded app from jumping when it wakes. */
 /** *Tests and headless pumps call `engine_step()` (a nominal 16 ms). */
 fn engine_step_dt(dt_ms: int) -> int {
     let mut delta_ms = dt_ms
@@ -1977,10 +1978,11 @@ fn snapshot(width: int, height: int, build: fn() -> Node) {
 }
 
 /** *Host async completion for `pick_image` (file input, photo library). */
+/** *`src` may be a view of the host's buffer, so the signal keeps a copy. */
 fn engine_picked_image(src: string, w: int, h: int) {
     if pick_dest.id > 0 {
         if src.len > 0 {
-            set(pick_dest, src)
+            set(pick_dest, str.slice(src, 0, src.len))
             if pick_w.id > 0 {
                 set(pick_w, w)
             }
@@ -1992,6 +1994,7 @@ fn engine_picked_image(src: string, w: int, h: int) {
         pick_w = Signal { id: 0 }
         pick_h = Signal { id: 0 }
     }
+    mediastate.host_redraw()
 }
 
 /** *A picker or a drop produced one file. The queue and the redraw live in */

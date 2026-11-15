@@ -111,7 +111,8 @@ component fn
 ```
 
 Browser events → `loader.js` → exported `zeus_pointer_*` / `zeus_key` →
-`zeus_handle_*` → signal writes → next `requestAnimationFrame` paint.
+the engine's Loam exports (`loam_zeus_engine_*`) → signal writes → next
+`requestAnimationFrame` paint.
 
 ## Build
 

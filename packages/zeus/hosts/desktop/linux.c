@@ -47,11 +47,14 @@ static void linux_fill_a(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
     linux_fill(ctx, x, y, w, h, rgb, radius);
 }
 
+/* No gradients in Xlib: the first stop as a solid fill. */
 static void linux_fill_g(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
-                         int64_t c0, int64_t c1, int64_t axis) {
+                         int64_t c0, int64_t c1, int64_t axis, int64_t radius,
+                         int64_t alpha) {
     (void)c1;
     (void)axis;
-    linux_fill(ctx, x, y, w, h, c0, 0);
+    (void)alpha;
+    linux_fill(ctx, x, y, w, h, c0, radius);
 }
 
 static void linux_text(void *ctx, int64_t x, int64_t y, const char *s,
@@ -80,7 +83,7 @@ static void linux_paint(void) {
     d.fill_a = linux_fill_a;
     d.fill_g = linux_fill_g;
     d.text = linux_text;
-    zeus_layout((int64_t)g_w, (int64_t)g_h);
+    loam_zeus_engine_layout((int32_t)g_w, (int32_t)g_h);
     zeus_paint(NULL, d);
     XFlush(g_dpy);
 }
@@ -150,12 +153,12 @@ static void linux_run(void) {
                 linux_paint();
             } else if (ev.type == ButtonPress) {
                 int x = ev.xbutton.x, y = ev.xbutton.y;
-                if (ev.xbutton.button == Button4) zeus_handle_scroll_smooth(x, y, 0, -100);
-                else if (ev.xbutton.button == Button5) zeus_handle_scroll_smooth(x, y, 0, 100);
-                else zeus_handle_click(x, y);
+                if (ev.xbutton.button == Button4) loam_zeus_engine_scroll_smooth(x, y, 0, -100);
+                else if (ev.xbutton.button == Button5) loam_zeus_engine_scroll_smooth(x, y, 0, 100);
+                else loam_zeus_engine_click(x, y);
                 linux_paint();
             } else if (ev.type == MotionNotify) {
-                zeus_handle_hover(ev.xmotion.x, ev.xmotion.y);
+                loam_zeus_engine_hover(ev.xmotion.x, ev.xmotion.y);
             } else if (ev.type == KeyPress) {
                 KeySym ks = XLookupKeysym(&ev.xkey, 0);
                 int key = 0;
@@ -164,7 +167,7 @@ static void linux_run(void) {
                 else if (ks == XK_BackSpace) key = 8;
                 else if (ks == XK_Escape) key = 27;
                 else if (ks >= 32 && ks < 127) key = (int)ks;
-                if (key) zeus_handle_key(key);
+                if (key) loam_zeus_engine_key(key);
                 linux_paint();
             }
             if (quit) goto done;
@@ -180,15 +183,14 @@ static void linux_run(void) {
             if (r < 0) break;
             if (r == 0) {
                 /* Timed out: a timer or animation is due. Step and repaint. */
-                float dt = 1.f / 60.f;
-                zeus_step(dt);
+                loam_zeus_engine_step_dt(17);
                 linux_paint();
             }
             continue;
         }
 
         /* timeout_ms == 0: a frame is due now. */
-        if (zeus_step(1.f / 60.f)) linux_paint();
+        if (loam_zeus_engine_step_dt(17)) linux_paint();
     }
 done:
     XFreeGC(g_dpy, g_gc);

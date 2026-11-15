@@ -11,6 +11,7 @@ import "geometry.loam"
 import "logs.loam"
 import "platform.loam"
 import "runtime.loam"
+import "std:str"
 import "std:unicode"
 
 struct Click {
@@ -1516,7 +1517,9 @@ fn insert_text(s: string) -> int {
         if nodes.ui[id].kdown_fn <= 0 || s.len == 0 {
             return 0
         }
-        arena.ev_text = s
+        // A copy: `s` may be a view of the host's buffer, and the handler
+        // may keep `ev_text`.
+        arena.ev_text = str.slice(s, 0, s.len)
         arena.ev_key = 2000
         arena.ev_mods = 0
         arena.invoke_handler(nodes.ui[id].kdown_fn, id)
