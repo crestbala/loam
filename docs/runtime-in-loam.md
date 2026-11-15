@@ -733,7 +733,8 @@ straight to libc, so no C shim.
       (−59).
 - [ ] R2.6b A `ReadDirectoryChangesW` watcher; the Windows CI job is green.
 
-**R3. Async and threads** (lands with T1, [threads.md](threads.md)).
+**R3. Async and threads** (lands with T1, [threads.md](threads.md); T1 is
+done, so every R3 step is checked by `thread_tsan`).
 
 - [ ] R3.1 The future table in Loam, keeping S0's typed cells.
 - [ ] R3.2 The channel queues in Loam; mutex, condition variable and thread

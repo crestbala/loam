@@ -1,0 +1,90 @@
+// The thread runtime under load, for the ThreadSanitizer stanza (and as a
+// plain fixture): 8 workers pull string jobs from one channel and push
+// string and struct replies on two others, 400 jobs each, so every send,
+// recv, try_send / try_recv, the condition-variable waits of a full and an
+// empty channel, and the atomic string refcounts run from several threads
+// at once. Every reply is checked; one line prints when all of it held.
+import "std:async"
+import "std:fmt"
+import "std:sys"
+import "std:thread"
+
+struct Reply {
+    job: int,
+    len: int,
+}
+
+fn main() {
+    let workers = 8
+    let per_worker = 400
+    let total = workers * per_worker
+    let jobs = thread.chan(32, "")
+    let texts = thread.chan(8, "")
+    let replies = thread.chan(8, Reply { job: 0, len: 0 })
+    for w in 0..workers {
+        thread.spawn(|| {
+            let mut going = true
+            while going {
+                let job = jobs.recv()
+                if job == "stop" {
+                    going = false
+                } else {
+                    // A new string made here, sent back across threads.
+                    let back = "{{job}}:done"
+                    texts.send(back)
+                    replies.send(Reply { job: job.len, len: back.len })
+                }
+            }
+        })
+    }
+    let mut posted = 0
+    let mut stops = 0
+    let mut text_n = 0
+    let mut reply_n = 0
+    let mut bad = 0
+    let mut guard = 0
+    while (text_n < total || reply_n < total || stops < workers) && guard < 2000000 {
+        let mut moved = false
+        // Post jobs (strings built on this thread) while there is room.
+        while posted < total && jobs.try_send("job {{posted}}") != 0 {
+            posted = posted + 1
+            moved = true
+        }
+        if posted == total {
+            while stops < workers && jobs.try_send("stop") != 0 {
+                stops = stops + 1
+                moved = true
+            }
+        }
+        while texts.ready() > 0 {
+            let t = texts.try_recv()
+            if t.len < 9 {
+                bad = bad + 1
+            }
+            text_n = text_n + 1
+            moved = true
+        }
+        while replies.ready() > 0 {
+            let r = replies.try_recv()
+            if r.len != r.job + 5 {
+                bad = bad + 1
+            }
+            reply_n = reply_n + 1
+            moved = true
+        }
+        if !moved {
+            async.sleep(0)
+        }
+        guard = guard + 1
+    }
+    guard = 0
+    while thread.running() > 0 && guard < 100000 {
+        async.sleep(1)
+        guard = guard + 1
+    }
+    if text_n != total || reply_n != total || bad != 0 || thread.running() > 0 {
+        fmt.println("FAIL texts", text_n, "replies", reply_n, "bad", bad, "running", thread.running())
+        sys.exit(1)
+    }
+    fmt.println("ok", workers, "workers,", total, "jobs, strings both ways")
+}
