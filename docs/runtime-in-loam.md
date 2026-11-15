@@ -672,8 +672,47 @@ straight to libc, so no C shim.
       (164), `thread`, `http`; the 8 stanzas plus `wasm_trap` (`lsp` speaks
       JSON-RPC through both); `cross-check.sh` Linux 123/123 and Windows
       111/111 on both CPUs. **Runtime: 8,286 → 8,249** (−37).
-- [ ] R2.5 `watch_*` bookkeeping over kqueue / inotify / Win32 bindings.
-- [ ] R2.6 Win32 paths through the same bindings; the Windows CI job is green.
+- [x] R2.5 `watch_*` over kqueue and inotify bindings. Done 2026-11-15.
+      Same four calls, no caller changed. macOS / iOS: raw `kqueue` / `open`
+      / `kevent` / `close`, with `struct kevent` laid out by hand in four
+      `i64` slots (ident; filter, flags and fflags little-endian; data;
+      udata), the layout and every flag value read from the SDK's headers;
+      the event and timeout slots are kept between calls (a drain asks
+      thousands of times). **Linux gets a watcher for the first time:**
+      raw `inotify_init1` / `inotify_add_watch` / `inotify_rm_watch` / `poll`
+      / `read`, events parsed in Loam (16-byte header, then the name). The
+      bookkeeping: an id packs handle and watch (`handle * 2^20 + wd`), so
+      `watch_close(id)` still needs no handle and no table; events one
+      `read` brings beyond the first wait in a module queue, so `watch_next`
+      answers one per call as kqueue does, and a repeat of an id already
+      waiting is folded (kqueue's `EV_CLEAR`). The mask (`IN_MODIFY`,
+      `IN_DELETE_SELF`, `IN_MOVE_SELF`, `IN_CREATE`, `IN_DELETE`,
+      `IN_MOVED_FROM`, `IN_MOVED_TO`) is what kqueue reports for a file and a
+      directory alike; `IN_IGNORED` is skipped. Layouts and constants read
+      from glibc's and musl's headers via zig (identical on x86_64 and
+      aarch64). Windows, Android, wasm and other Unix keep `watch_open` = 0
+      (the caller polls). The one change: a BSD (`other`) loses kqueue, its
+      `struct kevent` differs from Apple's and no BSD is a supported target.
+      Win32 (`ReadDirectoryChangesW`) moves to R2.6 with the Win32 paths.
+      Checks: the macOS probe (edit, create, remove, rename of a watched
+      file, bad paths and handles, timeouts, closes) is identical to HEAD's
+      C, 0 leaks; `watch`, `serve_native`, `thread_call_sys` (a worker still
+      cannot reach it) pass. **Linux is checked as far as this Mac can:** the
+      watcher fixture and the probe link for x86_64 / aarch64 glibc and musl
+      with `-Wall`, no warnings; the parsing, queueing, folding and id
+      decoding run here against a hand-built kernel buffer (order kept,
+      duplicate folded, `IN_IGNORED` skipped, names of 16 and 32 bytes
+      stepped over, handles kept apart, closes drop the right waiting
+      events). The kernel calls themselves first run on the Linux CI job.
+      `cross-check.sh` Linux 123/123 and Windows 111/111 on both CPUs; the
+      8 stanzas plus `wasm_trap` green.
+      Benchmark vs HEAD's C (macOS, 3 rounds): `watch_add` ×2000 24–30 vs
+      24–28 ms, `watch_next(0)` ×200k 2489–2510 vs 2484–2491 ms (noise),
+      `watch_close` ×2000 18–19 vs 17–19 ms. The dead `loam_sys_cpath`
+      helper goes with it. Seed 5,098,988 → 5,095,924 bytes, seed = stage 1
+      = stage 2. **Runtime: 8,249 → 8,136** (−113).
+- [ ] R2.6 Win32 paths through the same bindings, and a `ReadDirectoryChangesW`
+      watcher; the Windows CI job is green.
 
 **R3. Async and threads** (lands with T1, [threads.md](threads.md)).
 

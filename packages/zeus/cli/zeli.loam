@@ -2540,8 +2540,8 @@ fn echo_log(logfile: string, from: int) -> int {
 /** *Paths a registration is held for, parallel to `watch_ids`. */
 let mut watch_paths: []string = []string {}
 
-/** *The id `sys.watch_add` returned for `watch_paths[i]`. It is a descriptor, so */
-/** *closing one is `sys.watch_close`. */
+/** *The id `sys.watch_add` returned for `watch_paths[i]`; closing one is */
+/** *`sys.watch_close`. */
 let mut watch_ids: []int = []int {}
 
 /** *The path a registration id stands for, or `""` when it is not ours. */
