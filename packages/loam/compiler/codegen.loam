@@ -2042,20 +2042,31 @@ fn builtin_call(x: &Inst) -> bool {
     }
     if name == "loam_fut_push" && x.nargs >= 1 && has_dst {
         let a0 = lv(arg_of(x, 0))
+        // The table lives in `std:async` (R3.1): alloc the slot in Loam,
+        // then move the bytes. `memcpy` is libc, always linked.
         if is_copy_vec(x.ty) {
-            w("{ loam_vec _fv = loam_vec_retain(&{{a0}}); {{lv(x.dst)}} = loam_fut_push(&_fv, sizeof(_fv), {{handle_key(x.ty)}}u); }\n")
+            w("{ loam_vec _fv = loam_vec_retain(&{{a0}}); {{lv(x.dst)}} = loam_async_fut_alloc(sizeof(_fv), {{handle_key(x.ty)}}); ")
+            w("{ loam_vec _ar = loam_async_fut_arena(); memcpy((char *)_ar.ptr + loam_async_fut_off({{lv(x.dst)}}), &_fv, sizeof(_fv)); loam_vec_drop(&_ar); } }\n")
         } else {
-            w("{{lv(x.dst)}} = loam_fut_push(&{{a0}}, sizeof(")
+            w("{{lv(x.dst)}} = loam_async_fut_alloc(sizeof(")
             w_ctype(x.ty)
-            w("), {{handle_key(x.ty)}}u);\n")
+            w("), {{handle_key(x.ty)}});\n")
+            indent(1)
+            w("{ loam_vec _ar = loam_async_fut_arena(); memcpy((char *)_ar.ptr + loam_async_fut_off({{lv(x.dst)}}), &{{a0}}, sizeof(")
+            w_ctype(x.ty)
+            w(")); loam_vec_drop(&_ar); }\n")
         }
         return true
     }
     if name == "loam_fut_load" && x.nargs >= 1 && has_dst {
         let d = lv(x.dst)
-        w("loam_fut_load({{lv(arg_of(x, 0))}}, &{{d}}, sizeof(")
+        // Dead ids read zeroed, as the C table did; live ones check S0 first.
+        w("{ if (loam_async_fut_live({{lv(arg_of(x, 0))}})) { loam_async_fut_check({{lv(arg_of(x, 0))}}, {{handle_key(x.ty)}}); ")
+        w("{ loam_vec _ar = loam_async_fut_arena(); memcpy(&{{d}}, (char *)_ar.ptr + loam_async_fut_off({{lv(arg_of(x, 0))}}), sizeof(")
         w_ctype(x.ty)
-        w("), {{handle_key(x.ty)}}u);\n")
+        w(")); loam_vec_drop(&_ar); } } else { memset(&{{d}}, 0, sizeof(")
+        w_ctype(x.ty)
+        w(")); } }\n")
         if is_copy_vec(x.ty) {
             indent(1)
             w("{{d}} = loam_vec_retain(&{{d}});\n")
@@ -2070,16 +2081,28 @@ fn builtin_call(x: &Inst) -> bool {
         }
         let s = lv(arg_of(x, 0))
         let v = lv(a1)
+        // A dead id is a no-op (as before); a live one checks S0, moves the
+        // bytes, and marks ready.
         if is_copy_vec(vt) {
             let key = handle_key(vt)
-            w("{ loam_vec _old; loam_fut_load({{s}}, &_old, sizeof(_old), {{key}}u); ")
-            w("loam_vec _new = loam_vec_retain(&{{v}}); loam_fut_store({{s}}, &_new, sizeof(_new), {{key}}u); ")
-            w("loam_vec_drop(&_old); }\n")
+            w("{ if (loam_async_fut_live({{s}})) { loam_async_fut_check({{s}}, {{key}}); ")
+            w("loam_vec _old; { loam_vec _ar = loam_async_fut_arena(); memcpy(&_old, (char *)_ar.ptr + loam_async_fut_off({{s}}), sizeof(_old)); loam_vec_drop(&_ar); } ")
+            w("loam_vec _new = loam_vec_retain(&{{v}}); { loam_vec _ar = loam_async_fut_arena(); memcpy((char *)_ar.ptr + loam_async_fut_off({{s}}), &_new, sizeof(_new)); loam_vec_drop(&_ar); } ")
+            w("loam_vec_drop(&_old); loam_async_fut_mark_ready({{s}}); } }\n")
         } else {
-            w("loam_fut_store({{s}}, &{{v}}, sizeof(")
+            w("{ if (loam_async_fut_live({{s}})) { loam_async_fut_check({{s}}, {{handle_key(vt)}}); ")
+            w("{ loam_vec _ar = loam_async_fut_arena(); memcpy((char *)_ar.ptr + loam_async_fut_off({{s}}), &{{v}}, sizeof(")
             w_ctype(vt)
-            w("), {{handle_key(vt)}}u);\n")
+            w(")); loam_vec_drop(&_ar); } loam_async_fut_mark_ready({{s}}); } }\n")
         }
+        return true
+    }
+    if name == "loam_fut_ready" && x.nargs >= 1 && has_dst {
+        w("{{lv(x.dst)}} = loam_async_fut_is_ready({{lv(arg_of(x, 0))}});\n")
+        return true
+    }
+    if name == "loam_fut_clear" && x.nargs >= 1 {
+        w("loam_async_fut_unready({{lv(arg_of(x, 0))}});\n")
         return true
     }
     if name == "loam_ch_alloc" && x.nargs >= 1 && has_dst {

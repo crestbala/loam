@@ -351,6 +351,87 @@ fn tick() {
 // mailbox, then the value returns. UI code that must stay repaint-reactive
 // should keep using callbacks; `await` fits startup sequences and headless
 // flows (the counter app fetches before its App starts).
+//
+// The store lives here, not in the runtime header (docs/runtime-in-loam.md,
+// R3.1): one `[]u8` arena plus parallel slot metadata. Codegen lowers the
+// `__fut_*` builtins to per-type byte moves through `fut_arena_*` + `memcpy`
+// (see `builtin_call`), so a heterogeneous `T` never crosses Loam as a value.
+// S0 typed cells hold: the slot records `handle_key(T)` at push (the key is
+// FNV-1a over the type's spelling, never 0), and every access passes the key
+// it expects — a mismatch panics, as the `handle_forge_future` trap proves.
+// UI-thread only, like the signal arena: `__fut_*` on a worker is a compile
+// error (threadcheck), so no lock.
+
+/** *One future slot: byte range in the arena, readiness, and the S0 type key. */
+struct FutSlot {
+    off: int,
+    len: int,
+    ready: int,
+    key: i64,
+}
+
+/** *The mailbox store: payload bytes plus one slot per `future`. */
+let mut fut_data: []u8 = []u8 {}
+let mut fut_slots: []FutSlot = []FutSlot {}
+
+/** *A fresh slot id holding `n` zeroed bytes under `key`, unreadied. */
+fn fut_alloc(n: int, key: i64) -> int {
+    let off = fut_data.len
+    let mut i = 0
+    while i < n {
+        push(fut_data, u8(0))
+        i = i + 1
+    }
+    push(fut_slots, FutSlot { off: off, len: n, ready: 0, key: key })
+    return fut_slots.len - 1
+}
+
+/** *`1` when `id` names a live slot. Dead ids read zeroed, as before. */
+fn fut_live(id: int) -> int {
+    return if id >= 0 && id < fut_slots.len { 1 } else { 0 }
+}
+
+/** *`1` when `id` is live and resolved. A forged id is never ready. */
+fn fut_is_ready(id: int) -> int {
+    if fut_live(id) == 0 {
+        return 0
+    }
+    return fut_slots[id].ready
+}
+
+/** *Unready `id` (a no-op on a dead id). */
+fn fut_unready(id: int) {
+    if fut_live(id) != 0 {
+        fut_slots[id].ready = 0
+    }
+}
+
+/** *Mark `id` resolved, after codegen checks `key` and moved the bytes. */
+fn fut_mark_ready(id: int) {
+    fut_slots[id].ready = 1
+}
+
+/** *The S0 key check, in Loam: `id` must be live and keyed `key`. A forged */
+/** *id or a mismatched `T` panics, naming the handle kind as before. */
+fn fut_check(id: int, key: i64) {
+    if fut_live(id) == 0 {
+        panic("future handle used at the wrong type")
+    }
+    if fut_slots[id].key != key {
+        panic("future handle used at the wrong type")
+    }
+}
+
+/** *The arena itself, for codegen's per-type byte moves (a `[]u8` shares its */
+/** *buffer, so no bytes copy; the caller drops its handle). */
+fn fut_arena() -> []u8 {
+    return fut_data
+}
+
+/** *Slot `id`'s byte offset in the arena. */
+fn fut_off(id: int) -> int {
+    return fut_slots[id].off
+}
 
 /** *Allocate a fresh future. `init` is the value until `resolve` fills it */
 /** *(and the timeout fallback if the mailbox never resolves). */
