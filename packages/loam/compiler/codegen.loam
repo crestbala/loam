@@ -2653,7 +2653,13 @@ fn inst(i: int) {
             array_lit(x)
             break
         case Op.FnVal:
-            w("{{lv(x.dst)}} = ((loam_fn){(void *){{callee_of(x)}}__as_fn, NULL, 0});\n")
+            if x.imm == i64(1) {
+                // Only ever an argument to a `#[c]` binding, which hands `.fn`
+                // to C: the fn itself, called with the C ABI.
+                w("{{lv(x.dst)}} = ((loam_fn){(void *){{callee_of(x)}}, NULL, 0});\n")
+            } else {
+                w("{{lv(x.dst)}} = ((loam_fn){(void *){{callee_of(x)}}__as_fn, NULL, 0});\n")
+            }
             break
         case Op.Clos:
             clos_inst(x)
@@ -3506,7 +3512,7 @@ fn c_abi_type(t: int) {
     let k = tkind(t)
     if k == TK.String {
         w("const char *")
-    } else if k == TK.Vec {
+    } else if k == TK.Vec || k == TK.Proc {
         w("void *")
     } else {
         w_ctype(t)
@@ -3619,6 +3625,8 @@ fn c_bindings() {
                     w("_cs{{k}}")
                 } else if pk == TK.Vec {
                     w("{{cid(param_name(d, k))}}.ptr")
+                } else if pk == TK.Proc {
+                    w("{{cid(param_name(d, k))}}.fn")
                 } else {
                     w(cid(param_name(d, k)))
                 }
@@ -3647,13 +3655,15 @@ fn c_bindings() {
     }
 }
 
-/** *Adapter so a named fn can be stored in a `loam_fn` (env unused). */
+/** *Adapter so a named fn can be stored in a `loam_fn` (env unused). An */
+/** *`#[os]` variant's adapter is inside the variant's own `#if` (the caller */
+/** *places the shard mark before it, so no cut splits the conditional). */
 fn as_fn_tramp(d: int, proto: bool) {
     let ft = ast.NODES[d].ty
     let ret = ret_type(ft)
     let x = ast.ex(d)
     let cn = if ast.EXTRA[x].has_sname { ast.EXTRA[x].sname } else { ast.INFO[d].name }
-    if !proto {
+    if !proto && typecheck.os_mask(d) == 0 {
         shard_mark(cn)
     }
     w_ctype(ret)
@@ -3953,10 +3963,21 @@ fn emit_c() {
             for i in 0..decls.len {
                 let d = decls[i]
                 // A user seam has a prototype above, so it can be a value too.
-                if is_fn(d) && (ast.INFO[d].marks & ast.M_AS_VALUE) != 0 &&
-                    (!is_intrinsic(d) || c_sym_of(d).len > 0 || !std_mod) && !is_generic(d) && dce.keep(d) &&
-                    typecheck.os_primary(d) == d {
+                // Each `#[os]` variant gets its adapter under its own `#if`
+                // (a value names the primary, which holds the mark), so a
+                // target without the fn has no adapter calling it.
+                if !is_fn(d) {
+                    continue
+                }
+                let primary = typecheck.os_primary(d)
+                if (ast.INFO[primary].marks & ast.M_AS_VALUE) != 0 &&
+                    (!is_intrinsic(d) || c_sym_of(d).len > 0 || !std_mod) && !is_generic(d) && dce.keep(d) {
+                    if !proto && typecheck.os_mask(d) != 0 && primary == d {
+                        shard_mark("{{fn_cname(d)}}__as_fn")
+                    }
+                    os_begin(d)
                     as_fn_tramp(d, proto)
+                    os_end(d)
                 }
             }
         }

@@ -360,6 +360,9 @@ const ASTF_WRAPPED_LIT: int = 128
 const ASTF_NO_OVERFLOW: int = 256
 /** *`ranges`: this integer cast's source provably fits the target. */
 const ASTF_CONV_SAFE: int = 512
+/** *A named fn passed to a `#[c]` fn-typed parameter: lowered to its own C */
+/** *symbol (a C function pointer), not a `loam_fn` trampoline. */
+const ASTF_C_FN_PTR: int = 1024
 
 // --- generics ------------------------------------------------------------------------
 
@@ -3481,7 +3484,39 @@ fn check_call(n: int, expect: int) -> int {
         return types.ty_void()
     }
     let ft = fn_type_of(f)
-    return finish_proc_call(n, ft, f)
+    let result = finish_proc_call(n, ft, f)
+    if ast.EXTRA[ast.ex(f)].has_text {
+        check_c_fn_ptr_args(n, f)
+    }
+    return result
+}
+
+/** *A `#[c]` fn-typed parameter takes a C function pointer: the argument */
+/** *must name a module-level fn that is neither generic, a `#[c]` binding */
+/** *nor a body-less hook, so its own C symbol has exactly the C signature */
+/** *and needs no environment. Each such argument is marked to lower to that */
+/** *symbol; nothing else ever holds the raw pointer. */
+fn check_c_fn_ptr_args(n: int, f: int) {
+    let ft = fn_type_of(f)
+    if ft == NO_TYPE || tk(ft) != TK.Proc {
+        return
+    }
+    let ps = types.TYPES[ft].params
+    let args = ast.NODES[n].kids
+    for k in 0..ps.len {
+        if k >= args.len || tk(ps[k]) != TK.Proc {
+            continue
+        }
+        let a = args[k]
+        let target = if a != NONE && kind(a) == Kind.Ident && (ast.NODES[a].flags & ASTF_FN_VAL) != 0 { ast.NODES[a].res } else { NONE }
+        let ok = target != NONE && kind(target) == Kind.Fn && decl_mod(target) != NONE &&
+            !ast.EXTRA[ast.ex(target)].has_text && ast.EXTRA[ast.ex(target)].strs.len == 0 && !is_hook(target)
+        if !ok {
+            err(ast.INFO[if a != NONE { a } else { n }].loc, "#[c] fn '{{ast.INFO[f].name}}': argument {{k + 1}} must name a module-level fn (C calls it through a plain function pointer: no closure, no fn value held in a variable, no #[c] or body-less fn)")
+            continue
+        }
+        ast.NODES[a].flags = ast.NODES[a].flags | ASTF_C_FN_PTR
+    }
 }
 
 // --- value ifs, tails, closures -----------------------------------------------------
@@ -3802,6 +3837,16 @@ fn check_c_private(f: int, loc: Loc) {
 
 /** *`n` now names fn `f` as a value. */
 fn resolve_fn_value(n: int, f: int) -> int {
+    // Called through a value, its callback arguments would be trampolines.
+    if ast.EXTRA[ast.ex(f)].has_text && fn_type_of(f) != NO_TYPE && tk(fn_type_of(f)) == TK.Proc {
+        let ps = types.TYPES[fn_type_of(f)].params
+        for k in 0..ps.len {
+            if tk(ps[k]) == TK.Proc {
+                err(ast.INFO[n].loc, "#[c] fn '{{ast.INFO[f].name}}' takes a C function pointer, so it can only be called directly, not used as a value")
+                break
+            }
+        }
+    }
     ast.INFO[f].marks = ast.INFO[f].marks | ast.M_AS_VALUE
     ast.NODES[n].flags = ast.NODES[n].flags | ASTF_FN_VAL
     ast.NODES[n].ty = fn_type_of(f)
@@ -5548,9 +5593,28 @@ fn c_variadic_type(t: int) -> bool {
     return (types.is_float_kind(t) && bits == 64) || (!types.is_float_kind(t) && (bits == 32 || bits == 64))
 }
 
+/** *A fn type C can call through a plain function pointer: every */
+/** *parameter a C number or bool, and the result one or nothing. */
+fn c_callback_type(t: int) -> bool {
+    if tk(t) != TK.Proc {
+        return false
+    }
+    let ps = types.TYPES[t].params
+    for k in 0..ps.len {
+        if !(tk(ps[k]) == TK.Bool || c_scalar_type(ps[k])) {
+            return false
+        }
+    }
+    let r = types.TYPES[t].ret
+    return r == NO_TYPE || tk(r) == TK.Void || tk(r) == TK.Bool || c_scalar_type(r)
+}
+
 fn c_param_type(t: int) -> bool {
     if t == NO_TYPE {
         return false
+    }
+    if c_callback_type(t) {
+        return true
     }
     if tk(t) == TK.Bool || tk(t) == TK.String || c_scalar_type(t) || c_plain_struct(t) {
         return true
@@ -5589,7 +5653,7 @@ fn check_c_fn(d: int) {
         let ps = types.TYPES[ft].params
         for k in 0..ps.len {
             if !c_param_type(ps[k]) {
-                err(x.loc, "#[c] fn '{{name}}': parameter {{k + 1}} has a type C cannot take (use a number, bool, string, [] of numbers or bools, or a struct of numbers and bools)")
+                err(x.loc, "#[c] fn '{{name}}': parameter {{k + 1}} has a type C cannot take (use a number, bool, string, [] of numbers or bools, a struct of numbers and bools, or a fn of numbers and bools)")
             }
         }
         let fixed = ast.c_variadic_fixed(d)

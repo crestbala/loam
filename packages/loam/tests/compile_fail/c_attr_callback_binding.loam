@@ -1,0 +1,11 @@
+// A #[c] binding's own symbol is its Loam wrapper's, not C's: it cannot be
+// the callback.
+#[c("abs")]
+fn c_abs(x: i32) -> i32 {}
+
+#[c("c_call")]
+fn c_call(f: fn(i32) -> i32, x: i32) -> i32 {}
+
+fn main() {
+    let _ = c_call(c_abs, -1)
+}

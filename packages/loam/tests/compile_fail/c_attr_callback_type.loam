@@ -1,0 +1,11 @@
+// C cannot call a fn that takes a `string` (Loam's own layout).
+#[c("c_each")]
+fn c_each(f: fn(string) -> i32) {}
+
+fn first(s: string) -> i32 {
+    return 0
+}
+
+fn main() {
+    c_each(first)
+}

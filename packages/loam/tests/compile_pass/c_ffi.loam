@@ -119,6 +119,53 @@ fn fcntl_round_trip() -> bool {
     return true
 }
 
+/** *C calls `f` through a plain function pointer, twice. */
+#[c("c_ffi_apply")]
+fn apply(f: fn(i64, i32) -> i64, a: i64, b: i32) -> i64 {}
+
+/** *What `c_ffi_apply` calls back: a module-level fn, so its C symbol has */
+/** *the C signature and needs no environment. */
+fn scaled(x: i64, k: i32) -> i64 {
+    return x * i64(10) + i64(k)
+}
+
+/** *libc's `qsort` with a Loam comparator. */
+#[os("posix", "windows")]
+#[c("qsort")]
+fn c_qsort(base: []i32, n: i64, size: i64, compare: fn(i64, i64) -> i32) {}
+
+/** *The comparator reads the two `int`s C points at. */
+#[os("posix", "windows")]
+#[c("memcpy")]
+fn load_i32s(dst: []i32, src: i64, n: i64) -> i64 {}
+
+let mut compared: []i32 = []i32 {}
+
+#[os("posix", "windows")]
+fn by_value(a: i64, b: i64) -> i32 {
+    if compared.len == 0 {
+        compared.push(0)
+        compared.push(0)
+    }
+    load_i32s(compared, a, 4)
+    let x = compared[0]
+    load_i32s(compared, b, 4)
+    let y = compared[0]
+    return if x < y { -1 } else if x > y { 1 } else { 0 }
+}
+
+#[os("posix", "windows")]
+fn sorted_by_qsort() -> bool {
+    let xs = []i32 { 5, -3, 9, 0, 9, 2 }
+    c_qsort(xs, 6, 4, by_value)
+    return xs[0] == -3 && xs[1] == 0 && xs[2] == 2 && xs[3] == 5 && xs[4] == 9 && xs[5] == 9
+}
+
+#[os("wasm")]
+fn sorted_by_qsort() -> bool {
+    return true
+}
+
 /** *Named like a runtime function: the wrapper has to be renamed, not collide. */
 #[c("strlen")]
 fn str_copy(s: string) -> i64 {}
@@ -188,6 +235,9 @@ fn main() {
         "variadic ints, a double and a string",
     )
     expect(fcntl_round_trip(), "variadic libc fcntl")
+
+    expect(apply(scaled, i64(3), 4) == 77, "Loam fn called back from C")
+    expect(sorted_by_qsort(), "libc qsort with a Loam comparator")
 
     let f = tick
     f()

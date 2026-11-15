@@ -2835,6 +2835,14 @@ fn ig_c_layouts() {
     p = cat(p, "AT(struct sockaddr_in, sin_family, 1); IS(SOL_SOCKET, 65535); IS(SO_REUSEADDR, 4); IS(SO_RCVTIMEO, 4102);\n")
     p = cat(p, "IS(SO_ERROR, 4103); IS(SO_NOSIGPIPE, 4130); IS(MSG_NOSIGNAL, 524288); IS(O_NONBLOCK, 4);\n")
     p = cat(p, "IS(EAGAIN, 35); IS(EINPROGRESS, 36); IS(EALREADY, 37); SIZE(nfds_t, 4);\n")
+    // std:net's TLS client: `addrinfo` read word by word, SecureTransport's
+    // statuses and enums, and the errnos its I/O callbacks map.
+    p = cat(p, "#include <netdb.h>\n#include <Security/SecureTransport.h>\n")
+    p = cat(p, "SIZE(struct addrinfo, 48); AT(struct addrinfo, ai_family, 4); AT(struct addrinfo, ai_socktype, 8); AT(struct addrinfo, ai_protocol, 12);\n")
+    p = cat(p, "AT(struct addrinfo, ai_addrlen, 16); AT(struct addrinfo, ai_addr, 32); AT(struct addrinfo, ai_next, 40); SIZE(size_t, 8);\n")
+    p = cat(p, "IS(noErr, 0); IS(errSSLWouldBlock, -9803); IS(errSSLClosedGraceful, -9805); IS(errSSLClosedAbort, -9806);\n")
+    p = cat(p, "IS(errSSLInternal, -9810); IS(errSSLIllegalParam, -9830); IS(kSSLClientSide, 1); IS(kSSLStreamType, 0); IS(kTLSProtocol12, 8);\n")
+    p = cat(p, "SIZE(SSLProtocol, 4); SIZE(SSLProtocolSide, 4); SIZE(OSStatus, 4); IS(SO_SNDTIMEO, 4101); IS(ECONNRESET, 54); IS(EPIPE, 32); IS(AF_UNSPEC, 0);\n")
     // std:sys watch: `struct kevent` in four `i64` words, and its flags.
     p = cat(p, "#include <sys/event.h>\n#include <fcntl.h>\n#include <mach/mach.h>\n")
     p = cat(p, "SIZE(struct kevent, 32); AT(struct kevent, filter, 8); AT(struct kevent, flags, 10);\n")
@@ -2886,7 +2894,7 @@ fn ig_c_layouts() {
         }
     }
     let with_raylib = if raylib.len > 0 { ", raylib" } else { "" }
-    ok("c layouts (timespec, sockaddr_in, pollfd, kevent, task_vm_info, inotify_event, rusage{{with_raylib}}: {{names}})")
+    ok("c layouts (timespec, sockaddr_in, pollfd, addrinfo, SecureTransport, kevent, task_vm_info, inotify_event, rusage{{with_raylib}}: {{names}})")
 }
 
 /** *Floats: `std:floattext` gives the host libc's `%.<p>g` and `strtod` */
@@ -3302,7 +3310,7 @@ fn grammar() -> int {
 // deletes the C, so the runtime can only shrink. The target is zero.
 
 /** *Lines allowed under `packages/loam/runtime/`. Lower it when a step lands. */
-let RUNTIME_LINE_BUDGET: int = 5813
+let RUNTIME_LINE_BUDGET: int = 5359
 
 /** *The group a tracked C file belongs to, or `""` for C that is not shipped. */
 fn trusted_group(path: string) -> string {
