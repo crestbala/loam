@@ -9,6 +9,7 @@ import "arena.loam"
 import "nodes.loam"
 import "geometry.loam"
 import "platform.loam"
+import "imagesize.loam"
 import "metrics.loam"
 
 fn flex_grow_shrink(id: int, extra: int, row: int) -> int {
@@ -349,13 +350,14 @@ fn measure_node(id: int) {
         return
     }
     if k == 14 {
-        /* Intrinsic size comes from the host (0 until it decodes the source).
-           Recording it as the aspect ratio lets an `Image` with only a width
+        /* Intrinsic size: the host when it has decoded `src`, otherwise the
+           image header (`imagesize`). 0 leaves the box as it was. Recording a
+           positive pair as the aspect ratio lets an `Image` with only a width
            keep its height, and a widthless image shrink to the container /
            device width (see `sized_w`) instead of collapsing to zero. */
         let mut sw = 0
         let mut sh = 0
-        platform.plat_image_size(nodes.look[id].text, &mut sw, &mut sh)
+        imagesize.measure(nodes.look[id].text, &mut sw, &mut sh)
         nodes.lay[id].aspect_w = 0
         nodes.lay[id].aspect_h = 0
         if sw > 0 {

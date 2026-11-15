@@ -1,0 +1,128 @@
+// Headless media, with no host table bound: the null player and the pick
+// queue. Slots go through the zeus media API (which clamps to 1..7) and
+// through the platform calls with the raw slot, including 0, 8 and out of
+// range. Picks are dropped with plat_media_dropped and read back with
+// get(0, 7) / text(0, 1), including the start-up "told but not taken" case.
+import "std:fmt"
+import "zeus"
+import "zeus:zeuscore/platform"
+
+fn raw_slot(s: int) {
+    fmt.println("open0", s, platform.plat_media_open(s, ""))
+    fmt.println("state0", s, platform.plat_media_get(s, 3), platform.plat_media_get(s, 1))
+    fmt.println("open", s, platform.plat_media_open(s, "clip"))
+    fmt.println("state", s, platform.plat_media_get(s, 3), platform.plat_media_get(s, 1))
+    platform.plat_media_cmd(s, 1, 0)
+    fmt.println("play", s, platform.plat_media_get(s, 3), platform.plat_media_get(s, 1))
+    platform.plat_media_cmd(s, 3, 40)
+    fmt.println("seek", s, platform.plat_media_get(s, 1))
+    platform.plat_media_cmd(s, 3, -8)
+    fmt.println("seekneg", s, platform.plat_media_get(s, 1))
+    platform.plat_media_cmd(s, 4, 200)
+    fmt.println("rate", s, platform.plat_media_get(s, 3), platform.plat_media_get(s, 1))
+    platform.plat_media_cmd(s, 2, 0)
+    fmt.println("pause", s, platform.plat_media_get(s, 3))
+    platform.plat_media_cmd(s, 8, 0)
+    fmt.println("close", s, platform.plat_media_get(s, 3), platform.plat_media_get(s, 1))
+    platform.plat_media_cmd(s, 1, 0)
+    fmt.println("dead", s, platform.plat_media_get(s, 3))
+    fmt.println(
+        "other",
+        s,
+        platform.plat_media_get(s, 2),
+        platform.plat_media_get(s, 6),
+        platform.plat_media_get(s, 9),
+    )
+    fmt.println("err", s, platform.plat_media_text(s, 0))
+}
+
+fn api_slot(s: int) {
+    let p = zeus.media_player(s)
+    fmt.println("player", s, p.slot)
+    fmt.println("aopen0", s, if zeus.media_open(p, "") { 1 } else { 0 })
+    fmt.println("astate0", s, zeus.media_state(p), zeus.media_position(p))
+    fmt.println("aopen", s, if zeus.media_open(p, "movie") { 1 } else { 0 })
+    fmt.println("astate", s, zeus.media_state(p), zeus.media_position(p))
+    zeus.media_play(p)
+    fmt.println("aplay", s, zeus.media_state(p))
+    zeus.media_seek(p, 25)
+    fmt.println("aseek", s, zeus.media_position(p))
+    zeus.media_seek(p, -3)
+    fmt.println("aseekneg", s, zeus.media_position(p))
+    zeus.media_pause(p)
+    fmt.println("apause", s, zeus.media_state(p))
+    zeus.media_close(p)
+    fmt.println("aclose", s, zeus.media_state(p))
+    zeus.media_play(p)
+    fmt.println("adead", s, zeus.media_state(p), zeus.media_position(p))
+    fmt.println(
+        "aextra",
+        s,
+        zeus.media_duration(p),
+        zeus.media_width(p),
+        zeus.media_height(p),
+        zeus.media_buffered(p),
+    )
+    fmt.println("aerr", s, zeus.media_error(p))
+}
+
+fn main() {
+    let mut s = -1
+    while s <= 8 {
+        raw_slot(s)
+        s = s + 1
+    }
+    fmt.println("fs", platform.plat_fullscreen(-1))
+    fmt.println("fs", platform.plat_fullscreen(1))
+    fmt.println("fs", platform.plat_fullscreen(-1))
+    fmt.println("fs", platform.plat_fullscreen(2))
+    fmt.println("fs", platform.plat_fullscreen(-1))
+    fmt.println("fs", platform.plat_fullscreen(0))
+    fmt.println("fs", platform.plat_fullscreen(-1))
+    fmt.println("zfs", if zeus.fullscreen(true) { 1 } else { 0 })
+    fmt.println("zis", if zeus.is_fullscreen() { 1 } else { 0 })
+    fmt.println("zfs", if zeus.fullscreen(false) { 1 } else { 0 })
+    fmt.println("zis", if zeus.is_fullscreen() { 1 } else { 0 })
+
+    s = -1
+    while s <= 8 {
+        api_slot(s)
+        s = s + 1
+    }
+
+    // A start-up snapshot tells the count (0) before any file exists.
+    fmt.println("startup", platform.plat_media_get(0, 7))
+    fmt.println("startup-text", platform.plat_media_text(0, 1))
+
+    // The first file publishes at once. The get that first reports its seq
+    // does not promote the queued second file; the next get does, because
+    // the app was already told and did not read the text.
+    platform.plat_media_dropped("a", "sa")
+    platform.plat_media_dropped("b", "sb")
+    fmt.println("told", platform.plat_media_get(0, 7))
+    fmt.println("told-again", platform.plat_media_get(0, 7))
+    fmt.println("told-text", platform.plat_media_text(0, 1))
+
+    let mut i = 0
+    while i < 70 {
+        platform.plat_media_dropped("n{{i}}", "s{{i}}")
+        i = i + 1
+    }
+    i = 0
+    while i < 80 {
+        fmt.println("q", i, platform.plat_media_get(0, 7), platform.plat_media_text(0, 1))
+        i = i + 1
+    }
+
+    let mut bytes = []u8 {}
+    i = 0
+    while i < 5000 {
+        push(bytes, u8(97))
+        i = i + 1
+    }
+    let long = string_from_bytes(bytes)
+    platform.plat_media_dropped(long, "z")
+    fmt.println("cap-get", platform.plat_media_get(0, 7))
+    let got = platform.plat_media_text(0, 1)
+    fmt.println("cap", long.len, got.len, got[0])
+}

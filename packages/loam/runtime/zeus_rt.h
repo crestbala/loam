@@ -154,14 +154,12 @@ void zeus_set_image_size(void (*size)(const char *src, int64_t *w, int64_t *h));
 void zeus_picked_image(const char *src, int64_t w, int64_t h);
 void zeus_bind_draw(ZeusDraw draw);
 
-/* Media playback seam (`platform.plat_media_*`). A native host registers one
-   table; the web routes the same calls to JS imports. With no host (headless)
-   the runtime keeps a null player: open reports ready, play/pause move the
-   state, and the clock never advances — enough for layout and state tests.
-   Frames reach the screen through the ordinary `image` draw op with a
-   `"media:<slot>"` src, which the host recognises. `text` writes at most
-   `cap - 1` bytes plus a NUL into `out`. `picked` is the host telling the
-   runtime a picker or a drop produced a file. */
+/* Media playback seam. A native host registers one table; the web routes the
+   same calls to JS imports. The null player, the pick queue and fullscreen
+   live in `zeuscore/mediastate.loam`. Frames reach the screen through the
+   ordinary `image` draw op with a `"media:<slot>"` src, which the host
+   recognises. `text` writes at most `cap - 1` bytes plus a NUL into `out`.
+   `picked` is the host telling the runtime a picker or a drop produced a file. */
 typedef struct {
     int64_t (*open)(int64_t slot, const char *src);
     void (*cmd)(int64_t slot, int64_t cmd, int64_t value);
@@ -178,15 +176,21 @@ typedef struct {
 } ZeusMedia;
 void zeus_set_media(ZeusMedia media);
 void zeus_media_picked(const char *name, const char *src);
-int64_t loam_platform_plat_media_open(int64_t slot, loam_str src);
-void loam_platform_plat_media_cmd(int64_t slot, int64_t cmd, int64_t value);
-int64_t loam_platform_plat_media_get(int64_t slot, int64_t what);
-loam_str loam_platform_plat_media_text(int64_t slot, int64_t what);
-void loam_platform_plat_media_dropped(loam_str name, loam_str src);
-void loam_platform_plat_media_pick(void);
-void loam_platform_plat_media_pick_audio(void);
-int64_t loam_platform_plat_media_voice(int64_t what, loam_str src, loam_str out);
-int64_t loam_platform_plat_fullscreen(int64_t on);
+/* `zeuscore/mediastate.loam` and `imagesize.loam`: bodyless hooks. One bit of
+   `media_host_caps` per non-NULL `ZeusMedia` callback, plus 256 on wasm.
+   `read_head` is the file read behind an image header (empty on wasm). */
+loam_vec loam_imagesize_read_head(loam_str path, int32_t cap);
+int32_t loam_imagesize_image_host_bound(void);
+int32_t loam_mediastate_media_host_caps(void);
+int32_t loam_mediastate_host_open(int32_t slot, loam_str src);
+void loam_mediastate_host_cmd(int32_t slot, int32_t command, int32_t value);
+int32_t loam_mediastate_host_get(int32_t slot, int32_t what);
+loam_str loam_mediastate_host_text(int32_t slot, int32_t what);
+void loam_mediastate_host_pick(void);
+void loam_mediastate_host_pick_audio(void);
+int32_t loam_mediastate_host_voice(int32_t what, loam_str src, loam_str out);
+int32_t loam_mediastate_host_fullscreen(int32_t on);
+void loam_mediastate_host_redraw(void);
 
 /* Phase 4: the ONE blit of a frame Zeus rasterized itself — the sole place a
    host may touch our pixels.
@@ -420,6 +424,7 @@ void loam_zeus_engine_set_mods(int32_t mods);
 int32_t loam_zeus_engine_insert(loam_str text);
 int32_t loam_zeus_engine_marked(loam_str text);
 void loam_zeus_engine_picked_image(loam_str src, int32_t w, int32_t h);
+void loam_zeus_engine_media_picked(loam_str name, loam_str src);
 
 void zeus_layout(int64_t width, int64_t height);
 int zeus_step(float dt);
@@ -523,6 +528,7 @@ typedef struct {
     int32_t (*insert)(loam_str text);
     int32_t (*marked)(loam_str text);
     void (*picked_image)(loam_str src, int32_t w, int32_t h);
+    void (*media_picked)(loam_str name, loam_str src);
     int32_t (*context_click)(int32_t x, int32_t y);
     int32_t (*window_drag_at)(int32_t x, int32_t y);
 } ZeusAppApi;
@@ -564,6 +570,7 @@ void zeus_set_host_hooks(void (*run)(const char *path));
 #define loam_zeus_engine_insert zeus_app_api.insert
 #define loam_zeus_engine_marked zeus_app_api.marked
 #define loam_zeus_engine_picked_image zeus_app_api.picked_image
+#define loam_zeus_engine_media_picked zeus_app_api.media_picked
 #define loam_zeus_engine_context_click zeus_app_api.context_click
 #define loam_zeus_engine_window_drag_at zeus_app_api.window_drag_at
 #endif /* LOAM_HOST_BUILD */

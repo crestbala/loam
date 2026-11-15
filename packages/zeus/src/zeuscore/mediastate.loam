@@ -1,0 +1,307 @@
+// mediastate — the null media player and the pick queue (R4.4).
+//
+// A native host registers a `ZeusMedia` table; the web keeps its players in
+// JS. `media_host_caps` says which of those callbacks exist (and whether this
+// build is wasm). With none, the null player stands in: open reports ready,
+// play and pause move the state, seek stores a position, and the clock never
+// advances. The pick queue is native-only. Wasm asks JS for gets and text,
+// including the pick counter.
+//
+// Hosts deliver a picked file through `zeus.engine_media_picked`, which calls
+// `picked`. The first file with nothing published is published at once and
+// the host redraws; further files queue (64), and `get` of the pick counter
+// promotes the next one once the current file was read or the app was already
+// told its count.
+
+import "std:str"
+
+const SLOT_COUNT: int = 8
+const QUEUE_LIMIT: int = 64
+const TEXT_LIMIT: int = 4095
+
+const CAP_OPEN: int = 1
+const CAP_CMD: int = 2
+const CAP_GET: int = 4
+const CAP_TEXT: int = 8
+const CAP_PICK: int = 16
+const CAP_PICK_AUDIO: int = 32
+const CAP_VOICE: int = 64
+const CAP_FULLSCREEN: int = 128
+const CAP_WASM: int = 256
+
+/** *One bit per non-NULL host callback, plus `CAP_WASM` on wasm. */
+fn media_host_caps() -> int {}
+fn host_open(slot: int, src: string) -> int {}
+fn host_cmd(slot: int, command: int, value: int) {}
+fn host_get(slot: int, what: int) -> int {}
+fn host_text(slot: int, what: int) -> string {}
+fn host_pick() {}
+fn host_pick_audio() {}
+fn host_voice(what: int, src: string, out: string) -> int {}
+fn host_fullscreen(on: int) -> int {}
+fn host_redraw() {}
+
+let mut slot_state = [8]int { 0, 0, 0, 0, 0, 0, 0, 0 }
+let mut slot_position = [8]int { 0, 0, 0, 0, 0, 0, 0, 0 }
+let mut fullscreen_flag: int = 0
+
+/** *`-1` until the first call: hosts bind their table from a constructor. */
+let mut cached_caps: int = -1
+
+let mut published_sequence: int = 0
+let mut told_sequence: int = -1
+let mut text_was_taken: int = 0
+let mut have_published: int = 0
+let mut published_text: string = ""
+let mut queued_picks: []string = []string {}
+let mut queued_count: int = 0
+
+fn caps() -> int {
+    if cached_caps < 0 {
+        cached_caps = media_host_caps()
+    }
+    return cached_caps
+}
+
+fn slot_in_range(slot: int) -> bool {
+    return slot >= 0 && slot < SLOT_COUNT
+}
+
+/** *Bytes a C string would see: up to the first NUL. */
+fn c_length(text: string) -> int {
+    let mut index = 0
+    while index < text.len {
+        if text[index] == 0 {
+            return index
+        }
+        index = index + 1
+    }
+    return text.len
+}
+
+fn c_prefix_text(text: string) -> string {
+    let length = c_length(text)
+    if length == text.len {
+        return text
+    }
+    return str.slice(text, 0, length)
+}
+
+/** *`name\nsrc`, each side cut at its first NUL, as `strlen` did. */
+fn pack_pick(name: string, src: string) -> string {
+    let name_text = c_prefix_text(name)
+    let src_text = c_prefix_text(src)
+    return "{{name_text}}\n{{src_text}}"
+}
+
+fn publish(text: string, redraw: int) {
+    published_text = text
+    have_published = 1
+    published_sequence = published_sequence + 1
+    text_was_taken = 0
+    if redraw != 0 {
+        host_redraw()
+    }
+}
+
+fn ensure_queue() {
+    while queued_picks.len < QUEUE_LIMIT {
+        push(queued_picks, "")
+    }
+}
+
+fn promote() {
+    if queued_count <= 0 {
+        return
+    }
+    ensure_queue()
+    let kept = queued_picks[0]
+    let last = queued_count - 1
+    let mut index = 0
+    while index < last {
+        queued_picks[index] = queued_picks[index + 1]
+        index = index + 1
+    }
+    queued_picks[last] = ""
+    queued_count = last
+    publish(kept, 0)
+}
+
+fn source_is_empty(src: string) -> bool {
+    return src.len <= 0 || src[0] == 0
+}
+
+fn open(slot: int, src: string) -> int {
+    if slot <= 0 || slot >= SLOT_COUNT {
+        return 0
+    }
+    let host = caps()
+    if (host & CAP_WASM) != 0 || (host & CAP_OPEN) != 0 {
+        return host_open(slot, src)
+    }
+    slot_position[slot] = 0
+    if source_is_empty(src) {
+        slot_state[slot] = 0
+        return 0
+    }
+    slot_state[slot] = 2
+    return 1
+}
+
+fn cmd(slot: int, command: int, value: int) {
+    if !slot_in_range(slot) {
+        return
+    }
+    let host = caps()
+    if (host & CAP_WASM) != 0 || (host & CAP_CMD) != 0 {
+        host_cmd(slot, command, value)
+        return
+    }
+    if slot_state[slot] == 0 {
+        return
+    }
+    if command == 1 {
+        slot_state[slot] = 3
+    } else if command == 2 {
+        slot_state[slot] = 2
+    } else if command == 3 {
+        if value < 0 {
+            slot_position[slot] = 0
+        } else {
+            slot_position[slot] = value
+        }
+    } else if command == 8 {
+        slot_state[slot] = 0
+    }
+}
+
+fn pick_count() -> int {
+    if queued_count > 0 {
+        if text_was_taken != 0 || told_sequence == published_sequence {
+            promote()
+        }
+    }
+    told_sequence = published_sequence
+    return published_sequence
+}
+
+fn get(slot: int, what: int) -> int {
+    if !slot_in_range(slot) {
+        return 0
+    }
+    let host = caps()
+    if (host & CAP_WASM) != 0 {
+        return host_get(slot, what)
+    }
+    if what == 7 {
+        return pick_count()
+    }
+    if (host & CAP_GET) != 0 {
+        return host_get(slot, what)
+    }
+    if what == 1 {
+        return slot_position[slot]
+    }
+    if what == 3 {
+        return slot_state[slot]
+    }
+    return 0
+}
+
+/** *At most 4095 bytes, and cut at an embedded NUL (`strncpy` then `strlen`). */
+fn clipped_text() -> string {
+    if have_published == 0 {
+        return ""
+    }
+    let text = published_text
+    let mut count = text.len
+    if count > TEXT_LIMIT {
+        count = TEXT_LIMIT
+    }
+    let mut index = 0
+    while index < count {
+        if text[index] == 0 {
+            count = index
+            break
+        }
+        index = index + 1
+    }
+    if count == text.len {
+        return text
+    }
+    return str.slice(text, 0, count)
+}
+
+fn text(slot: int, what: int) -> string {
+    let host = caps()
+    if (host & CAP_WASM) != 0 {
+        return host_text(slot, what)
+    }
+    if what == 1 {
+        text_was_taken = 1
+        return clipped_text()
+    }
+    if (host & CAP_TEXT) != 0 && slot_in_range(slot) {
+        return host_text(slot, what)
+    }
+    return ""
+}
+
+fn pick() {
+    let host = caps()
+    if (host & CAP_WASM) != 0 || (host & CAP_PICK) != 0 {
+        host_pick()
+    }
+}
+
+fn pick_audio() {
+    let host = caps()
+    if (host & CAP_WASM) != 0 {
+        host_pick()
+        return
+    }
+    if (host & CAP_PICK_AUDIO) != 0 {
+        host_pick_audio()
+        return
+    }
+    if (host & CAP_PICK) != 0 {
+        host_pick()
+    }
+}
+
+fn voice(what: int, src: string, out: string) -> int {
+    let host = caps()
+    if (host & CAP_WASM) != 0 || (host & CAP_VOICE) == 0 {
+        return 0
+    }
+    return host_voice(what, src, out)
+}
+
+fn fullscreen(on: int) -> int {
+    let host = caps()
+    if (host & CAP_WASM) != 0 || (host & CAP_FULLSCREEN) != 0 {
+        return host_fullscreen(on)
+    }
+    if on >= 0 {
+        if on != 0 {
+            fullscreen_flag = 1
+        } else {
+            fullscreen_flag = 0
+        }
+    }
+    return fullscreen_flag
+}
+
+/** *One file from a picker or a drop. Queues past the one that is published. */
+fn picked(name: string, src: string) {
+    let packed = pack_pick(name, src)
+    if have_published == 0 {
+        publish(packed, 1)
+        return
+    }
+    if queued_count < QUEUE_LIMIT {
+        ensure_queue()
+        queued_picks[queued_count] = packed
+        queued_count = queued_count + 1
+    }
+}

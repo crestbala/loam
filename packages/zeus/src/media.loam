@@ -16,7 +16,7 @@
 // zui.Image(fn() => zeus.media_src(p), fit = Fit.Contain)
 // ```
 
-import "zeuscore/platform.loam"
+import "zeuscore/mediastate.loam"
 
 /** *Player states (`media_state`). */
 const MEDIA_EMPTY: int = 0
@@ -67,15 +67,15 @@ fn media_src(p: Player) -> string {
 /** *Starts paused at 0. False when the host refused it outright; a source */
 /** *that fails later shows as `MEDIA_ERROR` with `media_error`. */
 fn media_open(p: Player, src: string) -> bool {
-    return platform.plat_media_open(p.slot, src) != 0
+    return mediastate.open(p.slot, src) != 0
 }
 
 fn media_play(p: Player) {
-    platform.plat_media_cmd(p.slot, MEDIA_CMD_PLAY, 0)
+    mediastate.cmd(p.slot, MEDIA_CMD_PLAY, 0)
 }
 
 fn media_pause(p: Player) {
-    platform.plat_media_cmd(p.slot, MEDIA_CMD_PAUSE, 0)
+    mediastate.cmd(p.slot, MEDIA_CMD_PAUSE, 0)
 }
 
 /** *Jump to `ms` (clamped by the host to the media's length). */
@@ -84,12 +84,12 @@ fn media_seek(p: Player, ms: int) {
     if at < 0 {
         at = 0
     }
-    platform.plat_media_cmd(p.slot, MEDIA_CMD_SEEK, at)
+    mediastate.cmd(p.slot, MEDIA_CMD_SEEK, at)
 }
 
 /** *Playback rate in percent: 100 is normal, 50 half speed, 200 double. */
 fn media_rate(p: Player, pct: int) {
-    platform.plat_media_cmd(p.slot, MEDIA_CMD_RATE, pct)
+    mediastate.cmd(p.slot, MEDIA_CMD_RATE, pct)
 }
 
 /** *Volume 0..100. */
@@ -101,51 +101,51 @@ fn media_volume(p: Player, v: int) {
     if vol > 100 {
         vol = 100
     }
-    platform.plat_media_cmd(p.slot, MEDIA_CMD_VOLUME, vol)
+    mediastate.cmd(p.slot, MEDIA_CMD_VOLUME, vol)
 }
 
 fn media_mute(p: Player, on: bool) {
-    platform.plat_media_cmd(p.slot, MEDIA_CMD_MUTE, if on { 1 } else { 0 })
+    mediastate.cmd(p.slot, MEDIA_CMD_MUTE, if on { 1 } else { 0 })
 }
 
 fn media_loop(p: Player, on: bool) {
-    platform.plat_media_cmd(p.slot, MEDIA_CMD_LOOP, if on { 1 } else { 0 })
+    mediastate.cmd(p.slot, MEDIA_CMD_LOOP, if on { 1 } else { 0 })
 }
 
 /** *Stop and release the source; the slot paints nothing until the next open. */
 fn media_close(p: Player) {
-    platform.plat_media_cmd(p.slot, MEDIA_CMD_CLOSE, 0)
+    mediastate.cmd(p.slot, MEDIA_CMD_CLOSE, 0)
 }
 
 fn media_position(p: Player) -> int {
-    return platform.plat_media_get(p.slot, MEDIA_GET_POS)
+    return mediastate.get(p.slot, MEDIA_GET_POS)
 }
 
 /** *Length in ms; 0 while unknown (loading) and for live streams. */
 fn media_duration(p: Player) -> int {
-    return platform.plat_media_get(p.slot, MEDIA_GET_DUR)
+    return mediastate.get(p.slot, MEDIA_GET_DUR)
 }
 
 fn media_state(p: Player) -> int {
-    return platform.plat_media_get(p.slot, MEDIA_GET_STATE)
+    return mediastate.get(p.slot, MEDIA_GET_STATE)
 }
 
 /** *Decoded picture size in pixels (0 for audio or while loading). */
 fn media_width(p: Player) -> int {
-    return platform.plat_media_get(p.slot, MEDIA_GET_W)
+    return mediastate.get(p.slot, MEDIA_GET_W)
 }
 
 fn media_height(p: Player) -> int {
-    return platform.plat_media_get(p.slot, MEDIA_GET_H)
+    return mediastate.get(p.slot, MEDIA_GET_H)
 }
 
 /** *End of the buffered range that contains the playhead, in ms. */
 fn media_buffered(p: Player) -> int {
-    return platform.plat_media_get(p.slot, MEDIA_GET_BUFFERED)
+    return mediastate.get(p.slot, MEDIA_GET_BUFFERED)
 }
 
 fn media_error(p: Player) -> string {
-    return platform.plat_media_text(p.slot, 0)
+    return mediastate.text(p.slot, 0)
 }
 
 /** *Open the host's media picker. Poll `media_picks()`: when it moves, */
@@ -154,7 +154,7 @@ fn media_error(p: Player) -> string {
 /** *read of `media_picks()` that follows a read of the current file publishes */
 /** *the next one. */
 fn media_pick() {
-    platform.plat_media_pick()
+    mediastate.pick()
 }
 
 /** *Open a panel for audio files. On macOS this is a Finder open panel that */
@@ -162,13 +162,13 @@ fn media_pick() {
 /** *published the same way as a drop: poll `media_picks()` and read the name */
 /** *and path before the next call. */
 fn media_pick_audio() {
-    platform.plat_media_pick_audio()
+    mediastate.pick_audio()
 }
 
 /** *Deliver one file the way a drop does. Tests use this; the window drop and */
 /** *Open With call the same queue. */
 fn media_dropped(name: string, src: string) {
-    platform.plat_media_dropped(name, src)
+    mediastate.picked(name, src)
 }
 
 /** *Find where a voice is in the audio file `src`, in the background. On macOS */
@@ -177,23 +177,23 @@ fn media_dropped(name: string, src: string) {
 /** *confidence 0..100. Then `out.done` appears, or `out.fail` holding the */
 /** *reason. False when this host cannot do it. */
 fn media_voice_map(src: string, out: string) -> bool {
-    return platform.plat_media_voice(1, src, out) == 1
+    return mediastate.voice(1, src, out) == 1
 }
 
 /** *Write `src` minus its voice to `out` (32-bit float WAV), in the background. */
 /** *On macOS 13+ an ML voice isolator finds the voice. Then `out.done` */
 /** *appears, or `out.fail`. False when this host cannot do it. */
 fn media_voice_split(src: string, out: string) -> bool {
-    return platform.plat_media_voice(2, src, out) == 1
+    return mediastate.voice(2, src, out) == 1
 }
 
 /** *How many files the picker (or a drop) has published so far. */
 fn media_picks() -> int {
-    return platform.plat_media_get(0, MEDIA_GET_PICKED)
+    return mediastate.get(0, MEDIA_GET_PICKED)
 }
 
 fn media_picked_name() -> string {
-    let t = platform.plat_media_text(0, 1)
+    let t = mediastate.text(0, 1)
     let nl = media_nl(t)
     if nl < 0 {
         return t
@@ -202,7 +202,7 @@ fn media_picked_name() -> string {
 }
 
 fn media_picked_src() -> string {
-    let t = platform.plat_media_text(0, 1)
+    let t = mediastate.text(0, 1)
     let nl = media_nl(t)
     if nl < 0 {
         return t

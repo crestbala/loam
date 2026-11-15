@@ -190,7 +190,7 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       `wasm_inc`), hosts 4,871, vendored 346,122 (sqlite, monocypher, raygui
       and the generated tree-sitter parser).
 - [x] R0.2 The budget: `RUNTIME_LINE_BUDGET` in `nob.loam`, set at 9,939
-      and lowered by each step since (now **7,410**, after R4.2).
+      and lowered by each step since (now **7,216**, after R4.4).
       `nob trusted` and the unfiltered `nob test` fail if `runtime/` grows
       past it. Each step below lowers it to its new count in the same
       change.
@@ -897,7 +897,64 @@ done, so every R3 step is checked by `thread_tsan`).
       glibc / aarch64 musl Linux with `-Wall`, no warnings.
       **Runtime: 7,612 → 7,410** (−202).
 - [ ] R4.3 Recoverable traps (needs R6.2's trap path).
-- [ ] R4.4 Image sizes and media state.
+- [x] R4.4 Image sizes and media state. Done 2026-11-15.
+      `zeuscore/imagesize.loam` reads a PNG, GIF, JPEG (SOF scan, including
+      progressive SOF2) or WebP (VP8X, VP8, VP8L) header. A `data:` URI
+      base64-decodes the first 4096 bytes after `base64,`, skipping bytes
+      outside the alphabet; `file://` is stripped and a bare path is a file,
+      and only the first 4096 bytes are read; `http://` and `https://` stay
+      0. `measure` asks the host hook first and keeps that size when both
+      sides are positive. C keeps the hook (`loam_zeus_plat_image_size`
+      writes 0, 0 when none is bound), `image_host_bound` (cached in Loam
+      after the first call) and `read_head` (fopen / fread / fclose, an
+      empty vec on wasm or on failure). `layout` calls `imagesize.measure`.
+      `zeuscore/mediastate.loam` holds the null player (8 slots; open
+      refuses slot 0; `""` is state 0, anything else is state 2 at position
+      0; commands 1, 2, 3 and 8; a command on state 0 is ignored), the
+      fullscreen flag, and the pick queue (64, later picks dropped, the
+      first pick published at once and redrawn, promote on get(7) only when
+      the queue is non-empty and the text was taken or `told == seq`, text
+      cut at 4095 and at an embedded NUL). `media_host_caps` is one bit per
+      non-NULL `ZeusMedia` callback, plus a wasm bit. A set callback is
+      forwarded; the null player runs otherwise. On native, get(7) and
+      text(1) stay in Loam even when the host table is set. On wasm, open,
+      cmd, get, text, pick and fullscreen go to JS, voice returns 0, and
+      pick-audio uses the pick import. C keeps one forwarder per callback
+      (a direct call, strings through `cstr_in` / `cstr_done`) and the wasm
+      imports. `zeus_media_picked` copies both C strings into `loam_str`
+      and calls the Loam export `engine_media_picked`; Loam decides the
+      redraw. The macOS host binds that export next to `picked_image`.
+      **On the way:** a signed base64 accumulator hits the overflow check
+      where C's unsigned one wraps, so the decode uses `wrapping_shl` /
+      `wrapping_add` and the bits match. Once `plat_media_*` had Loam
+      bodies, codegen's `int32_t` prototypes clashed with the old
+      `int64_t` declarations, so those declarations left `zeus_rt.h`.
+      `engine_media_picked` is a DCE c_root of `zeus` (next to
+      `engine_picked_image`); without it the C one-liner does not link.
+      The header scan stays level with C by a base64 lookup table, a
+      one-byte search for `base64,`, a module-level 4096-byte buffer
+      (constant offsets need no bounds check) and skipping the host hook
+      when none is bound. Fixtures `zeus_image_size` and `zeus_media_null`
+      were printed by HEAD's compiler (`ZEUS_HEADLESS=1`) before the port
+      and still match, including a real PNG read with and without
+      `file://`, and 70 picks. Benchmark vs HEAD, release `-O1`, no Cocoa
+      host, 5 rounds. Image, 200k `measure` calls per data URI (ms, new
+      vs HEAD): png 59–60 vs 59–61, gif 19–20 vs 20–21, jpeg 28 vs 28–29,
+      progressive jpeg 23–24 vs 23–24, VP8 34–35 vs 34–35, VP8L 35 vs
+      35–36, VP8X 34 vs 34–35; the width+height sums match. Media, 2M
+      `get(1, 1)` / `get(1, 3)` with no host: 5 ms vs 16–17 ms, sum
+      4,000,000. Binaries (new vs HEAD): tiny `fmt.println(42)` 33,688
+      both, gallery 2,078,968 vs 2,077,504 (+0.07%), greeninfer 1,071,704
+      vs 1,053,672 (+1.7%). ASan+UBSan on both fixtures: empty stderr,
+      stdout matches the goldens. Seed 5,132,237 → 5,132,477 bytes, seed
+      = stage 1 = stage 2. Suite: `zeus` (449), `golden` (135),
+      `compile_fail` (164); `wasm_smoke`, `wasm_trap`, `wasm_float`,
+      `ownership_asan`, `android_project`, `cost`, `lsp`, `fresh_cache`,
+      `arena_lint`, `api_freeze`, `one_surface`, `stale_capture`,
+      `server_split`, `modules` green; `zeus_plat.c` builds for x86_64
+      glibc / aarch64 musl Linux with `-Wall`, no warnings; wasm32
+      `zeus_cell` warning-free.
+      **Runtime: 7,410 → 7,216** (−194).
 - [ ] R4.5 The `loam_zeus_engine_*` trampolines are gone: hosts call the
       Loam exports.
 - [ ] R4.6 `maya_plat.c` and `raygui_plat.c`: the bridge logic moves to
