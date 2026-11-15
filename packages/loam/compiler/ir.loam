@@ -997,12 +997,24 @@ fn state_sig_local(n: int) -> int {
     return scope_find(ast.INFO[n].name)
 }
 
+// A captured `let mut int` is a `Signal<int>` local; its reads and writes
+// call the Loam signal store (`zeuscore/arena.loam`) with the handle's `id`.
+fn state_cell_id(sid: int, loc: Loc) -> int {
+    let idp = new_place(PlaceKind.Field, 0, "id", 0, place_local(sid, local_ty(sid)), types.ty_int())
+    let cell = temp(types.ty_int())
+    let ld = emit(Op.Load, loc)
+    SCRATCH[ld].dst = cell
+    SCRATCH[ld].place = idp
+    SCRATCH[ld].ty = types.ty_int()
+    return cell
+}
+
 fn emit_state_get(sid: int, loc: Loc) -> int {
-    return emit_named_call("loam_zeus_get", []int { sid }, types.ty_int(), loc)
+    return emit_named_call("loam_arena_state_get", []int { state_cell_id(sid, loc) }, types.ty_int(), loc)
 }
 
 fn emit_state_set(sid: int, val: int, loc: Loc) {
-    emit_named_call("loam_zeus_set", []int { sid, val }, types.ty_void(), loc)
+    emit_named_call("loam_arena_store_sig", []int { state_cell_id(sid, loc), val }, types.ty_void(), loc)
 }
 
 fn assign_to_bin(op: int) -> int {
@@ -2507,7 +2519,13 @@ fn lower_var(n: int) {
         }
         // A captured `let mut int` is a signal cell. R4.1a: the id recycles
         // through Loam (`arena.sig_reserve`); the cell is `sigcells` (R4.1b).
-        let id = emit_named_call("loam_zeus_signal", []int { emit_named_call("loam_arena_sig_reserve", []int {}, types.ty_int(), loc), initv }, sig_ty, loc)
+        let reserved = emit_named_call("loam_arena_sig_reserve", []int {}, types.ty_int(), loc)
+        let cell = emit_named_call("loam_arena_sig_new_int", []int { reserved, initv }, types.ty_int(), loc)
+        let id = temp(sig_ty)
+        let lit = emit(Op.StructLit, loc)
+        SCRATCH[lit].dst = id
+        set_args(lit, []int { cell })
+        SCRATCH[lit].ty = sig_ty
         if id >= 0 && ast.INFO[n].has_name {
             LOCALS[F_LOCALS + id].name = name
             LOCALS[F_LOCALS + id].has_name = true

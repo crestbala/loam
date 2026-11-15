@@ -194,13 +194,14 @@ int32_t zeus_wasm_paint(void) {
     int more;
     int64_t due;
     int64_t now = zeus_js_now_ms();
-    float dt = 1.f / 60.f;
-    if (last_ms > 0) dt = (float)((double)(now - last_ms) / 1000.0);
+    /* The frame delta in ms: a sixtieth of a second (17) on the first frame
+       or when the clock did not move, at most 64. */
+    int64_t dt_ms = last_ms > 0 ? now - last_ms : 0;
     last_ms = now;
-    if (dt < 0.001f) dt = 1.f / 60.f;
-    if (dt > 0.064f) dt = 0.064f;
-    zeus_layout(zeus_window_width(), zeus_window_height());
-    more = zeus_step(dt);
+    if (dt_ms < 1) dt_ms = 17;
+    if (dt_ms > 64) dt_ms = 64;
+    loam_zeus_engine_layout((int32_t)zeus_window_width(), (int32_t)zeus_window_height());
+    more = loam_zeus_engine_step_dt((int32_t)dt_ms);
     loam_zeus_engine_paint();
     if (more) return 1;
     due = loam_zeus_engine_next_ms();
@@ -256,7 +257,7 @@ void zeus_reduced_motion(int32_t on) {
 
 __attribute__((export_name("zeus_pointer_down")))
 void zeus_pointer_down(int32_t x, int32_t y) {
-    zeus_handle_click(x, y);
+    loam_zeus_engine_click(x, y);
 }
 
 /* Touch classification for the loader, without pressing. See `engine_grab`. */
@@ -268,18 +269,18 @@ int32_t zeus_grab(int32_t x, int32_t y) {
 /* Secondary click (`contextmenu`): the nearest `on_context_menu` handler. */
 __attribute__((export_name("zeus_context_click")))
 int32_t zeus_context_click(int32_t x, int32_t y) {
-    return zeus_handle_context_click(x, y);
+    return loam_zeus_engine_context_click(x, y);
 }
 
 __attribute__((export_name("zeus_pointer_move")))
 void zeus_pointer_move(int32_t x, int32_t y) {
-    zeus_handle_hover(x, y);
-    zeus_handle_drag(x, y);
+    loam_zeus_engine_hover(x, y);
+    loam_zeus_engine_drag(x, y);
 }
 
 __attribute__((export_name("zeus_pointer_up")))
 void zeus_pointer_up(void) {
-    zeus_handle_mouseup();
+    loam_zeus_engine_mouseup();
 }
 
 static char wasm_cursor[64];
@@ -288,11 +289,12 @@ static char wasm_cursor[64];
    static buffer the loader can read and hand to canvas.style.cursor. */
 __attribute__((export_name("zeus_cursor_sync")))
 const char *zeus_cursor_sync(void) {
-    const char *name = zeus_cursor();
-    size_t n = name ? strlen(name) : 0;
+    loam_str name = loam_zeus_engine_cursor();
+    size_t n = name.len > 0 && name.ptr ? (size_t)name.len : 0;
     if (n >= sizeof wasm_cursor) n = sizeof wasm_cursor - 1;
-    memcpy(wasm_cursor, name ? name : "", n);
+    if (n) memcpy(wasm_cursor, name.ptr, n);
     wasm_cursor[n] = '\0';
+    loam_str_release(&name);
     return wasm_cursor;
 }
 
@@ -416,13 +418,13 @@ int32_t zeus_state_restore(const char *snapshot) {
 
 __attribute__((export_name("zeus_scroll")))
 void zeus_scroll(int32_t x, int32_t y, int32_t dx, int32_t dy) {
-    zeus_handle_scroll(x, y, dx, dy);
+    loam_zeus_engine_scroll(x, y, dx, dy);
 }
 
 /* 1 if anything moved: a fling stops when it runs out of content. */
 __attribute__((export_name("zeus_scroll_step")))
 int32_t zeus_scroll_step(int32_t x, int32_t y, int32_t dx, int32_t dy) {
-    return zeus_handle_scroll_step(x, y, dx, dy);
+    return loam_zeus_engine_scroll_step(x, y, dx, dy);
 }
 
 /* Hold the scrollers under a touch for its whole gesture. See `scroll_latch`. */
@@ -433,17 +435,17 @@ void zeus_scroll_latch(int32_t x, int32_t y) {
 
 __attribute__((export_name("zeus_scroll_smooth")))
 void zeus_scroll_smooth(int32_t x, int32_t y, int32_t dx, int32_t dy) {
-    zeus_handle_scroll_smooth(x, y, dx, dy);
+    loam_zeus_engine_scroll_smooth(x, y, dx, dy);
 }
 
 __attribute__((export_name("zeus_key_up")))
 void zeus_key_up(int32_t key, int32_t mods) {
-    zeus_handle_key_up((int)key, (int)mods);
+    loam_zeus_engine_key_up(key, mods);
 }
 
 __attribute__((export_name("zeus_key")))
 void zeus_key(int32_t key, int32_t mods) {
-    zeus_handle_key_ev((int)key, (int)mods);
+    loam_zeus_engine_key_ev(key, mods);
 }
 
 static char wasm_text_buf[4096];
@@ -463,7 +465,7 @@ void zeus_text(int32_t n) {
     if (n < 0) n = 0;
     if (n >= (int32_t)sizeof wasm_text_buf) n = (int32_t)sizeof wasm_text_buf - 1;
     wasm_text_buf[n] = '\0';
-    zeus_handle_text(wasm_text_buf, (int)n);
+    loam_zeus_engine_insert((loam_str){wasm_text_buf, n, 0});
 }
 
 __attribute__((export_name("zeus_marked")))
@@ -471,12 +473,12 @@ void zeus_marked(int32_t n) {
     if (n < 0) n = 0;
     if (n >= (int32_t)sizeof wasm_text_buf) n = (int32_t)sizeof wasm_text_buf - 1;
     wasm_text_buf[n] = '\0';
-    zeus_handle_marked(wasm_text_buf, (int)n);
+    loam_zeus_engine_marked((loam_str){wasm_text_buf, n, 0});
 }
 
 __attribute__((export_name("zeus_captures_text")))
 int32_t zeus_captures_text(void) {
-    return zeus_focus_captures_text() ? 1 : 0;
+    return loam_zeus_engine_focus_captures_text() ? 1 : 0;
 }
 
 __attribute__((export_name("zeus_picked")))
@@ -484,5 +486,5 @@ void zeus_picked(int32_t n, int32_t w, int32_t h) {
     if (n < 0) n = 0;
     if (n >= (int32_t)sizeof wasm_text_buf) n = (int32_t)sizeof wasm_text_buf - 1;
     wasm_text_buf[n] = '\0';
-    zeus_picked_image(wasm_text_buf, w, h);
+    loam_zeus_engine_picked_image((loam_str){wasm_text_buf, n, 0}, w, h);
 }

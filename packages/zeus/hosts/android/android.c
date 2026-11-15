@@ -338,7 +338,7 @@ JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativeResize(JNIEnv *env, job
     if (h > 0) g_view_h = h;
     zeus_set_window_size(w, h);
     zeus_set_insets(inset_t, inset_r, inset_b, inset_l);
-    if (w > 0 && h > 0) zeus_layout(w, h);
+    if (w > 0 && h > 0) loam_zeus_engine_layout(w, h);
 }
 
 JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativeReducedMotion(JNIEnv *env, jobject thiz,
@@ -354,7 +354,7 @@ JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativePaint(JNIEnv *env, jobj
     int w, h;
     static double last_ms;
     double now_ms;
-    float dt;
+    double dt_ms;
     struct timespec ts;
     (void)thiz;
     if (!g_ready) return;
@@ -367,13 +367,13 @@ JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativePaint(JNIEnv *env, jobj
        120 Hz device look the same. */
     clock_gettime(CLOCK_MONOTONIC, &ts);
     now_ms = (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1000000.0;
-    dt = 1.f / 60.f;
-    if (last_ms > 0.0) dt = (float)((now_ms - last_ms) / 1000.0);
+    dt_ms = 1000.0 / 60.0;
+    if (last_ms > 0.0) dt_ms = now_ms - last_ms;
     last_ms = now_ms;
-    if (dt < 0.001f) dt = 1.f / 60.f;
-    if (dt > 0.064f) dt = 0.064f;
-    zeus_layout(w, h);
-    (void)zeus_step(dt);
+    if (dt_ms < 1.0) dt_ms = 1000.0 / 60.0;
+    if (dt_ms > 64.0) dt_ms = 64.0;
+    loam_zeus_engine_layout(w, h);
+    (void)loam_zeus_engine_step_dt((int32_t)(dt_ms + 0.5));
     memset(&d, 0, sizeof d);
     d.fill = draw_fill;
     d.fill_a = draw_fill_a;
@@ -398,7 +398,7 @@ JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativePointerDown(JNIEnv *env
                                                                      jint x, jint y) {
     (void)env;
     (void)thiz;
-    (void)zeus_handle_click(x, y);
+    (void)loam_zeus_engine_click(x, y);
 }
 
 JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativePointerMove(JNIEnv *env, jobject thiz,
@@ -407,23 +407,23 @@ JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativePointerMove(JNIEnv *env
     int dirty;
     (void)env;
     (void)thiz;
-    dirty = zeus_handle_drag(x, y);
-    dirty |= zeus_handle_hover(x, y);
-    if (dx || dy) dirty |= zeus_handle_scroll(x, y, dx, dy);
+    dirty = loam_zeus_engine_drag(x, y);
+    dirty |= loam_zeus_engine_hover(x, y);
+    if (dx || dy) dirty |= loam_zeus_engine_scroll(x, y, dx, dy);
     (void)dirty;
 }
 
 JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativePointerUp(JNIEnv *env, jobject thiz) {
     (void)env;
     (void)thiz;
-    zeus_handle_mouseup();
+    loam_zeus_engine_mouseup();
 }
 
 JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativeKey(JNIEnv *env, jobject thiz, jint key,
                                                             jint mods) {
     (void)env;
     (void)thiz;
-    (void)zeus_handle_key_ev((int)key, (int)mods);
+    (void)loam_zeus_engine_key_ev(key, mods);
 }
 
 JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativePicked(JNIEnv *env, jobject thiz,
@@ -432,6 +432,6 @@ JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativePicked(JNIEnv *env, job
     (void)thiz;
     g_env = env;
     s = src ? (*env)->GetStringUTFChars(env, src, NULL) : NULL;
-    zeus_picked_image(s ? s : "", w, h);
+    loam_zeus_engine_picked_image((loam_str){s ? s : "", s ? (int64_t)strlen(s) : 0, 0}, w, h);
     if (s) (*env)->ReleaseStringUTFChars(env, src, s);
 }

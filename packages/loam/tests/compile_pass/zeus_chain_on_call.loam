@@ -1,0 +1,19 @@
+// A method chained onto a call that fills default props
+// (`zeus.Text("a").focusable()`). The receiver is checked once: checking it
+// again as the method's first argument refilled the defaults of its own props
+// with no expected type, and every `none` in them failed to infer.
+import "std:fmt"
+import "zeus"
+import "zui"
+
+fn main() {
+    zeus.snapshot(200, 100, fn() -> Node {
+        zeus.Box(style = Style(direction = Direction.Column)) {
+            zeus.Text("a").focusable()
+            zeus.Box(style = Style(width = px(200), height = px(40))).capture_text()
+            zeus.capture_text(zeus.Text("b")).focusable()
+        }
+    })
+    let n = zeus.Text("c").focusable().capture_text()
+    fmt.println("chain ok {{n.id > 0}}")
+}

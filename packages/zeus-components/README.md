@@ -204,7 +204,7 @@ accessible name; empty falls back to the placeholder).
   Other hosts only remember the text; `zeus.clipboard_last()` reads it back.
 - `apple_keys()` (`KbdCombo`) → `plat_apple_keys`: Apple builds and Apple
   browsers spell chords ⌘⇧P.
-- `on_context_menu` (`ContextMenu`) → `zeus_handle_context_click`: right-click
+- `on_context_menu` (`ContextMenu`) → `loam_zeus_engine_context_click`: right-click
   and ctrl-click on macOS, `contextmenu` on the web.
 - `on_drag` (`RangeSlider`): press and move inside a node, through the
   existing drag path.

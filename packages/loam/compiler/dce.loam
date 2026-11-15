@@ -215,8 +215,7 @@ fn walk(n: int) {
             mark_cname("loam_arena_note_write")
         }
     }
-    // Captured-`let mut` state signals lower to the `loam_zeus_signal` /
-    // `get` / `set` trampolines in `zeus_rt.h`, over these `arena` fns.
+    // Captured-`let mut` state signals lower to calls of these `arena` fns.
     if x.kind == Kind.Var && (ast.NODES[n].flags & typecheck.ASTF_STATE) != 0 {
         mark_cname("loam_arena_sig_reserve")
         mark_cname("loam_arena_sig_new_int")

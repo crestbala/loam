@@ -66,7 +66,7 @@ static void mac_media_pick(void) {
     if ([p runModal] != NSModalResponseOK) return;
     path = [[p URL] path];
     if (!path) return;
-    zeus_media_picked([[path lastPathComponent] UTF8String], [path UTF8String]);
+    loam_zeus_engine_media_picked(za_str([[path lastPathComponent] UTF8String]), za_str([path UTF8String]));
 }
 
 /* Mune's recordings panel. Separate from `mac_media_pick`, which stays a
@@ -90,7 +90,7 @@ static void mac_audio_pick(void) {
     for (i = 0; i < n; i++) {
         NSString *path = [[urls objectAtIndex:i] path];
         if (!path) continue;
-        zeus_media_picked([[path lastPathComponent] UTF8String], [path UTF8String]);
+        loam_zeus_engine_media_picked(za_str([[path lastPathComponent] UTF8String]), za_str([path UTF8String]));
     }
 }
 
@@ -436,6 +436,18 @@ static NSCursor *zeus_cursor_for(const char *name) {
     return [NSCursor arrowCursor];
 }
 
+/* The cursor for what is under the pointer now. */
+static NSCursor *mac_cursor_now(void) {
+    char name[64];
+    loam_str s = loam_zeus_engine_cursor();
+    size_t n = s.len > 0 && s.ptr ? (size_t)s.len : 0;
+    if (n > sizeof name - 1) n = sizeof name - 1;
+    if (n) memcpy(name, s.ptr, n);
+    name[n] = '\0';
+    loam_str_release(&s);
+    return zeus_cursor_for(name);
+}
+
 @interface ZeusView : NSView <NSTextInputClient> {
     NSTrackingArea *track;
     NSString *marked;
@@ -672,11 +684,7 @@ static void mac_sync_reduced_motion(void) {
     if (@available(macOS 10.12, *)) {
         on = [NSWorkspace sharedWorkspace].accessibilityDisplayShouldReduceMotion ? 1 : 0;
     }
-#ifdef LOAM_HOST_BUILD
-    if (zeus_app_api.set_reduced_motion) zeus_app_api.set_reduced_motion(on);
-#else
     loam_zeus_engine_set_reduced_motion(on);
-#endif
 }
 
 /* One engine frame: layout, step, and paint through the host's draw callbacks.
@@ -753,9 +761,9 @@ static void mac_snapshot(const char *path) {
         CGContextScaleCTM(bc, scale, -scale);
         [NSGraphicsContext setCurrentContext:
             [NSGraphicsContext graphicsContextWithCGContext:bc flipped:YES]];
-        zeus_layout(w, h);
-        for (int i = 0; i < 60; i++) zeus_step(1.f / 60.f);
-        zeus_layout(w, h);
+        loam_zeus_engine_layout((int32_t)w, (int32_t)h);
+        for (int i = 0; i < 60; i++) loam_zeus_engine_step_dt(17);
+        loam_zeus_engine_layout((int32_t)w, (int32_t)h);
         zeus_paint(NULL, za_draw_table());
         CGImageRef img = CGBitmapContextCreateImage(bc);
         NSBitmapImageRep *rep = [[NSBitmapImageRep alloc] initWithCGImage:img];
@@ -779,8 +787,8 @@ static int mac_frame(int64_t vw, int64_t vh) {
     mac_sync_reduced_motion();
     mac_mem_debug();
     mac_sync_chrome();
-    zeus_layout(vw, vh);
-    more = zeus_step(dt);
+    loam_zeus_engine_layout((int32_t)vw, (int32_t)vh);
+    more = loam_zeus_engine_step_dt((int32_t)(dt * 1000.0f + 0.5f));
     d = za_draw_table();
     zeus_paint(NULL, d);
     if (za_media_live()) more = 1;
@@ -1087,7 +1095,7 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
 - (BOOL)isFlipped { return YES; }
 
 /* A file dropped on the window goes where the media picker's result goes
-   (`zeus_media_picked`); the app decides what to do with it. */
+   (`engine_media_picked`); the app decides what to do with it. */
 - (void)viewDidMoveToWindow {
     [super viewDidMoveToWindow];
     if ([self window]) [self registerForDraggedTypes:@[ NSPasteboardTypeFileURL ]];
@@ -1105,7 +1113,7 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
     BOOL any = NO;
     for (NSURL *u in urls) {
         if (![u isFileURL] || ![u path]) continue;
-        zeus_media_picked([[[u path] lastPathComponent] UTF8String], [[u path] UTF8String]);
+        loam_zeus_engine_media_picked(za_str([[[u path] lastPathComponent] UTF8String]), za_str([[u path] UTF8String]));
         any = YES;
     }
     return any;
@@ -1126,10 +1134,12 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
 - (NSArray *)accessibilityChildren {
     NSMutableArray *kids = [NSMutableArray array];
     loam_str dump = loam_zeus_engine_a11y_dump();
-    if (!dump.ptr || dump.len <= 0) return kids;
-    NSString *s = [[[NSString alloc] initWithBytes:dump.ptr
-                                           length:(NSUInteger)dump.len
-                                         encoding:NSUTF8StringEncoding] autorelease];
+    NSString *s = nil;
+    if (dump.ptr && dump.len > 0)
+        s = [[[NSString alloc] initWithBytes:dump.ptr
+                                      length:(NSUInteger)dump.len
+                                    encoding:NSUTF8StringEncoding] autorelease];
+    loam_str_release(&dump);
     if (!s) return kids;
     for (NSString *line in [s componentsSeparatedByString:@"\n"]) {
         if (line.length == 0) continue;
@@ -1419,14 +1429,14 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
 
 - (void)mouseMoved:(NSEvent *)event {
     NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
-    int dirty = zeus_handle_hover((int64_t)p.x, (int64_t)p.y);
-    [zeus_cursor_for(zeus_cursor()) set];
+    int dirty = loam_zeus_engine_hover((int32_t)p.x, (int32_t)p.y);
+    [mac_cursor_now() set];
     if (dirty) [self setNeedsDisplay:YES];
 }
 
 - (void)mouseExited:(NSEvent *)event {
     (void)event;
-    if (zeus_handle_hover(-1, -1)) [self setNeedsDisplay:YES];
+    if (loam_zeus_engine_hover(-1, -1)) [self setNeedsDisplay:YES];
     [zeus_cursor_for(0) set];
 }
 
@@ -1435,14 +1445,14 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
     NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
     /* Control-click is the Mac's secondary click. */
     if (([event modifierFlags] & NSEventModifierFlagControl) &&
-        zeus_handle_context_click((int64_t)p.x, (int64_t)p.y)) {
+        loam_zeus_engine_context_click((int32_t)p.x, (int32_t)p.y)) {
         [self setNeedsDisplay:YES];
         return;
     }
     /* An app-drawn title bar moves the window like the system's: drag it
        anywhere off its controls, double-click to zoom (or whatever the user
        chose for title-bar double-clicks in System Settings). */
-    if (zeus_window_drag_at((int64_t)p.x, (int64_t)p.y)) {
+    if (loam_zeus_engine_window_drag_at((int32_t)p.x, (int32_t)p.y)) {
         if ([event clickCount] == 2) {
             NSString *act = [[NSUserDefaults standardUserDefaults] stringForKey:@"AppleActionOnDoubleClick"];
             if ([act isEqualToString:@"Minimize"]) [[self window] performMiniaturize:nil];
@@ -1452,14 +1462,14 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
         }
         return;
     }
-    if (zeus_handle_click((int64_t)p.x, (int64_t)p.y))
+    if (loam_zeus_engine_click((int32_t)p.x, (int32_t)p.y))
         [self setNeedsDisplay:YES];
 }
 
 - (void)rightMouseDown:(NSEvent *)event {
     [[self window] makeFirstResponder:self];
     NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
-    if (zeus_handle_context_click((int64_t)p.x, (int64_t)p.y))
+    if (loam_zeus_engine_context_click((int32_t)p.x, (int32_t)p.y))
         [self setNeedsDisplay:YES];
     else
         [super rightMouseDown:event];
@@ -1467,14 +1477,14 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
 
 - (void)mouseDragged:(NSEvent *)event {
     NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
-    int dirty = zeus_handle_drag((int64_t)p.x, (int64_t)p.y);
-    dirty |= zeus_handle_hover((int64_t)p.x, (int64_t)p.y);
+    int dirty = loam_zeus_engine_drag((int32_t)p.x, (int32_t)p.y);
+    dirty |= loam_zeus_engine_hover((int32_t)p.x, (int32_t)p.y);
     if (dirty) [self setNeedsDisplay:YES];
 }
 
 - (void)mouseUp:(NSEvent *)event {
     (void)event;
-    zeus_handle_mouseup();
+    loam_zeus_engine_mouseup();
 }
 
 - (void)scrollWheel:(NSEvent *)event {
@@ -1518,9 +1528,9 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
        smooth wheel scroll — bounded, and retargeted by the next notch. */
     int dirty;
     if (precise)
-        dirty = zeus_handle_scroll_step((int64_t)p.x, (int64_t)p.y, -ix, -iy);
+        dirty = loam_zeus_engine_scroll_step((int32_t)p.x, (int32_t)p.y, (int32_t)-ix, (int32_t)-iy);
     else
-        dirty = zeus_handle_scroll_smooth((int64_t)p.x, (int64_t)p.y, -ix, -iy);
+        dirty = loam_zeus_engine_scroll_smooth((int32_t)p.x, (int32_t)p.y, (int32_t)-ix, (int32_t)-iy);
     if (dirty) [self setNeedsDisplay:YES];
 }
 
@@ -1579,18 +1589,18 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
     }
     if (code == 48 || code == 53 || (mods & (ZEUS_MOD_CMD | ZEUS_MOD_CTRL))) {
         int key = [self zeusKeyFromEvent:event];
-        if (key && zeus_handle_key_ev(key, mods))
+        if (key && loam_zeus_engine_key_ev(key, mods))
             [self setNeedsDisplay:YES];
         else
             [super keyDown:event];
         return;
     }
-    if (zeus_focus_captures_text()) {
+    if (loam_zeus_engine_focus_captures_text()) {
         [self interpretKeyEvents:@[ event ]];
         return;
     }
     int key = [self zeusKeyFromEvent:event];
-    if (key && zeus_handle_key_ev(key, mods))
+    if (key && loam_zeus_engine_key_ev(key, mods))
         [self setNeedsDisplay:YES];
     else
         [super keyDown:event];
@@ -1606,7 +1616,7 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
                       ? [(NSAttributedString *)string string]
                       : (NSString *)string;
     const char *u = [s UTF8String];
-    if (u && zeus_handle_text(u, (int)strlen(u))) {
+    if (u && loam_zeus_engine_insert(za_str(u))) {
         [marked release];
         marked = nil;
         [self setNeedsDisplay:YES];
@@ -1623,14 +1633,14 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
     marked = [s copy];
     markedSel = selectedRange;
     const char *u = [s UTF8String];
-    zeus_handle_marked(u ? u : "", u ? (int)strlen(u) : 0);
+    loam_zeus_engine_marked(za_str(u));
     [self setNeedsDisplay:YES];
 }
 
 - (void)unmarkText {
     [marked release];
     marked = nil;
-    zeus_handle_marked("", 0);
+    loam_zeus_engine_marked(za_str(""));
     [self setNeedsDisplay:YES];
 }
 
@@ -1689,7 +1699,7 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
         key = ZEUS_K_TAB;
     else if (sel == @selector(cancelOperation:))
         key = 27;
-    if (key && zeus_handle_key_ev(key, mods)) [self setNeedsDisplay:YES];
+    if (key && loam_zeus_engine_key_ev(key, mods)) [self setNeedsDisplay:YES];
 }
 
 - (void)paste:(id)sender {
@@ -1697,7 +1707,7 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
     NSString *s = [[NSPasteboard generalPasteboard] stringForType:NSPasteboardTypeString];
     if (!s) return;
     const char *u = [s UTF8String];
-    if (u && zeus_handle_text(u, (int)strlen(u))) [self setNeedsDisplay:YES];
+    if (u && loam_zeus_engine_insert(za_str(u))) [self setNeedsDisplay:YES];
 }
 
 - (void)keyUp:(NSEvent *)event {
@@ -1727,7 +1737,7 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
     if (f & NSEventModifierFlagOption) mods |= ZEUS_MOD_ALT;
     if (f & NSEventModifierFlagCommand) mods |= ZEUS_MOD_CMD;
     if (code == 48) key = ZEUS_K_TAB;
-    if (key && zeus_handle_key_up(key, mods))
+    if (key && loam_zeus_engine_key_up(key, mods))
         [self setNeedsDisplay:YES];
     else
         [super keyUp:event];
@@ -1744,14 +1754,14 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
 }
 /* Finder's Open / Open With and a drop on the Dock icon, for a bundled app
    that declares document types: each file goes where a picked or dropped one
-   does (`zeus_media_picked`), in order. */
+   does (`engine_media_picked`), in order. */
 - (void)application:(NSApplication *)app openURLs:(NSArray<NSURL *> *)urls {
     (void)app;
     for (NSURL *u in urls) {
         if ([u isFileURL])
-            zeus_media_picked([[[u path] lastPathComponent] UTF8String], [[u path] UTF8String]);
+            loam_zeus_engine_media_picked(za_str([[[u path] lastPathComponent] UTF8String]), za_str([[u path] UTF8String]));
         else
-            zeus_media_picked([[[u path] lastPathComponent] UTF8String], [[u absoluteString] UTF8String]);
+            loam_zeus_engine_media_picked(za_str([[[u path] lastPathComponent] UTF8String]), za_str([[u absoluteString] UTF8String]));
     }
 }
 @end
@@ -1871,6 +1881,14 @@ static NSString *g_arg0;
 #define ZEUS_BIND(field, name) \
     (*(void **)&zeus_app_api.field = dlsym(handle, name))
 
+/* What an image built before an optional entry existed answers instead. */
+static int32_t host_no_point(int32_t x, int32_t y) {
+    (void)x;
+    (void)y;
+    return 0;
+}
+static void host_no_flag(int32_t on) { (void)on; }
+
 static int host_load_image(void) {
     struct stat st;
     void *handle;
@@ -1913,6 +1931,9 @@ static int host_load_image(void) {
     ZEUS_BIND(media_picked, "loam_zeus_engine_media_picked");
     ZEUS_BIND(context_click, "loam_zeus_engine_context_click");
     ZEUS_BIND(window_drag_at, "loam_zeus_engine_window_drag_at");
+    if (!zeus_app_api.context_click) zeus_app_api.context_click = host_no_point;
+    if (!zeus_app_api.window_drag_at) zeus_app_api.window_drag_at = host_no_point;
+    if (!zeus_app_api.set_reduced_motion) zeus_app_api.set_reduced_motion = host_no_flag;
     if (!zeus_app_api.layout || !zeus_app_api.paint) {
         fprintf(stderr, "zeli: host: %s is not a Loam app image\n", g_image_path);
         return 0;

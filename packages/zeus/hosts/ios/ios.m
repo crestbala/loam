@@ -40,7 +40,8 @@ void za_redraw(void) {
     NSURL *u = [urls firstObject];
     (void)c;
     if (!u || ![u path]) return;
-    zeus_media_picked([[[u path] lastPathComponent] UTF8String], [[u path] UTF8String]);
+    loam_zeus_engine_media_picked(za_str([[[u path] lastPathComponent] UTF8String]),
+                                  za_str([[u path] UTF8String]));
 }
 - (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)c {
     (void)c;
@@ -88,10 +89,10 @@ static CGPoint zeus_content_point(UIView *v, CGPoint p) {
   
    The engine owns the field and its contents; the host supplies only the
    keyboard. The browser host does the same with a hidden <textarea> (`syncIme`
-   in hosts/web/loader.js): focus it while `zeus_focus_captures_text()` and blur
+   in hosts/web/loader.js): focus it while `loam_zeus_engine_focus_captures_text()` and blur
    it otherwise. Call after anything that can move focus — today, a touch. */
 static void zeus_sync_keyboard(UIView *v) {
-    if (zeus_focus_captures_text()) {
+    if (loam_zeus_engine_focus_captures_text()) {
         if (![v isFirstResponder]) [v becomeFirstResponder];
     } else if ([v isFirstResponder]) {
         [v resignFirstResponder];
@@ -139,7 +140,7 @@ static void zeus_sync_keyboard(UIView *v) {
 
 - (void)drawRect:(CGRect)dirty {
     CGRect b;
-    float dt;
+    double dt;
     ZeusDraw d;
     (void)dirty;
     b = zeus_content_rect(self);
@@ -156,10 +157,10 @@ static void zeus_sync_keyboard(UIView *v) {
             loam_zeus_engine_set_reduced_motion(UIAccessibilityIsReduceMotionEnabled() ? 1 : 0);
         }
     }
-    dt = (float)link.duration;
-    if (dt <= 0.f || dt > 0.05f) dt = 1.f / 60.f;
-    zeus_layout((int64_t)b.size.width, (int64_t)b.size.height);
-    (void)zeus_step(dt);
+    dt = link.duration;
+    if (dt <= 0.0 || dt > 0.05) dt = 1.0 / 60.0;
+    loam_zeus_engine_layout((int32_t)b.size.width, (int32_t)b.size.height);
+    (void)loam_zeus_engine_step_dt((int32_t)(dt * 1000.0 + 0.5));
     d = za_draw_table();
     zeus_paint(NULL, d);
 }
@@ -183,8 +184,8 @@ static void zeus_sync_keyboard(UIView *v) {
        while the same tap works on Cocoa and Canvas2D, where a mouse move has
        already hovered that point. Left in place on `touchesEnded`, so a tap
        keeps its tooltip rather than clearing it when the finger lifts. */
-    dirty = zeus_handle_hover((int64_t)p.x, (int64_t)p.y);
-    if (zeus_handle_click((int64_t)p.x, (int64_t)p.y)) dirty = 1;
+    dirty = loam_zeus_engine_hover((int32_t)p.x, (int32_t)p.y);
+    if (loam_zeus_engine_click((int32_t)p.x, (int32_t)p.y)) dirty = 1;
     /* The press may have moved focus into or out of a text field. */
     zeus_sync_keyboard(self);
     if (dirty) [self setNeedsDisplay];
@@ -207,8 +208,8 @@ static void zeus_sync_keyboard(UIView *v) {
     dy = (int64_t)fy;
     rem_x = fx - (CGFloat)dx;
     rem_y = fy - (CGFloat)dy;
-    dirty = zeus_handle_drag((int64_t)p.x, (int64_t)p.y);
-    dirty |= zeus_handle_hover((int64_t)p.x, (int64_t)p.y);
+    dirty = loam_zeus_engine_drag((int32_t)p.x, (int32_t)p.y);
+    dirty |= loam_zeus_engine_hover((int32_t)p.x, (int32_t)p.y);
     /* Measured from the press: moves are small, so a slow start judged one
        move at a time would never become a scroll. */
     if (!scrolling) {
@@ -216,7 +217,7 @@ static void zeus_sync_keyboard(UIView *v) {
         if (sx * sx + sy * sy > 64) scrolling = 1;
     }
     if (scrolling && (dx || dy))
-        dirty |= zeus_handle_scroll((int64_t)p.x, (int64_t)p.y, dx, dy);
+        dirty |= loam_zeus_engine_scroll((int32_t)p.x, (int32_t)p.y, (int32_t)dx, (int32_t)dy);
     last = p;
     if (dirty) [self setNeedsDisplay];
 }
@@ -226,7 +227,7 @@ static void zeus_sync_keyboard(UIView *v) {
     (void)event;
     tracking = 0;
     scrolling = 0;
-    zeus_handle_mouseup();
+    loam_zeus_engine_mouseup();
     [self setNeedsDisplay];
 }
 
@@ -245,21 +246,21 @@ static void zeus_sync_keyboard(UIView *v) {
 }
 
 - (BOOL)hasText {
-    return zeus_focus_captures_text() ? YES : NO;
+    return loam_zeus_engine_focus_captures_text() ? YES : NO;
 }
 
 - (void)insertText:(NSString *)text {
     const char *u;
     if ([text isEqualToString:@"\n"]) {
-        if (zeus_handle_key_ev(13, 0)) [self setNeedsDisplay];
+        if (loam_zeus_engine_key_ev(13, 0)) [self setNeedsDisplay];
         return;
     }
     u = [text UTF8String];
-    if (u && zeus_handle_text(u, (int)strlen(u))) [self setNeedsDisplay];
+    if (u && loam_zeus_engine_insert(za_str(u))) [self setNeedsDisplay];
 }
 
 - (void)deleteBackward {
-    if (zeus_handle_key_ev(8, 0)) [self setNeedsDisplay];
+    if (loam_zeus_engine_key_ev(8, 0)) [self setNeedsDisplay];
 }
 
 /* IME composition, kept separate from committed text exactly as mac.m does with
@@ -269,11 +270,11 @@ static void zeus_sync_keyboard(UIView *v) {
     const char *u;
     (void)selectedRange;
     u = [markedText UTF8String];
-    if (u && zeus_handle_marked(u, (int)strlen(u))) [self setNeedsDisplay];
+    if (u && loam_zeus_engine_marked(za_str(u))) [self setNeedsDisplay];
 }
 
 - (void)unmarkText {
-    if (zeus_handle_marked("", 0)) [self setNeedsDisplay];
+    if (loam_zeus_engine_marked(za_str(""))) [self setNeedsDisplay];
 }
 @end
 
@@ -298,8 +299,8 @@ static void zeus_sync_keyboard(UIView *v) {
     data = UIImageJPEGRepresentation(img, 0.9f);
     path = [NSTemporaryDirectory() stringByAppendingPathComponent:@"zeus-pick.jpg"];
     [data writeToFile:path atomically:YES];
-    zeus_picked_image([path UTF8String], (int64_t)(img.size.width + 0.5),
-                      (int64_t)(img.size.height + 0.5));
+    loam_zeus_engine_picked_image(za_str([path UTF8String]), (int32_t)(img.size.width + 0.5),
+                                  (int32_t)(img.size.height + 0.5));
 }
 - (void)imagePickerControllerDidCancel:(UIImagePickerController *)p {
     [p dismissViewControllerAnimated:YES completion:nil];

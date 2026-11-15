@@ -27,6 +27,14 @@ typedef NSFont ZAFont;
 typedef NSColor ZAColor;
 #endif
 #include "zeus_rt.h"
+#include <string.h>
+
+/* A C string as the borrowed `loam_str` the engine's entry points take
+   (NULL is ""). The engine copies what it keeps, so `s` need only live for
+   the call. */
+static inline loam_str za_str(const char *s) {
+    return (loam_str){ s ? s : "", s ? (int64_t)strlen(s) : 0, 0 };
+}
 
 /* --- provided by the platform file -------------------------------------- */
 

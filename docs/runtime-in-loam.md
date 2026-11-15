@@ -190,7 +190,7 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       `wasm_inc`), hosts 4,871, vendored 346,122 (sqlite, monocypher, raygui
       and the generated tree-sitter parser).
 - [x] R0.2 The budget: `RUNTIME_LINE_BUDGET` in `nob.loam`, set at 9,939
-      and lowered by each step since (now **7,204**, after R4.3).
+      and lowered by each step since (now **7,066**, after R4.5).
       `nob trusted` and the unfiltered `nob test` fail if `runtime/` grows
       past it. Each step below lowers it to its new count in the same
       change.
@@ -990,8 +990,71 @@ done, so every R3 step is checked by `thread_tsan`).
       glibc / aarch64 musl Linux with `-Wall`, no warnings; wasm32
       `zeus_cell` warning-free.
       **Runtime: 7,410 → 7,216** (−194).
-- [ ] R4.5 The `loam_zeus_engine_*` trampolines are gone: hosts call the
-      Loam exports.
+- [x] R4.5 The `loam_zeus_engine_*` trampolines are gone: hosts call the
+      Loam exports. Done 2026-11-15. Every `zeus_handle_*` forwarder,
+      `zeus_layout`, `zeus_step`, `zeus_over_button`, `zeus_cursor`,
+      `zeus_focus_captures_text`, `zeus_window_drag_at`, `zeus_picked_image`
+      and `zeus_media_picked` left `zeus_plat.c` and `zeus_rt.h`; the Cocoa,
+      iOS, Android, X11 and web hosts call `loam_zeus_engine_*` themselves
+      (the web exports went through two C layers before). `zeus_paint` stays:
+      it binds the host's draw table and context, which is platform state,
+      not a forward. The contract is written once in `zeus_rt.h`,
+      `boundary.md` and `host-contract.md`: a `loam_str` argument is borrowed
+      for the call (a host passes `(loam_str){ptr, len, 0}` over its own
+      buffer, `za_str` on Apple), the engine copies what it keeps, and a
+      returned `loam_str` is the host's to release. A host with a float `dt`
+      passes `dt * 1000 + 0.5` ms to `engine_step_dt`, which already maps
+      `<= 0` to 16, so every host steps by the same milliseconds as before
+      (the web host does it in integer ms). `engine_picked_image` now redraws
+      itself through `mediastate.host_redraw`, as C did after it. In a
+      `zeli serve` host build the loader binds no-op stubs for the optional
+      entries an older image may lack (`context_click`, `window_drag_at`,
+      `set_reduced_motion`), so no call site tests for NULL. The three
+      `Signal` trampolines go too: a captured `let mut int` lowers to
+      `arena.sig_new_int` / `state_get` / `store_sig` on the handle's `id` (a
+      field load and a struct literal in the IR), so `zeus_rt.h` no longer
+      has any `static inline` code.
+      **Bugs found on the way.** (1) Typed text was not copied: the C
+      forwarders handed Loam an `own = 0` view of the host's buffer, and
+      `insert_text` parked it in `arena.ev_text`, so a key handler that kept
+      `e.text` kept a pointer into a buffer the host reused (the web text
+      buffer) or freed (Cocoa's autoreleased `UTF8String`). It is copied now;
+      fixture `zeus_host_text_copy` drives it from a C shim that reuses its
+      buffer after the call (HEAD prints `kept=XYZ`, this prints `kept=abc`).
+      (2) Leaks at the old seam: `zeus_cursor` and mac's accessibility dump
+      never released the string the export returned (a fresh dump per
+      VoiceOver query), and `zeus_picked_image` / `zeus_media_picked` passed
+      copies to borrowed parameters and never released them. (3) The X11
+      host did not compile: `linux_fill_g` had lost the `radius` / `alpha`
+      parameters `ZeusDraw.fill_g` gained, which clang rejects; it now fills
+      with the radius. (4) Compiler: a method chained onto a call that fills
+      default props (`zeus.Text("a").focusable()`) failed with a cascade of
+      `cannot infer type parameter 'T'`, because the UFCS receiver was
+      checked a second time as argument 0 and its props' `none` defaults were
+      refilled with no expected type. A call receiver is now checked once
+      (`M_RECV_TYPED`); fixture `zeus_chain_on_call` (HEAD: 222 errors).
+      Checks: the gallery's 2x `ZEUS_SNAPSHOT` through the real Cocoa host is
+      byte-identical to HEAD's; the `LOAM_HOST` build of mac.m links; the iOS
+      Simulator gallery builds; `linux.c` and `zeus_plat.c` build for x86_64
+      glibc and aarch64 musl with `-Wall`, no warnings; `android.c` type-checks
+      for aarch64 against the JDK's `jni.h` (no NDK here); the wasm32 gallery
+      and `zeus_cell` build warning-free. Benchmark vs HEAD (release `-O1`, 7
+      rounds, ms): captured `let mut` bump + read ×2M 77–78 vs 78–79; host
+      input from C, `engine_hover` + `engine_scroll_step` ×1M 274–276 vs
+      274–275; the compiler emitting itself, median of 10, 177.6 vs 176.6
+      (min 175.3 vs 175.7). Binaries (new vs HEAD): tiny `fmt.println(42)`
+      33,688 both, gallery 2,078,216 vs 2,079,184 (−968), greeninfer
+      1,070,904 vs 1,071,912 (−1,008). Seed 5,133,189 → 5,138,643 bytes, seed
+      = stage 1 = stage 2. Suite: `zeus` (455), `golden` (135),
+      `compile_pass` (710), `compile_fail` (164), `signal`, `state`;
+      `selfhost_seed`, `wasm_smoke`, `wasm_trap`, `wasm_float`,
+      `android_project`, `lsp`, `ownership_asan`, `cost`, `fresh_cache`,
+      `arena_lint`, `api_freeze`, `one_surface`, `stale_capture`,
+      `server_split`, `modules`, `design_lint`, `loader_cases`,
+      `thread_tsan`, `serve_native` green; `cross-check.sh` Linux 125/125 and
+      Windows 113/113 on both CPUs. Hosts grow 4,869 → 4,903 (+34: the cursor
+      and string helpers, the reload stubs, the `fill_g` fix), so trusted C
+      falls by 104 in all. **Runtime: 7,204 → 7,066** (−138).
 - [ ] R4.6 `maya_plat.c` and `raygui_plat.c`: the bridge logic moves to
       `packages/maya` and `packages/raygui`; raylib calls become `#[c]`
       bindings of those packages. `maya_mac.m` moves to the maya package as

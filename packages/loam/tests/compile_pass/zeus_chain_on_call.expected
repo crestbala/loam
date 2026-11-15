@@ -1,0 +1,4 @@
+DRAW 2
+text 0 0 0 0 a
+text 0 52 0 0 b
+chain ok true

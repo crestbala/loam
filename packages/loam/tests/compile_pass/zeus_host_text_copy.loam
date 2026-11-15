@@ -1,0 +1,25 @@
+// A host passes typed text as a view of its own buffer and reuses the buffer
+// after the call. A key handler that keeps `e.text` must keep what was typed
+// (`abc`), not whatever the host wrote there next (`XYZ`): the engine copies
+// the text it hands to handlers.
+#![c_source("vendor/zeus_host_text.c")]
+import "std:fmt"
+import "zeus"
+import "zui"
+
+#[c("host_text_insert_then_reuse")]
+fn host_text_insert_then_reuse() -> i32 {}
+
+let mut kept: string = ""
+
+fn main() {
+    zeus.snapshot(200, 100, fn() -> Node {
+        zeus.capture_text(zeus.Box(
+            style = Style(width = px(200), height = px(100)),
+            on_key_down = fn(e: KeyEvent) { kept = e.text }
+        ))
+    })
+    zeus.engine_click(10, 10)
+    let consumed = host_text_insert_then_reuse()
+    fmt.println("consumed={{consumed}} kept={{kept}}")
+}

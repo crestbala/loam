@@ -257,6 +257,10 @@ const M_EPRINTLN: int = 2048
 /** *On a module `let`: it is in typecheck's `GVARS` (static storage, never */
 /** *captured). A mark, so the test is one load, not a scan of every global. */
 const M_GLOBAL_VAR: int = 4096
+/** *On a call rewritten from `recv.f(...)`: `kids[0]` is a call receiver the */
+/** *checker already typed. Checking it again would refill the default props */
+/** *of the receiver's own call, with no expected type left for their `none`s. */
+const M_RECV_TYPED: int = 8192
 
 /** *`#[os(...)]` bits (on a Fn's `numb`): which targets a variant is for. */
 const OS_MACOS: int = 1
