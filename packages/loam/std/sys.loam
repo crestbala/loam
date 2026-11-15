@@ -978,8 +978,9 @@ fn mkdir(path: string) -> int {
 }
 
 /** *Native `mkdir -p`: walk the path in Loam, one `mkdir` per level. `C:` is */
-/** *a drive, not a directory to create. The shim hands back `errno` itself */
-/** *(`0` on success): comparing message text would depend on the locale. */
+/** *a drive, not a directory to create. A level that fails with `EEXIST` (17 */
+/** *on every target here) is already there; `errno`, not message text, which */
+/** *would depend on the locale. */
 #[os("posix", "windows")]
 fn mkdir_os(path: string) -> int {
     let n = path.len
@@ -995,8 +996,7 @@ fn mkdir_os(path: string) -> int {
             continue
         }
         let part = str.slice(path, 0, i)
-        // `17` is `EEXIST` (see the shim): the level is already there.
-        if part.len > 0 && c_mkdir(part) != 0 && c_mkdir_errno() != 17 {
+        if part.len > 0 && mkdir_level(part) != 0 && c_errno() != 17 {
             return 1
         }
         i = i + 1
@@ -1010,17 +1010,27 @@ fn mkdir_os(path: string) -> int {
     return 1
 }
 
-/** *One `mkdir(2)`: `0` when the level exists now. The `errno` stays in C for */
-/** *the caller to ask about (below), so no message text crosses. */
-#[os("posix", "windows")]
-#[c("loam_sys_mkdir_one")]
-fn c_mkdir(path: string) -> i32 {}
+/** *One level, mode `0755`: `0` when it was created. */
+#[os("posix")]
+fn mkdir_level(path: string) -> i32 {
+    return c_mkdir(path, 493)
+}
 
-/** *The `errno` the last `c_mkdir` left: `17` (`EEXIST`) means the level was */
-/** *already there. */
-#[os("posix", "windows")]
-#[c("loam_sys_mkdir_errno")]
-fn c_mkdir_errno() -> i32 {}
+/** *One level on Windows, where `_mkdir` takes no mode. */
+#[os("windows")]
+fn mkdir_level(path: string) -> i32 {
+    return c_mkdir_win(path)
+}
+
+/** *`mkdir` straight from libc. */
+#[os("posix")]
+#[c("mkdir")]
+fn c_mkdir(path: string, mode: i32) -> i32 {}
+
+/** *`_mkdir` straight from the Windows CRT. */
+#[os("windows")]
+#[c("_mkdir")]
+fn c_mkdir_win(path: string) -> i32 {}
 
 /** *Rename `from` to `to`. `0` on success. Native only; wasm returns `1`. */
 fn rename(from: string, to: string) -> int {
@@ -1121,21 +1131,43 @@ fn realpath(path: string) -> string {
 #[c("realpath")]
 fn c_realpath(path: string, resolved: []u8) -> i64 {}
 
-/** *Windows has no `realpath`: `_fullpath` plus the slash fix and an existence */
-/** *check, behind a hook with the same shape until its Loam binding lands (R2.6). */
-#[os("windows")]
-#[c("loam_sys_realpath_win")]
-fn c_realpath(path: string, resolved: []u8) -> i64 {}
-
-/** *Native `realpath`: resolve into a zeroed buffer, trimmed at the first NUL. */
-/** *An empty path is `""`, as the C had it. */
-#[os("posix", "windows")]
+/** *posix `realpath`: resolve into a zeroed buffer, trimmed at the first */
+/** *NUL. An empty path is `""`, as the C had it. */
+#[os("posix")]
 fn realpath_os(path: string) -> string {
     let mut resolved = buf.with_len(4096)
     if path.len == 0 || c_realpath(path, resolved) == 0 {
         return ""
     }
     return until_nul(resolved)
+}
+
+/** *Windows has no `realpath`: `_fullpath` makes the path absolute (without */
+/** *touching the disk), so the answer is `/`-separated here and must exist. */
+#[os("windows")]
+fn realpath_os(path: string) -> string {
+    let mut resolved = buf.with_len(4096)
+    if path.len == 0 || c_fullpath(resolved, path, i64(4096)) == 0 {
+        return ""
+    }
+    let full = forward_slashes(until_nul(resolved))
+    return if exists_os(full) == 1 { full } else { "" }
+}
+
+/** *`_fullpath(absolute, relative, max)` straight from the Windows CRT. */
+#[os("windows")]
+#[c("_fullpath")]
+fn c_fullpath(resolved: []u8, path: string, max: i64) -> i64 {}
+
+/** *A Windows path with its `\\` turned to `/`: paths are `/` on the Loam side, */
+/** *which every Win32 file API accepts. */
+#[os("windows")]
+fn forward_slashes(p: string) -> string {
+    let mut out = []u8 {}
+    for i in 0..p.len {
+        push(out, u8(if p[i] == '\\' { '/' } else { p[i] }))
+    }
+    return string_from_bytes(out)
 }
 
 /** *No filesystem on wasm: nothing resolves. */
@@ -1343,16 +1375,25 @@ fn cwd() -> string {
     return cwd_os()
 }
 
-/** *Native `cwd`: `getcwd` into a `with_len` buffer. The C read the length */
-/** *back from `strlen`; Loam trims at the first NUL instead (a path cannot */
-/** *hold one, and the buffer is zeroed). */
-#[os("posix", "windows")]
+/** *posix `cwd`: `getcwd` into a `with_len` buffer, trimmed at the first NUL */
+/** *(a path cannot hold one, and the buffer is zeroed). */
+#[os("posix")]
 fn cwd_os() -> string {
     let mut cwd = buf.with_len(4096)
-    if c_getcwd(cwd, 4096) == 0 {
+    if c_getcwd(cwd, i64(4096)) == 0 {
         return ""
     }
     return until_nul(cwd)
+}
+
+/** *Windows `cwd`: `_getcwd`, then `/` for `\\`. */
+#[os("windows")]
+fn cwd_os() -> string {
+    let mut cwd = buf.with_len(4096)
+    if c_getcwd_win(cwd, i32(4096)) == 0 {
+        return ""
+    }
+    return forward_slashes(until_nul(cwd))
 }
 
 /** *The bytes of a C-filled buffer up to its first NUL, as a string. */
@@ -1375,11 +1416,15 @@ fn cwd_os() -> string {
     return ""
 }
 
-/** *One `getcwd`: the path bytes in `buf`, or NULL. A shim because Windows */
-/** *spells it `_getcwd` (see below). */
-#[os("posix", "windows")]
-#[c("loam_sys_getcwd")]
+/** *`getcwd` straight from libc: the path bytes in `buf`, or NULL. */
+#[os("posix")]
+#[c("getcwd")]
 fn c_getcwd(buf: []u8, n: i64) -> i64 {}
+
+/** *`_getcwd` straight from the Windows CRT (its size is an `int`). */
+#[os("windows")]
+#[c("_getcwd")]
+fn c_getcwd_win(buf: []u8, n: i32) -> i64 {}
 
 /** *Open a filesystem watcher, for the paths `watch_add` is then given. Returns a */
 /** *handle (> 0), or `0` when this host has no kernel watcher: macOS and iOS */
