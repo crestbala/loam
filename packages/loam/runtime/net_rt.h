@@ -7,19 +7,8 @@
 #include "loam_rt.h"
 #endif
 
-int64_t loam_net_tls_connect(loam_str host, int64_t port);
-int64_t loam_net_tls_nb_connect(loam_str host, int64_t port);
-int64_t loam_net_tls_nb_ready(int64_t fd);
-/* The pieces of `std:net` that stay C (R5.1): one `send` from an offset into
-   a string, and the macOS TLS client's handle ops. */
-int64_t loam_net_send_at(int64_t fd, loam_str data, int64_t off, int64_t flags);
-int64_t loam_net_tls_handle_send(int64_t fd, loam_str data, int64_t off);
-int64_t loam_net_tls_handle_write(int64_t fd, loam_str data);
-loam_str loam_net_tls_handle_read(int64_t fd, int64_t max);
-void loam_net_tls_handle_close(int64_t fd);
-int64_t loam_net_tls_handle_socket(int64_t fd);
-int64_t loam_net_tls_handle_handshaking(int64_t fd);
-int64_t loam_net_tls_handle_would_block(void);
+/* `std:net`'s one C helper (native): a string's byte address. */
+int64_t loam_net_string_bytes_at(loam_str s, int64_t off);
 loam_str loam_net_fetch_rpc(loam_str path, loam_str body);
 int64_t loam_net_fetch_issue(loam_str path, loam_str body);
 int64_t loam_net_fetch_ready(void);

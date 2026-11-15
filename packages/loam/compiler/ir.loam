@@ -1852,6 +1852,11 @@ fn lower_expr(n: int) -> int {
                 let d = temp(nty)
                 let i = emit(Op.FnVal, loc)
                 SCRATCH[i].dst = d
+                // `imm` 1: a C function pointer for a `#[c]` fn-typed
+                // parameter, the fn's own symbol rather than its trampoline.
+                if (ast.NODES[n].flags & typecheck.ASTF_C_FN_PTR) != 0 {
+                    SCRATCH[i].imm = i64(1)
+                }
                 let c = resolve_callee(n)
                 if c.len > 0 {
                     set_text(i, c)

@@ -1,0 +1,9 @@
+// A closure has an environment C cannot pass back: a #[c] fn-typed parameter
+// takes only a module-level fn.
+#[c("qsort")]
+fn c_qsort(base: []i32, n: i64, size: i64, compare: fn(i64, i64) -> i32) {}
+
+fn main() {
+    let flip = 1
+    c_qsort([]i32 { 2, 1 }, 2, 4, |a: i64, b: i64| -> i32 { return i32(flip) })
+}

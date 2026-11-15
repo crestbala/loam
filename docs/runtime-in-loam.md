@@ -181,7 +181,7 @@ safely today:
   | b. `#[c]` on a module `let`: an extern C global | `loam_sys_spawnp` (exists only for `environ`), `stdout` |
   | c. `#[os]` / `#[arch]` on structs and consts | per-OS layouts (`stat`, `rusage`) written once per target, not as offsets |
   | d. Variadic bindings (numbers and strings only): `#[c("fcntl", "variadic after 2")]`. **Done with R5.1.** | wrappers over `open` / `fcntl` / `ioctl` and the arm64 Apple variadic ABI trap |
-  | e. Explicit C-callable exports and env-less fn pointers | callback shims (`qsort`-style, run loops, library callbacks) |
+  | e. Env-less fn pointers: a `#[c]` parameter of a fn type of numbers and bools takes a named module-level fn, passed as its own C symbol. **Done with R5.2.** | callback shims (`qsort`-style, run loops, library callbacks) |
   | f. Typed `objc_msgSend` bindings and selectors (`std:objc`) | the Cocoa and UIKit hosts (`mac.m`, `ios.m`, maya's `hosts/mac.m`; R7) |
 
 ## 5. Order and gates
@@ -219,7 +219,7 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       `wasm_inc`), hosts 4,871, vendored 346,122 (sqlite, monocypher, raygui
       and the generated tree-sitter parser).
 - [x] R0.2 The budget: `RUNTIME_LINE_BUDGET` in `nob.loam`, set at 9,939
-      and lowered by each step since (now **5,813**, after R5.1).
+      and lowered by each step since (now **5,359**, after R5.2).
       `nob trusted` and the unfiltered `nob test` fail if `runtime/` grows
       past it. Each step below lowers it to its new count in the same
       change.
@@ -1245,8 +1245,67 @@ done, so every R3 step is checked by `thread_tsan`).
       layout-checked here; they first run on the Linux CI job.
       **Runtime: 6,248 → 5,813** (−435: `net.c` 1,295 → 862, `net_rt.h`
       51 → 42, `loam_rt.h` +7).
-- [ ] R5.2 TLS: SecureTransport as `#[c]` bindings on macOS, and a binding
-      for Linux and Windows.
+- [x] R5.2 TLS: SecureTransport as `#[c]` bindings on macOS. Done
+      2026-11-15. First, §4 feature e: a `#[c]` parameter may have a fn type
+      whose parameters and result are numbers and bools, and its argument
+      must name a module-level fn that is not generic, not a `#[c]` binding
+      and not a body-less hook. Codegen passes that fn's own C symbol (its
+      Loam C signature is the C one), not its `loam_fn` trampoline, so C
+      calls it with the C ABI. The raw value exists only as that argument:
+      closures, fn values held in variables, and calling such a binding
+      through a fn value are compile errors. Each `#[os]` variant's
+      `__as_fn` trampoline is now emitted under that variant's own `#if`
+      (only the primary's was emitted, unguarded, so a wasm build of an
+      Apple-only fn used as a value called a fn that did not exist there).
+      Then the TLS client is Loam (`#[os("apple")]`; other targets answer
+      `-1` in Loam):
+      - The 8-slot table (state, socket, `SSLContextRef` as an opaque
+        `i64`).
+      - `getaddrinfo` walked by copying each 48-byte `addrinfo` into an
+        `[]i64` with `memcpy`, and the 10 s socket timeouts.
+      - The blocking handshake with its three-idle-polls rule, and the
+        non-blocking connect and `tls_nb_ready` state machine.
+      - Read, write, send, close; context set-up (SNI and name check, TLS
+        1.2 floor).
+      - SecureTransport's two I/O callbacks, `recv` / `send` into the
+        buffer C hands over, the `size_t` length read and written through
+        C's pointer, and `errno` mapped to `OSStatus`.
+
+      `send_at` gives way to one smaller hook, `string_bytes_at` (a string's
+      byte address for a binding to read in the same call), so `send` and
+      `SSLWrite` are plain bindings. What `net.c` keeps: that hook, and the
+      wasm bridges with their native stubs. `c_layouts` gains `addrinfo`,
+      the `OSStatus` values, the SecureTransport enums and the callbacks'
+      errnos. Fixtures: `c_ffi` calls back into Loam from a vendored C fn and
+      sorts with libc `qsort` and a Loam comparator;
+      `compile_fail/c_attr_callback_closure`, `_variable`, `_type`,
+      `_binding`, `_as_value`. Checks: a probe (bad arguments, an
+      unresolvable host, a refused port, a peer that answers in plaintext,
+      eight pending handshakes and a ninth refused, double and stale closes,
+      a blocking and a non-blocking HTTPS exchange with `example.com`)
+      prints what HEAD's C prints; ASan+UBSan clean; `leaks` reports the
+      same 6 blocks as HEAD, all inside Security.framework
+      (`CryptKit::FEEKeyInfoProvider`). Benchmark vs HEAD: an HTTPS GET of
+      `example.com` retires 14.6–14.8 M instructions against 14.6–14.9 M
+      (3 runs of 20); TCP request/reply and 1 GiB sent by offsets at parity
+      (1,785–1,828 vs 1,773–1,834 ms, 398–399 vs 397–424 ms). Binaries (new
+      vs HEAD, `__text`): tiny 308 both; `http_parse` 16,340 vs 16,244 (the
+      TLS table's empty cells in `__init`); `http_listen` 148,476 vs
+      151,504 (−2%, `send_at` gone); `zeli` 510,884 vs 509,132 (+0.3%);
+      `http_https_live` 12,804 vs 7,252 (+5.5 KB: the client is about three
+      times its C's size, from checked conversions, bounds checks and a
+      retain/drop around each binding call that passes a module buffer).
+      Follow-up: borrowed `&[]T` / `&mut []T` binding parameters would drop
+      those retain/drop pairs from every binding. Seed 5,155,152 →
+      5,176,131 bytes, seed = stage 1 = stage 2. Suite: `compile_pass`
+      (710), `compile_fail` (173), `zeus` (455), `golden` (135), `http`
+      (39), `net_`, `c_ffi`, `os_`; every integration stanza listed for
+      R5.1 green; `cross-check.sh` Linux and Windows 125/125 on both CPUs.
+      **Runtime: 5,813 → 5,359** (−454: `net.c` 862 → 419, `net_rt.h`
+      42 → 31).
+- [ ] R5.3 TLS on Linux (OpenSSL bindings: needs per-target link flags,
+      §4 c, and a Linux machine to run on) and on Windows (after a Winsock
+      port; TCP answers `-1` there today).
 
 **R6. The core: zero runtime.** What remains of `loam_rt.h`: allocation,
 refcounts, owned strings, vec growth and copy-on-write, element and env drop

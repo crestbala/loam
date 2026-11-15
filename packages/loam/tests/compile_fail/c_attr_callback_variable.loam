@@ -1,0 +1,13 @@
+// A fn value held in a variable is a `loam_fn` (a trampoline and an
+// environment), not a C function pointer.
+#[c("qsort")]
+fn c_qsort(base: []i32, n: i64, size: i64, compare: fn(i64, i64) -> i32) {}
+
+fn same(a: i64, b: i64) -> i32 {
+    return 0
+}
+
+fn main() {
+    let f = same
+    c_qsort([]i32 { 2, 1 }, 2, 4, f)
+}

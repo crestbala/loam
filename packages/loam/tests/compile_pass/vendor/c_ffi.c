@@ -73,3 +73,7 @@ int64_t c_ffi_vsum(int32_t count, ...) {
     va_end(ap);
     return sum;
 }
+
+// A C function pointer to a Loam fn: called back with the C ABI, as
+// SecureTransport calls its I/O hooks and qsort its comparator.
+int64_t c_ffi_apply(int64_t (*f)(int64_t, int32_t), int64_t a, int32_t b) { return f(a, b) + f(b, (int32_t)a); }
