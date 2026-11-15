@@ -37,7 +37,7 @@ recorded below.
 | Before | After |
 |---|---|
 | `loam_alloc_count` **defined** in `zeus_plat.c`, `extern` in `loam_rt.h` | defined in `loam_rt.h` under `LOAM_RT_DEFINE_ALLOC`, emitted by codegen |
-| the only `setjmp` arm in the tree lived in `zeus_plat.c` | `loam_trap_guard` in `loam_rt.h`; the seam is one line |
+| the only `setjmp` arm in the tree lived in `zeus_plat.c` | `loam_trap_guard` in `loam_rt.h`. The guard policy and the wasm preset table are Loam (R4.3); C forwards the arm |
 | `plat_now_ms` reached into `loam_async_now_ms` | `loam_now_ms` — one monotonic clock in the runtime |
 | `extern zeus_heap_used()` declared inside a seam function | `loam_heap_used`, a documented runtime verb |
 

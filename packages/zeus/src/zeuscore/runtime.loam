@@ -58,18 +58,96 @@ fn edit_reset(slot: int) {}
 /** *Free an interned handler/thunk: release its captured env and make the id */
 /** *reusable. No-op for ids that are already free. */
 fn intern_free(id: int) {}
+
+// Recoverable traps. The arm itself (`setjmp`, and the panic buffer it
+// returns into) stays in `loam_rt.h` until R6.2. What lives here is the
+// policy: which interned slot may run under that arm, and the wasm restart
+// table. The table is a constant initializer, so a store from the web loader
+// before `main` is still there when `__init` runs — `__init` does not write
+// a global whose initializer is plain data.
+
+/** *Run `build` on the installed arm. "" when it returned, else the panic */
+/** *message (a view of the runtime's panic buffer). On wasm the body runs */
+/** *unprotected. */
+fn trap_guard(build: fn()) -> string {}
+/** *One past the last interned-handler id. Id 0 is never a slot. */
+fn intern_limit() -> int {}
+/** *Slot `id` (already in range): low bit is "has a function", bits 8..15 are */
+/** *the signature it was interned with. */
+fn slot_bits(id: int) -> int {}
+/** *Count a call through the wrong signature and say so, the first few times. */
+fn note_kind_mismatch(id: int, want: int, got: int) {}
+/** *Run interned slot `id` under the arm. The caller has already checked it. */
+fn guard_slot(id: int) -> string {}
+/** *The panic buffer as a string. A view: copy it before the next panic. */
+fn panic_text() -> string {}
+
+/** *Void handlers. Matches `ZEUS_FN_VOID` in `zeus_plat.c`. */
+const KIND_VOID: int = 1
+/** *How many startup presets the web loader may record. Further ones drop. */
+const PRESET_LIMIT: int = 16
+
+let mut preset_seq: [16]int = [16]int { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
+let mut preset_text: [16]string = [16]string {
+    "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+}
+let mut preset_count: int = 0
+
+/** *Record a startup failure for boundary `seq`. The web loader calls this */
+/** *before `main`, on a fresh instance. */
+fn preset_store(seq: int, msg: string) {
+    if preset_count >= PRESET_LIMIT {
+        return
+    }
+    preset_seq[preset_count] = seq
+    preset_text[preset_count] = msg
+    preset_count = preset_count + 1
+}
+
 /** *Run `build` under a recoverable trap (`zui.Boundary`). Returns "" when the */
 /** *build completed, else the panic message. On wasm a trap is not caught here; */
 /** *it unwinds to the host, which recovers through `zeus.engine_recover`. */
-fn boundary(build: fn()) -> string {}
+fn boundary(build: fn()) -> string {
+    return trap_guard(build)
+}
+
 /** *Invoke interned handler `id` under a trap arm: "" when it returned, else the */
-/** *panic message. On wasm a trap is not caught here; it unwinds to the host. */
-fn guard_fn(id: int) -> string {}
+/** *panic message. A missing slot or a slot of another signature is "". On wasm */
+/** *a trap is not caught here; it unwinds to the host. */
+fn guard_fn(id: int) -> string {
+    if id <= 0 || id >= intern_limit() {
+        return ""
+    }
+    let bits = slot_bits(id)
+    if (bits & 1) == 0 {
+        return ""
+    }
+    let kind = bits >> 8
+    if kind != KIND_VOID {
+        note_kind_mismatch(id, KIND_VOID, kind)
+        return ""
+    }
+    return guard_slot(id)
+}
+
 /** *The last panic's message, "" before any. Static storage: copy before keeping. */
-fn trap_msg() -> string {}
+fn trap_msg() -> string {
+    return panic_text()
+}
+
 /** *The message boundary number `seq` trapped with during a previous wasm */
 /** *instance's startup (pre-seeded by the web loader), or "". */
-fn boundary_preset(seq: int) -> string {}
+fn boundary_preset(seq: int) -> string {
+    let mut index = 0
+    while index < preset_count {
+        if preset_seq[index] == seq {
+            // A copy. The slot keeps its own text for the next read.
+            return "{{preset_text[index]}}"
+        }
+        index = index + 1
+    }
+    return ""
+}
 /** *Runtime allocation count since boot, for the animation proof harness. The */
 /** *runtime counts `loam_new` and array growth; an animated frame must not move */
 /** *it. 0 when the host/runtime does not track it. */

@@ -73,6 +73,10 @@ fn c_roots(module_name: string) -> []string {
         return []string { "bind" }
     }
     // Hosts deliver deep links, the OS back button and chunk loads.
+    // `zeus_boundary_preset_add` calls this before `main`. Nothing in Loam does.
+    if module_name == "runtime" {
+        return []string { "preset_store" }
+    }
     if module_name == "router" {
         return []string { "engine_open_url", "engine_history_back", "engine_chunks_done", "engine_chunks_slow" }
     }
