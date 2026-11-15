@@ -408,7 +408,7 @@ fn computed<T>(calc: fn() -> T) -> Signal<T> {
     let owner = arena.owner_now()
     // The output is reserved unbound: `T` may be a struct or a list with no
     // nameable default, and the first pull is what binds it.
-    let out_id = runtime.sig_alloc_zero()
+    let out_id = arena.sig_alloc()
     // A closure can only be persisted through an environment that is a plain int
     // copy, and a `fn` value is not — so the body is stored in a raw signal cell
     // (whose payload is typed bytes) and rehydrated by id inside the thunk. That

@@ -781,10 +781,26 @@ done, so every R3 step is checked by `thread_tsan`).
       inert (`memset` zero-fill stays, over the Loam table's ids). 5-way
       TSan clean, forge traps byte-identical, worker-sleep probe green.
       A channel-free binary links no table. **Runtime: 7,994 → 7,981** (−13).
+- [x] R3 done. The six `do_*` sections, `block_alloc`, the tab-lock shims,
+      spawn/entry/`running` stay C by the §2 rule (lock and condvar calls
+      stay in the core): each section is an atomic lock+wait+memcpy+signal
+      unit — `cond_wait` must hold the mutex, so it cannot split across a
+      Loam boundary — and Loam cannot lay out `pthread_mutex_t` /
+      `pthread_cond_t`. Everything movable (tables, keys, clock/sleep) is
+      Loam; the rest is the sync core TSan checks every run.
 
 **R4. Zeus platform** (`zeus_plat.c`, `zeus_rt.h`).
 
-- [ ] R4.1 The signal byte store as a `[]u8` arena with S0's typed cells.
+- [x] R4.1a Signal id free-list in Loam. Done 2026-11-16. `free_sigs` +
+      `sig_reserve` / `sig_release` / `sig_alloc` / `sig_free_cell` in
+      `zeuscore/arena.loam` replace the C free-list; `sig_slot_ensure` grows
+      the cell table + arena mirror for a Loam-reserved id. Codegen
+      `__sig_push` and captured-`let mut` state signals reserve through
+      Loam (`mark_cname` keeps the reserve fn, as R3.1b does for futures).
+      `zeus_state`, signal fixtures, both drop goldens, forge trap
+      byte-identical, wasm32 `trap_app` warning-free. **Runtime: 7,981 →
+      7,961** (−20).
+- [ ] R4.1b The signal byte store as a `[]u8` arena with S0's typed cells.
 - [ ] R4.2 Frame and trace logic.
 - [ ] R4.3 Recoverable traps (needs R6.2's trap path).
 - [ ] R4.4 Image sizes and media state.

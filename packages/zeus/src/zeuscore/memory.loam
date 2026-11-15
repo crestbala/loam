@@ -4,6 +4,7 @@
 // `int` (i32), 16 for a `string` or a `[]U`, a struct's size for a Copy struct.
 
 import "runtime.loam"
+import "arena.loam"
 
 // The language already provides the pair that makes this possible without the
 // engine ever naming a type:
@@ -301,7 +302,7 @@ fn cell_drop(c: &mut Cell) {
     if c.id == 0 {
         return
     }
-    runtime.sig_free(c.id)
+    arena.sig_free_cell(c.id)
     c.id = 0
     c.n = 0
     c.gen = 0

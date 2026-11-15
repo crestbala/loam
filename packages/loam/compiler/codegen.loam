@@ -1933,9 +1933,11 @@ fn builtin_call(x: &Inst) -> bool {
         w("loam_arena_ensure();\n")
         indent(1)
         if tkind(vt) == TK.Int && types.TYPES[vt].bits == 32 {
-            w("{{d}} = loam_zeus_sig_alloc_int({{a0}});\n")
+            // R4.1a: the id recycles through Loam (`arena.sig_reserve`); C
+            // only ensures its cell table and the arena mirror.
+            w("{{d}} = loam_zeus_sig_alloc_int(loam_arena_sig_reserve(), {{a0}});\n")
         } else {
-            w("{{d}} = loam_zeus_sig_alloc_zero();\n")
+            w("{{d}} = loam_zeus_sig_alloc_zero(loam_arena_sig_reserve());\n")
         }
         indent(1)
         if is_copy_vec(vt) {

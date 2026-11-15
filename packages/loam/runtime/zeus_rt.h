@@ -30,12 +30,13 @@ void loam_zeus_raw_init(void);
 void loam_zeus_open_window(loam_str title, int32_t width, int32_t height);
 void loam_zeus_raw_run(void);
 
-Signal loam_zeus_signal(int64_t value);
+Signal loam_zeus_signal(int64_t id, int64_t value);
 /* Signal slot allocation with free-list reuse (arena compaction). The int
    form writes the int mirror slot; the zero form reserves a placeholder slot
-   for a typed payload the caller binds afterwards. */
-int64_t loam_zeus_sig_alloc_int(int64_t value);
-int64_t loam_zeus_sig_alloc_zero(void);
+   for a typed payload the caller binds afterwards. R4.1a: the id is reserved
+   by Loam (`arena.sig_reserve`) and passed in; C only ensures the tables. */
+int64_t loam_zeus_sig_alloc_int(int64_t id, int64_t value);
+int64_t loam_zeus_sig_alloc_zero(int64_t id);
 void loam_zeus_sig_free(int64_t id);
 int64_t loam_zeus_get(Signal sig);
 void loam_zeus_set(Signal sig, int64_t value);
@@ -336,7 +337,7 @@ int32_t loam_runtime_intern_kind_mismatch_count(void);
 int32_t loam_runtime_intern_live_count(void);
 void loam_runtime_sig_bind_int(int64_t id, int64_t value);
 int64_t loam_runtime_sig_gen(int64_t id);
-int64_t loam_runtime_sig_alloc_zero(void);
+int64_t loam_runtime_sig_alloc_zero(int64_t id);
 void loam_runtime_sig_free(int64_t id);
 void loam_runtime_edit_reset(int64_t slot);
 void loam_runtime_intern_free(int64_t id);

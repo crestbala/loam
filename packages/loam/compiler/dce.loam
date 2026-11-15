@@ -193,6 +193,16 @@ fn walk(n: int) {
             mark_cname("loam_thread_ch_alloc")
             mark_cname("loam_thread_ch_begin")
         }
+        // A `__sig_push` builtin lowers in codegen to a Loam id reserve
+        // (R4.1a: `arena.sig_reserve`, recycling through `free_sigs`) plus
+        // the C cell bind: keep the reserve fn. Captured-`let mut` state
+        // signals lower to `loam_zeus_signal(reserve(), init)` the same way.
+        if ast.EXTRA[ast.ex(n)].sig == 1 {
+            mark_cname("loam_arena_sig_reserve")
+        }
+        if x.kind == Kind.Var && (ast.NODES[n].flags & typecheck.ASTF_STATE) != 0 {
+            mark_cname("loam_arena_sig_reserve")
+        }
     }
     switch x.kind {
         case Kind.Ident:

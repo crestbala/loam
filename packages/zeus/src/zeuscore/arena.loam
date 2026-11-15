@@ -113,6 +113,59 @@ let mut own_eff: []int = []int {}
 let mut own_tok: []int = []int {}
 /** *Freed node ids, recycled by `alloc_node`. */
 let mut free_nodes: []int = []int {}
+/** *Freed signal ids, recycled by `sig_reserve` (R4.1a: the C free-list in */
+/** *`zeus_plat.c` moved here — a plain id stack, same shape as `free_nodes` */
+/** *and `lr_free` below. An id is freed only when nothing reachable from the */
+/** *live tree can reference it (subtree teardown), so recycling never aliases */
+/** *a live signal. */
+let mut free_sigs: []int = []int {}
+
+/** *File a freed signal id for reuse. No-op for ids already free (id 0 is */
+/** *the null signal and never recycles). */
+fn sig_release(id: int) {
+    if id <= 0 {
+        return
+    }
+    push(free_sigs, id)
+}
+
+/** *Reserve a signal id: recycle a freed one, else append a fresh slot (the */
+/** *caller zeroes the mirror). Returns -1 never — the stack grows. */
+fn sig_reserve() -> int {
+    if free_sigs.len > 0 {
+        let id = free_sigs[free_sigs.len - 1]
+        pop(free_sigs)
+        return id
+    }
+    push(sigs, 0)
+    return sigs.len - 1
+}
+
+/** *Reserve + ensure a signal slot: the Loam half of allocation (R4.1a). The */
+/** *id recycles through `free_sigs`; C (`c_sig_alloc_zero`) only ensures its */
+/** *cell table and zeroes the arena mirror. */
+fn sig_alloc() -> int {
+    ensure()
+    let id = sig_reserve()
+    c_sig_alloc_zero(id)
+    return id
+}
+
+/** *The C cell-ensure for a Loam-reserved id. Module-private, like every */
+/** *`#[c]` binding: callers use `sig_alloc` / `sig_free_cell`. */
+#[c("loam_zeus_sig_alloc_zero")]
+fn c_sig_alloc_zero(id: int) -> int {}
+
+/** *Free a signal slot: release its C cell, then recycle the id. The Loam */
+/** *half of `sig_free` (R4.1a). */
+fn sig_free_cell(id: int) {
+    c_sig_free(id)
+    sig_release(id)
+}
+
+/** *The C cell release (bytes, ownership refs, mirror zero, key clear). */
+#[c("loam_zeus_sig_free")]
+fn c_sig_free(id: int) {}
 
 /* Ids freed by the current drop_children pass: effect teardown runs once per
    subtree (track.free_nodes_effects) instead of once per node — per-node
@@ -436,7 +489,7 @@ fn rec_release(slot: int) {
     let kind = r_kind[slot]
     rec_drop(slot)
     if kind == 0 {
-        runtime.sig_free(k)
+        sig_free_cell(k)
         forget_sig_meta(k)
         track.drop_sig(k)
         anim_drop_sig(k)
@@ -1638,7 +1691,7 @@ fn release(m: ArenaMark) {
     let mut s = sigs.len
     while s > m.sigs {
         s = s - 1
-        runtime.sig_free(s)
+        sig_free_cell(s)
         forget_sig_meta(s)
         track.drop_sig(s)
         anim_drop_sig(s)
