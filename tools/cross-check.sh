@@ -91,17 +91,15 @@ xargs -P "$jobs" -n 2 sh -c 'bin/loamc "$3" --emit-c -o "$1/c/$2.c" >/dev/null 2
 cat "$list.ok" >> "$list"
 wait
 
-# 2. Every target × fixture link. Known gap: runtime/net.c is BSD sockets +
-# platform TLS with no Windows port yet. Not needed to self-host; listed so
-# it stays visible.
+# 2. Every target × fixture link. On Windows std:net's TCP answers -1 (no
+# Winsock port yet) and runtime/net.c compiles to its stubs, so the
+# networking fixtures link there too; win-bundle.sh leaves the ones that
+# open sockets out of the Windows run.
 work="$OUT/work"
 : > "$work"
 for t in $targets; do
     [ -e "$OUT/res/$t.net" ] && continue
     while read -r b f; do
-        case $t in *windows*)
-            if [ "$b" != nob ] && grep -q 'loam_net_' "$OUT/c/$b.c"; then echo "$b" >> "$OUT/res/$t.gap"; continue; fi ;;
-        esac
         echo "$t $b $f" >> "$work"
     done < "$list"
 done
@@ -126,9 +124,6 @@ for t in $targets; do
         fi
     done
     echo "cross-check $t: nob + $n fixtures, $bad failed"
-    if [ -e "$OUT/res/$t.gap" ]; then
-        echo "  known gap, skipped (std:net has no Windows port): $(tr '\n' ' ' < "$OUT/res/$t.gap" | sed 's/ $//')"
-    fi
     [ "$bad" -eq 0 ] || fail=1
     rm -f "$OUT/net-$t.o"
 done

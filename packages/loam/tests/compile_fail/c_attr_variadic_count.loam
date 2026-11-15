@@ -1,0 +1,8 @@
+// "variadic after 3" on a binding with two parameters: C's fixed ones would
+// be more than the binding passes.
+#[c("fcntl", "variadic after 3")]
+fn c_fcntl(fd: i32, cmd: i32) -> i32 {}
+
+fn main() {
+    let _ = c_fcntl(0, 1)
+}

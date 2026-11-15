@@ -90,6 +90,35 @@ fn item_sum(base: i32, item: Item, after: i32) -> i64 {}
 #[c("c_ffi_flip")]
 fn flip(flags: []bool, n: i32) -> i32 {}
 
+#[c("c_ffi_vsum", "variadic after 1")]
+fn vsum3(count: i32, a: i64, b: i64, c: i64, x: f64, tail: string) -> i64 {}
+
+/** *`fcntl(fd, F_GETFD)` and `fcntl(fd, F_SETFD, flags)`: libc's own */
+/** *variadic fn, through two shapes of one binding (POSIX only). */
+#[os("posix")]
+#[c("fcntl", "variadic after 2")]
+fn fcntl_get(fd: i32, cmd: i32) -> i32 {}
+
+#[os("posix")]
+#[c("fcntl", "variadic after 2")]
+fn fcntl_set(fd: i32, cmd: i32, arg: i32) -> i32 {}
+
+/** *Close-on-exec set and cleared on stdout. F_GETFD 1, F_SETFD 2 and */
+/** *FD_CLOEXEC 1 on macOS and Linux alike. */
+#[os("posix")]
+fn fcntl_round_trip() -> bool {
+    return fcntl_set(1, 2, 1) == 0 &&
+        fcntl_get(1, 1) == 1 &&
+        fcntl_set(1, 2, 0) == 0 &&
+        fcntl_get(1, 1) == 0
+}
+
+/** *Windows has no `fcntl`. */
+#[os("windows", "wasm")]
+fn fcntl_round_trip() -> bool {
+    return true
+}
+
 /** *Named like a runtime function: the wrapper has to be renamed, not collide. */
 #[c("strlen")]
 fn str_copy(s: string) -> i64 {}
@@ -135,7 +164,10 @@ fn main() {
 
     let r = Rect { x: f32(3.0), y: f32(1.0), width: f32(2.5), height: f32(4.0) }
     expect(area(r) == 12.0, "struct by value")
-    expect(rgba(Rgba { r: u8(1), g: u8(2), b: u8(3), a: u8(255) }) == 16909311, "byte struct by value")
+    expect(
+        rgba(Rgba { r: u8(1), g: u8(2), b: u8(3), a: u8(255) }) == 16909311,
+        "byte struct by value",
+    )
     let item = Item {
         rect: r,
         tint: Rgba { r: u8(0), g: u8(0), b: u8(3), a: u8(232) },
@@ -150,6 +182,12 @@ fn main() {
     let flags = []bool { true, false, false }
     expect(flip(flags, 3) == 2, "[]bool into C")
     expect(!flags[0] && flags[1] && flags[2], "[]bool written by C")
+
+    expect(
+        vsum3(3, i64(1), i64(20), i64(300), 0.5, "four") == 330,
+        "variadic ints, a double and a string",
+    )
+    expect(fcntl_round_trip(), "variadic libc fcntl")
 
     let f = tick
     f()

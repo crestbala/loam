@@ -3591,14 +3591,23 @@ fn c_bindings() {
             w("((")
             c_abi_type(ret)
             w(" (*)(")
-            if np == 0 {
+            // A variadic binding is called through C's own `(fixed, ...)`
+            // shape, so `cc` passes the rest as varargs (on the stack on
+            // Apple arm64, where a fixed-arity call would put them in
+            // registers the callee never reads).
+            let fixed = ast.c_variadic_fixed(d)
+            let declared = if fixed >= 0 { fixed } else { np }
+            if declared == 0 {
                 w("void")
             }
-            for k in 0..np {
+            for k in 0..declared {
                 if k > 0 {
                     w(", ")
                 }
                 c_abi_type(param_type(ft, k))
+            }
+            if fixed >= 0 {
+                w(", ...")
             }
             w("))(void *){{cn}}__csym)(")
             for k in 0..np {

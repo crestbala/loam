@@ -105,7 +105,7 @@ from the C library every program already links. `std:batch` binds `fork` /
 | Layer | C | Loam |
 |---|---|---|
 | Language (`loam_rt`) | Allocator, panic/trap, overflow, wrapping bit ops, `string_from_bytes`, `loam_fn` `{fn, env, env_size}`, `env_set` / `exit` | — |
-| net (`packages/loam/std/net`) | TCP connect/read/write/close, listen/accept/peek, wasm `fetch_rpc` | — |
+| net (`packages/loam/std/net`) | `send_at` (one `send` from an offset into a string), the macOS TLS client (SecureTransport), the wasm fetch / WebSocket / stream bridges | TCP over raw libc bindings: addresses, socket options, non-blocking connect, the poll set, `errno` retries, would-block, TLS dispatch (R5.1) |
 | Zeus | Host event loop + replay of the draw list; `runtime.intern_fn` memcpy's a `loam_fn` env so click/styled handlers outlive the interned value | Tree, layout, signals, design system, `platform.loam` signatures |
 | Maya | The package's Cocoa host (`packages/maya/src/hosts/mac.m`): event loop and draw primitives (blit, discs, rings, labels), int-only both ways | Scene, orbits, camera, CPU tracer, 2D map layout, draw order and the RGBA frame, `sin`/`cos` |
 | raygui | raylib and raygui themselves (vendored `raygui.h` compiled as itself); no shim | API, frame loop, window state, headless rule, RAM probe and every retained value; raylib/raygui reached by `#[c]` bindings (`packages/raygui/src/raygui.loam`) |

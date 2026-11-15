@@ -9,8 +9,10 @@
 #
 #   tools/win-bundle.sh OUTDIR
 #
-# Fixtures that call into std:net are left out: runtime/net.c has no Windows
-# port yet (a known gap, not needed to self-host).
+# Fixtures that open a socket (their C keeps a `tcp_` or `tls_` fn of std:net)
+# are left out: std:net's TCP answers -1 on Windows until it has a Winsock
+# port (a known gap, not needed to self-host). Fixtures that only import the
+# http package to parse or encode run as usual.
 set -e
 ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
@@ -23,7 +25,7 @@ for f in packages/loam/tests/compile_pass/*.loam; do
     echo "$b" | grep -qE "$skip" && continue
     grep -qE "$gui" "$f" && continue
     bin/loamc "$f" --emit-c -o "$OUT/$b.c" >/dev/null 2>&1 || { rm -f "$OUT/$b.c"; continue; }
-    if grep -q 'loam_net_' "$OUT/$b.c"; then rm -f "$OUT/$b.c"; gap="$gap $b"; continue; fi
+    if grep -q 'loam_net_tcp_\|loam_net_tls_' "$OUT/$b.c"; then rm -f "$OUT/$b.c"; gap="$gap $b"; continue; fi
     deps_of "$f" | sort -u > "$OUT/$b.deps"
     [ -f "packages/loam/tests/compile_pass/$b.expected" ] && cp "packages/loam/tests/compile_pass/$b.expected" "$OUT/"
     [ -f "packages/loam/tests/compile_pass/$b.trap" ] && cp "packages/loam/tests/compile_pass/$b.trap" "$OUT/"
@@ -32,5 +34,5 @@ done
 # The Loam compiler's own C: tools/win-selfhost.sh checks stage 1 emits it.
 bin/loamc packages/loam/compiler/loamc.loam --emit-c -o "$OUT/loamc.c.txt" >/dev/null
 echo "win-bundle: $n fixtures and the compiler's C in $OUT"
-[ -n "$gap" ] && echo "  left out (std:net has no Windows port):$gap"
+[ -n "$gap" ] && echo "  left out (they open sockets; std:net has no Winsock port):$gap"
 exit 0

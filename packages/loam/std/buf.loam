@@ -42,6 +42,11 @@ fn push_u64(b: &mut []u8, n: u64) {
 /** *The bytes as a string. Copies; `b` stays usable. */
 fn to_string(b: &[]u8) -> string {}
 
+/** *The first `n` bytes as a string (all of them when `n` is past the end, */
+/** *`""` when `n <= 0`). One copy of exactly those bytes: for a reused */
+/** *buffer that a read filled part of. */
+fn prefix_to_string(b: &[]u8, n: int) -> string {}
+
 /** *A `[]u8` of `n` zeroed bytes, in one allocation. For a buffer C fills
  *  (`fread` into `read_file`, `getcwd`), where a push loop would cost one
  *  bounds check and branch per byte before the real work starts. */

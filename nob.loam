@@ -2824,7 +2824,17 @@ fn ig_c_layouts() {
     p = cat(p, "#define IS(c, v) _Static_assert((c) == (v), #c \" is \" #v)\n")
     // std:async: `struct timespec` as two `i64` words; std:sys `cpu_count`.
     p = cat(p, "SIZE(struct timespec, 16); AT(struct timespec, tv_nsec, 8);\n")
+    // std:net: `sockaddr_in` in 16 bytes, `pollfd` as two `i32`s, and the
+    // socket, fcntl and errno constants its bindings pass.
+    p = cat(p, "#include <sys/socket.h>\n#include <sys/time.h>\n#include <netinet/in.h>\n#include <poll.h>\n#include <fcntl.h>\n#include <errno.h>\n")
+    p = cat(p, "SIZE(struct sockaddr_in, 16); AT(struct sockaddr_in, sin_port, 2); AT(struct sockaddr_in, sin_addr, 4); SIZE(socklen_t, 4);\n")
+    p = cat(p, "SIZE(struct pollfd, 8); AT(struct pollfd, events, 4); AT(struct pollfd, revents, 6); SIZE(struct timeval, 16);\n")
+    p = cat(p, "IS(AF_INET, 2); IS(SOCK_STREAM, 1); IS(MSG_PEEK, 2); IS(POLLIN, 1); IS(POLLOUT, 4); IS(EINTR, 4);\n")
+    p = cat(p, "IS(F_GETFD, 1); IS(F_SETFD, 2); IS(F_GETFL, 3); IS(F_SETFL, 4); IS(FD_CLOEXEC, 1);\n")
     p = cat(p, "#if defined(__APPLE__)\nIS(CLOCK_MONOTONIC, 6); IS(_SC_NPROCESSORS_ONLN, 58);\n")
+    p = cat(p, "AT(struct sockaddr_in, sin_family, 1); IS(SOL_SOCKET, 65535); IS(SO_REUSEADDR, 4); IS(SO_RCVTIMEO, 4102);\n")
+    p = cat(p, "IS(SO_ERROR, 4103); IS(SO_NOSIGPIPE, 4130); IS(MSG_NOSIGNAL, 524288); IS(O_NONBLOCK, 4);\n")
+    p = cat(p, "IS(EAGAIN, 35); IS(EINPROGRESS, 36); IS(EALREADY, 37); SIZE(nfds_t, 4);\n")
     // std:sys watch: `struct kevent` in four `i64` words, and its flags.
     p = cat(p, "#include <sys/event.h>\n#include <fcntl.h>\n#include <mach/mach.h>\n")
     p = cat(p, "SIZE(struct kevent, 32); AT(struct kevent, filter, 8); AT(struct kevent, flags, 10);\n")
@@ -2835,6 +2845,9 @@ fn ig_c_layouts() {
     p = cat(p, "IS(TASK_VM_INFO, 22); IS(TASK_VM_INFO_COUNT, 93); FITS(task_vm_info_data_t, 47);\n")
     p = cat(p, "AT(task_vm_info_data_t, phys_footprint, 144);\n")
     p = cat(p, "#elif defined(__linux__)\nIS(CLOCK_MONOTONIC, 1); IS(_SC_NPROCESSORS_ONLN, 84);\n")
+    p = cat(p, "AT(struct sockaddr_in, sin_family, 0); IS(SOL_SOCKET, 1); IS(SO_REUSEADDR, 2); IS(SO_RCVTIMEO, 20);\n")
+    p = cat(p, "IS(SO_ERROR, 4); IS(MSG_NOSIGNAL, 16384); IS(O_NONBLOCK, 2048);\n")
+    p = cat(p, "IS(EAGAIN, 11); IS(EINPROGRESS, 115); IS(EALREADY, 114); SIZE(nfds_t, 8);\n")
     // std:sys watch: `struct inotify_event` and the watch mask.
     p = cat(p, "#include <sys/inotify.h>\n#include <sys/resource.h>\n")
     p = cat(p, "SIZE(struct inotify_event, 16); AT(struct inotify_event, mask, 4); AT(struct inotify_event, len, 12);\n")
@@ -2873,7 +2886,7 @@ fn ig_c_layouts() {
         }
     }
     let with_raylib = if raylib.len > 0 { ", raylib" } else { "" }
-    ok("c layouts (timespec, kevent, task_vm_info, inotify_event, rusage{{with_raylib}}: {{names}})")
+    ok("c layouts (timespec, sockaddr_in, pollfd, kevent, task_vm_info, inotify_event, rusage{{with_raylib}}: {{names}})")
 }
 
 /** *Floats: `std:floattext` gives the host libc's `%.<p>g` and `strtod` */
@@ -3289,7 +3302,7 @@ fn grammar() -> int {
 // deletes the C, so the runtime can only shrink. The target is zero.
 
 /** *Lines allowed under `packages/loam/runtime/`. Lower it when a step lands. */
-let RUNTIME_LINE_BUDGET: int = 6248
+let RUNTIME_LINE_BUDGET: int = 5813
 
 /** *The group a tracked C file belongs to, or `""` for C that is not shipped. */
 fn trusted_group(path: string) -> string {
