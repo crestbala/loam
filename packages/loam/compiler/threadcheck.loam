@@ -30,6 +30,11 @@ let WORKER_SEAM_OK: []string = []string {
     "loam_key_push_vec_tag", "loam_key_push_str", "loam_decimal_push_int",
     "loam_decimal_push_u64", "loam_key_push_f32", "loam_key_push_f64", "loam_key_push_addr",
     "loam_async_now_ms_os", "loam_async_sleep_os",
+    // R3.1 moved the clock/sleep into Loam over raw `#[c]` bindings; a worker
+    // calling `async.now_ms` / `sleep` reaches them through the Loam wrappers
+    // above, so the raw symbols stay callable from workers (module-private to
+    // `std:async`, so only the wrappers can name them).
+    "loam_async_c_clock_gettime", "loam_async_c_nanosleep", "loam_async_c_sleep_errno",
     "loam_wrapping_add", "loam_wrapping_shr", "loam_wrapping_shl",
     "loam_wrapping_or", "loam_wrapping_and", "loam_saturating_add",
 }

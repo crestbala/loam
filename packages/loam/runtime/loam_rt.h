@@ -1519,11 +1519,32 @@ static inline void loam_async_wasm_sleep(int64_t ms) {
 
 LOAM_RT_STATE int64_t loam_thread_live;          /* detached workers still running */
 LOAM_RT_STATE pthread_mutex_t loam_thread_mtx LOAM_RT_INIT(PTHREAD_MUTEX_INITIALIZER);
+LOAM_RT_STATE pthread_mutex_t loam_ch_tab_mtx LOAM_RT_INIT(PTHREAD_MUTEX_INITIALIZER);
+
+/* The table lock for `std:thread`'s Loam id table: held across every table
+   read and write there, so a worker fetching a cookie races nothing. Plain
+   C functions (not `static inline`): the `#[c]` wrappers reference them as
+   symbols, like `loam_sys_stat` below. */
+int loam_ch_tab_lock(void);
+int loam_ch_tab_unlock(void);
+#ifdef LOAM_RT_DEFINE_JMP
+int loam_ch_tab_lock(void) {
+    return pthread_mutex_lock(&loam_ch_tab_mtx);
+}
+int loam_ch_tab_unlock(void) {
+    return pthread_mutex_unlock(&loam_ch_tab_mtx);
+}
+#endif
+
+/* --- channel: std/thread.loam. The ABI is a detached pthread and a bounded
+   FIFO of byte payloads guarded by a mutex + two condvars. R3.2: the id
+   table and S0 keys live in Loam (`ch_slots`); C owns one sync block per
+   channel (below), named by an opaque cookie, plus one atomic section per
+   op. A 0 cookie names nothing: the section no-ops, as a dead id did. */
 
 typedef struct {
     unsigned char *buf;     /* cap * esz ring */
     size_t esz;             /* payload byte size (sizeof T) */
-    uint32_t key;           /* the payload type's key (typed handle cells) */
     int64_t cap;            /* slots */
     int64_t head;           /* first live slot */
     int64_t count;          /* live slots */
@@ -1531,61 +1552,36 @@ typedef struct {
     pthread_cond_t has_data, has_space;
 } loam_ch;
 
-LOAM_RT_STATE loam_ch **loam_chs;
-LOAM_RT_STATE size_t loam_ch_n, loam_ch_cap;
-LOAM_RT_STATE pthread_mutex_t loam_ch_tab_mtx LOAM_RT_INIT(PTHREAD_MUTEX_INITIALIZER);
-
-static int64_t loam_ch_alloc(int64_t cap, size_t esz, uint32_t key) {
+/* The sync block for `cap` slots of `esz` bytes. The cookie is the block
+   address; Loam files it in its id table under the payload type's key.
+   Declared here, defined once in the owning unit (like `loam_sys_stat`):
+   the `#[c]` wrapper references it as a symbol. */
+int64_t loam_ch_block_alloc(int64_t cap, size_t esz);
+#ifdef LOAM_RT_DEFINE_JMP
+int64_t loam_ch_block_alloc(int64_t cap, size_t esz) {
     loam_ch *c;
-    size_t i;
     if (cap < 1) cap = 1;
     if (esz < 1) esz = 1;
     c = (loam_ch *)loam_new(sizeof(loam_ch), "channel", 0);
     c->buf = (unsigned char *)loam_new((size_t)cap * esz, "channel", 0);
     c->esz = esz;
-    c->key = key;
     c->cap = cap;
     c->head = 0;
     c->count = 0;
     pthread_mutex_init(&c->mtx, NULL);
     pthread_cond_init(&c->has_data, NULL);
     pthread_cond_init(&c->has_space, NULL);
-    pthread_mutex_lock(&loam_ch_tab_mtx);
-    if (loam_ch_n == loam_ch_cap) {
-        size_t nc = loam_ch_cap ? loam_ch_cap * 2 : 16;
-        loam_ch **next = (loam_ch **)realloc(loam_chs, nc * sizeof(loam_ch *));
-        if (!next) loam_panic(__FILE__, __LINE__, "out of memory");
-        loam_chs = next;
-        loam_ch_cap = nc;
-    }
-    i = loam_ch_n;
-    loam_chs[i] = c;
-    loam_ch_n++;
-    pthread_mutex_unlock(&loam_ch_tab_mtx);
-    return (int64_t)i;
+    return (int64_t)(intptr_t)c;
+}
+#endif
+
+static inline loam_ch *loam_ch_from_cookie(int64_t cookie) {
+    if (!cookie) return NULL;
+    return (loam_ch *)(intptr_t)cookie;
 }
 
-/* The channel `id` names, checked against the payload type the caller holds
-   (typed handle cells, above). `key` 0 skips the check: `ready` only reports
-   a count. The key never changes after `loam_ch_alloc`, so the compare needs
-   no lock; doing it here keeps each op at one call. */
-static inline loam_ch *loam_ch_get(int64_t id, uint32_t key) {
-    loam_ch *c;
-    /* Readers may run on worker threads while the UI thread grows the table
-       (realloc). Lock the table for the fetch so the entry pointer is read
-       race-free; the entry itself is stable once published. */
-    pthread_mutex_lock(&loam_ch_tab_mtx);
-    if (id < 0 || (size_t)id >= loam_ch_n)
-        c = NULL;
-    else
-        c = loam_chs[(size_t)id];
-    pthread_mutex_unlock(&loam_ch_tab_mtx);
-    if (__builtin_expect(c && key && c->key != key, 0)) loam_handle_wrong_type("channel");
-    return c;
-}
-
-static inline void loam_ch_send(int64_t id, const void *val, size_t sz, uint32_t key) {
-    loam_ch *c = loam_ch_get(id, key);
+static inline void loam_ch_do_send(int64_t cookie, const void *val, size_t sz) {
+    loam_ch *c = loam_ch_from_cookie(cookie);
     if (!c || !val) return;
     pthread_mutex_lock(&c->mtx);
     while (c->count == c->cap) pthread_cond_wait(&c->has_space, &c->mtx);
@@ -1597,8 +1593,8 @@ static inline void loam_ch_send(int64_t id, const void *val, size_t sz, uint32_t
     pthread_mutex_unlock(&c->mtx);
 }
 
-static inline int64_t loam_ch_try_send(int64_t id, const void *val, size_t sz, uint32_t key) {
-    loam_ch *c = loam_ch_get(id, key);
+static inline int64_t loam_ch_do_try_send(int64_t cookie, const void *val, size_t sz) {
+    loam_ch *c = loam_ch_from_cookie(cookie);
     if (!c || !val) return 0;
     pthread_mutex_lock(&c->mtx);
     if (c->count == c->cap) {
@@ -1614,8 +1610,8 @@ static inline int64_t loam_ch_try_send(int64_t id, const void *val, size_t sz, u
     return 1;
 }
 
-static inline void loam_ch_recv(int64_t id, void *out, size_t sz, uint32_t key) {
-    loam_ch *c = loam_ch_get(id, key);
+static inline void loam_ch_do_recv(int64_t cookie, void *out, size_t sz) {
+    loam_ch *c = loam_ch_from_cookie(cookie);
     if (!c || !out) return;
     pthread_mutex_lock(&c->mtx);
     while (c->count == 0) pthread_cond_wait(&c->has_data, &c->mtx);
@@ -1627,8 +1623,8 @@ static inline void loam_ch_recv(int64_t id, void *out, size_t sz, uint32_t key) 
     pthread_mutex_unlock(&c->mtx);
 }
 
-static inline int64_t loam_ch_pop(int64_t id, void *out, size_t sz, uint32_t key) {
-    loam_ch *c = loam_ch_get(id, key);
+static inline int64_t loam_ch_do_pop(int64_t cookie, void *out, size_t sz) {
+    loam_ch *c = loam_ch_from_cookie(cookie);
     if (!c || !out) return 0;
     pthread_mutex_lock(&c->mtx);
     if (c->count == 0) {
@@ -1650,9 +1646,9 @@ static inline int64_t loam_ch_pop(int64_t id, void *out, size_t sz, uint32_t key
    reference (the head advances past the slot, so the channel never releases
    it). A payload still queued when the channel dies is not released — bounded,
    and only when a producer enqueues what no consumer drains. */
-static inline void loam_ch_send_owned(int64_t id, const void *val, size_t sz,
-                                      loam_elem_fn retain, uint32_t key) {
-    loam_ch *c = loam_ch_get(id, key);
+static inline void loam_ch_do_send_owned(int64_t cookie, const void *val, size_t sz,
+                                         loam_elem_fn retain) {
+    loam_ch *c = loam_ch_from_cookie(cookie);
     if (!c || !val) return;
     pthread_mutex_lock(&c->mtx);
     while (c->count == c->cap) pthread_cond_wait(&c->has_space, &c->mtx);
@@ -1665,9 +1661,9 @@ static inline void loam_ch_send_owned(int64_t id, const void *val, size_t sz,
     pthread_mutex_unlock(&c->mtx);
 }
 
-static inline int64_t loam_ch_try_send_owned(int64_t id, const void *val, size_t sz,
-                                             loam_elem_fn retain, uint32_t key) {
-    loam_ch *c = loam_ch_get(id, key);
+static inline int64_t loam_ch_do_try_send_owned(int64_t cookie, const void *val, size_t sz,
+                                                loam_elem_fn retain) {
+    loam_ch *c = loam_ch_from_cookie(cookie);
     if (!c || !val) return 0;
     pthread_mutex_lock(&c->mtx);
     if (c->count == c->cap) {
@@ -1684,8 +1680,8 @@ static inline int64_t loam_ch_try_send_owned(int64_t id, const void *val, size_t
     return 1;
 }
 
-static inline int64_t loam_ch_ready(int64_t id) {
-    loam_ch *c = loam_ch_get(id, 0);
+static inline int64_t loam_ch_do_ready(int64_t cookie) {
+    loam_ch *c = loam_ch_from_cookie(cookie);
     int64_t r;
     if (!c) return 0;
     pthread_mutex_lock(&c->mtx);
@@ -1736,49 +1732,40 @@ static inline int64_t loam_thread_running(void) {
     return n;
 }
 #else /* __wasm32__: no threads; channel ops are inert so std:thread compiles */
-/* The key is unused: an inert channel holds no bytes to misread. */
-static inline int64_t loam_ch_alloc(int64_t cap, size_t esz, uint32_t key) {
-    (void)cap;
-    (void)esz;
-    (void)key;
-    return -1;
-}
-static inline void loam_ch_send(int64_t id, const void *val, size_t sz, uint32_t key) {
-    (void)id;
+/* The cookies name nothing: the Loam table still hands out ids and checks
+   keys, but no bytes ever move. */
+static inline void loam_ch_do_send(int64_t cookie, const void *val, size_t sz) {
+    (void)cookie;
     (void)val;
     (void)sz;
-    (void)key;
 }
-static inline int64_t loam_ch_try_send(int64_t id, const void *val, size_t sz, uint32_t key) {
-    (void)id;
+static inline int64_t loam_ch_do_try_send(int64_t cookie, const void *val, size_t sz) {
+    (void)cookie;
     (void)val;
     (void)sz;
-    (void)key;
     return 0;
 }
-static inline void loam_ch_send_owned(int64_t id, const void *val, size_t sz,
-                                      loam_elem_fn retain, uint32_t key) {
+static inline void loam_ch_do_send_owned(int64_t cookie, const void *val, size_t sz,
+                                         loam_elem_fn retain) {
     (void)retain;
-    loam_ch_send(id, val, sz, key);
+    loam_ch_do_send(cookie, val, sz);
 }
-static inline int64_t loam_ch_try_send_owned(int64_t id, const void *val, size_t sz,
-                                             loam_elem_fn retain, uint32_t key) {
+static inline int64_t loam_ch_do_try_send_owned(int64_t cookie, const void *val, size_t sz,
+                                                loam_elem_fn retain) {
     (void)retain;
-    return loam_ch_try_send(id, val, sz, key);
+    return loam_ch_do_try_send(cookie, val, sz);
 }
-static inline void loam_ch_recv(int64_t id, void *out, size_t sz, uint32_t key) {
-    (void)id;
-    (void)key;
+static inline void loam_ch_do_recv(int64_t cookie, void *out, size_t sz) {
+    (void)cookie;
     if (out) memset(out, 0, sz);
 }
-static inline int64_t loam_ch_pop(int64_t id, void *out, size_t sz, uint32_t key) {
-    (void)id;
-    (void)key;
+static inline int64_t loam_ch_do_pop(int64_t cookie, void *out, size_t sz) {
+    (void)cookie;
     if (out) memset(out, 0, sz);
     return 0;
 }
-static inline int64_t loam_ch_ready(int64_t id) {
-    (void)id;
+static inline int64_t loam_ch_do_ready(int64_t cookie) {
+    (void)cookie;
     return 0;
 }
 static inline void loam_thread_spawn(loam_fn cb) {

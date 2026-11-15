@@ -759,8 +759,28 @@ done, so every R3 step is checked by `thread_tsan`).
       `async_*`, `thread_*`, forge traps (messages byte-identical), 5-way
       TSan, wasm32 `trap_app` green; 14 `compile_fail` fixtures still reject.
       **Runtime: 8,068 → 7,994** (−74).
+- [x] R3.1c Worker-called `async.sleep` / `now_ms` still check. Done
+      2026-11-16. R3.1a moved the clock/sleep behind Loam wrappers over raw
+      `#[c]` bindings, which took them off the worker allowlist — a worker
+      calling `async.sleep` no longer compiled. The raw symbols
+      (`clock_gettime`, `nanosleep`, `loam_sys_errno`) are allowlisted for
+      workers (module-private to `std:async`, so only the wrappers name
+      them). Probe: a worker that sleeps then sends, drained on the UI.
 - [ ] R3.2 The channel queues in Loam; mutex, condition variable and thread
       start are `#[c]` pthread bindings, which a thread worker may call.
+- [x] R3.2a The channel id table and S0 keys in Loam. Done 2026-11-16.
+      `ch_slots` (`cookie` + `key`) in `std:thread` under a C table lock
+      (`loam_ch_tab_mtx`, beside `loam_thread_mtx` — the lock itself stays
+      C because Loam vec refcounts are not atomic; passing the mutex as a
+      Loam value raced by construction, and TSan caught the first shape of
+      this). Codegen lowers `__ch_*` to `ch_begin` (S0 panic on forged ids,
+      silent 0 on dead ones, as the C table did) plus one atomic C section
+      per op (`loam_ch_do_*`, taking the cookie: lock, ring math, bytes,
+      counts, signal, unlock — inseparable across a Loam boundary, so they
+      stay C). Per-channel sync blocks are C-allocated; the wasm stubs turn
+      inert (`memset` zero-fill stays, over the Loam table's ids). 5-way
+      TSan clean, forge traps byte-identical, worker-sleep probe green.
+      A channel-free binary links no table. **Runtime: 7,994 → 7,981** (−13).
 
 **R4. Zeus platform** (`zeus_plat.c`, `zeus_rt.h`).
 

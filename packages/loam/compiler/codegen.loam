@@ -2106,37 +2106,49 @@ fn builtin_call(x: &Inst) -> bool {
         return true
     }
     if name == "loam_ch_alloc" && x.nargs >= 1 && has_dst {
-        w("{{lv(x.dst)}} = loam_ch_alloc({{lv(arg_of(x, 0))}}, sizeof(")
+        // The table lives in `std:thread` (R3.2): the id comes from Loam,
+        // the cookie from one C sync-block alloc.
+        w("{{lv(x.dst)}} = loam_thread_ch_alloc({{lv(arg_of(x, 0))}}, sizeof(")
         w_ctype(x.ty)
-        w("), {{handle_key(x.ty)}}u);\n")
+        w("), {{handle_key(x.ty)}});\n")
         return true
     }
     if (name == "loam_ch_send" && x.nargs >= 2) || (name == "loam_ch_try_send" && x.nargs >= 2 && has_dst) {
+        // S0 + cookie in Loam (`ch_begin` panics on a forged id, returns 0
+        // on a dead one); the bytes move in one atomic C section.
         let h = elem_hook(x.ty)
+        w("{ int64_t _ck = loam_thread_ch_begin({{lv(arg_of(x, 0))}}, {{handle_key(x.ty)}}); ")
         if name == "loam_ch_try_send" {
             w("{{lv(x.dst)}} = ")
         }
-        w(name)
+        w("loam_ch_do")
+        w((if name == "loam_ch_try_send" { "_try_send" } else { "_send" }))
         if h > 0 {
             w("_owned")
         }
-        w("({{lv(arg_of(x, 0))}}, &{{lv(arg_of(x, 1))}}, sizeof(")
+        w("(_ck, &{{lv(arg_of(x, 1))}}, sizeof(")
         w_ctype(x.ty)
         if h > 0 {
-            w("), loam_elem_retain_{{h}}, {{handle_key(x.ty)}}u);\n")
+            w("), loam_elem_retain_{{h}});\n")
         } else {
-            w("), {{handle_key(x.ty)}}u);\n")
+            w("));\n")
         }
+        w("}\n")
         return true
     }
     if (name == "loam_ch_recv" || name == "loam_ch_pop") && x.nargs >= 1 && has_dst {
-        w("{{name}}({{lv(arg_of(x, 0))}}, &{{lv(x.dst)}}, sizeof(")
+        // `recv` on a dead id leaves the caller's zeroed value (as before);
+        // the `if` keeps the atomic section off dead cookies.
+        w("{ int64_t _ck = loam_thread_ch_begin({{lv(arg_of(x, 0))}}, {{handle_key(x.ty)}}); ")
+        w("if (_ck) loam_ch_do")
+        w(if name == "loam_ch_recv" { "_recv" } else { "_pop" })
+        w("(_ck, &{{lv(x.dst)}}, sizeof(")
         w_ctype(x.ty)
-        w("), {{handle_key(x.ty)}}u);\n")
+        w(")); }\n")
         return true
     }
     if name == "loam_ch_ready" && x.nargs >= 1 && has_dst {
-        w("{{lv(x.dst)}} = loam_ch_ready({{lv(arg_of(x, 0))}});\n")
+        w("{{lv(x.dst)}} = loam_ch_do_ready(loam_thread_ch_begin({{lv(arg_of(x, 0))}}, 0));\n")
         return true
     }
     if name == "loam_vec_push" && x.nargs >= 2 {

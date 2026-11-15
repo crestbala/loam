@@ -185,6 +185,14 @@ fn walk(n: int) {
             mark_cname("loam_async_fut_unready")
             mark_cname("loam_async_fut_mark_ready")
         }
+        // A `__ch_*` builtin lowers in codegen to the Loam table in
+        // `std:thread` (R3.2) plus one atomic C section: keep the table fns.
+        // The lock calls order them against workers (TSan sees the pthread
+        // calls); what they call follows the ordinary walk.
+        if ast.EXTRA[ast.ex(n)].ch != 0 {
+            mark_cname("loam_thread_ch_alloc")
+            mark_cname("loam_thread_ch_begin")
+        }
     }
     switch x.kind {
         case Kind.Ident:
