@@ -142,9 +142,6 @@ typedef struct {
     int64_t np;
 } ZeusFrame;
 
-/* Decode a frame into the bound ZeusDraw, with the NULL-callback fallbacks.
-   This is the default; a host needs it only to replay a frame it kept. */
-void zeus_replay(const ZeusFrame *f);
 /* Take each frame whole instead of as ZeusDraw calls (NULL restores replay).
    For a host that decodes the buffer itself: the web host hands it to JS. */
 void zeus_bind_frame(void (*sink)(const ZeusFrame *f));
@@ -267,7 +264,33 @@ loam_str loam_platform_plat_pick_image(int32_t *w, int32_t *h);
 int64_t loam_platform_plat_mem_kb(void);
 /* 1 when built `-DZEUS_MEM_STATS` or run with `ZEUS_MEM_STATS=1` (Phase 0). */
 int64_t loam_runtime_mem_stats(void);
-void loam_runtime_trace_draw(int64_t on);
+/* `zeuscore/replay.loam`'s forwarders into the bound ZeusDraw (zeus_plat.c). */
+int32_t loam_replay_draw_caps(void);
+void loam_replay_draw_fill(int32_t x, int32_t y, int32_t w, int32_t h, int32_t rgb, int32_t r);
+void loam_replay_draw_fill_a(int32_t x, int32_t y, int32_t w, int32_t h, int32_t rgb, int32_t r,
+                             int32_t a);
+void loam_replay_draw_text(int32_t x, int32_t y, const loam_vec *strs, int32_t si, int32_t rgb,
+                           int32_t font);
+void loam_replay_draw_text_rot(int32_t x, int32_t y, const loam_vec *strs, int32_t si,
+                               int32_t rgb, int32_t font, int32_t deg);
+void loam_replay_draw_save(void);
+void loam_replay_draw_clip(int32_t x, int32_t y, int32_t w, int32_t h, int32_t r);
+void loam_replay_draw_restore(void);
+void loam_replay_draw_alpha(int32_t a);
+void loam_replay_draw_image(int32_t x, int32_t y, int32_t w, int32_t h, const loam_vec *strs,
+                            int32_t si, int32_t r, int32_t a, int32_t fit);
+void loam_replay_draw_fill_g(int32_t x, int32_t y, int32_t w, int32_t h, int32_t c0, int32_t c1,
+                             int32_t axis, int32_t r, int32_t a);
+void loam_replay_draw_shadow(int32_t x, int32_t y, int32_t w, int32_t h, int32_t r, int32_t rgb,
+                             int32_t a, int32_t blur, int32_t dx, int32_t dy);
+void loam_replay_draw_stroke(int32_t x, int32_t y, int32_t w, int32_t h, int32_t rgb, int32_t r,
+                             int32_t width, int32_t a);
+void loam_replay_draw_fill4(int32_t x, int32_t y, int32_t w, int32_t h, int32_t rgb, int32_t a,
+                            int32_t tl, int32_t tr, int32_t br, int32_t bl);
+void loam_replay_draw_xform(int32_t dx, int32_t dy, int32_t scale, int32_t rot, int32_t ox,
+                            int32_t oy);
+void loam_replay_draw_path(const loam_vec *path, int32_t start, int32_t n, int32_t rgb, int32_t a,
+                           int32_t width, int32_t style);
 int64_t loam_platform_plat_now_ms(void);
 void loam_platform_plat_clock_skip(int32_t ms);
 /* Phase 4 blit. The Loam `[]u8` arrives as a `loam_vec` (ptr/len/cap) BY VALUE,

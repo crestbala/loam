@@ -190,7 +190,7 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       `wasm_inc`), hosts 4,871, vendored 346,122 (sqlite, monocypher, raygui
       and the generated tree-sitter parser).
 - [x] R0.2 The budget: `RUNTIME_LINE_BUDGET` in `nob.loam`, set at 9,939
-      and lowered by each step since (now **7,612**, after R4.1b).
+      and lowered by each step since (now **7,410**, after R4.2).
       `nob trusted` and the unfiltered `nob test` fail if `runtime/` grows
       past it. Each step below lowers it to its new count in the same
       change.
@@ -855,7 +855,47 @@ done, so every R3 step is checked by `thread_tsan`).
       `stale_capture`, `server_split`, `modules` green; Zeus C compiles for
       x86_64 glibc / aarch64 musl Linux with `-Wall`, no warnings.
       **Runtime: 7,961 → 7,612** (−349).
-- [ ] R4.2 Frame and trace logic.
+- [x] R4.2 Frame and trace logic. Done 2026-11-15. `zeuscore/replay.loam`
+      decodes a frame into the host's `ZeusDraw` calls: the op switch, the
+      field unpacking (packed shadow offsets and corner radii), the 24-bit
+      colour mask, the range checks, and every fallback for a callback the
+      host left NULL (gradient → solid fill, stroke → four `fill_a` edges,
+      `fill4` → largest radius, rotated → plain text, shadow / xform / image
+      skipped). C keeps a capability mask (`draw_caps`: one bit per non-NULL
+      callback, plus a bound frame sink) and one forwarder per callback,
+      each re-checking its own pointer; a text or image op hands over the
+      frame's string table and an index, checked in C, so no refcount is
+      touched per op, and the text is NUL-terminated in a 256-byte stack
+      buffer where the C `malloc`'d and freed one per op. `plat_frame` now
+      only hands a frame whole to a bound sink (the web host). The trace host
+      is Loam too (`replay.trace_draw`, one shared line formatter): its
+      2,089-line golden is byte-identical. Deleted: `zeus_replay`, the
+      `op_*` fallbacks and the 15 `tr_*` printers. **Compiler change found on
+      the way:** a module `const` / immutable `let` holding a literal number
+      or bool was emitted as a mutable C global, so `cc` could fold none of
+      them (`const STRIDE: int = 11` stayed a load and a checked multiply in
+      every index). Such globals are now C `const`, which `cc` folds even
+      with external linkage; no new warnings in the compiler's, nob's or
+      greeninfer's C. Benchmark vs HEAD (release `-O1`, the gallery's
+      sections repainted 20,000 times into a host whose callbacks only
+      count, 5 rounds): a frame 1,331 vs 1,368 ms (−2.7%), the same
+      14,040,702 host calls and 85,444,272 text bytes; with no host bound
+      1,129 vs 1,187 ms (−4.9%, the `const` folding). The replay alone is
+      about 200 vs 180 ms of that, so the Loam decode is ~15% slower than
+      the C one (bounds and overflow checks per field) and the frame is
+      faster overall. The real Cocoa host's 2x snapshot of the gallery
+      (`ZEUS_SNAPSHOT`) is pixel-identical to HEAD's but for the RAM
+      readout. Binaries (new vs HEAD): tiny program 33,688 both, gallery
+      2,077,496 vs 2,071,944 (+0.3%), greeninfer 1,053,672 vs 1,046,312
+      (+0.7%; the checked Loam decode is larger than the C). Compile time
+      within noise. Seed 5,128,304 → 5,132,237 bytes, seed = stage 1 =
+      stage 2. Suite: `zeus` (445), `golden` (135), `compile_pass` (700),
+      `compile_fail` (164); `wasm_smoke`, `wasm_trap`, `wasm_float`,
+      `ownership_asan`, `android_project`, `cost`, `lsp`, `fresh_cache`,
+      `arena_lint`, `api_freeze`, `one_surface`, `stale_capture`,
+      `server_split`, `modules` green; `zeus_plat.c` builds for x86_64
+      glibc / aarch64 musl Linux with `-Wall`, no warnings.
+      **Runtime: 7,612 → 7,410** (−202).
 - [ ] R4.3 Recoverable traps (needs R6.2's trap path).
 - [ ] R4.4 Image sizes and media state.
 - [ ] R4.5 The `loam_zeus_engine_*` trampolines are gone: hosts call the

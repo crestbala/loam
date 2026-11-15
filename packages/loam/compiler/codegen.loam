@@ -671,6 +671,16 @@ fn sig_bind_owned(vt: int, id: string, val: string) {
     sig_put(vt, id, val, SIG_KIND_OWNED, "0", elem_hook(vt))
 }
 
+/** *Module binding `gv` is never written and holds a literal number or bool: */
+/** *emitted `const`. */
+fn gvar_folds(gv: int) -> bool {
+    if ast.NODES[gv].kind != Kind.Var || ast.NODES[gv].op != 0 || !ir.static_data(ast.NODES[gv].b) {
+        return false
+    }
+    let k = tkind(ast.NODES[gv].ty)
+    return k == TK.Int || k == TK.Float || k == TK.Bool
+}
+
 /** *The program links Zeus's signal store (`sigcells.free` is kept). */
 fn sig_store_linked() -> bool {
     if dce.RAN && !dce.SKIP {
@@ -3830,13 +3840,18 @@ fn emit_c() {
         if gv == NONE {
             continue
         }
+        let init = ast.NODES[gv].b
+        // An immutable scalar with a literal value is a C `const`, so `cc`
+        // folds it where it is read (a `const STRIDE: int = 11` stays 11 in
+        // index math instead of a load and a checked multiply by a variable).
+        let ro = if gvar_folds(gv) { "const " } else { "" }
         if SHARD {
-            w("extern ")
+            w("extern {{ro}}")
             var_decl(ast.NODES[gv].ty, typecheck.GVARS[i].cname)
             w(";\n#ifdef LOAM_SHARD_DEFS\n")
         }
+        w(ro)
         var_decl(ast.NODES[gv].ty, typecheck.GVARS[i].cname)
-        let init = ast.NODES[gv].b
         if ir.static_data(init) {
             w(" = ")
             const_init(init)

@@ -1,6 +1,6 @@
 // Host-replay golden: what a host is actually handed for a frame. The other
 // draw goldens print the Loam draw list; this one binds the trace host
-// (`runtime.trace_draw`), so every paint below goes through the runtime's
+// (`replay.trace_draw`), so every paint below goes through the runtime's
 // replay — fallbacks, text alpha wrapping, wrapped-text splitting, packed
 // shadow / corner fields — and prints the `ZeusDraw` calls it makes, one `T`
 // line each. Between them the screens below use every op kind. Keep this file
@@ -9,7 +9,7 @@
 import "zeus"
 import "zui:spacing"
 import "zui"
-import "zeus:zeuscore/runtime"
+import "zeus:zeuscore/replay"
 import "../../../../examples/zeus/gallery/screen.loam" as screen
 
 fn settle(w: int, h: int) {
@@ -23,7 +23,7 @@ fn settle(w: int, h: int) {
 }
 
 fn main() {
-    runtime.trace_draw(1)
+    replay.trace_draw(1)
 
     // Gallery: fill, text, stroke, svg, clip, fill_a, shadow, text_wrap,
     // fill4, text_rot, gradient.
@@ -94,5 +94,5 @@ fn main() {
         }
     })
 
-    runtime.trace_draw(0)
+    replay.trace_draw(0)
 }
