@@ -637,30 +637,75 @@ fn collect_elem_hooks() {
     }
 }
 
+// The signal byte store is Loam (`zeus/src/zeuscore/sigcells.loam`, R4.1b):
+// these ask it for an offset, then move the bytes with one `memcpy`, reading
+// `loam_sigcells_bytes.ptr` with no Loam call in between (as `__fut_*` does
+// with `std:async`'s arena). The kinds match `sigcells.KIND_*`.
+const SIG_KIND_PLAIN: int = 0
+const SIG_KIND_STR: int = 1
+const SIG_KIND_LIST: int = 2
+const SIG_KIND_OWNED: int = 3
+
+/** *Bind the lvalue `val` (of type `vt`) in signal cell `id`; `kind`, `esz` */
+/** *and `hook` tell the cell what its bytes own, for `sigcells.free`. */
+fn sig_put(vt: int, id: string, val: string, kind: int, esz: string, hook: int) {
+    w("{ int32_t _so = loam_sigcells_bind_at({{id}}, (int32_t)sizeof({{val}}), {{handle_key(vt)}}, {{kind}}, {{esz}}, {{hook}}); ")
+    w("if (_so >= 0) memcpy((char *)loam_sigcells_bytes.ptr + _so, &{{val}}, sizeof({{val}})); }")
+}
+
+/** *Load cell `id` into the lvalue `dst` (of type `t`): zeros when the cell */
+/** *holds no such value. The S0 key check is `sigcells.load_at`'s. */
+fn sig_get(t: int, id: string, dst: string) {
+    w("{ int32_t _so = loam_sigcells_load_at({{id}}, (int32_t)sizeof({{dst}}), {{handle_key(t)}}); ")
+    w("if (_so >= 0) memcpy(&{{dst}}, (char *)loam_sigcells_bytes.ptr + _so, sizeof({{dst}})); ")
+    w("else memset(&{{dst}}, 0, sizeof({{dst}})); }")
+}
+
 fn sig_bind_vec(vt: int, id: string, val: string) {
     let e = elem_of(vt)
-    let h = elem_hook(e)
     let cn = if vt != NO_TYPE && e != NO_TYPE { ctype(e) } else { "char" }
-    w("loam_zeus_sig_bind_vec({{id}}, &{{val}}, sizeof({{val}}), sizeof({{cn}}), ")
-    if h > 0 {
-        w("loam_elem_release_")
-        wi(h)
-    } else {
-        w("NULL")
-    }
-    w(", {{handle_key(vt)}}u);")
+    sig_put(vt, id, val, SIG_KIND_LIST, "(int32_t)sizeof({{cn}})", elem_hook(e))
 }
 
 fn sig_bind_owned(vt: int, id: string, val: string) {
-    let h = elem_hook(vt)
-    w("loam_zeus_sig_bind_owned({{id}}, &{{val}}, sizeof({{val}}), ")
-    if h > 0 {
-        w("loam_elem_release_")
-        wi(h)
-    } else {
-        w("NULL")
+    sig_put(vt, id, val, SIG_KIND_OWNED, "0", elem_hook(vt))
+}
+
+/** *The program links Zeus's signal store (`sigcells.free` is kept). */
+fn sig_store_linked() -> bool {
+    if dce.RAN && !dce.SKIP {
+        return dce.kept_cname("loam_sigcells_payload_drop")
     }
-    w(", {{handle_key(vt)}}u);")
+    for m in 0..typecheck.MODS.len {
+        if typecheck.MODS[m].name == "sigcells" && typecheck.MODS[m].root != NONE {
+            return true
+        }
+    }
+    return false
+}
+
+/** *The generated half of `sigcells.free`: release an owned payload by its */
+/** *recorded kind and hook id, so no C function pointer is kept in Loam. */
+/** *Emitted after every release hook exists; only a program that keeps the */
+/** *signal store has it. */
+fn sig_payload_drop_def() {
+    if !sig_store_linked() {
+        return
+    }
+    shard_mark("loam_sigcells_payload_drop")
+    w("void loam_sigcells_payload_drop(int32_t kind, int32_t esz, int32_t hook, int32_t off) {\n")
+    w("    void *p = (char *)loam_sigcells_bytes.ptr + off;\n")
+    w("    loam_elem_fn rel = NULL;\n")
+    w("    switch (hook) {\n")
+    for h in 0..ELEM_HOOK_TYPES.len {
+        w("    case {{h + 1}}: rel = loam_elem_release_{{h + 1}}; break;\n")
+    }
+    w("    default: break;\n")
+    w("    }\n")
+    w("    if (kind == {{SIG_KIND_STR}}) loam_str_release((loam_str *)p);\n")
+    w("    else if (kind == {{SIG_KIND_LIST}}) loam_vec_drop_owned((loam_vec *)p, (size_t)esz, rel);\n")
+    w("    else if (kind == {{SIG_KIND_OWNED}} && rel) rel(p);\n")
+    w("}\n")
 }
 
 // --- value keys and value equality --------------------------------------------------------
@@ -963,22 +1008,23 @@ fn value_eq(t0: int, a: string, b: string) {
     }
 }
 
-/** *`loam_zeus_sig_changed(id, &val, sizeof val)`, refined by value for a type */
-/** *whose bytes name storage. */
+/** *1 when writing `val` moves signal `id`: no value of its width is bound, */
+/** *or the bytes differ, refined by value for a type whose bytes name storage */
+/** *(two equal strings in different buffers are the same state). */
 fn sig_changed(t: int, id: string, val: string) {
-    if !ve_deep(t) {
-        w("loam_zeus_sig_changed({{id}}, &{{val}}, sizeof({{val}}), {{handle_key(t)}}u)")
-        return
-    }
     let k = VK_TMP
     VK_TMP = VK_TMP + 1
-    w("({ int64_t _chg{{k}} = loam_zeus_sig_changed({{id}}, &{{val}}, sizeof({{val}}), {{handle_key(t)}}u); ")
-    w("if (_chg{{k}} && loam_zeus_sig_sized({{id}}, sizeof({{val}}))) { ")
-    let cur = "_cur{{k}}"
-    var_decl(t, cur)
-    w("; loam_zeus_sig_load({{id}}, &{{cur}}, sizeof({{cur}}), {{handle_key(t)}}u); _chg{{k}} = !")
-    value_eq(t, cur, val)
-    w("; } _chg{{k}}; })")
+    w("({ int32_t _sc{{k}} = loam_sigcells_cmp_at({{id}}, (int32_t)sizeof({{val}}), {{handle_key(t)}}); ")
+    w("int64_t _chg{{k}} = _sc{{k}} < 0 || memcmp((char *)loam_sigcells_bytes.ptr + _sc{{k}}, &{{val}}, sizeof({{val}})) != 0; ")
+    if ve_deep(t) {
+        w("if (_chg{{k}} && _sc{{k}} >= 0) { ")
+        let cur = "_cur{{k}}"
+        var_decl(t, cur)
+        w("; memcpy(&{{cur}}, (char *)loam_sigcells_bytes.ptr + _sc{{k}}, sizeof({{cur}})); _chg{{k}} = !")
+        value_eq(t, cur, val)
+        w("; } ")
+    }
+    w("_chg{{k}}; })")
 }
 
 // --- operators and casts ---------------------------------------------------------------
@@ -1933,12 +1979,12 @@ fn builtin_call(x: &Inst) -> bool {
         w("loam_arena_ensure();\n")
         indent(1)
         if tkind(vt) == TK.Int && types.TYPES[vt].bits == 32 {
-            // R4.1a: the id recycles through Loam (`arena.sig_reserve`); C
-            // only ensures its cell table and the arena mirror.
-            w("{{d}} = loam_zeus_sig_alloc_int(loam_arena_sig_reserve(), {{a0}});\n")
-        } else {
-            w("{{d}} = loam_zeus_sig_alloc_zero(loam_arena_sig_reserve());\n")
+            // The id recycles through `arena.sig_reserve` (R4.1a); an
+            // `int` binds its mirror and cell in Loam, and returns.
+            w("{{d}} = loam_arena_sig_new_int(loam_arena_sig_reserve(), {{a0}});\n")
+            return true
         }
+        w("{{d}} = loam_arena_sig_new_zero(loam_arena_sig_reserve());\n")
         indent(1)
         if is_copy_vec(vt) {
             w("{ loam_vec _sigv = loam_vec_retain(&{{a0}}); ")
@@ -1946,7 +1992,8 @@ fn builtin_call(x: &Inst) -> bool {
             w(" }\n")
         } else if is_refcounted(vt) {
             w("{ loam_str _sigv = {{a0}}; loam_str_retain(_sigv); ")
-            w("loam_zeus_sig_bind_str({{d}}, &_sigv, sizeof(_sigv), {{handle_key(vt)}}u); }\n")
+            sig_put(vt, d, "_sigv", SIG_KIND_STR, "0", 0)
+            w(" }\n")
         } else if tkind(vt) == TK.Struct && needs_drop(vt) {
             w("{ ")
             w_ctype(vt)
@@ -1956,17 +2003,15 @@ fn builtin_call(x: &Inst) -> bool {
             sig_bind_owned(vt, d, "_sigv")
             w(" }\n")
         } else {
-            w("loam_zeus_sig_bind({{d}}, &{{a0}}, sizeof(")
-            w_ctype(vt)
-            w("), {{handle_key(vt)}}u);\n")
+            sig_put(vt, d, a0, SIG_KIND_PLAIN, "0", 0)
+            wc('\n')
         }
         return true
     }
     if name == "loam_sig_load" && x.nargs >= 1 && has_dst {
         let d = lv(x.dst)
-        w("loam_zeus_sig_load({{lv(arg_of(x, 0))}}, &{{d}}, sizeof(")
-        w_ctype(x.ty)
-        w("), {{handle_key(x.ty)}}u);\n")
+        sig_get(x.ty, lv(arg_of(x, 0)), d)
+        wc('\n')
         if is_copy_vec(x.ty) {
             indent(1)
             w("{{d}} = loam_vec_retain(&{{d}});\n")
@@ -1993,7 +2038,9 @@ fn builtin_call(x: &Inst) -> bool {
             sig_changed(vt, s, v)
             w(") {\n")
             indent(2)
-            w("loam_vec _old; loam_zeus_sig_load({{s}}, &_old, sizeof(_old), {{handle_key(vt)}}u);\n")
+            w("loam_vec _old; ")
+            sig_get(vt, s, "_old")
+            wc('\n')
             indent(2)
             w("loam_vec _new = loam_vec_retain(&{{v}}); ")
             sig_bind_vec(vt, s, "_new")
@@ -2008,10 +2055,13 @@ fn builtin_call(x: &Inst) -> bool {
             sig_changed(vt, s, v)
             w(") {\n")
             indent(2)
-            w("loam_str _old; loam_zeus_sig_load({{s}}, &_old, sizeof(_old), {{handle_key(vt)}}u);\n")
+            w("loam_str _old; ")
+            sig_get(vt, s, "_old")
+            wc('\n')
             indent(2)
             w("loam_str _new = {{v}}; loam_str_retain(_new); ")
-            w("loam_zeus_sig_bind_str({{s}}, &_new, sizeof(_new), {{handle_key(vt)}}u);\n")
+            sig_put(vt, s, "_new", SIG_KIND_STR, "0", 0)
+            wc('\n')
             indent(2)
             w("loam_str_release(&_old); loam_arena_note_write({{s}});\n")
             indent(1)
@@ -2022,7 +2072,9 @@ fn builtin_call(x: &Inst) -> bool {
             w(") {\n")
             indent(2)
             w_ctype(vt)
-            w(" _old; loam_zeus_sig_load({{s}}, &_old, sizeof(_old), {{handle_key(vt)}}u);\n")
+            w(" _old; ")
+            sig_get(vt, s, "_old")
+            wc('\n')
             indent(2)
             w_ctype(vt)
             w(" _new = {{v}};\n")
@@ -2036,9 +2088,11 @@ fn builtin_call(x: &Inst) -> bool {
             indent(1)
             w("}\n")
         } else {
-            let ct = ctype(vt)
-            let key = handle_key(vt)
-            w("if (loam_zeus_sig_changed({{s}}, &{{v}}, sizeof({{ct}}), {{key}}u)) { loam_zeus_sig_bind({{s}}, &{{v}}, sizeof({{ct}}), {{key}}u); loam_arena_note_write({{s}}); }\n")
+            w("if (")
+            sig_changed(vt, s, v)
+            w(") { ")
+            sig_put(vt, s, v, SIG_KIND_PLAIN, "0", 0)
+            w(" loam_arena_note_write({{s}}); }\n")
         }
         return true
     }
@@ -3764,6 +3818,9 @@ fn emit_c() {
     for i in 1..ELEM_HOOK_MAX + 1 {
         w("{{unit_static()}}void loam_elem_retain_{{i}}(void *p);\n{{unit_static()}}void loam_elem_release_{{i}}(void *p);\n")
     }
+    if sig_store_linked() {
+        w("void loam_sigcells_payload_drop(int32_t kind, int32_t esz, int32_t hook, int32_t off);\n")
+    }
     wc('\n')
     own_helpers()
     flush_big()
@@ -3980,6 +4037,7 @@ fn emit_c() {
         flush_big()
         h = h + 1
     }
+    sig_payload_drop_def()
     if SHARD {
         w("\n/*@D*/\n#ifdef LOAM_SHARD_DEFS\n")
     }

@@ -130,7 +130,7 @@ commit per phase. Line anchors are for the tree at `feat/zeus-upgrade-v2`.
   node. A write marks it dirty and queues its readers; it recomputes when something
   reads it (`get` / `peek`) or when the flush reaches one of its readers, and only
   if an input's recorded generation actually moved — the check-clean pass, over
-  `runtime.sig_gen`. A reader whose inputs turn out not to have moved is skipped, so
+  `sigcells.gen`. A reader whose inputs turn out not to have moved is skipped, so
   the change gate the eager form got from `set` is preserved, and a memo nothing
   observes is never recomputed at all.
 - Ownership is manual: `effect_owner`, `ui_parents`, `record_intern`,

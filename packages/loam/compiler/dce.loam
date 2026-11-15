@@ -193,16 +193,30 @@ fn walk(n: int) {
             mark_cname("loam_thread_ch_alloc")
             mark_cname("loam_thread_ch_begin")
         }
-        // A `__sig_push` builtin lowers in codegen to a Loam id reserve
-        // (R4.1a: `arena.sig_reserve`, recycling through `free_sigs`) plus
-        // the C cell bind: keep the reserve fn. Captured-`let mut` state
-        // signals lower to `loam_zeus_signal(reserve(), init)` the same way.
-        if ast.EXTRA[ast.ex(n)].sig == 1 {
+        // The `__sig_*` builtins lower in codegen to the Loam signal store
+        // (R4.1b: `arena` reserves the id, `sigcells` keeps the bytes) plus
+        // one `memcpy` per access: keep the fns the generated C names.
+        let sig_op = ast.EXTRA[ast.ex(n)].sig
+        if sig_op == 1 {
             mark_cname("loam_arena_sig_reserve")
+            mark_cname("loam_arena_sig_new_int")
+            mark_cname("loam_arena_sig_new_zero")
         }
-        if x.kind == Kind.Var && (ast.NODES[n].flags & typecheck.ASTF_STATE) != 0 {
-            mark_cname("loam_arena_sig_reserve")
+        if sig_op != 0 {
+            mark_cname("loam_sigcells_bind_at")
+            mark_cname("loam_sigcells_load_at")
+            mark_cname("loam_sigcells_cmp_at")
+            mark_cname("loam_arena_store_sig")
+            mark_cname("loam_arena_note_write")
         }
+    }
+    // Captured-`let mut` state signals lower to the `loam_zeus_signal` /
+    // `get` / `set` trampolines in `zeus_rt.h`, over these `arena` fns.
+    if x.kind == Kind.Var && (ast.NODES[n].flags & typecheck.ASTF_STATE) != 0 {
+        mark_cname("loam_arena_sig_reserve")
+        mark_cname("loam_arena_sig_new_int")
+        mark_cname("loam_arena_state_get")
+        mark_cname("loam_arena_store_sig")
     }
     switch x.kind {
         case Kind.Ident:
@@ -434,6 +448,13 @@ fn dropped(cname: string) -> bool {
     }
     let f = map.get(&mut BY_CNAME, map.key_str(cname))
     return f >= 0 && !keep(f)
+}
+
+/** *The fn declared with C name `cname` is emitted: it exists and DCE kept */
+/** *it (every declared fn, when DCE did not run). */
+fn kept_cname(cname: string) -> bool {
+    let f = map.get(&mut BY_CNAME, map.key_str(cname))
+    return f >= 0 && keep(f)
 }
 
 fn keep(f: int) -> bool {

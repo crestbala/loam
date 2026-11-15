@@ -2506,7 +2506,7 @@ fn lower_var(n: int) {
             initv = const_int(i64(0), types.ty_int(), loc)
         }
         // A captured `let mut int` is a signal cell. R4.1a: the id recycles
-        // through Loam (`arena.sig_reserve`); C only ensures its cell.
+        // through Loam (`arena.sig_reserve`); the cell is `sigcells` (R4.1b).
         let id = emit_named_call("loam_zeus_signal", []int { emit_named_call("loam_arena_sig_reserve", []int {}, types.ty_int(), loc), initv }, sig_ty, loc)
         if id >= 0 && ast.INFO[n].has_name {
             LOCALS[F_LOCALS + id].name = name

@@ -1,0 +1,196 @@
+// sigcells — the signal byte store, in Loam (R4.1b).
+//
+// Every signal's value lives in one `[]u8` arena. A cell is a slot in a
+// table: where its bytes sit, how many are bound, the generation, and the
+// S0 key of the type it was bound at. The value's layout is only known at
+// the typed call site (`__sig_push` / `__sig_load` / `__sig_store`), so
+// codegen asks this module for an offset and moves the bytes itself with one
+// `memcpy` per access; a heterogeneous `T` never crosses Loam as a value, as
+// with the future table (R3.1b).
+//
+// Ownership: a string, a list or a struct with owned leaves keeps references
+// the cell must release when it is freed. A cell records only the kind and
+// the element size / release hook id (plain ints), and `free` hands them to
+// `payload_drop`, a dispatcher codegen emits over its per-type release hooks.
+// No C function pointer is ever stored in Loam.
+//
+// A leaf module: `arena`, `track` and `flow` all read it, and it imports none
+// of them.
+
+/** *One signal's storage. `off` / `cap` stay with the slot after a free, so */
+/** *a recycled id reuses its bytes; a bind wider than `cap` moves the cell to */
+/** *the end of the arena (a slot's `cap` only grows, so the bytes it leaves */
+/** *behind are bounded by its distinct widths). */
+struct SigCell {
+    /** *Where the cell's bytes start in `bytes`. */
+    off: int,
+    /** *Bytes reserved at `off`. */
+    cap: int,
+    /** *Bytes bound now; 0 = no value (never bound, or freed). */
+    n: int,
+    /** *Bumped by every bind; 0 once freed. `computed<T>` and the list hosts */
+    /** *compare it to tell a moved value from a repeat notification. */
+    gen: int,
+    /** *The bound type's S0 key (`handle_key`, never 0); 0 = unbound. */
+    key: i64,
+    /** *What the bytes own: `KIND_PLAIN`, `KIND_STR`, `KIND_LIST`, `KIND_OWNED`. */
+    kind: int,
+    /** *Element size of a list payload. */
+    esz: int,
+    /** *Release hook id of a list's elements or of an owning struct; 0 = none. */
+    hook: int,
+}
+
+const KIND_PLAIN: int = 0
+const KIND_STR: int = 1
+const KIND_LIST: int = 2
+const KIND_OWNED: int = 3
+
+/** *Every cell starts on this boundary (the widest field a payload has: an */
+/** *`i64`, an `f64` or a pointer). The arena's own buffer comes from the */
+/** *allocator, which aligns at least this much. */
+const CELL_ALIGN: int = 8
+
+/** *The S0 key of `int` (`int32_t`), as codegen spells it: the int-signal */
+/** *paths below bind without a typed call site. */
+const KEY_INT: i64 = 3226083260
+
+/** *The arena. Codegen reads its buffer as `loam_sigcells_bytes.ptr` between */
+/** *an offset call and its `memcpy`, with no Loam call in between, so it never */
+/** *moves under a copy. Only this module names it, and never copies it, so the */
+/** *buffer is never shared. */
+let mut bytes: []u8 = []u8 {}
+let mut cells: []SigCell = []SigCell {}
+
+/** *Release the owned payload at `off` (`kind`, `esz`, `hook` as recorded). */
+/** *Emitted by codegen next to its release hooks (`loam_elem_release_*`). */
+fn payload_drop(kind: int, esz: int, hook: int, off: int) {}
+
+/** *Make sure slot `id` exists. */
+fn grow(id: int) {
+    if id < cells.len {
+        return
+    }
+    while cells.len <= id {
+        push(cells, SigCell { off: 0, cap: 0, n: 0, gen: 0, key: i64(0), kind: 0, esz: 0, hook: 0 })
+    }
+}
+
+/** *A cell bound at one type, reached through a handle of another: a forged */
+/** *handle. Reading its bytes as the other type could take an int for a */
+/** *pointer, so it panics instead. */
+fn wrong_type() {
+    panic("signal handle used at the wrong type")
+}
+
+/** *Bind `n` bytes of the type keyed `key` in cell `id`: returns the offset */
+/** *the caller writes them at, or -1 for a negative id or width. The caller */
+/** *has already released whatever the cell owned before. One read and one */
+/** *write of the slot, so an unoptimized build pays two bounds checks. */
+fn bind_at(id: int, n: int, key: i64, kind: int, esz: int, hook: int) -> int {
+    if id < 0 || n < 0 {
+        return -1
+    }
+    grow(id)
+    let mut c = cells[id]
+    if c.key != key && c.key != 0 {
+        wrong_type()
+    }
+    if c.cap < n {
+        // 8-aligned, as `malloc` gave the C cells: `payload_drop` releases a
+        // string, a list or a struct in place, where a `memcpy` would not care.
+        while bytes.len % CELL_ALIGN != 0 {
+            push(bytes, u8(0))
+        }
+        c.off = bytes.len
+        c.cap = n
+        for i in 0..n {
+            push(bytes, u8(0))
+        }
+    }
+    c.n = n
+    c.key = key
+    c.kind = kind
+    c.esz = esz
+    c.hook = hook
+    c.gen = c.gen + 1
+    cells[id] = c
+    return c.off
+}
+
+/** *Where to read `n` bytes of cell `id` as the type keyed `key`; -1 when */
+/** *the cell holds no such value (the caller then reads zeros, as an unbound */
+/** *cell always has). */
+fn load_at(id: int, n: int, key: i64) -> int {
+    if id < 0 || id >= cells.len {
+        return -1
+    }
+    let c = cells[id]
+    if c.n == 0 {
+        return -1
+    }
+    if c.key != key && c.key != 0 {
+        wrong_type()
+    }
+    if c.n != n {
+        return -1
+    }
+    return c.off
+}
+
+/** *Where to compare a new `n`-byte value with the one held; -1 when the */
+/** *write moves the value whatever its bytes (nothing of that width bound). */
+fn cmp_at(id: int, n: int, key: i64) -> int {
+    if n <= 0 {
+        return -1
+    }
+    return load_at(id, n, key)
+}
+
+/** *Cell `id`'s generation (0 when unbound or out of range). */
+fn gen(id: int) -> int {
+    if id < 0 || id >= cells.len {
+        return 0
+    }
+    return cells[id].gen
+}
+
+/** *Bind an `int` (the int-signal paths, which keep their mirror in `arena`). */
+/** *Little-endian, as every target is. */
+fn bind_int(id: int, value: int) {
+    let off = bind_at(id, 4, KEY_INT, KIND_PLAIN, 0, 0)
+    if off < 0 {
+        return
+    }
+    bytes[off] = u8(value & 255)
+    bytes[off + 1] = u8((value >> 8) & 255)
+    bytes[off + 2] = u8((value >> 16) & 255)
+    bytes[off + 3] = u8((value >> 24) & 255)
+}
+
+/** *1 when cell `id` may be read as an `int` (panics on a forged handle). */
+fn int_ok(id: int) -> int {
+    return if load_at(id, 4, KEY_INT) >= 0 { 1 } else { 0 }
+}
+
+/** *Free cell `id`: release what its bytes own and unbind it. Returns 0 for */
+/** *a cell that was never bound or reserved (nothing to free), else 1. */
+fn free(id: int) -> int {
+    if id <= 0 || id >= cells.len {
+        return 0
+    }
+    let c = cells[id]
+    if c.n == 0 && c.gen == 0 {
+        return 0
+    }
+    if c.kind != KIND_PLAIN && c.n > 0 {
+        payload_drop(c.kind, c.esz, c.hook, c.off)
+    }
+    cells[id].n = 0
+    cells[id].gen = 0
+    cells[id].key = i64(0)
+    cells[id].kind = KIND_PLAIN
+    cells[id].esz = 0
+    cells[id].hook = 0
+    return 1
+}
