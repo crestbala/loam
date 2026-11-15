@@ -747,7 +747,18 @@ done, so every R3 step is checked by `thread_tsan`).
       `sleep_os`); all 14 thread/async `compile_fail` fixtures still reject.
       `async_*`, `thread_*`, forge traps (messages byte-identical), 5-way
       TSan, wasm32 `trap_app` green. **Runtime: 8,077 → 8,068** (−9).
-- [ ] R3.1b The future table in Loam, keeping S0's typed cells.
+- [x] R3.1b The future table in Loam, keeping S0's typed cells. Done
+      2026-11-15. `fut_data: []u8` arena + `fut_slots` (`off/len/ready/key`)
+      in `std:async`; codegen lowers `__fut_*` to Loam table calls plus an
+      inline `memcpy` per type (heterogeneous `T` never crosses Loam as a
+      value), with the Copy-vec retain/drop dance and dead-id zero-fill
+      unchanged. S0 holds: the slot records `handle_key(T)` at push, every
+      access checks it in Loam (`fut_check` panics like before). A
+      future-free binary links no table at all (DCE via `mark_cname`, as
+      `std:key` does); before, the C table shipped in every binary.
+      `async_*`, `thread_*`, forge traps (messages byte-identical), 5-way
+      TSan, wasm32 `trap_app` green; 14 `compile_fail` fixtures still reject.
+      **Runtime: 8,068 → 7,994** (−74).
 - [ ] R3.2 The channel queues in Loam; mutex, condition variable and thread
       start are `#[c]` pthread bindings, which a thread worker may call.
 

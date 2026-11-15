@@ -172,6 +172,19 @@ fn walk(n: int) {
             mark_cname("loam_key_push_f64")
             mark_cname("loam_key_push_addr")
         }
+        // A `__fut_*` builtin lowers in codegen to the Loam table in
+        // `std:async` (R3.1) plus an inline `memcpy`: keep the table fns.
+        // What they call (`panic`, vec growth) follows the ordinary walk.
+        if ast.EXTRA[ast.ex(n)].fut != 0 {
+            mark_cname("loam_async_fut_alloc")
+            mark_cname("loam_async_fut_arena")
+            mark_cname("loam_async_fut_off")
+            mark_cname("loam_async_fut_live")
+            mark_cname("loam_async_fut_check")
+            mark_cname("loam_async_fut_is_ready")
+            mark_cname("loam_async_fut_unready")
+            mark_cname("loam_async_fut_mark_ready")
+        }
     }
     switch x.kind {
         case Kind.Ident:
