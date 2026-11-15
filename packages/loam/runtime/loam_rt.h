@@ -1569,28 +1569,19 @@ static inline void loam_fut_store(int64_t id, const void *val, size_t sz, uint32
 }
 
 #ifdef __wasm32__
-/* `zeus_js_now_ms` and `zeus_js_heap_used` are declared with their import
-   attributes near `loam_now_ms` above; only the async helpers are added here. */
-static inline int64_t loam_async_now_ms(void) { return loam_now_ms(); }
-static inline void loam_async_sleep(int64_t ms) {
-    int64_t t0 = loam_async_now_ms();
-    while (loam_async_now_ms() - t0 < ms) {
+/* `std:async` binds `clock_gettime` / `nanosleep` itself on native (`#[c]`);
+   wasm binds no libc, so the two wasm bridges live here (like `sys.wasm_exit`
+   bridges `abort`): the clock is the `zeus_js_now_ms` host import
+   (`loam_now_ms`, above), and the sleep is its spin. */
+static inline int64_t loam_async_wasm_now_ms(void) { return loam_now_ms(); }
+static inline void loam_async_wasm_sleep(int64_t ms) {
+    int64_t t0 = loam_now_ms();
+    while (loam_now_ms() - t0 < ms) {
     }
 }
 #else
-static inline int64_t loam_async_now_ms(void) {
-    struct timespec ts;
-    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
-    return (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000);
-}
-static inline void loam_async_sleep(int64_t ms) {
-    struct timespec req;
-    if (ms <= 0) return;
-    req.tv_sec = (time_t)(ms / 1000);
-    req.tv_nsec = (long)(ms % 1000) * 1000000L;
-    while (nanosleep(&req, &req) != 0 && errno == EINTR) {
-    }
-}
+/* Native binds `clock_gettime` / `nanosleep` through `#[c]` in `std:async`;
+   nothing of the clock or sleep remains in C. */
 #endif
 
 /* --- thread + channel: std/thread.loam. The ABI is a detached pthread and a ---
