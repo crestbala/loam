@@ -68,10 +68,6 @@ fn zeus_dir() -> string {
     return "{{loader.home()}}/packages/zeus"
 }
 
-fn raygui_dir() -> string {
-    return "{{loader.home()}}/packages/raygui"
-}
-
 /** *Seconds as `%.3f`, from milliseconds. */
 fn secs(ms: i64) -> string {
     let frac = ms % i64(1000)
@@ -473,7 +469,38 @@ fn fresh_save(out: string, key: string) {
 
 // --- C sources (`#![c_source]`, `#![c_link]`) ---------------------------------------
 
-/** *Module `m` still has a `#[c]` fn after dead code removal. */
+/** *The `#[os]` and `#[arch]` bits of a native build: the machine loamc runs on. */
+fn native_target_bits() -> int {
+    let os = sys.os()
+    let os_bit = if os == "macos" {
+        ast.OS_MACOS
+    } else if os == "linux" {
+        ast.OS_LINUX
+    } else if os == "windows" {
+        ast.OS_WINDOWS
+    } else {
+        ast.OS_OTHER
+    }
+    let arch = sys.arch()
+    let arch_bit = if arch == "x86_64" {
+        ast.ARCH_X86_64
+    } else if arch == "aarch64" {
+        ast.ARCH_AARCH64
+    } else {
+        ast.ARCH_OTHER
+    }
+    return os_bit | arch_bit
+}
+
+/** *An `#[os]` / `#[arch]` mask that includes this native build. */
+fn mask_builds_here(mask: int) -> bool {
+    let here = native_target_bits()
+    return (ast.target_os(mask) & here) != 0 && (ast.target_arch(mask) & here) != 0
+}
+
+/** *Module `m` still has a `#[c]` fn after dead code removal that this build */
+/** *compiles. A module whose bindings are all variants for other targets (a */
+/** *Cocoa host's) brings none of its C sources or link flags here. */
 fn module_uses_c(m: int) -> bool {
     let root = typecheck.MODS[m].root
     if root == ast.NONE {
@@ -482,7 +509,8 @@ fn module_uses_c(m: int) -> bool {
     let decls = ast.NODES[root].kids
     for i in 0..decls.len {
         let d = decls[i]
-        if ast.NODES[d].kind == Kind.Fn && codegen.c_sym_of(d).len > 0 && dce.keep(d) {
+        if ast.NODES[d].kind == Kind.Fn && codegen.c_sym_of(d).len > 0 && dce.keep(d) &&
+            mask_builds_here(typecheck.os_mask(d)) {
             return true
         }
     }
@@ -525,6 +553,71 @@ fn cdir_error(path: string, loc_line: int, msg: string) -> bool {
     return false
 }
 
+/** *The library a `pkg-config:NAME` argument names, or `""` for any other */
+/** *argument. */
+fn pkg_config_name(arg: string) -> string {
+    let tag = "pkg-config:"
+    if !str.starts_with(arg, tag) {
+        return ""
+    }
+    return str.slice_from(arg, tag.len)
+}
+
+/** *A library name a shell may see: letters, digits, `_ + . -`. */
+fn pkg_name_ok(name: string) -> bool {
+    if name.len == 0 {
+        return false
+    }
+    for i in 0..name.len {
+        let c = name[i]
+        let ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+            c == '.' || c == '_' || c == '+' || c == '-'
+        if !ok {
+            return false
+        }
+    }
+    return true
+}
+
+/** *A system library's compile flags (`cflags`) or link flags: under */
+/** *`<NAME>_PREFIX` when set, else what `pkg-config` says, else the Homebrew */
+/** *prefixes that hold `include/<name>.h`. Empty when it is not found (the */
+/** *compile or link then fails with the C compiler's own message). */
+fn pkg_config_flags(name: string, cflags: bool) -> []string {
+    let prefix = sys.env("{{str.to_upper(name)}}_PREFIX")
+    if prefix.len > 0 {
+        return if cflags { []string { "-I{{prefix}}/include" } } else { []string { "-L{{prefix}}/lib", "-l{{name}}" } }
+    }
+    let what = if cflags { "--cflags" } else { "--libs" }
+    let out = sys.exec("pkg-config {{what}} {{name}} 2>/dev/null")
+    if sys.exec_status() == 0 && str.trim(out).len > 0 {
+        return words(str.trim(out))
+    }
+    let prefixes = []string { "/opt/homebrew/opt/{{name}}", "/usr/local/opt/{{name}}" }
+    for i in 0..prefixes.len {
+        if sys.exists("{{prefixes[i]}}/include/{{name}}.h") == 1 {
+            return if cflags { []string { "-I{{prefixes[i]}}/include" } } else { []string { "-L{{prefixes[i]}}/lib", "-l{{name}}" } }
+        }
+    }
+    return []string {}
+}
+
+/** *A `#![c_source]` / `#![c_link]` argument as compiler flags: itself, or */
+/** *for `pkg-config:NAME` that library's flags. `false` for a bad name. */
+fn expand_c_arg(arg: string, cflags: bool, out: &mut []string) -> bool {
+    let name = pkg_config_name(arg)
+    if name.len == 0 && !str.starts_with(arg, "pkg-config:") {
+        push(out, arg)
+        return true
+    }
+    if !pkg_name_ok(name) {
+        return false
+    }
+    let flags = pkg_config_flags(name, cflags)
+    push_all(out, &flags)
+    return true
+}
+
 /** *Compile one `#![c_source]` if stale and add its object to `link`. The */
 /** *headers beside it are dependencies; the object's name hashes the path */
 /** *and flags, so two flag sets never share an object. */
@@ -546,8 +639,15 @@ fn c_source_obj(loam_path: string, d: int, link: &mut []string) -> bool {
     let mut flags = ""
     let mut extra = []string { "-I{{include}}" }
     for k in 1..args.len {
-        flags = "{{flags}}{{shell_quoted(args[k])}}"
-        push(extra, args[k])
+        let before = extra.len
+        if !expand_c_arg(args[k], true, &mut extra) {
+            return cdir_error(loam_path, line, "#![c_source] argument '{{args[k]}}' names no library pkg-config could look up")
+        }
+        // The object's key is the flags as expanded, so a library that moves
+        // (a new `pkg-config` answer) rebuilds it.
+        for e in before..extra.len {
+            flags = "{{flags}}{{shell_quoted(extra[e])}}"
+        }
     }
     let key = fnv(src, fnv(flags, FNV_BASIS))
     let dot = str.index_of_byte(base, '.')
@@ -597,7 +697,11 @@ fn c_inputs(link: &mut []string) -> bool {
                     continue
                 }
                 let args = ast.EXTRA[ast.ex(d)].strs
-                push_all(link, &args)
+                for k in 0..args.len {
+                    if !expand_c_arg(args[k], false, link) {
+                        return cdir_error(typecheck.MODS[m].path, ast.INFO[d].loc.line, "#![c_link] argument '{{args[k]}}' names no library pkg-config could look up")
+                    }
+                }
             }
         }
     }
@@ -615,32 +719,11 @@ fn mods_use(name: string) -> bool {
     return false
 }
 
-/** *raylib's compile and link flags: `RAYLIB_PREFIX`, then pkg-config, then */
-/** *the Homebrew prefixes. Empty when raylib is missing (the link then fails */
-/** *with the C compiler's own message). */
 /** *Links the Zeus platform layer: a Zeus program, or a `zeli serve` host */
 /** *(`LOAM_HOST`), whose own source is a shim but whose loaded images call */
 /** *into that layer. */
 fn uses_zeus() -> bool {
     return mods_use("zeus") || env_on("LOAM_HOST")
-}
-
-fn raylib_flags() -> []string {
-    let p = sys.env("RAYLIB_PREFIX")
-    if p.len > 0 {
-        return []string { "-I{{p}}/include", "-L{{p}}/lib", "-lraylib" }
-    }
-    let out = sys.exec("pkg-config --cflags --libs raylib 2>/dev/null")
-    if sys.exec_status() == 0 && out.len > 0 {
-        return words(str.trim(out))
-    }
-    let prefixes = []string { "/opt/homebrew/opt/raylib", "/usr/local/opt/raylib" }
-    for i in 0..prefixes.len {
-        if sys.exists("{{prefixes[i]}}/include/raylib.h") == 1 {
-            return []string { "-I{{prefixes[i]}}/include", "-L{{prefixes[i]}}/lib", "-lraylib" }
-        }
-    }
-    return []string {}
 }
 
 /** *The Zeus platform layer and key state, and on a GUI build the desktop */
@@ -742,7 +825,6 @@ fn cocoa_frameworks() -> []string {
 /** *flags, then output and inputs. `false` when a host object failed. */
 fn link_args(cpath: string, binpath: string, copt: &[]string, ld: string, extra_link: &[]string, app_in: &[]string, args: &mut []string) -> bool {
     let rt = loader.runtime_dir()
-    let owns = []string { if types.string_owns { "-DLOAM_STRING_OWNS" } else { "" } }
     let net_c = "{{rt}}/net.c"
     push_all(args, copt)
     if uses_zeus() {
@@ -775,37 +857,6 @@ fn link_args(cpath: string, binpath: string, copt: &[]string, ld: string, extra_
         }
         return true
     }
-    if mods_use("maya") {
-        let src_c = "{{rt}}/maya_plat.c"
-        let src_h = "{{rt}}/maya_rt.h"
-        let otag = if types.string_owns { ".owns" } else { "" }
-        let obj_c = "{{rt}}/.obj/maya_plat{{otag}}.o"
-        let deps = []string { src_c, src_h }
-        let mut ok = ensure_obj(src_c, obj_c, &owns, &deps)
-        let mut objs = []string { obj_c }
-        if on_mac() && ok {
-            let src_m = "{{rt}}/maya_mac.m"
-            let obj_m = "{{rt}}/.obj/maya_mac{{otag}}.o"
-            let mac_flags = []string { "-x", "objective-c", "-fobjc-arc", owns[0] }
-            let mac_deps = []string { src_m, src_h }
-            ok = ensure_obj(src_m, obj_m, &mac_flags, &mac_deps)
-            push(objs, obj_m)
-        }
-        if !ok {
-            fmt.eprintln("loam: failed to compile the maya host")
-            return false
-        }
-        push_list(args, []string { ld, "-o", binpath, "-I{{rt}}" })
-        push_all(args, app_in)
-        push_list(args, []string { "-x", "none" })
-        push_all(args, &objs)
-        if on_mac() {
-            push_list(args, []string { "-framework", "Cocoa" })
-        }
-        push(args, "-lm")
-        push_all(args, extra_link)
-        return true
-    }
     if mods_use("http") || mods_use("net") {
         push_list(args, []string { ld, "-o", binpath, "-I{{rt}}" })
         push_all(args, app_in)
@@ -814,27 +865,6 @@ fn link_args(cpath: string, binpath: string, copt: &[]string, ld: string, extra_
         if on_mac() {
             push_list(args, []string { "-framework", "Security", "-framework", "CoreFoundation" })
         }
-        push_all(args, extra_link)
-        return true
-    }
-    if mods_use("raygui") {
-        let rlib = raylib_flags()
-        let src_c = "{{rt}}/raygui_plat.c"
-        let src_h = "{{rt}}/raygui_rt.h"
-        let otag = if types.string_owns { ".owns" } else { "" }
-        let obj_c = "{{rt}}/.obj/raygui_plat{{otag}}.o"
-        let mut flags = []string { "-I{{raygui_dir()}}/vendor" }
-        push_all(&mut flags, &rlib)
-        push(flags, owns[0])
-        let deps = []string { src_c, src_h }
-        if !ensure_obj(src_c, obj_c, &flags, &deps) {
-            fmt.eprintln("loam: failed to compile the raygui host")
-            return false
-        }
-        push_list(args, []string { ld, "-o", binpath, "-I{{rt}}", "-I{{raygui_dir()}}/vendor" })
-        push_all(args, &rlib)
-        push_all(args, app_in)
-        push_list(args, []string { "-x", "none", obj_c, "-lm" })
         push_all(args, extra_link)
         return true
     }

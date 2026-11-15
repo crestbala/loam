@@ -1,0 +1,13 @@
+// A struct with a `string` field is Loam's own layout, which C cannot read:
+// only structs of numbers, bools and such structs pass by value.
+struct Label {
+    width: i32,
+    text: string,
+}
+
+#[c("puts")]
+fn c_puts(label: Label) -> i32 {}
+
+fn main() {
+    let _ = c_puts(Label { width: 1, text: "a" })
+}

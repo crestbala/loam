@@ -28,53 +28,434 @@
 // sets) opens no window: `begin`/`end` are inert and `open()` returns 0 after
 // `RAYGUI_FRAMES` frames (default 3), so the control code still runs.
 //
-// The C side (`packages/loam/runtime/raygui_plat.c`) is only the raylib +
-// raygui trampoline and the RAM probe — no widget logic, per
+// The C is raylib and raygui itself (`vendor/raygui.h`, compiled once here
+// with `RAYGUI_IMPLEMENTATION`), bound directly: raygui's `Rectangle` and
+// raylib's `Color` cross as Loam structs of the same fields, and its `bool *`
+// / `int *` / `float *` state as one-cell buffers. The window state, the
+// headless rule, the frame cap and the guards below are Loam, per
 // `docs/boundary.md`.
 
-/** *Open the window and set the target frame rate. `fps <= 0` leaves raylib's */
-/** *default. Headless: records the size and opens nothing. */
-fn plat_init(title: string, w: int, h: int, fps: int) {}
-/** *1 when no window will open (env override or no display host). */
-fn plat_headless() -> int {}
-/** *1 once the user closed the window (or the headless frame cap is reached). */
-fn plat_should_close() -> int {}
-fn plat_begin(bg: int) {}
-fn plat_end() {}
-fn plat_close() {}
-/** *Host process memory in KB: Apple phys_footprint (Xcode's memory-gauge */
-/** *number) or the Linux/Android resident set. 0 when unknown. */
-fn plat_ram_kb() -> int {}
-fn plat_fps() -> int {}
-/** *Last frame time, milliseconds. */
-fn plat_frame_ms() -> int {}
-fn plat_screen_w() -> int {}
-fn plat_screen_h() -> int {}
-fn plat_set_style(control: int, prop: int, value: int) {}
-fn plat_load_style_default() {}
+#![c_source("vendor/raygui.h", "-x", "c", "-DRAYGUI_IMPLEMENTATION", "pkg-config:raylib")]
+#![c_link("pkg-config:raylib")]
+import "std:sys"
 
-fn plat_label(x: int, y: int, w: int, h: int, text: string) -> int {}
-fn plat_panel(x: int, y: int, w: int, h: int, text: string) -> int {}
-fn plat_group_box(x: int, y: int, w: int, h: int, text: string) -> int {}
-fn plat_line(x: int, y: int, w: int, h: int, text: string) -> int {}
-fn plat_button(x: int, y: int, w: int, h: int, text: string) -> int {}
+/** *raylib's `Rectangle`: what every raygui control is laid out in. */
+struct Bounds {
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+}
+
+/** *raylib's `Color`. */
+struct Rgba8 {
+    r: u8,
+    g: u8,
+    b: u8,
+    a: u8,
+}
+
+// --- raylib ------------------------------------------------------------------------
+
+#[c("InitWindow")]
+fn c_init_window(w: i32, h: i32, title: string) {}
+#[c("SetTargetFPS")]
+fn c_set_target_fps(fps: i32) {}
+#[c("WindowShouldClose")]
+fn c_window_should_close() -> bool {}
+#[c("BeginDrawing")]
+fn c_begin_drawing() {}
+#[c("EndDrawing")]
+fn c_end_drawing() {}
+#[c("CloseWindow")]
+fn c_close_window() {}
+#[c("ClearBackground")]
+fn c_clear_background(color: Rgba8) {}
+#[c("GetFPS")]
+fn c_get_fps() -> i32 {}
+#[c("GetFrameTime")]
+fn c_get_frame_time() -> f32 {}
+#[c("GetScreenWidth")]
+fn c_get_screen_width() -> i32 {}
+#[c("GetScreenHeight")]
+fn c_get_screen_height() -> i32 {}
+
+// --- raygui ------------------------------------------------------------------------
+
+#[c("GuiSetStyle")]
+fn c_gui_set_style(control: i32, prop: i32, value: i32) {}
+#[c("GuiLoadStyleDefault")]
+fn c_gui_load_style_default() {}
+#[c("GuiLabel")]
+fn c_gui_label(bounds: Bounds, text: string) -> i32 {}
+#[c("GuiPanel")]
+fn c_gui_panel(bounds: Bounds, text: string) -> i32 {}
+#[c("GuiGroupBox")]
+fn c_gui_group_box(bounds: Bounds, text: string) -> i32 {}
+#[c("GuiLine")]
+fn c_gui_line(bounds: Bounds, text: string) -> i32 {}
+#[c("GuiButton")]
+fn c_gui_button(bounds: Bounds, text: string) -> i32 {}
+#[c("GuiToggle")]
+fn c_gui_toggle(bounds: Bounds, text: string, active: []bool) -> i32 {}
+#[c("GuiCheckBox")]
+fn c_gui_check_box(bounds: Bounds, text: string, checked: []bool) -> i32 {}
+#[c("GuiSlider")]
+fn c_gui_slider(bounds: Bounds, left: string, right: string, value: []f32, lo: f32, hi: f32) -> i32 {}
+#[c("GuiProgressBar")]
+fn c_gui_progress_bar(bounds: Bounds, left: string, right: string, value: []f32, lo: f32, hi: f32) -> i32 {}
+#[c("GuiSpinner")]
+fn c_gui_spinner(bounds: Bounds, text: string, value: []i32, lo: i32, hi: i32, edit: bool) -> i32 {}
+#[c("GuiValueBox")]
+fn c_gui_value_box(bounds: Bounds, text: string, value: []i32, lo: i32, hi: i32, edit: bool) -> i32 {}
+#[c("GuiComboBox")]
+fn c_gui_combo_box(bounds: Bounds, text: string, active: []i32) -> i32 {}
+#[c("GuiListView")]
+fn c_gui_list_view(bounds: Bounds, text: string, scroll: []i32, active: []i32) -> i32 {}
+
+/** *A control's bounds from integer pixels. */
+fn bounds(x: int, y: int, w: int, h: int) -> Bounds {
+    return Bounds { x: f32(x), y: f32(y), width: f32(w), height: f32(h) }
+}
+
+/** *raylib's `GetColor`: `0xRRGGBBAA` as a `Color`. */
+fn rgba8(packed: int) -> Rgba8 {
+    return Rgba8 {
+        r: u8((packed >> 24) & 255),
+        g: u8((packed >> 16) & 255),
+        b: u8((packed >> 8) & 255),
+        a: u8(packed & 255),
+    }
+}
+
+// --- window state -----------------------------------------------------------------
+
+/** *A window is open (never in headless). */
+let mut window_open: bool = false
+/** *Frames drawn this run (the headless cap counts them). */
+let mut frames_drawn: int = 0
+/** *1 when this run opens no window; decided by `init`. */
+let mut headless_run: int = 0
+/** *How many frames a headless run draws; read once by `init`. */
+let mut headless_frames: int = 3
+/** *The in/out cells the stateful controls hand raygui, reused every frame */
+/** *so an immediate-mode loop allocates nothing. */
+let mut flag_cell: []bool = []bool { false }
+let mut int_cell: []i32 = []i32 { 0 }
+let mut scroll_cell: []i32 = []i32 { 0 }
+let mut float_cell: []f32 = []f32 { 0.0 }
+
+/** *raylib opens a window on macOS and Linux; elsewhere a run is headless. */
+#[os("macos", "linux")]
+fn window_host() -> bool {
+    return true
+}
+
+#[os("ios", "android", "windows", "wasm", "other")]
+fn window_host() -> bool {
+    return false
+}
+
+fn env_on(name: string) -> bool {
+    let v = sys.env(name)
+    return v.len > 0 && v[0] == '1'
+}
+
+/** *C's `atoi`: leading space, a sign, then digits; 0 when there are none. */
+fn leading_int(text: string) -> int {
+    let mut i = 0
+    while i < text.len && (text[i] == ' ' || (text[i] >= 9 && text[i] <= 13)) {
+        i += 1
+    }
+    let mut negative = false
+    if i < text.len && (text[i] == '-' || text[i] == '+') {
+        negative = text[i] == '-'
+        i += 1
+    }
+    let mut n = 0
+    while i < text.len && text[i] >= '0' && text[i] <= '9' && n < 100000000 {
+        n = n * 10 + int(text[i] - '0')
+        i += 1
+    }
+    return if negative { -n } else { n }
+}
+
+/** *The headless frame cap: `RAYGUI_FRAMES`, else 3, enough for the first */
+/** *frames to lay out state. */
+fn frame_cap() -> int {
+    let n = leading_int(sys.env("RAYGUI_FRAMES"))
+    return if n > 0 { n } else { 3 }
+}
+
+fn plat_init(title: string, w: int, h: int, fps: int) {
+    headless_run = if env_on("RAYGUI_HEADLESS") || env_on("ZEUS_HEADLESS") || env_on("LOAM_HEADLESS") || !window_host() { 1 } else { 0 }
+    frames_drawn = 0
+    if headless_run != 0 {
+        headless_frames = frame_cap()
+        return
+    }
+    c_init_window(i32(if w <= 0 { 800 } else { w }), i32(if h <= 0 { 600 } else { h }), title)
+    if fps > 0 {
+        c_set_target_fps(i32(fps))
+    }
+    window_open = true
+}
+
+fn plat_headless() -> int {
+    return headless_run
+}
+
+fn plat_should_close() -> int {
+    if headless_run != 0 {
+        frames_drawn += 1
+        return if frames_drawn > headless_frames { 1 } else { 0 }
+    }
+    if !window_open {
+        return 1
+    }
+    return if c_window_should_close() { 1 } else { 0 }
+}
+
+fn plat_begin(bg: int) {
+    if !window_open {
+        return
+    }
+    c_begin_drawing()
+    c_clear_background(rgba8(bg))
+}
+
+fn plat_end() {
+    if window_open {
+        c_end_drawing()
+    }
+}
+
+fn plat_close() {
+    if window_open {
+        c_close_window()
+        window_open = false
+    }
+}
+
+fn plat_ram_kb() -> int {
+    return footprint_kb()
+}
+
+// --- process memory -----------------------------------------------------------------
+//
+// The layouts below were read from the macOS SDK (`mach/task_info.h`) and from
+// glibc and musl via zig, on x86_64 and aarch64.
+
+#[os("macos")]
+#[c("task_self_trap")]
+fn c_task_self_trap() -> u32 {}
+
+#[os("macos")]
+#[c("task_info")]
+fn c_task_info(task: u32, flavor: i32, info: []i64, count: []u32) -> i32 {}
+
+#[os("linux")]
+#[c("getrusage")]
+fn c_getrusage(who: i32, usage: []i64) -> i32 {}
+
+/** *`TASK_VM_INFO`, and its count in `natural_t` units (372 bytes). */
+const TASK_VM_INFO: i32 = 22
+const TASK_VM_INFO_COUNT: u32 = 93
+
+/** *This task's port, as `mach_task_self()` (a macro over a global libc */
+/** *fills once from `task_self_trap`). Asked once: each trap adds a user */
+/** *reference to the send right. */
+let mut task_port: u32 = 0
+
+/** *The out-buffers the probe hands the kernel, made once and reused, so a */
+/** *sample per frame allocates nothing. */
+let mut vm_info_cell: []i64 = []i64 {}
+let mut vm_count_cell: []u32 = []u32 { 0 }
+let mut usage_cell: []i64 = []i64 {}
+
+/** *`phys_footprint` in KB (the number Xcode's memory gauge shows): the u64 */
+/** *at byte 144 of `struct task_vm_info`. */
+#[os("macos")]
+fn footprint_kb() -> int {
+    if task_port == 0 {
+        task_port = c_task_self_trap()
+    }
+    if vm_info_cell.len == 0 {
+        vm_info_cell = buf_i64(47)
+    }
+    // task_info writes the count it filled back; ask for the whole struct.
+    vm_count_cell[0] = TASK_VM_INFO_COUNT
+    if c_task_info(task_port, TASK_VM_INFO, vm_info_cell, vm_count_cell) != 0 {
+        return 0
+    }
+    return int(vm_info_cell[18] / i64(1024))
+}
+
+/** *The peak resident set in KB: `ru_maxrss`, the `long` at byte 32 of */
+/** *`struct rusage` (144 bytes in glibc, 272 in musl; the buffer fits both). */
+#[os("linux")]
+fn footprint_kb() -> int {
+    if usage_cell.len == 0 {
+        usage_cell = buf_i64(34)
+    }
+    if c_getrusage(0, usage_cell) != 0 {
+        return 0
+    }
+    return int(usage_cell[4])
+}
+
+#[os("ios", "android", "windows", "wasm", "other")]
+fn footprint_kb() -> int {
+    return 0
+}
+
+/** *`n` zeroed `i64` words for a C struct to be written into. */
+fn buf_i64(n: int) -> []i64 {
+    let mut words = []i64 {}
+    for i in 0..n {
+        words.push(i64(0))
+    }
+    return words
+}
+
+fn plat_fps() -> int {
+    return if window_open { int(c_get_fps()) } else { 0 }
+}
+
+fn plat_frame_ms() -> int {
+    return if window_open { int(c_get_frame_time() * f32(1000.0)) } else { 0 }
+}
+
+fn plat_screen_w() -> int {
+    return if window_open { int(c_get_screen_width()) } else { 0 }
+}
+
+fn plat_screen_h() -> int {
+    return if window_open { int(c_get_screen_height()) } else { 0 }
+}
+
+fn plat_set_style(control: int, prop: int, value: int) {
+    c_gui_set_style(i32(control), i32(prop), i32(value))
+}
+
+fn plat_load_style_default() {
+    c_gui_load_style_default()
+}
+
+// raygui is pure immediate mode: bounds in, state in and out, and the answer
+// is "was this activated". With no window there is no context to draw in, so
+// a control answers 0 and leaves its state as the caller passed it.
+
+fn plat_label(x: int, y: int, w: int, h: int, text: string) -> int {
+    return if window_open { int(c_gui_label(bounds(x, y, w, h), text)) } else { 0 }
+}
+
+fn plat_panel(x: int, y: int, w: int, h: int, text: string) -> int {
+    return if window_open { int(c_gui_panel(bounds(x, y, w, h), text)) } else { 0 }
+}
+
+fn plat_group_box(x: int, y: int, w: int, h: int, text: string) -> int {
+    return if window_open { int(c_gui_group_box(bounds(x, y, w, h), text)) } else { 0 }
+}
+
+fn plat_line(x: int, y: int, w: int, h: int, text: string) -> int {
+    return if window_open { int(c_gui_line(bounds(x, y, w, h), text)) } else { 0 }
+}
+
+fn plat_button(x: int, y: int, w: int, h: int, text: string) -> int {
+    return if window_open { int(c_gui_button(bounds(x, y, w, h), text)) } else { 0 }
+}
+
 /** *Toggle button. `active` is 1/0 in, 1/0 out. */
-fn plat_toggle(x: int, y: int, w: int, h: int, text: string, active: &mut int) -> int {}
+fn plat_toggle(x: int, y: int, w: int, h: int, text: string, active: &mut int) -> int {
+    if !window_open {
+        return 0
+    }
+    flag_cell[0] = *active != 0
+    let r = c_gui_toggle(bounds(x, y, w, h), text, flag_cell)
+    *active = if flag_cell[0] { 1 } else { 0 }
+    return int(r)
+}
+
 /** *Check box. `checked` is 1/0 in, 1/0 out. */
-fn plat_checkbox(x: int, y: int, w: int, h: int, text: string, checked: &mut int) -> int {}
+fn plat_checkbox(x: int, y: int, w: int, h: int, text: string, checked: &mut int) -> int {
+    if !window_open {
+        return 0
+    }
+    flag_cell[0] = *checked != 0
+    let r = c_gui_check_box(bounds(x, y, w, h), text, flag_cell)
+    *checked = if flag_cell[0] { 1 } else { 0 }
+    return int(r)
+}
+
 fn plat_slider(x: int, y: int, w: int, h: int, left: string, right: string,
-               value: &mut float, lo: float, hi: float) -> int {}
+               value: &mut float, lo: float, hi: float) -> int {
+    if !window_open {
+        return 0
+    }
+    float_cell[0] = f32(*value)
+    let r = c_gui_slider(bounds(x, y, w, h), left, right, float_cell, f32(lo), f32(hi))
+    *value = float(float_cell[0])
+    return int(r)
+}
+
 fn plat_progress(x: int, y: int, w: int, h: int, left: string, right: string,
-                 value: &mut float, lo: float, hi: float) -> int {}
+                 value: &mut float, lo: float, hi: float) -> int {
+    if !window_open {
+        return 0
+    }
+    float_cell[0] = f32(*value)
+    let r = c_gui_progress_bar(bounds(x, y, w, h), left, right, float_cell, f32(lo), f32(hi))
+    *value = float(float_cell[0])
+    return int(r)
+}
+
 fn plat_spinner(x: int, y: int, w: int, h: int, text: string, value: &mut int,
-                lo: int, hi: int, edit: int) -> int {}
+                lo: int, hi: int, edit: int) -> int {
+    if !window_open {
+        return 0
+    }
+    int_cell[0] = i32(*value)
+    let r = c_gui_spinner(bounds(x, y, w, h), text, int_cell, i32(lo), i32(hi), edit != 0)
+    *value = int(int_cell[0])
+    return int(r)
+}
+
 fn plat_value_box(x: int, y: int, w: int, h: int, text: string, value: &mut int,
-                  lo: int, hi: int, edit: int) -> int {}
+                  lo: int, hi: int, edit: int) -> int {
+    if !window_open {
+        return 0
+    }
+    int_cell[0] = i32(*value)
+    let r = c_gui_value_box(bounds(x, y, w, h), text, int_cell, i32(lo), i32(hi), edit != 0)
+    *value = int(int_cell[0])
+    return int(r)
+}
+
 /** *Dropdown. `active` is the selected index in, the new index out (-1 = none). */
-fn plat_combo(x: int, y: int, w: int, h: int, text: string, active: &mut int) -> int {}
+fn plat_combo(x: int, y: int, w: int, h: int, text: string, active: &mut int) -> int {
+    if !window_open {
+        return 0
+    }
+    int_cell[0] = i32(*active)
+    let r = c_gui_combo_box(bounds(x, y, w, h), text, int_cell)
+    *active = int(int_cell[0])
+    return int(r)
+}
+
 /** *List view. `text` items are separated by `;`. `scroll`/`active` are in/out. */
 fn plat_listview(x: int, y: int, w: int, h: int, text: string,
-                 scroll: &mut int, active: &mut int) -> int {}
+                 scroll: &mut int, active: &mut int) -> int {
+    if !window_open {
+        return 0
+    }
+    scroll_cell[0] = i32(*scroll)
+    int_cell[0] = i32(*active)
+    let r = c_gui_list_view(bounds(x, y, w, h), text, scroll_cell, int_cell)
+    *scroll = int(scroll_cell[0])
+    *active = int(int_cell[0])
+    return int(r)
+}
 
 // ── style property + control tokens (raygui.h) ────────────────────────────
 // Control ids (a subset; raygui `GuiControlProperty` values for `set_style`).

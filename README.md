@@ -127,8 +127,8 @@ Call imported items as `foo.bar(...)`.
 | `std:fmt` | Stdout. `fmt.println` is compile-time lowering to length-based writes, not `printf`. |
 | `zeus` | UI toolkit + design system in one module: one `Node` tree, signals, `Box` / `Text` / `Button` / `App`, themed chrome (`Card`, `Button` with `Look` / `Size`, `Dialog`, `Tabs`, `Navbar`, charts, `DatePicker`). Same source on Cocoa, iOS, Android, and wasm Canvas2D (no HTML DOM). |
 | `http` | Unary RPC over gRPC-Web (HTTP/1.1) and h2c. `#[proto]` structs, no REST routes. |
-| `maya` | Tiny 3D/2D engine. Scene and tracer in Loam; C is the event loop and present. |
-| `raygui` | Immediate-mode GUI: [raygui](https://github.com/raysan5/raygui) controls on [raylib](https://www.raylib.com). No retained tree; the frame loop lives in Loam. Host seam: `raygui_plat.c`; RAM probe included. |
+| `maya` | Tiny 3D/2D engine. Scene, tracer and draw order in Loam; the package's own Cocoa host (`hosts/mac.m`) is the event loop and draw primitives. |
+| `raygui` | Immediate-mode GUI: [raygui](https://github.com/raysan5/raygui) controls on [raylib](https://www.raylib.com). No retained tree; the frame loop, window state and RAM probe are Loam over `#[c]` bindings to raylib and raygui, with no C shim. |
 | `std:thread` | Detached OS threads for CPU-bound work, plus Send-disciplined `channel<T>` between workers and the UI loop. `spawn` callbacks must be Send (plain data) and are checked to never touch module state or the C seam. Native/iOS/Android; wasm `spawn` is a no-op. |
 | `std:net` | TCP connect / listen / read / write. Used by `http`; not an app-level import. |
 | `std:sys` | `env_set` / `exit`. Language-level seam into `loam_rt`. |
@@ -303,9 +303,9 @@ nob.loam               the build and test tool (run as `bin/nob`; `nob.sh` forwa
 zeus/                  the framework
   hosts/               desktop/ Cocoa, ios/ UIKit, android/ JNI, web/ Canvas2D
   docs/                spec.md = zeus backends and paint model
-raygui/                immediate-mode GUI package (raygui)
-  std/raygui.loam      the Loam API + frame loop
-  vendor/raygui.h      vendored raygui (raysan5/raygui)
+packages/raygui/       immediate-mode GUI package (raygui)
+  src/raygui.loam      the Loam API, frame loop and raylib/raygui bindings
+  src/vendor/raygui.h  vendored raygui (raysan5/raygui), compiled as itself
 packages/tooling/tree-sitter-loam/  grammar
 packages/tooling/editors/       Zed extension, VSCode extension
 install.sh             one-time macOS setup (core tools; android stack)

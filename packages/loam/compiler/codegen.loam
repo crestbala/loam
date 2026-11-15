@@ -2,8 +2,8 @@
 // of the C compiler's codegen_c.c, which it matched byte for byte.
 //
 // Layout of the generated file:
-//   1. loam_rt.h pasted in, then zeus_rt.h / net_rt.h / maya_rt.h /
-//      raygui_rt.h when those modules are loaded
+//   1. loam_rt.h pasted in, then zeus_rt.h / net_rt.h when those modules
+//      are loaded
 //   2. struct typedefs, then definitions in by-value dependency order
 //   3. element hook and ownership helper prototypes, globals, prototypes,
 //      closure envs, `#[c]` bindings, fn-value trampolines
@@ -3741,12 +3741,6 @@ fn emit_c() {
     if mods_use("net") {
         w("#include \"net_rt.h\"\n")
     }
-    if mods_use("maya") {
-        w("#include \"maya_rt.h\"\n")
-    }
-    if mods_use("raygui") {
-        w("#include \"raygui_rt.h\"\n")
-    }
     wc('\n')
     flush()
 
@@ -3786,10 +3780,7 @@ fn emit_c() {
             if ast.NODES[d].kind != Kind.Struct {
                 continue
             }
-            // Handle types live in the runtime headers.
-            if mod_name == "maya" {
-                continue
-            }
+            // Zeus's handle types live in its runtime header.
             if zeus_handle_mod(mod_name) && is_handle_struct(d) {
                 continue
             }

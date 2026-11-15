@@ -1,12 +1,30 @@
-/* maya_mac.m — Cocoa 2D present for Maya (no Metal).
+/* mac.m — Cocoa 2D present for Maya (no Metal).
  *
- * Host only: window, input, vsync. Scene/tracer/map are Loam engine_*.
- * 2D map draws discs and orbit rings. 3D blits the CPU RGBA buffer.
+ * Host only: the window, input, vsync and Cocoa drawing. The scene, tracer,
+ * map and what each frame draws are Loam (`maya.loam`, `mayacore/`). The
+ * boundary is the plain C ABI both ways, with no Loam type in this file:
+ * the host calls the int-only `engine_*` exports below, and Loam calls the
+ * `maya_mac_*` primitives at the bottom (bound as `#[os("macos")] #[c]` fns,
+ * so this file is a `#![c_source]` of `maya.loam`, built on macOS only).
+ * Text arrives as a NUL-terminated `const char *` and the frame as RGBA
+ * bytes, each valid for the call.
  */
 #import <Cocoa/Cocoa.h>
-#include "maya_rt.h"
+#include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
+
+/* The Loam exports this host calls (`maya.loam`). */
+int32_t loam_maya_engine_is_map(void);
+void loam_maya_engine_set_viewport(int32_t w, int32_t h);
+void loam_maya_engine_fixed_update(int32_t dt_ms);
+void loam_maya_engine_frame(void);
+void loam_maya_engine_present(void);
+void loam_maya_engine_input_key(int32_t key);
+void loam_maya_engine_cam_orbit(int32_t dx, int32_t dy);
+void loam_maya_engine_cam_zoom(int32_t dy100);
+void loam_maya_engine_cam_pan(int32_t dx, int32_t dy);
+void loam_maya_engine_note_present(int32_t dt_ms);
 
 #define MAYA_DT (1.0 / 60.0)
 
@@ -18,10 +36,12 @@ static int g_inited_time;
 static NSPoint g_mouse;
 static int g_have_mouse;
 
-static NSString *ys(loam_str s) {
-    if (!s.ptr || s.len <= 0) return @"";
-    return [[NSString alloc] initWithBytes:s.ptr length:(NSUInteger)s.len
-                                  encoding:NSUTF8StringEncoding];
+/* The view being drawn: what the primitives below fill. */
+static NSRect g_bounds;
+
+static NSString *ys(const char *s) {
+    if (!s || !s[0]) return @"";
+    return [NSString stringWithUTF8String:s] ?: @"";
 }
 
 static NSColor *rgb_a(uint8_t r, uint8_t g, uint8_t b, CGFloat a) {
@@ -80,70 +100,59 @@ static void draw_stars(NSRect bounds) {
     }
 }
 
-static void draw_hud(void) {
-    loam_str hud = loam_maya_engine_hud();
-    if (hud.len > 0 && hud.ptr) {
-        NSString *str = ys(hud);
-        [str drawAtPoint:NSMakePoint(14.0, 12.0) withAttributes:hud_attrs()];
-    }
+/* --- primitives Loam draws a frame with (`maya.engine_present`) --------- */
+
+/* The map's background: near-black space and a fixed star field. */
+void maya_mac_stars(void) {
+    draw_stars(g_bounds);
 }
 
-static void draw_map(NSRect bounds) {
-    int i, n;
-    CGFloat cx = 0, cy = 0;
-
-    draw_stars(bounds);
-    n = (int)loam_maya_engine_sprite_count();
-    for (i = 0; i < n; i++) {
-        if (loam_maya_engine_sprite_is_sun(i)) {
-            cx = (CGFloat)loam_maya_engine_sprite_x(i);
-            cy = (CGFloat)loam_maya_engine_sprite_y(i);
-            break;
-        }
-    }
-    for (i = 0; i < n; i++) {
-        CGFloat orbit = (CGFloat)loam_maya_engine_sprite_orbit_r(i);
-        if (orbit > 1.0)
-            stroke_oval(cx, cy, orbit, rgb_a(107, 117, 158, 0.55), 1.15);
-    }
-    for (i = 0; i < n; i++) {
-        int64_t rgb = loam_maya_engine_sprite_rgb(i);
-        uint8_t cr = (uint8_t)((rgb / 65536) % 256);
-        uint8_t cg = (uint8_t)((rgb / 256) % 256);
-        uint8_t cb = (uint8_t)(rgb % 256);
-        CGFloat x = (CGFloat)loam_maya_engine_sprite_x(i);
-        CGFloat y = (CGFloat)loam_maya_engine_sprite_y(i);
-        CGFloat r = (CGFloat)loam_maya_engine_sprite_r(i);
-        NSColor *c = rgb_a(cr, cg, cb, 1.0);
-        if (loam_maya_engine_sprite_is_sun(i))
-            fill_oval(x, y, r * 2.4f, rgb_a(cr, cg, cb, 0.20));
-        fill_oval(x, y, r, c);
-        loam_str nm = loam_maya_engine_sprite_name(i);
-        if (nm.len > 0 && nm.ptr) {
-            NSString *str = ys(nm);
-            NSSize sz = [str sizeWithAttributes:name_attrs()];
-            [str drawAtPoint:NSMakePoint(x + r + 5.0, y - sz.height * 0.55)
-              withAttributes:name_attrs()];
-        }
-    }
-    draw_hud();
+/* The 3D view's background before the first traced frame. */
+void maya_mac_clear(void) {
+    [[NSColor colorWithCalibratedRed:0.012 green:0.008 blue:0.035 alpha:1] setFill];
+    NSRectFill(g_bounds);
 }
 
-static void draw_cpu(NSRect bounds) {
-    int w = 0, h = 0;
-    const uint8_t *fb = maya_cpu_fb(&w, &h);
+/* An orbit ring of radius `r` around (cx, cy). */
+void maya_mac_ring(int32_t cx, int32_t cy, int32_t r) {
+    stroke_oval((CGFloat)cx, (CGFloat)cy, (CGFloat)r, rgb_a(107, 117, 158, 0.55), 1.15);
+}
+
+/* A body's disc in 0xRRGGBB; `glow` adds the sun's halo under it. */
+void maya_mac_disc(int32_t x, int32_t y, int32_t r, int32_t rgb, int32_t glow) {
+    uint8_t cr = (uint8_t)((rgb >> 16) & 255);
+    uint8_t cg = (uint8_t)((rgb >> 8) & 255);
+    uint8_t cb = (uint8_t)(rgb & 255);
+    if (glow) fill_oval((CGFloat)x, (CGFloat)y, (CGFloat)r * 2.4f, rgb_a(cr, cg, cb, 0.20));
+    fill_oval((CGFloat)x, (CGFloat)y, (CGFloat)r, rgb_a(cr, cg, cb, 1.0));
+}
+
+/* A body's name, right of its disc of radius `r` at (x, y). */
+void maya_mac_label(const char *text, int32_t x, int32_t y, int32_t r) {
+    NSString *str = ys(text);
+    NSSize sz;
+    if (str.length == 0) return;
+    sz = [str sizeWithAttributes:name_attrs()];
+    [str drawAtPoint:NSMakePoint((CGFloat)x + (CGFloat)r + 5.0, (CGFloat)y - sz.height * 0.55)
+      withAttributes:name_attrs()];
+}
+
+/* The HUD line, top left. */
+void maya_mac_hud(const char *text) {
+    NSString *str = ys(text);
+    if (str.length == 0) return;
+    [str drawAtPoint:NSMakePoint(14.0, 12.0) withAttributes:hud_attrs()];
+}
+
+/* The traced frame, `w` x `h` RGBA bytes, scaled to the view. */
+void maya_mac_blit(const uint8_t *rgba, int32_t w, int32_t h) {
     CGColorSpaceRef cs;
     CGDataProviderRef prov;
     CGImageRef img;
-
-    if (!fb || w < 1 || h < 1) {
-        [[NSColor colorWithCalibratedRed:0.012 green:0.008 blue:0.035 alpha:1] setFill];
-        NSRectFill(bounds);
-        return;
-    }
+    NSRect bounds = g_bounds;
+    if (!rgba || w < 1 || h < 1) return;
     cs = CGColorSpaceCreateDeviceRGB();
-    prov = CGDataProviderCreateWithData(NULL, (const void *)fb,
-                                        (size_t)w * (size_t)h * 4, NULL);
+    prov = CGDataProviderCreateWithData(NULL, (const void *)rgba, (size_t)w * (size_t)h * 4, NULL);
     img = CGImageCreate((size_t)w, (size_t)h, 8, 32, (size_t)w * 4, cs,
                         kCGImageAlphaNoneSkipLast | kCGBitmapByteOrder32Big,
                         prov, NULL, false, kCGRenderingIntentDefault);
@@ -152,14 +161,12 @@ static void draw_cpu(NSRect bounds) {
         CGContextSaveGState(ctx);
         CGContextTranslateCTM(ctx, 0, bounds.size.height);
         CGContextScaleCTM(ctx, 1, -1);
-        CGContextDrawImage(ctx, CGRectMake(0, 0, bounds.size.width, bounds.size.height),
-                           img);
+        CGContextDrawImage(ctx, CGRectMake(0, 0, bounds.size.width, bounds.size.height), img);
         CGContextRestoreGState(ctx);
         CGImageRelease(img);
     }
     CGDataProviderRelease(prov);
     CGColorSpaceRelease(cs);
-    draw_hud();
 }
 
 static void tick_view(NSView *view) {
@@ -212,10 +219,8 @@ static void tick_view(NSView *view) {
     (void)dirty;
     @autoreleasepool {
         tick_view(self);
-        if (loam_maya_engine_is_map())
-            draw_map(self.bounds);
-        else
-            draw_cpu(self.bounds);
+        g_bounds = self.bounds;
+        loam_maya_engine_present();
     }
 }
 
@@ -306,7 +311,7 @@ static void tick_view(NSView *view) {
 }
 @end
 
-void loam_maya_plat_window(loam_str title, int64_t w, int64_t h) {
+void maya_mac_window(const char *title, int32_t w, int32_t h) {
     NSRect rect;
     MayaView *v;
     int wi = (int)w, hi = (int)h;
@@ -321,7 +326,7 @@ void loam_maya_plat_window(loam_str title, int64_t w, int64_t h) {
                              NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable)
                     backing:NSBackingStoreBuffered
                       defer:NO];
-    [g_win setTitle:title.len > 0 ? ys(title) : @"Maya"];
+    [g_win setTitle:title && title[0] ? [NSString stringWithUTF8String:title] : @"Maya"];
     v = [[MayaView alloc] initWithFrame:rect];
     v.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     g_view = v;
@@ -340,6 +345,6 @@ void loam_maya_plat_window(loam_str title, int64_t w, int64_t h) {
     [[NSRunLoop mainRunLoop] addTimer:g_timer forMode:NSRunLoopCommonModes];
 }
 
-void loam_maya_plat_run(void) {
+void maya_mac_run(void) {
     [NSApp run];
 }
