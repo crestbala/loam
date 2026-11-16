@@ -1,6 +1,5 @@
 // ABI trampolines, with no logic: crypto_argon2 takes structs by value, which
-// `#[c]` does not pass, and the OS entropy call differs per platform. See
-// docs/boundary.md.
+// `#[c]` does not pass, and the OS entropy call differs per platform.
 #ifdef _WIN32
 #define _CRT_RAND_S /* before any CRT header: declares rand_s */
 #include <stdlib.h>

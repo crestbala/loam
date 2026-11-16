@@ -1,8 +1,8 @@
 // `math` — elementary functions for `f64`.
 //
-// Loam has no math library and no libm seam: `docs/boundary.md` reserves C for
+// Loam has no math library and no libm seam: C is reserved for
 // platform bindings, and a per-library `*_rt.c` for arithmetic is the thing
-// that document rejects. Everything here is ordinary Loam, which also makes it
+// the C seam rejects. Everything here is ordinary Loam, which also makes it
 // deterministic on every target instead of inheriting the host libm's
 // last-bit behavior.
 //

@@ -1,4 +1,4 @@
-// Phase 0 reference screen (`docs/mem-baseline.md`). It exercises every
+// Phase 0 reference screen. It exercises every
 // element the visual baseline must cover: body text at 11/13/17 px, a 1px
 // border, a rounded card with a drop shadow, a vertical gradient, and an
 // image drawn smaller than a source would be.

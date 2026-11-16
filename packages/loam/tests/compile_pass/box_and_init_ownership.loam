@@ -1,4 +1,4 @@
-// Ownership in generated code (docs/box-and-init-ownership.md).
+// Ownership in generated code.
 // `Box` owns its value: built from a temporary, a named local, a vec or a
 // recursive list, the box keeps its own references and releases them when it
 // drops. A module `let` initializer drops its temporaries, so a reassigned

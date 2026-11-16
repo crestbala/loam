@@ -1,6 +1,6 @@
 # The runtime and packages in Loam
 
-Moved out of [self-hosting-loam.md](self-hosting-loam.md) (§6) on
+Moved out of the self-hosting plan on
 2026-11-12. **This is not part of the 100% self-hosting claim.** The
 compiler and every tool are Loam already; the runtime they link (and every
 program links) is the C this plan moves. It starts after self-hosting is
@@ -81,7 +81,7 @@ Counted on 2026-11-11 (`wc -l`, comments included):
   hooks. These are the primitives safe Loam is built *from*. Checked integer
   ops and the panic path have left this header (R6.1, R6.2). R6.3 measured
   both ways the rest could leave and chose codegen emission, per type, not
-  a `std:core` module. `unsafe` ([unsafe.md](unsafe.md)) is the C ABI. It
+  a `std:core` module. `unsafe` is the C ABI. It
   is not how these helpers move. Vec push and vec pop have left this header
   (R6.4): codegen emits each variant a program calls. Allocation, the
   refcount word, reserve, copy-on-write and drop stay here. The file stays
@@ -138,7 +138,7 @@ safely today:
   core, and the core gets a line-count budget.
 - **`unsafe`, for the C ABI.** Landed 2026-11-16. One word, like `async`,
   on a top-level fn or a block. The operations are `raw_addr`, `raw_read`,
-  and `raw_write` ([unsafe.md](unsafe.md)): the address of a string or a
+  and `raw_write`: the address of a string or a
   number buffer, and a `memcpy` of one number, bool, or plain struct.
   Offset is ordinary `i64` arithmetic. No pointer type in safe code, no
   unchecked index, no inline C. An address-to-handle conversion was not
@@ -470,7 +470,7 @@ straight to libc, so no C shim.
       change was needed: raw libc symbols already link with no `#![c_source]`
       (proven by `compile_pass/c_ffi`'s `memcpy` / `floor` / `strlen` and by
       `std:batch`'s nine bindings since R1.2); the blockers were convention,
-      now written in `boundary.md` (bindings are module-private, so each sits
+      now written down (bindings are module-private, so each sits
       beside a safe wrapper; per-OS shape is `#[os]` variants; Windows keeps
       a hook behind a wrapper until R2.6). First production binding:
       `sys.stdout_tty` is Loam over `#[os]` variants — posix `#[c("isatty")]`,
@@ -583,8 +583,7 @@ straight to libc, so no C shim.
       (58 in the macOS SDK, 84 in glibc and musl, read from the headers via
       zig), Windows parses `NUMBER_OF_PROCESSORS` as `strtol` did, and wasm /
       iOS / Android answer `1`. An unknown Unix (`other`) now answers `1`
-      too: its constant differs per BSD and no BSD is a supported target
-      (docs/platforms.md). R2.3a's names were corrected here before anything
+      too: its constant differs per BSD and no BSD is a supported target. R2.3a's names were corrected here before anything
       used them: as in Rust, `linux` is Linux only, `android` separate, and
       `other` (any other Unix) is nameable; naming both `linux` and
       `android` still emits plain `__linux__`. Two-stage bootstrap (compiler
@@ -1044,8 +1043,8 @@ done, so every R3 step is checked by `thread_tsan`).
       iOS, Android, X11 and web hosts call `loam_zeus_engine_*` themselves
       (the web exports went through two C layers before). `zeus_paint` stays:
       it binds the host's draw table and context, which is platform state,
-      not a forward. The contract is written once in `zeus_rt.h`,
-      `boundary.md` and `host-contract.md`: a `loam_str` argument is borrowed
+      not a forward. The contract is written once in `zeus_rt.h`
+      and `host-contract.md`: a `loam_str` argument is borrowed
       for the call (a host passes `(loam_str){ptr, len, 0}` over its own
       buffer, `za_str` on Apple), the engine copies what it keeps, and a
       returned `loam_str` is the host's to release. A host with a float `dt`

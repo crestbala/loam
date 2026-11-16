@@ -840,7 +840,7 @@ static void mac_link_arm(void) {
    something is animating — which would make `bench/own_buffer.sh` depend on a
    human moving the mouse, and let the two display paths be measured at different
    workloads. `ZEUS_FRAME_BENCH=1` keeps frames coming. Off by default; it exists
-   so the numbers in docs/mem-baseline.md can be re-derived. */
+   so the memory numbers can be re-derived. */
 static int frame_bench_on(void) {
     static int v = -1;
     if (v < 0) v = env_truthy("ZEUS_FRAME_BENCH");

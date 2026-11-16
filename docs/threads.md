@@ -1,6 +1,6 @@
 # Threads: what exists and what to add
 
-Moved out of [self-hosting-loam.md](self-hosting-loam.md) (§5.1) on
+Moved out of the self-hosting plan on
 2026-11-12. **This is not part of the 100% self-hosting claim.** The
 compiler is single-threaded and needs nothing here; it is checked after the
 claim. Related plans: [security.md](security.md) (S9 relies on T4) and

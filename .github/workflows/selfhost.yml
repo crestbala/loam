@@ -1,4 +1,4 @@
-# Self-hosting platform check (docs/self-hosting-loam.md §1.6, §3): the suite on
+# Self-hosting platform check: the suite on
 # Linux x86_64 and aarch64, and the non-GUI fixtures built and *run* natively on
 # Windows x86_64.
 #
@@ -15,7 +15,7 @@
 # driver (tools/win-selfhost.sh). The same-c job then checks that Windows
 # emitted the same C as Linux for the compiler and every fixture. Linux checks
 # the seed and the fixed point (`selfhost_seed`) in the selfhost job, on
-# x86_64 and aarch64. See docs/platforms.md.
+# x86_64 and aarch64.
 
 name: selfhost
 

@@ -209,7 +209,7 @@ __attribute__((noinline, noreturn, cold)) static void loam_trap(const char *msg)
    program defines it (`codegen_c.c` emits `#define LOAM_RT_DEFINE_ALLOC` beside
    the trap state). It used to be defined inside `zeus_plat.c` while this header
    declared it `extern` — the language runtime's accounting depending on a Zeus
-   translation unit, which is the one inversion docs/boundary.md forbids. */
+   translation unit, an inversion the C seam forbids. */
 #ifdef LOAM_ALLOC_TRACE
 #ifdef LOAM_RT_DEFINE_ALLOC
 int64_t loam_alloc_count = 0;

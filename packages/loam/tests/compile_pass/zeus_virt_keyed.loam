@@ -1,6 +1,6 @@
 // Phase 2: keyed windowed rows. A scroll must MOVE the rows whose key stays in
 // the window and build only the rows entering it, so a scroll allocates O(rows
-// entering), not O(window) per frame — the `docs/mem-baseline.md` §5.1 growth.
+// entering), not O(window) per frame — the per-scroll growth.
 // `zeus.proof_allocs()` is the runtime allocation counter.
 
 import "std:fmt"

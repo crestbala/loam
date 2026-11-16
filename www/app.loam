@@ -3,7 +3,7 @@
 // `zeli routes` generates app_routes.loam from routes/. This file mounts it.
 // The app itself has no server import, no filesystem, and no working
 // directory. Analytics post to `/api/track`, on the server in `server/`, which is
-// not deployed yet: see docs/site-analytics.md before publishing.
+// not deployed yet.
 
 import "zeus"
 import "zeus:analytics"

@@ -136,7 +136,7 @@ the next thing worth fixing if `Map` should own them.
 than the C ABI. This is the right design — it is how `LOAM_HOST_BUILD` and the
 `engine_*` table already work here — and it compiled. It was reverted because it
 had grown to a new codegen branch, a naming convention, and per-kind forwarders
-in `zeusbase`, all unverified at once. `docs/boundary.md` says C should own only
+in `zeusbase`, all unverified at once. The C seam rule says C should own only
 a host loop or an ABI trampoline; this is the change that enforces it, and it
 should be done as its own verified pass.
 

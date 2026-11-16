@@ -5,7 +5,7 @@
  *   gi_sys_mmap() / gi_sys_munmap()   POSIX zero-copy file mapping
  *
  * Plus the smallest possible trampolines to let Loam use them safely
- * (docs/boundary.md). Loam is memory-safe and has no raw pointers, so a map
+ * Loam is memory-safe and has no raw pointers, so a map
  * is an opaque int handle into the registry below; every entry re-validates
  * its handle and row bounds against the 64-byte on-disk header before
  * touching the mapping. ALL policy lives in Loam (engine.loam): capacity

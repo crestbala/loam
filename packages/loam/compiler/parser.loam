@@ -2491,7 +2491,7 @@ fn parse_program(p: &mut Parser) -> int {
             continue
         }
         // `unsafe fn`: may do raw memory operations and call unsafe fns; its
-        // callers must be unsafe too (docs/unsafe.md).
+        // callers must be unsafe too.
         let is_unsafe = p.peek.kind == Tok.Fn && cur_is_word(p, "unsafe")
         if is_unsafe {
             bump(p)

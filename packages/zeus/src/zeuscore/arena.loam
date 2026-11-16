@@ -326,7 +326,7 @@ let mut anim_signal_writes: int = 0
 let mut anim_assert: int = 1
 
 // --- Phase 0 memory instrumentation ---------------------------------------
-// See `docs/mem-baseline.md`. These counters only observe: no allocation or
+// These counters only observe: no allocation or
 // layout decision reads them, and with `ZEUS_MEM_STATS` off `mem_sample()` is
 // never called, so a normal frame does no extra work. `mem_sample()` is invoked
 // at the end of every layout while stats are on, which is what makes the
@@ -5017,8 +5017,8 @@ fn mem_sample() {
 }
 
 /** *Print the arena side of the Phase 0 report. The caller prints the draw list */
-/** *and the host footprint. One line per bucket so `docs/mem-baseline.md` can */
-/** *quote it verbatim. */
+/** *and the host footprint. One line per bucket so the */
+/** *report can be quoted verbatim. */
 fn mem_report() {
     fmt.println(
         "ZEUS_MEM live_nodes=",

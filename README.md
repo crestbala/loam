@@ -19,7 +19,7 @@ fn main() {
 ./hello
 ```
 
-Language: [docs/loam.md](docs/loam.md). C vs Loam: [docs/boundary.md](docs/boundary.md).
+Language: [docs/loam.md](docs/loam.md).
 Zeus backends and specifications: [packages/zeus/docs/spec.md](packages/zeus/docs/spec.md).
 Browsable docs: `./run.sh www` — Zeus UI at http://127.0.0.1:5175, `Docs.Page` on `:8082`.
 
@@ -314,8 +314,8 @@ install.sh             one-time macOS setup (core tools; android stack)
 examples/language/     standalone .loam programs
 examples/zeus/         gallery (component catalog), dashboard, full-stack counter
 www/                   language site (zeli, wasm web target)
-docs/                  loam.md (language + architecture), boundary.md (C seam),
-                       downsides.md (self-improvement phases)
+docs/                  loam.md (language + architecture), runtime, threads,
+                       security, wasm splitting, Zeus design
 bin/loamc              compiler
 bin/loam-lsp           diagnostics, hover, go-to-def, completion, semantic tokens
 ```

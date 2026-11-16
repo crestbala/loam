@@ -2735,7 +2735,7 @@ fn ig_android_project() {
     ok("android project ({{files.len}} files, the program as app.c)")
 }
 
-/** *Ownership in generated code (docs/box-and-init-ownership.md): the */
+/** *Ownership in generated code: the */
 /** *`box_and_init_ownership` fixture built with ASan must print its expected */
 /** *output with no report (leak checking on too, on Linux), and on macOS a */
 /** *plain build must show 0 leaks under `leaks --atExit`. */
@@ -3640,7 +3640,7 @@ fn clean() -> int {
 // Every program `loamc` accepts is built with ASan and run: an ASan report
 // means the checker let unsafe code through. Kept out of `nob test`.
 // `LOAM_FUZZ_LOAMC` picks the compiler under test (default bin/loamc);
-// `FUZZ_SEED` the first seed. See docs/reference-escape.md, phase 7.
+// `FUZZ_SEED` the first seed.
 //
 // The backend drops values at function exit, so a reference outliving an
 // inner block is invisible at run time; what ASan sees is a list buffer

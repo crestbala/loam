@@ -18,8 +18,7 @@ the tree as it exists, not against an assumed tree.
 ## 1. What the repo provides, and what it does not
 
 Verified by reading `packages/loam/std/`, `packages/zeus/src/`,
-`packages/http/src/`, `docs/loam.md`, `docs/boundary.md`,
-`docs/numeric-widths.md`, and `examples/zeus/myapp/`.
+`packages/http/src/`, `docs/loam.md`, and `examples/zeus/myapp/`.
 
 ### Present
 
@@ -65,7 +64,7 @@ docs:
 
 ### The exact widths that matter
 
-`int` is `i32`, `float` is `f32`. From `docs/numeric-widths.md` and a probe
+`int` is `i32`, `float` is `f32`. From a probe
 program compiled against this tree:
 
 - `f64` is a real, usable type: a fn with an `f64` parameter takes an untyped
@@ -159,7 +158,7 @@ and calendar code and now live in the language std:
   by `loam test examples/zeus/dracula/app.loam`.
 
 Both std modules are implemented in Loam rather than via a C seam because
-`docs/boundary.md` reserves C for platform bindings, and a pure-Loam
+C is reserved for platform bindings, and a pure-Loam
 implementation is deterministic across every target. `docs/loam.md` was already
 listing a `math` module among `packages/loam/std/` that did not exist; that
 listing is now true, and `date` joins it.
