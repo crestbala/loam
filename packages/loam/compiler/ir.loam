@@ -87,6 +87,9 @@ const I_BORROWED: int = 4
 const I_MOVED: int = 8
 // Unary `-` that `ranges` proved cannot overflow: emitted plain.
 const I_NO_TRAP: int = 16
+// Call of a numeric builtin (`wrapping_add`, `saturating_mul`, ...), whose
+// helper codegen defines.
+const I_NUMERIC_BUILTIN: int = 32
 
 /** *One instruction. `dst`, `a`, `b` are locals (`NONE` when unused). */
 struct Inst {
@@ -1304,6 +1307,7 @@ fn lower_call(n: int) -> int {
         SCRATCH[i].dst = dst
         set_args(i, args)
         SCRATCH[i].ty = ir_subst(nty)
+        SCRATCH[i].bits = I_NUMERIC_BUILTIN
         set_text(i, types.numeric_builtin_cname(numb, nty))
         return dst
     }
