@@ -67,6 +67,14 @@ fn c_floor(x: f64) -> f64 {}
 #[c("c_ffi_missing")]
 fn missing() {}
 
+/** *A binding's own library, linked because the binding is kept. */
+#[c("ceil", "link -lm")]
+fn c_ceil(x: f64) -> f64 {}
+
+/** *Never called: its library does not exist, and is never linked. */
+#[c("c_ffi_missing_lib", "link -lloam_no_such_library")]
+fn missing_lib() {}
+
 /** *C's `CFfiRect`: four `float`s, passed by value. */
 struct Rect {
     x: f32,
@@ -204,6 +212,7 @@ fn main() {
     expect(quarter(float(1)) == 0.25, "f32")
     expect(even(4) && !even(3), "bool")
     expect(c_floor(2.5) == 2.0, "c_link")
+    expect(c_ceil(2.5) == 3.0, "a binding's link libraries")
     expect(str_copy("four") == 4, "name shared with the runtime")
 
     let bytes = []u8 { 1, 0, 255 }

@@ -183,6 +183,7 @@ safely today:
   | d. Variadic bindings (numbers and strings only): `#[c("fcntl", "variadic after 2")]`. **Done with R5.1.** | wrappers over `open` / `fcntl` / `ioctl` and the arm64 Apple variadic ABI trap |
   | e. Env-less fn pointers: a `#[c]` parameter of a fn type of numbers and bools takes a named module-level fn, passed as its own C symbol. **Done with R5.2.** | callback shims (`qsort`-style, run loops, library callbacks) |
   | e2. Borrowed buffers: a `#[c]` parameter may be `&[]T` or `&mut []T` of numbers and bools. The wrapper passes the element pointer and does not retain or drop. **Done** (after R5.2). | no runtime C. The cost was a retain and a drop on every binding call that passed a module buffer |
+  | e3. Binding libraries: `#[c("SSL_new", "link -lssl -lcrypto")]` (or `-framework NAME`), linked only when a kept binding that builds here names them. **Done with R5.3.** | the always-on Security and CoreFoundation link of every `std:net` program; a module-wide `#![c_link]` would have made every TCP program on Linux link libssl |
   | f. Typed `objc_msgSend` bindings and selectors (`std:objc`) | the Cocoa and UIKit hosts (`mac.m`, `ios.m`, maya's `hosts/mac.m`; R7) |
 
 ## 5. Order and gates
@@ -1357,9 +1358,126 @@ done, so every R3 step is checked by `thread_tsan`).
       growth 0). `wasm_smoke`, `wasm_trap`, `lsp`, `c_layouts`;
       `cross-check.sh` Linux and Windows 125/125 on both CPUs. A wasm32
       build of `zeus_async_rpc.loam` links.
-- [ ] R5.3 TLS on Linux (OpenSSL bindings: needs per-target link flags,
-      §4 c, and a Linux machine to run on) and on Windows (after a Winsock
-      port; TCP answers `-1` there today).
+- [x] R5.3 TLS on Linux: OpenSSL as `#[c]` bindings. Done 2026-11-16.
+
+      **Compiler: binding libraries (§4 e3).** Per-target link flags did not
+      need §4 c. A binding names its libraries:
+      `#[c("SSL_new", "link -lssl -lcrypto")]`. The driver links them only
+      when a kept binding that builds here names them, each once, in
+      declaration order. Only `-lNAME` and `-framework NAME` are accepted
+      (`compile_fail/c_attr_link_flag`). A module-wide `#![c_link]` could
+      not do this, because it applies whenever any binding of the module is
+      kept, and `std:net` cannot be split in two (imports cannot be
+      cyclic). The libraries ride in the Fn node's unused `cbuiltin` slot,
+      so no node grows. The SecureTransport bindings now name Security and
+      CoreFoundation too. The driver's fixed `-framework Security
+      -framework CoreFoundation` for every `net` and headless Zeus build is
+      gone, so a macOS program that uses TCP but never TLS links only
+      libSystem. That cuts start-up from 3.5 to 2.5 ms a run (200 runs,
+      fork and exec included).
+
+      **One TLS layer, two backends.** The slot table, the `getaddrinfo`
+      walk, the blocking handshake with its three-idle-polls rule, the
+      non-blocking state machine, and blocking and non-blocking write, read
+      and close are now shared by Apple and Linux. Each backend gives seven
+      ops over its opaque context: `tls_new`, `tls_shake`, `tls_put`,
+      `tls_get`, `tls_buffered`, `tls_end` and `tls_free`. On Linux:
+      - One process-wide `SSL_CTX` (`TLS_client_method`), with
+        `SSL_VERIFY_PEER` against the default CA paths, a TLS 1.2 floor, and
+        partial and moving writes (the contract `SSLWrite` gave the shared
+        layer).
+      - Per connection, an `SSL` with SNI (`SSL_ctrl` code 55, which is what
+        the `SSL_set_tlsext_host_name` macro expands to) and
+        `SSL_set1_host`.
+      - A BIO whose read, write and ctrl are Loam callbacks (§4 e), so every
+        `send` carries `MSG_NOSIGNAL`. `SSL_set_fd` would `write()` and
+        raise `SIGPIPE` on a reset peer.
+      - `ERR_clear_error` before each call, so `SSL_get_error` reads only
+        that call's error.
+
+      The `addrinfo` walk reads `ai_addr` at word 3 on Linux and word 4 on
+      Apple, where `ai_canonname` comes first. `SO_SNDTIMEO` is per OS.
+
+      **TLS only when used.** The TCP calls reach a TLS handle through four
+      fn-value hooks (send, read, info, close). They answer as for a closed
+      handle until the first TLS connect installs the client. With direct
+      calls, `tcp_close` / `tcp_read` / `tcp_poll` kept every TLS binding,
+      so every TCP program on Linux would have linked libssl. The hooks also
+      merge the six Apple+Linux / Android+other TCP variants into one POSIX
+      variant each.
+
+      **Bug fixed on the way.** `tcp_poll` (readable) on a TLS handle now
+      answers 1 when the TLS layer holds decrypted bytes (`SSL_pending`,
+      `SSLGetBufferedReadSize`). The socket alone cannot show those bytes,
+      so a poll could wait out its timeout with data ready. HEAD had this on
+      macOS too.
+
+      **Layouts and links.** `c_layouts` gains Linux `addrinfo` and
+      `SO_SNDTIMEO`, and, when OpenSSL's headers are found (the system's or
+      Homebrew's), every `SSL_ctrl`, mode, error and BIO code, the three
+      BIO callback types (`-Werror=incompatible-function-pointer-types`),
+      and that every symbol a binding links from OpenSSL is a declared
+      function, not a macro (a missing header failed it once). This runs
+      natively and with zig for x86_64 glibc and aarch64 musl.
+      `cross-check.sh` links a stub `libssl` / `libcrypto` on Linux (zig
+      ships no OpenSSL), made from the bindings' own `"link"` lists, so the
+      rest of each link is still checked. CI's Linux jobs install
+      `libssl-dev`; `install.sh` and the README name it.
+
+      **Checks.** A probe covered bad ports, an empty host, an unresolvable
+      host, a refused port, a wrong-name, an expired and a self-signed
+      certificate (badssl.com), a blocking GET, double and stale closes,
+      eight non-blocking handshakes plus a refused ninth, and a non-blocking
+      GET. A second probe covered local peers: one answering the ClientHello
+      in plaintext, a silent one, one resetting with the hello unread, and
+      one closing at once. Both print what HEAD's C prints in three builds:
+      HEAD, this change on SecureTransport, and this change with the
+      backends swapped in a scratch copy so that OpenSSL (Homebrew 3.6)
+      runs on this Mac. All four probe builds were ASan+UBSan clean.
+      `leaks` reports 0 for OpenSSL. SecureTransport leaks only inside
+      Security.framework (`FEEKeyInfoProvider`, `SSLRecordReadInternal`),
+      as on HEAD, and the count varies from run to run. A TCP-only program
+      keeps only the TCP bindings and links neither library. The emitted C
+      of `http_https_live` compiles for x86_64 glibc and aarch64 musl and
+      references 30 of the 31 bound OpenSSL symbols (it never polls, so
+      `SSL_pending` drops out). **Not yet run on
+      Linux:** the first native run is the selfhost CI job (`http`
+      fixtures, `http_https_live`, on ubuntu x86_64 and arm64).
+
+      **Benchmark vs HEAD** (release `-O1`, macOS). 100k TCP round trips
+      plus 1 GiB sent by offsets: 8.15–8.57 G instructions against
+      8.25–8.46 G, syscall-bound. An HTTPS GET of `example.com`:
+      14.7–14.8 M instructions per successful GET against 14.9–16.8 M (3
+      runs of 20; failed connects vary with the network). OpenSSL 3 on the
+      same Mac: 22.2–22.4 M. The compiler emitting itself: median of 10,
+      200 ms both.
+
+      **Binaries** (`__text`, new vs HEAD):
+      - tiny `fmt.println(42)`: 308 both.
+      - `http_parse`: 16,532 vs 16,500 (the hook cells).
+      - `http_https_live`: 13,244 vs 13,616.
+      - `http_listen`: 146,060 vs 149,564, file 211,984 vs 228,256 (the
+        server keeps no TLS code now).
+      - a TCP-only program: 2,876 vs 3,052.
+      - `zeli`: 507,764 vs 509,392.
+
+      Seed 5,179,265 → 5,207,343 bytes, seed = stage 1 = stage 2.
+
+      **Suite.** `compile_pass` (710), `compile_fail` (175), `zeus` (455),
+      `golden` (135), `http` (39), `c_ffi`, `c_attr` (19), `net_`, `async_`,
+      `sys_`; `selfhost_seed`, `wasm_smoke`, `wasm_trap`, `wasm_float`,
+      `lsp`, `c_layouts`, `serve_native`, `serve_boot`, `serve_build`,
+      `server_split`, `android_project`, `ownership_asan`, `cost`,
+      `fresh_cache`, `modules`, `loader_cases`, `thread_tsan` and `watch`
+      green; `cross-check.sh` Linux and Windows 125/125 on both CPUs.
+      No C deleted: **Runtime stays 5,359.**
+- [ ] R5.4 Winsock: `std:net`'s TCP on Windows (`WSAStartup`, `SOCKET`
+      handles, `WSAPoll`, `ioctlsocket` for non-blocking, `WSAGetLastError`),
+      so the 12 socket fixtures run there; TCP answers `-1` today.
+- [ ] R5.5 TLS on Windows (SChannel through SSPI bindings), after R5.4, as
+      a third backend of the shared TLS layer; and Android, whose system
+      BoringSSL is not a public NDK library, so it needs a vendored TLS
+      library or the Java one through JNI.
 
 **R6. The core: zero runtime.** What remains of `loam_rt.h`: allocation,
 refcounts, owned strings, vec growth and copy-on-write, element and env drop

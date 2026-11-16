@@ -51,6 +51,14 @@ if [ "${1:-}" = --link ]; then
         objs="$objs $o"
     done
     IFS=' '
+    # A library a kept binding names (`"link -lssl"`) links its stub.
+    for want in "$OUT/stubs/$t"/*.want; do
+        [ -e "$want" ] || continue
+        if grep -qFf "$want" "$OUT/c/$b.c"; then
+            lib=$(basename "$want" .want)
+            links="$links -L$OUT/stubs/$t -l$lib"
+        fi
+    done
     bin="$OUT/obj/$t-$b"
     # shellcheck disable=SC2086
     zig cc -target "$t" -std=gnu99 -O1 -w -I packages/loam/runtime "$OUT/c/$b.c" $objs -o "$bin" $links 2>&1 | grep -E "error" | head -3 > "$res" || true
@@ -69,6 +77,28 @@ mkdir -p "$OUT/cache" "$OUT/c" "$OUT/obj"
 for t in $targets; do mkdir -p "$OUT/res/$t"; done
 
 # 1. Each target's runtime/net.c object and each fixture's C, at once.
+# On Linux, a stub shared library for each library std's bindings name
+# (`#[c("SSL_new", "link -lssl -lcrypto")]`): zig's sysroot has no OpenSSL,
+# so every bound symbol is a stub fn, and the link still checks that all
+# else resolves. `nob integration c_layouts` checks the names against the
+# real headers. `<lib>.want` holds the `LOAM_CSYM("sym")` of its symbols.
+rm -rf "$OUT/stubs"
+for t in $targets; do
+    case $t in *-linux-*) ;; *) continue ;; esac
+    mkdir -p "$OUT/stubs/$t"
+    grep -hoE '#\[c\("[A-Za-z0-9_]+", "link [^"]*"\)\]' packages/loam/std/*.loam | while IFS= read -r attr; do
+        sym=$(printf '%s\n' "$attr" | sed -E 's/^#\[c\("([A-Za-z0-9_]+)".*/\1/')
+        for lib in $(printf '%s\n' "$attr" | grep -oE ' -l[A-Za-z0-9_+.-]+' | sed 's/ -l//'); do
+            echo "void $sym(void) {}" >> "$OUT/stubs/$t/$lib.c"
+            echo "LOAM_CSYM(\"$sym\")" >> "$OUT/stubs/$t/$lib.want"
+        done
+    done
+    for c in "$OUT/stubs/$t"/*.c; do
+        [ -e "$c" ] || continue
+        lib=$(basename "$c" .c)
+        zig cc -target "$t" -shared -w "$c" -o "$OUT/stubs/$t/lib$lib.so" || echo "stub lib$lib" > "$OUT/res/$t.net"
+    done
+done
 for t in $targets; do
     (
         e=$(zig cc -target "$t" -O1 -fno-sanitize=undefined -w -I packages/loam/runtime -c packages/loam/runtime/net.c -o "$OUT/net-$t.o" 2>&1 | grep -E "error" | head -3)
@@ -127,5 +157,5 @@ for t in $targets; do
     [ "$bad" -eq 0 ] || fail=1
     rm -f "$OUT/net-$t.o"
 done
-rm -rf "$OUT/c" "$OUT/obj" "$OUT/res" "$OUT/work" "$list" "$list.all" "$list.ok"
+rm -rf "$OUT/c" "$OUT/obj" "$OUT/res" "$OUT/stubs" "$OUT/work" "$list" "$list.all" "$list.ok"
 exit $fail

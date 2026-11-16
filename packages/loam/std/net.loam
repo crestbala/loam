@@ -1,10 +1,10 @@
 // Sockets and TLS (`docs/boundary.md`).
 //
-// TCP (R5.1) and the macOS TLS client (R5.2) are Loam over raw bindings:
-// addresses, socket options, the non-blocking connect, the poll set,
-// retries, `errno`, and SecureTransport's context, handshake and I/O, whose
-// read and write callbacks are Loam fns C calls through plain function
-// pointers. One piece stays C: `string_bytes_at`, the address of a string's
+// TCP (R5.1) and the TLS client (macOS R5.2, Linux R5.3) are Loam over raw
+// bindings: addresses, socket options, the non-blocking connect, the poll
+// set, retries, `errno`, and the TLS slots, handshake and I/O over
+// SecureTransport (Apple) or OpenSSL (Linux), whose read and write
+// callbacks are Loam fns C calls through plain function pointers. One piece stays C: `string_bytes_at`, the address of a string's
 // byte for a binding to read in the same call (core byte movement, like
 // `fmt.write`). The fetch, WebSocket and stream bridges are the browser's
 // (wasm). No HTTP parsing lives here: that is `packages/http/src/http.loam`.
@@ -18,15 +18,15 @@ fn tcp_connect(host: string, port: int) -> int {
 }
 
 /** *Connect to `host`:`port` over TLS and verify the server certificate */
-/** *against `host` (macOS SecureTransport). Returns a TLS fd that `tcp_write` */
-/** * / `tcp_read` / `tcp_close` handle like any socket, or `-1` when TLS is */
-/** *unavailable (wasm keeps browser TLS; other hosts have none) or the */
-/** *handshake / certificate check fails. */
+/** *against `host` (SecureTransport on Apple, OpenSSL on Linux). Returns a */
+/** *TLS fd that `tcp_write` / `tcp_read` / `tcp_close` handle like any */
+/** *socket, or `-1` when TLS is unavailable (wasm keeps browser TLS; other */
+/** *hosts have none) or the handshake / certificate check fails. */
 fn tls_connect(host: string, port: int) -> int {
     return tls_connect_os(host, port)
 }
 
-/** *Non-blocking TLS connect (macOS SecureTransport). Returns a TLS handle */
+/** *Non-blocking TLS connect (Apple and Linux). Returns a TLS handle */
 /** *immediately; poll `tls_nb_ready` until 1. `-1` when TLS is unavailable. */
 fn tls_nb_connect(host: string, port: int) -> int {
     return tls_nb_connect_os(host, port)
@@ -255,6 +255,38 @@ let mut one_poll: []i32 = []i32 {}
 let mut poll_set: []i32 = []i32 {}
 let mut poll_count: int = 0
 
+/** *How the TCP calls reach a handle at or above `TLS_BASE`. Until the */
+/** *first TLS connect installs the client (`install_tls`), they answer as */
+/** *for a closed handle, and a program that never connects over TLS */
+/** *keeps none of the TLS code or its library. */
+let mut tls_send_hook: fn(int, string, int) -> int = no_tls_send
+let mut tls_read_hook: fn(int, int) -> string = no_tls_read
+let mut tls_info_hook: fn(int, int) -> int = no_tls_info
+let mut tls_close_hook: fn(int) = no_tls_close
+/** *What `tls_info_hook` answers: the socket (`-1` if none); 1 while still */
+/** *connecting or shaking hands; 1 when decrypted bytes wait. */
+const TLS_INFO_SOCKET: int = 0
+const TLS_INFO_SHAKING: int = 1
+const TLS_INFO_BUFFERED: int = 2
+
+fn no_tls_send(fd: int, data: string, off: int) -> int {
+    last_would_block = false
+    return -1
+}
+
+fn no_tls_read(fd: int, max: int) -> string {
+    last_would_block = false
+    return ""
+}
+
+fn no_tls_info(fd: int, what: int) -> int {
+    return if what == TLS_INFO_SOCKET { -1 } else if what == TLS_INFO_SHAKING { 1 } else { 0 }
+}
+
+fn no_tls_close(fd: int) {
+    return
+}
+
 /** *The IPv4 address in `text` as a host-order `i64`, or `-1`. Dotted */
 /** *decimal only, as `inet_pton` reads it: four parts of 0..255, no leading */
 /** *zeros, nothing else. */
@@ -470,6 +502,10 @@ fn tcp_poll_os(fd: int, want: int, ms: int) -> int {
         // A closed TLS handle: ready, as a bad fd is (`POLLNVAL`).
         return 1
     }
+    if want != 2 && tls_info_hook(fd, TLS_INFO_BUFFERED) != 0 {
+        // Decrypted bytes wait in the TLS layer, not in the socket.
+        return 1
+    }
     ensure_cells()
     one_poll[0] = i32(sock)
     one_poll[1] = if want == 2 { POLLOUT } else { POLLIN }
@@ -541,7 +577,7 @@ fn send_once(fd: int, data: string, off: int) -> int {
     return -1
 }
 
-#[os("apple")]
+#[os("posix")]
 fn tcp_send_os(fd: int, data: string, off: int) -> int {
     if fd < 0 || off < 0 || off > data.len {
         return -1
@@ -550,18 +586,7 @@ fn tcp_send_os(fd: int, data: string, off: int) -> int {
         return 0
     }
     if fd >= TLS_BASE {
-        return tls_send(fd, data, off)
-    }
-    return send_once(fd, data, off)
-}
-
-#[os("linux", "android", "other")]
-fn tcp_send_os(fd: int, data: string, off: int) -> int {
-    if fd < 0 || off < 0 || off > data.len {
-        return -1
-    }
-    if off == data.len {
-        return 0
+        return tls_send_hook(fd, data, off)
     }
     return send_once(fd, data, off)
 }
@@ -572,14 +597,8 @@ fn tcp_send_os(fd: int, data: string, off: int) -> int {
 }
 
 /** *The socket under `fd`: itself, or a TLS handle's TCP socket. */
-#[os("apple")]
 fn socket_of(fd: int) -> int {
-    return if fd >= TLS_BASE { tls_socket(fd) } else { fd }
-}
-
-#[os("linux", "android", "other", "windows", "wasm")]
-fn socket_of(fd: int) -> int {
-    return fd
+    return if fd >= TLS_BASE { tls_info_hook(fd, TLS_INFO_SOCKET) } else { fd }
 }
 
 /** *`SO_ERROR` of a socket: 0 = connected, else the errno; 1 if unreadable. */
@@ -594,26 +613,18 @@ fn socket_error(fd: int) -> int {
     return int(int_cell[0])
 }
 
-#[os("apple")]
+#[os("posix")]
 fn tcp_so_error_os(fd: int) -> int {
     if fd < 0 {
         return 1
     }
     if fd >= TLS_BASE {
         // A TLS handle still connecting or shaking hands is not connected.
-        let sock = tls_socket(fd)
-        if sock < 0 || tls_handshaking(fd) {
+        let sock = tls_info_hook(fd, TLS_INFO_SOCKET)
+        if sock < 0 || tls_info_hook(fd, TLS_INFO_SHAKING) != 0 {
             return 1
         }
         return socket_error(sock)
-    }
-    return socket_error(fd)
-}
-
-#[os("linux", "android", "other")]
-fn tcp_so_error_os(fd: int) -> int {
-    if fd < 0 {
-        return 1
     }
     return socket_error(fd)
 }
@@ -637,23 +648,34 @@ fn write_all(fd: int, data: string) -> int {
     return off
 }
 
-#[os("apple")]
+#[os("posix")]
 fn tcp_write_os(fd: int, data: string) -> int {
     if fd < 0 {
         return -1
     }
     if fd >= TLS_BASE {
-        return tls_write(fd, data)
+        return tls_write_all(fd, data)
     }
     return write_all(fd, data)
 }
 
-#[os("linux", "android", "other")]
-fn tcp_write_os(fd: int, data: string) -> int {
-    if fd < 0 {
-        return -1
+/** *Every byte of `data` through TLS sends on a blocking socket, or `-1`. */
+/** *A send that would block (the 10 s timeout ran out) fails the write; */
+/** *`tcp_wouldblock` is left as it was. */
+#[os("posix")]
+fn tls_write_all(fd: int, data: string) -> int {
+    let blocked = last_would_block
+    let mut off = 0
+    while off < data.len {
+        let n = tls_send_hook(fd, data, off)
+        if n <= 0 {
+            last_would_block = blocked
+            return -1
+        }
+        off += n
     }
-    return write_all(fd, data)
+    last_would_block = blocked
+    return off
 }
 
 #[os("windows", "wasm")]
@@ -679,21 +701,13 @@ fn recv_text(fd: int, max: int, flags: i32, notes_block: bool) -> string {
     return buf.prefix_to_string(&read_cell, int(n))
 }
 
-#[os("apple")]
+#[os("posix")]
 fn tcp_read_os(fd: int, max: int) -> string {
     if fd < 0 || max <= 0 {
         return ""
     }
     if fd >= TLS_BASE {
-        return tls_read(fd, if max > READ_MAX { READ_MAX } else { max })
-    }
-    return recv_text(fd, max, 0, true)
-}
-
-#[os("linux", "android", "other")]
-fn tcp_read_os(fd: int, max: int) -> string {
-    if fd < 0 || max <= 0 {
-        return ""
+        return tls_read_hook(fd, if max > READ_MAX { READ_MAX } else { max })
     }
     return recv_text(fd, max, 0, true)
 }
@@ -716,24 +730,17 @@ fn tcp_peek_os(fd: int, max: int) -> string {
     return ""
 }
 
-#[os("apple")]
+#[os("posix")]
 fn tcp_close_os(fd: int) {
     if fd < 0 {
         return
     }
     if fd >= TLS_BASE {
         // A TLS handle owns its socket; a stale one closes nothing.
-        tls_close(fd)
+        tls_close_hook(fd)
         return
     }
     c_close(i32(fd))
-}
-
-#[os("linux", "android", "other")]
-fn tcp_close_os(fd: int) {
-    if fd >= 0 {
-        c_close(i32(fd))
-    }
 }
 
 #[os("windows", "wasm")]
@@ -1022,14 +1029,17 @@ fn c_close(fd: i32) -> i32 {}
 #[c("loam_sys_errno")]
 fn c_errno() -> i32 {}
 
-// --- TLS: SecureTransport (macOS, iOS) ----------------------------------------------------
+// --- TLS: the slot table (macOS, iOS, Linux) ----------------------------------------------
 //
 // A connection is a slot; its handle is `TLS_BASE + slot`, far above any
 // socket, so the TCP calls above hand it here and the HTTP client treats a
-// TLS connection like a socket. SecureTransport is deprecated in favor of
-// Network.framework, but it is the only synchronous TLS API on macOS and
-// fits this blocking-socket design. Layouts and constants are from the
-// macOS SDK, checked by `nob integration c_layouts`.
+// TLS connection like a socket. The slot logic, the name lookup, the
+// handshake loop and the non-blocking state machine are shared, and the
+// TCP calls reach them through the hooks above; each
+// backend gives seven ops over its opaque context: `tls_new`, `tls_shake`,
+// `tls_put`, `tls_get`, `tls_buffered`, `tls_end` and `tls_free`. On Apple
+// that is SecureTransport, on Linux OpenSSL. Layouts and constants are
+// checked by `nob integration c_layouts`.
 
 const TLS_SLOTS: int = 8
 /** *Slot states: free, ready, TCP still connecting, TLS handshake running. */
@@ -1037,22 +1047,11 @@ const TLS_FREE: i32 = -1
 const TLS_READY: i32 = 0
 const TLS_CONNECTING: i32 = 1
 const TLS_SHAKING: i32 = 2
+/** *What `tls_put` and `tls_get` answer when the socket would block. */
+const TLS_WOULD_BLOCK: int = -2
 
-/** *`OSStatus` results and SecureTransport enums. */
-const NO_ERR: i32 = 0
-const ERR_SSL_WOULD_BLOCK: i32 = -9803
-const ERR_SSL_CLOSED_GRACEFUL: i32 = -9805
-const ERR_SSL_CLOSED_ABORT: i32 = -9806
-const ERR_SSL_INTERNAL: i32 = -9810
-const ERR_SSL_ILLEGAL_PARAM: i32 = -9830
-const SSL_CLIENT_SIDE: i32 = 1
-const SSL_STREAM_TYPE: i32 = 0
-const TLS_PROTOCOL_12: i32 = 8
-/** *`SO_SNDTIMEO` on Apple. */
-const SO_SNDTIMEO_APPLE: i32 = 4101
-
-/** *Per slot: state, socket and `SSLContextRef` (an opaque address, never */
-/** *read by Loam). Made on the first TLS connect. */
+/** *Per slot: state, socket and the backend's context (an opaque address, */
+/** *never read by Loam). Made on the first TLS connect. */
 let mut tls_state: []i32 = []i32 {}
 let mut tls_socket_fd: []i32 = []i32 {}
 let mut tls_context: []i64 = []i64 {}
@@ -1063,7 +1062,7 @@ let mut io_word: []u64 = []u64 {}
 /** *One `struct addrinfo` (48 bytes) copied out of `getaddrinfo`'s list. */
 let mut addrinfo_cell: []i64 = []i64 {}
 
-#[os("apple")]
+#[os("apple", "linux")]
 fn ensure_tls_slots() {
     if tls_state.len == 0 {
         for i in 0..TLS_SLOTS {
@@ -1080,7 +1079,7 @@ fn ensure_tls_slots() {
 }
 
 /** *The slot of a live TLS handle, or `-1`. */
-#[os("apple")]
+#[os("apple", "linux")]
 fn tls_slot_of(fd: int) -> int {
     let slot = fd - TLS_BASE
     if fd < TLS_BASE || slot >= TLS_SLOTS || tls_state.len == 0 {
@@ -1089,9 +1088,10 @@ fn tls_slot_of(fd: int) -> int {
     return if tls_state[slot] != TLS_FREE { slot } else { -1 }
 }
 
-#[os("apple")]
+#[os("apple", "linux")]
 fn free_tls_slot() -> int {
     ensure_tls_slots()
+    install_tls()
     for i in 0..TLS_SLOTS {
         if tls_state[i] == TLS_FREE {
             return i
@@ -1101,10 +1101,10 @@ fn free_tls_slot() -> int {
 }
 
 /** *Free a slot: its context released and its socket closed. */
-#[os("apple")]
+#[os("apple", "linux")]
 fn drop_tls_slot(slot: int) {
     tls_state[slot] = TLS_FREE
-    c_cf_release(tls_context[slot])
+    tls_free(tls_context[slot])
     if tls_socket_fd[slot] >= 0 {
         c_close(tls_socket_fd[slot])
     }
@@ -1112,43 +1112,28 @@ fn drop_tls_slot(slot: int) {
     tls_socket_fd[slot] = -1
 }
 
-/** *A client context for `host` over socket `fd`: TLS 1.2 at least, SNI */
-/** *and the certificate name checked against `host` (SecureTransport */
-/** *validates the chain and the name by default), I/O through the Loam */
-/** *callbacks. `0` when no context could be made. */
-#[os("apple")]
-fn new_tls_context(host: string, fd: i32) -> i64 {
-    let ctx = c_ssl_create_context(i64(0), SSL_CLIENT_SIDE, SSL_STREAM_TYPE)
-    if ctx == i64(0) {
-        return i64(0)
-    }
-    c_ssl_set_io_funcs(ctx, tls_io_read, tls_io_write)
-    c_ssl_set_connection(ctx, i64(fd))
-    c_ssl_set_peer_domain_name(ctx, host, i64(host.len))
-    c_ssl_set_protocol_version_min(ctx, TLS_PROTOCOL_12)
-    return ctx
-}
-
 /** *`getaddrinfo` for `host`:`port`, then each address in order until one */
 /** *gives a socket; `-1` when none does. `family` 0 is any. */
-#[os("apple")]
+#[os("apple", "linux")]
 fn connect_by_name(host: string, port: int, family: i32, blocking: bool) -> i32 {
     let hints = []i32 { 0, family, SOCK_STREAM, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
     let mut list = []i64 { i64(0) }
     if c_getaddrinfo(host, "{{port}}", hints, list) != 0 {
         return -1
     }
+    let addr_word = ai_addr_word()
     let mut fd: i32 = -1
     let mut at = list[0]
     while fd < 0 && at != i64(0) {
         c_load_words(addrinfo_cell, at, 48)
         // Words: flags | family << 32, socktype | protocol << 32, addrlen,
-        // canonname, addr, next.
+        // then `ai_addr` and `ai_canonname` (Apple has them the other way
+        // round), then `ai_next`.
         let ai_family = i32((addrinfo_cell[0] >> 32) & i64(4294967295))
         let ai_socktype = i32(addrinfo_cell[1] & i64(4294967295))
         let ai_protocol = i32((addrinfo_cell[1] >> 32) & i64(4294967295))
         let ai_addrlen = u32(addrinfo_cell[2] & i64(4294967295))
-        let ai_addr = addrinfo_cell[4]
+        let ai_addr = addrinfo_cell[addr_word]
         at = addrinfo_cell[5]
         fd = if blocking {
             blocking_socket_to(ai_family, ai_socktype, ai_protocol, ai_addr, ai_addrlen)
@@ -1160,9 +1145,31 @@ fn connect_by_name(host: string, port: int, family: i32, blocking: bool) -> i32 
     return fd
 }
 
+/** *The `struct addrinfo` word that holds `ai_addr`. */
+#[os("apple")]
+fn ai_addr_word() -> int {
+    return 4
+}
+
+#[os("linux")]
+fn ai_addr_word() -> int {
+    return 3
+}
+
+/** *`SO_SNDTIMEO`. */
+#[os("apple")]
+fn so_sndtimeo() -> i32 {
+    return 4101
+}
+
+#[os("linux")]
+fn so_sndtimeo() -> i32 {
+    return 21
+}
+
 /** *A connected blocking socket, its reads and writes bounded at 10 s so a */
 /** *silent peer (one that never speaks TLS) cannot block forever; or `-1`. */
-#[os("apple")]
+#[os("apple", "linux")]
 fn blocking_socket_to(family: i32, kind: i32, protocol: i32, addr: i64, addrlen: u32) -> i32 {
     let f = c_socket(family, kind, protocol)
     if f < 0 {
@@ -1172,7 +1179,7 @@ fn blocking_socket_to(family: i32, kind: i32, protocol: i32, addr: i64, addrlen:
     no_sigpipe(f)
     let timeout = []i64 { i64(10), i64(0) }
     c_setsockopt_time(f, sol_socket(), so_rcvtimeo(), timeout, u32(16))
-    c_setsockopt_time(f, sol_socket(), SO_SNDTIMEO_APPLE, timeout, u32(16))
+    c_setsockopt_time(f, sol_socket(), so_sndtimeo(), timeout, u32(16))
     if c_connect_at(f, addr, addrlen) != 0 {
         c_close(f)
         return -1
@@ -1181,7 +1188,7 @@ fn blocking_socket_to(family: i32, kind: i32, protocol: i32, addr: i64, addrlen:
 }
 
 /** *A non-blocking socket whose connect finished or is in progress; `-1`. */
-#[os("apple")]
+#[os("apple", "linux")]
 fn pending_socket_to(family: i32, kind: i32, protocol: i32, addr: i64, addrlen: u32) -> i32 {
     let f = c_socket(family, kind, protocol)
     if f < 0 {
@@ -1206,7 +1213,7 @@ fn pending_socket_to(family: i32, kind: i32, protocol: i32, addr: i64, addrlen: 
 /** *Native `tls_connect`: TCP, then the handshake to the end. A handshake */
 /** *that would block polls the socket 50 ms at a time and gives up after */
 /** *three idle polls in a row. */
-#[os("apple")]
+#[os("apple", "linux")]
 fn tls_connect_os(host: string, port: int) -> int {
     if port <= 0 || port > 65535 || host.len == 0 || host.len >= 256 {
         return -1
@@ -1219,7 +1226,7 @@ fn tls_connect_os(host: string, port: int) -> int {
     if fd < 0 {
         return -1
     }
-    let ctx = new_tls_context(host, fd)
+    let ctx = tls_new(host, fd)
     if ctx == i64(0) {
         c_close(fd)
         return -1
@@ -1228,37 +1235,37 @@ fn tls_connect_os(host: string, port: int) -> int {
     tls_socket_fd[slot] = fd
     tls_context[slot] = ctx
     ensure_cells()
-    let mut st = c_ssl_handshake(ctx)
+    let mut st = tls_shake(ctx)
     let mut idle = 0
-    while st == ERR_SSL_WOULD_BLOCK {
+    while st == 0 {
         one_poll[0] = fd
         one_poll[1] = POLLIN | POLLOUT
         if c_poll(one_poll, 1, 50) <= 0 {
             idle += 1
             if idle >= 3 {
-                st = ERR_SSL_INTERNAL
+                st = -1
                 break
             }
         } else {
             idle = 0
         }
-        st = c_ssl_handshake(ctx)
+        st = tls_shake(ctx)
     }
-    if st != NO_ERR {
+    if st != 1 {
         drop_tls_slot(slot)
         return -1
     }
     return TLS_BASE + slot
 }
 
-#[os("linux", "android", "other", "windows", "wasm")]
+#[os("android", "other", "windows", "wasm")]
 fn tls_connect_os(host: string, port: int) -> int {
     return -1
 }
 
 /** *Native `tls_nb_connect`: an IPv4 connect started and the context */
 /** *made; `tls_nb_ready` drives the rest. */
-#[os("apple")]
+#[os("apple", "linux")]
 fn tls_nb_connect_os(host: string, port: int) -> int {
     if port <= 0 || port > 65535 || host.len == 0 || host.len >= 256 {
         return -1
@@ -1271,7 +1278,7 @@ fn tls_nb_connect_os(host: string, port: int) -> int {
     if fd < 0 {
         return -1
     }
-    let ctx = new_tls_context(host, fd)
+    let ctx = tls_new(host, fd)
     if ctx == i64(0) {
         c_close(fd)
         return -1
@@ -1282,14 +1289,14 @@ fn tls_nb_connect_os(host: string, port: int) -> int {
     return TLS_BASE + slot
 }
 
-#[os("linux", "android", "other", "windows", "wasm")]
+#[os("android", "other", "windows", "wasm")]
 fn tls_nb_connect_os(host: string, port: int) -> int {
     return -1
 }
 
 /** *One step of a non-blocking connect: the TCP connect, then one */
 /** *handshake round. A failure frees the slot. */
-#[os("apple")]
+#[os("apple", "linux")]
 fn tls_nb_ready_os(fd: int) -> int {
     let slot = tls_slot_of(fd)
     if slot < 0 {
@@ -1315,76 +1322,43 @@ fn tls_nb_ready_os(fd: int) -> int {
     one_poll[0] = sock
     one_poll[1] = POLLIN | POLLOUT
     c_poll(one_poll, 1, 0)
-    let st = c_ssl_handshake(tls_context[slot])
-    if st == NO_ERR {
+    let st = tls_shake(tls_context[slot])
+    if st == 1 {
         tls_state[slot] = TLS_READY
         return 1
     }
-    if st == ERR_SSL_WOULD_BLOCK {
+    if st == 0 {
         return 0
     }
     drop_tls_slot(slot)
     return -1
 }
 
-#[os("linux", "android", "other", "windows", "wasm")]
+#[os("android", "other", "windows", "wasm")]
 fn tls_nb_ready_os(fd: int) -> int {
     return -1
 }
 
-/** *Every byte of `data` through `SSLWrite`, or `-1`. */
-#[os("apple")]
-fn tls_write(fd: int, data: string) -> int {
-    let slot = tls_slot_of(fd)
-    if slot < 0 {
-        return -1
-    }
-    let mut off = 0
-    while off < data.len {
-        processed_cell[0] = u64(0)
-        let st = c_ssl_write(
-            tls_context[slot],
-            string_bytes_at(data, off),
-            i64(data.len - off),
-            processed_cell,
-        )
-        if st != NO_ERR || processed_cell[0] == u64(0) {
-            return -1
-        }
-        off += int(processed_cell[0])
-    }
-    return off
-}
-
-/** *One `SSLWrite` of `data[off..]` (`off < data.len`): bytes taken, `0` */
-/** *when it would block. */
-#[os("apple")]
+/** *One backend write of `data[off..]` (`off < data.len`): bytes taken, */
+/** *`0` when it would block. */
+#[os("apple", "linux")]
 fn tls_send(fd: int, data: string, off: int) -> int {
     last_would_block = false
     let slot = tls_slot_of(fd)
     if slot < 0 {
         return -1
     }
-    processed_cell[0] = u64(0)
-    let st = c_ssl_write(
-        tls_context[slot],
-        string_bytes_at(data, off),
-        i64(data.len - off),
-        processed_cell,
-    )
-    if st == ERR_SSL_WOULD_BLOCK {
+    let n = tls_put(tls_context[slot], data, off)
+    if n == TLS_WOULD_BLOCK {
         last_would_block = true
         return 0
     }
-    if st != NO_ERR {
-        return -1
-    }
-    return int(processed_cell[0])
+    return n
 }
 
-/** *One `SSLRead` of up to `max` bytes; `""` at the end, on an error, or */
-/** *when it would block (then `tcp_wouldblock` says so). */
-#[os("apple")]
+/** *One backend read of up to `max` bytes; `""` at the end, on an error, */
+/** *or when it would block (then `tcp_wouldblock` says so). */
+#[os("apple", "linux")]
 fn tls_read(fd: int, max: int) -> string {
     last_would_block = false
     let slot = tls_slot_of(fd)
@@ -1394,13 +1368,11 @@ fn tls_read(fd: int, max: int) -> string {
     if read_cell.len == 0 {
         read_cell = buf.with_len(READ_MAX)
     }
-    processed_cell[0] = u64(0)
-    let st = c_ssl_read(tls_context[slot], read_cell, i64(max), processed_cell)
-    if st == ERR_SSL_WOULD_BLOCK {
+    let got = tls_get(tls_context[slot], max)
+    if got == TLS_WOULD_BLOCK {
         last_would_block = true
         return ""
     }
-    let got = int(processed_cell[0])
     if got <= 0 {
         return ""
     }
@@ -1408,28 +1380,128 @@ fn tls_read(fd: int, max: int) -> string {
 }
 
 /** *Close a TLS handle: a best-effort `close_notify`, then free its slot. */
-#[os("apple")]
+#[os("apple", "linux")]
 fn tls_close(fd: int) {
     let slot = tls_slot_of(fd)
     if slot < 0 {
         return
     }
-    c_ssl_close(tls_context[slot])
+    tls_end(tls_context[slot])
     drop_tls_slot(slot)
 }
 
-/** *The TCP socket under a TLS handle, or `-1`. */
-#[os("apple")]
-fn tls_socket(fd: int) -> int {
+/** *A TLS handle's socket, handshake state or buffered bytes (`TLS_INFO_*`). */
+#[os("apple", "linux")]
+fn tls_info(fd: int, what: int) -> int {
     let slot = tls_slot_of(fd)
-    return if slot < 0 { -1 } else { int(tls_socket_fd[slot]) }
+    if slot < 0 {
+        return no_tls_info(fd, what)
+    }
+    if what == TLS_INFO_SOCKET {
+        return int(tls_socket_fd[slot])
+    }
+    let ready = tls_state[slot] == TLS_READY
+    if what == TLS_INFO_SHAKING {
+        return if ready { 0 } else { 1 }
+    }
+    return if ready && tls_buffered(tls_context[slot]) { 1 } else { 0 }
 }
 
-/** *A TLS handle still connecting or shaking hands (or a closed one). */
+/** *The TLS client behind the TCP calls, from the first TLS connect on. */
+#[os("apple", "linux")]
+fn install_tls() {
+    tls_send_hook = tls_send
+    tls_read_hook = tls_read
+    tls_info_hook = tls_info
+    tls_close_hook = tls_close
+}
+
+// --- TLS backend: SecureTransport (macOS, iOS) --------------------------------------------
+//
+// SecureTransport is deprecated in favor of Network.framework, but it is
+// the only synchronous TLS API on macOS and fits this blocking-socket
+// design. Its bindings name Security and CoreFoundation, so a program
+// that never connects over TLS links neither. Its read and write callbacks are Loam fns C calls through plain
+// function pointers.
+
+/** *`OSStatus` results and SecureTransport enums. */
+const NO_ERR: i32 = 0
+const ERR_SSL_WOULD_BLOCK: i32 = -9803
+const ERR_SSL_CLOSED_GRACEFUL: i32 = -9805
+const ERR_SSL_CLOSED_ABORT: i32 = -9806
+const ERR_SSL_INTERNAL: i32 = -9810
+const ERR_SSL_ILLEGAL_PARAM: i32 = -9830
+const SSL_CLIENT_SIDE: i32 = 1
+const SSL_STREAM_TYPE: i32 = 0
+const TLS_PROTOCOL_12: i32 = 8
+
+/** *A client context for `host` over socket `fd`: TLS 1.2 at least, SNI */
+/** *and the certificate name checked against `host` (SecureTransport */
+/** *validates the chain and the name by default), I/O through the Loam */
+/** *callbacks. `0` when no context could be made. */
 #[os("apple")]
-fn tls_handshaking(fd: int) -> bool {
-    let slot = tls_slot_of(fd)
-    return slot < 0 || tls_state[slot] != TLS_READY
+fn tls_new(host: string, fd: i32) -> i64 {
+    let ctx = c_ssl_create_context(i64(0), SSL_CLIENT_SIDE, SSL_STREAM_TYPE)
+    if ctx == i64(0) {
+        return i64(0)
+    }
+    c_ssl_set_io_funcs(ctx, tls_io_read, tls_io_write)
+    c_ssl_set_connection(ctx, i64(fd))
+    c_ssl_set_peer_domain_name(ctx, host, i64(host.len))
+    c_ssl_set_protocol_version_min(ctx, TLS_PROTOCOL_12)
+    return ctx
+}
+
+/** *One handshake step: 1 done, 0 would block, `-1` failed. */
+#[os("apple")]
+fn tls_shake(ctx: i64) -> int {
+    let st = c_ssl_handshake(ctx)
+    if st == NO_ERR {
+        return 1
+    }
+    return if st == ERR_SSL_WOULD_BLOCK { 0 } else { -1 }
+}
+
+/** *One `SSLWrite` of `data[off..]`: bytes taken, `TLS_WOULD_BLOCK`, or */
+/** *`-1`. */
+#[os("apple")]
+fn tls_put(ctx: i64, data: string, off: int) -> int {
+    processed_cell[0] = u64(0)
+    let st = c_ssl_write(ctx, string_bytes_at(data, off), i64(data.len - off), processed_cell)
+    if st == ERR_SSL_WOULD_BLOCK {
+        return TLS_WOULD_BLOCK
+    }
+    return if st == NO_ERR { int(processed_cell[0]) } else { -1 }
+}
+
+/** *One `SSLRead` of up to `max` bytes into `read_cell`: bytes read (`0` */
+/** *at the end or on an error), or `TLS_WOULD_BLOCK`. */
+#[os("apple")]
+fn tls_get(ctx: i64, max: int) -> int {
+    processed_cell[0] = u64(0)
+    let st = c_ssl_read(ctx, read_cell, i64(max), processed_cell)
+    if st == ERR_SSL_WOULD_BLOCK {
+        return TLS_WOULD_BLOCK
+    }
+    return int(processed_cell[0])
+}
+
+/** *SecureTransport holds decrypted bytes the socket no longer has. */
+#[os("apple")]
+fn tls_buffered(ctx: i64) -> bool {
+    processed_cell[0] = u64(0)
+    return c_ssl_get_buffered_read_size(ctx, processed_cell) == NO_ERR &&
+        processed_cell[0] != u64(0)
+}
+
+#[os("apple")]
+fn tls_end(ctx: i64) {
+    c_ssl_close(ctx)
+}
+
+#[os("apple")]
+fn tls_free(ctx: i64) {
+    c_cf_release(ctx)
 }
 
 /** *SecureTransport's read callback: `recv` into its buffer `data` up to */
@@ -1509,13 +1581,13 @@ fn io_status(e: i32) -> i32 {
 }
 
 #[os("apple")]
-#[c("SSLCreateContext")]
+#[c("SSLCreateContext", "link -framework Security")]
 fn c_ssl_create_context(allocator: i64, side: i32, kind: i32) -> i64 {}
 
 /** *The read and write callbacks: `OSStatus (*)(SSLConnectionRef, void *, */
 /** *size_t *)`, every argument an address-sized `i64`. */
 #[os("apple")]
-#[c("SSLSetIOFuncs")]
+#[c("SSLSetIOFuncs", "link -framework Security")]
 fn c_ssl_set_io_funcs(
     ctx: i64,
     read: fn(i64, i64, i64) -> i32,
@@ -1524,59 +1596,421 @@ fn c_ssl_set_io_funcs(
 
 /** *The connection ref is the socket itself, as an address-sized value. */
 #[os("apple")]
-#[c("SSLSetConnection")]
+#[c("SSLSetConnection", "link -framework Security")]
 fn c_ssl_set_connection(ctx: i64, conn: i64) -> i32 {}
 
 #[os("apple")]
-#[c("SSLSetPeerDomainName")]
+#[c("SSLSetPeerDomainName", "link -framework Security")]
 fn c_ssl_set_peer_domain_name(ctx: i64, name: string, len: i64) -> i32 {}
 
 #[os("apple")]
-#[c("SSLSetProtocolVersionMin")]
+#[c("SSLSetProtocolVersionMin", "link -framework Security")]
 fn c_ssl_set_protocol_version_min(ctx: i64, version: i32) -> i32 {}
 
 #[os("apple")]
-#[c("SSLHandshake")]
+#[c("SSLHandshake", "link -framework Security")]
 fn c_ssl_handshake(ctx: i64) -> i32 {}
 
 #[os("apple")]
-#[c("SSLRead")]
+#[c("SSLRead", "link -framework Security")]
 fn c_ssl_read(ctx: i64, into: &mut []u8, len: i64, processed: &mut []u64) -> i32 {}
 
 #[os("apple")]
-#[c("SSLWrite")]
+#[c("SSLWrite", "link -framework Security")]
 fn c_ssl_write(ctx: i64, bytes: i64, len: i64, processed: &mut []u64) -> i32 {}
 
 #[os("apple")]
-#[c("SSLClose")]
+#[c("SSLGetBufferedReadSize", "link -framework Security")]
+fn c_ssl_get_buffered_read_size(ctx: i64, size: &mut []u64) -> i32 {}
+
+#[os("apple")]
+#[c("SSLClose", "link -framework Security")]
 fn c_ssl_close(ctx: i64) -> i32 {}
 
 #[os("apple")]
-#[c("CFRelease")]
+#[c("CFRelease", "link -framework CoreFoundation")]
 fn c_cf_release(object: i64) {}
 
-#[os("apple")]
+// --- TLS backend: OpenSSL (Linux) ----------------------------------------------------------
+//
+// libssl 1.1.1 or 3.x, linked only into a program that keeps a TLS call
+// (each binding names its libraries). One client `SSL_CTX` for the
+// process: peer verification against the system's default CA paths, TLS
+// 1.2 at least, partial and moving writes (the `SSLWrite` contract the
+// shared layer expects). Each connection is an `SSL` with SNI and the
+// host name checked, over a BIO whose read and write are Loam callbacks,
+// so every `send` carries `MSG_NOSIGNAL`: a reset peer is an error, never
+// a `SIGPIPE`. `SSL_set_tlsext_host_name`, `SSL_CTX_set_min_proto_version`
+// and `SSL_CTX_set_mode` are macros over `SSL_ctrl` / `SSL_CTX_ctrl`, so
+// their codes are written here and checked by `c_layouts`.
+
+const SSL_VERIFY_PEER: i32 = 1
+const SSL_CTRL_MODE: i32 = 33
+const SSL_CTRL_SET_TLSEXT_HOSTNAME: i32 = 55
+const SSL_CTRL_SET_MIN_PROTO_VERSION: i32 = 123
+const SSL_MODE_ENABLE_PARTIAL_WRITE: i64 = 1
+const SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER: i64 = 2
+const TLSEXT_NAMETYPE_HOST_NAME: i64 = 0
+const TLS1_2_VERSION: i64 = 771
+const SSL_ERROR_WANT_READ: i32 = 2
+const SSL_ERROR_WANT_WRITE: i32 = 3
+const BIO_TYPE_SOURCE_SINK: i32 = 1024
+const BIO_CTRL_FLUSH: i32 = 11
+const BIO_FLAGS_READ: i32 = 1
+const BIO_FLAGS_WRITE: i32 = 2
+const BIO_FLAGS_RWS: i32 = 7
+const BIO_FLAGS_SHOULD_RETRY: i32 = 8
+/** *`SSL_write` takes an `int` length: a larger write goes in parts. */
+const SSL_WRITE_MAX: int = 1073741824
+
+/** *The process's client `SSL_CTX` and the socket `BIO_METHOD`, made on */
+/** *the first TLS connect (`0` until then, or when OpenSSL failed). */
+let mut openssl_ctx: i64 = i64(0)
+let mut socket_bio_method: i64 = i64(0)
+
+/** *The client context and BIO method, made once; `false` when OpenSSL */
+/** *could not make them. */
+#[os("linux")]
+fn openssl_ready() -> bool {
+    if openssl_ctx != i64(0) {
+        return true
+    }
+    let method = c_bio_meth_new(c_bio_get_new_index() | BIO_TYPE_SOURCE_SINK, "loam socket")
+    if method == i64(0) {
+        return false
+    }
+    c_bio_meth_set_write(method, bio_write)
+    c_bio_meth_set_read(method, bio_read)
+    c_bio_meth_set_ctrl(method, bio_ctrl)
+    let ctx = c_ssl_ctx_new(c_tls_client_method())
+    if ctx == i64(0) {
+        c_bio_meth_free(method)
+        return false
+    }
+    c_ssl_ctx_set_verify(ctx, SSL_VERIFY_PEER, i64(0))
+    c_ssl_ctx_set_default_verify_paths(ctx)
+    if c_ssl_ctx_ctrl(ctx, SSL_CTRL_SET_MIN_PROTO_VERSION, TLS1_2_VERSION, i64(0)) != i64(1) {
+        c_ssl_ctx_free(ctx)
+        c_bio_meth_free(method)
+        return false
+    }
+    let mode = SSL_MODE_ENABLE_PARTIAL_WRITE | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER
+    c_ssl_ctx_ctrl(ctx, SSL_CTRL_MODE, mode, i64(0))
+    socket_bio_method = method
+    openssl_ctx = ctx
+    return true
+}
+
+/** *A client `SSL` for `host` over socket `fd`: SNI, the certificate name */
+/** *checked against `host`, I/O through the Loam BIO. `0` when OpenSSL */
+/** *could not make one. */
+#[os("linux")]
+fn tls_new(host: string, fd: i32) -> i64 {
+    if !openssl_ready() {
+        return i64(0)
+    }
+    let ssl = c_ssl_new(openssl_ctx)
+    if ssl == i64(0) {
+        return i64(0)
+    }
+    let bio = c_bio_new(socket_bio_method)
+    if bio == i64(0) {
+        c_ssl_free(ssl)
+        return i64(0)
+    }
+    c_bio_set_data(bio, i64(fd))
+    c_bio_set_init(bio, 1)
+    // The `SSL` owns the BIO from here: `SSL_free` frees it.
+    c_ssl_set_bio(ssl, bio, bio)
+    let sni = c_ssl_ctrl_text(ssl, SSL_CTRL_SET_TLSEXT_HOSTNAME, TLSEXT_NAMETYPE_HOST_NAME, host)
+    if sni != i64(1) || c_ssl_set1_host(ssl, host) != 1 {
+        c_ssl_free(ssl)
+        return i64(0)
+    }
+    c_ssl_set_connect_state(ssl)
+    return ssl
+}
+
+/** *1 when an OpenSSL call that answered `rc` only has to wait for the */
+/** *socket. The error queue was cleared before the call. */
+#[os("linux")]
+fn openssl_would_block(ssl: i64, rc: i32) -> bool {
+    let e = c_ssl_get_error(ssl, rc)
+    return e == SSL_ERROR_WANT_READ || e == SSL_ERROR_WANT_WRITE
+}
+
+/** *One handshake step: 1 done, 0 would block, `-1` failed (a bad chain */
+/** *or name included). */
+#[os("linux")]
+fn tls_shake(ssl: i64) -> int {
+    c_err_clear_error()
+    let rc = c_ssl_connect(ssl)
+    if rc == 1 {
+        return 1
+    }
+    return if openssl_would_block(ssl, rc) { 0 } else { -1 }
+}
+
+/** *One `SSL_write` of `data[off..]`: bytes taken, `TLS_WOULD_BLOCK`, or */
+/** *`-1`. */
+#[os("linux")]
+fn tls_put(ssl: i64, data: string, off: int) -> int {
+    let rest = data.len - off
+    let len = if rest > SSL_WRITE_MAX { SSL_WRITE_MAX } else { rest }
+    c_err_clear_error()
+    let rc = c_openssl_write(ssl, string_bytes_at(data, off), i32(len))
+    if rc > 0 {
+        return int(rc)
+    }
+    return if openssl_would_block(ssl, rc) { TLS_WOULD_BLOCK } else { -1 }
+}
+
+/** *One `SSL_read` of up to `max` bytes into `read_cell`: bytes read (`0` */
+/** *at the end or on an error), or `TLS_WOULD_BLOCK`. */
+#[os("linux")]
+fn tls_get(ssl: i64, max: int) -> int {
+    c_err_clear_error()
+    let rc = c_openssl_read(ssl, read_cell, i32(max))
+    if rc > 0 {
+        return int(rc)
+    }
+    return if openssl_would_block(ssl, rc) { TLS_WOULD_BLOCK } else { 0 }
+}
+
+/** *OpenSSL holds decrypted bytes the socket no longer has. */
+#[os("linux")]
+fn tls_buffered(ssl: i64) -> bool {
+    return c_ssl_pending(ssl) > 0
+}
+
+/** *A best-effort `close_notify`; the peer's is not waited for. */
+#[os("linux")]
+fn tls_end(ssl: i64) {
+    c_err_clear_error()
+    c_ssl_shutdown(ssl)
+}
+
+#[os("linux")]
+fn tls_free(ssl: i64) {
+    c_ssl_free(ssl)
+}
+
+/** *The BIO's write: one `send` of `len` bytes at `data` C handed over, */
+/** *retried on `EINTR`. A full socket asks OpenSSL to retry. */
+#[os("linux")]
+fn bio_write(bio: i64, data: i64, len: i32) -> i32 {
+    c_bio_clear_flags(bio, BIO_FLAGS_RWS | BIO_FLAGS_SHOULD_RETRY)
+    if data == i64(0) || len <= 0 {
+        return 0
+    }
+    let sock = i32(c_bio_get_data(bio))
+    while true {
+        let n = c_send_at(sock, data, i64(len), msg_nosignal())
+        if n >= i64(0) {
+            return i32(n)
+        }
+        let e = c_errno()
+        if e == EINTR {
+            continue
+        }
+        if e == e_again() {
+            c_bio_set_flags(bio, BIO_FLAGS_WRITE | BIO_FLAGS_SHOULD_RETRY)
+        }
+        return -1
+    }
+    return -1
+}
+
+/** *The BIO's read: one `recv` of up to `len` bytes into OpenSSL's buffer; */
+/** *`0` at EOF. An empty socket asks OpenSSL to retry. */
+#[os("linux")]
+fn bio_read(bio: i64, data: i64, len: i32) -> i32 {
+    c_bio_clear_flags(bio, BIO_FLAGS_RWS | BIO_FLAGS_SHOULD_RETRY)
+    if data == i64(0) || len <= 0 {
+        return 0
+    }
+    let sock = i32(c_bio_get_data(bio))
+    while true {
+        let n = c_recv_at(sock, data, i64(len), 0)
+        if n >= i64(0) {
+            return i32(n)
+        }
+        let e = c_errno()
+        if e == EINTR {
+            continue
+        }
+        if e == e_again() {
+            c_bio_set_flags(bio, BIO_FLAGS_READ | BIO_FLAGS_SHOULD_RETRY)
+        }
+        return -1
+    }
+    return -1
+}
+
+/** *The BIO's control: a flush succeeds (every write went straight to the */
+/** *socket); nothing else is supported. */
+#[os("linux")]
+fn bio_ctrl(bio: i64, cmd: i32, larg: i64, parg: i64) -> i64 {
+    return if cmd == BIO_CTRL_FLUSH { i64(1) } else { i64(0) }
+}
+
+// libssl first: a static link resolves libssl's own libcrypto calls only
+// when `-lcrypto` follows it.
+
+#[os("linux")]
+#[c("TLS_client_method", "link -lssl -lcrypto")]
+fn c_tls_client_method() -> i64 {}
+
+#[os("linux")]
+#[c("SSL_CTX_new", "link -lssl -lcrypto")]
+fn c_ssl_ctx_new(method: i64) -> i64 {}
+
+#[os("linux")]
+#[c("SSL_CTX_free", "link -lssl -lcrypto")]
+fn c_ssl_ctx_free(ctx: i64) {}
+
+/** *The verify callback is always `NULL`: OpenSSL's own chain check. */
+#[os("linux")]
+#[c("SSL_CTX_set_verify", "link -lssl -lcrypto")]
+fn c_ssl_ctx_set_verify(ctx: i64, mode: i32, callback: i64) {}
+
+#[os("linux")]
+#[c("SSL_CTX_set_default_verify_paths", "link -lssl -lcrypto")]
+fn c_ssl_ctx_set_default_verify_paths(ctx: i64) -> i32 {}
+
+#[os("linux")]
+#[c("SSL_CTX_ctrl", "link -lssl -lcrypto")]
+fn c_ssl_ctx_ctrl(ctx: i64, cmd: i32, larg: i64, parg: i64) -> i64 {}
+
+#[os("linux")]
+#[c("SSL_new", "link -lssl -lcrypto")]
+fn c_ssl_new(ctx: i64) -> i64 {}
+
+#[os("linux")]
+#[c("SSL_free", "link -lssl -lcrypto")]
+fn c_ssl_free(ssl: i64) {}
+
+#[os("linux")]
+#[c("SSL_set_bio", "link -lssl -lcrypto")]
+fn c_ssl_set_bio(ssl: i64, rbio: i64, wbio: i64) {}
+
+/** *`SSL_ctrl` with a NUL-terminated string argument, which OpenSSL copies. */
+#[os("linux")]
+#[c("SSL_ctrl", "link -lssl -lcrypto")]
+fn c_ssl_ctrl_text(ssl: i64, cmd: i32, larg: i64, text: string) -> i64 {}
+
+#[os("linux")]
+#[c("SSL_set1_host", "link -lssl -lcrypto")]
+fn c_ssl_set1_host(ssl: i64, host: string) -> i32 {}
+
+#[os("linux")]
+#[c("SSL_set_connect_state", "link -lssl -lcrypto")]
+fn c_ssl_set_connect_state(ssl: i64) {}
+
+#[os("linux")]
+#[c("SSL_connect", "link -lssl -lcrypto")]
+fn c_ssl_connect(ssl: i64) -> i32 {}
+
+#[os("linux")]
+#[c("SSL_get_error", "link -lssl -lcrypto")]
+fn c_ssl_get_error(ssl: i64, rc: i32) -> i32 {}
+
+#[os("linux")]
+#[c("SSL_read", "link -lssl -lcrypto")]
+fn c_openssl_read(ssl: i64, into: &mut []u8, len: i32) -> i32 {}
+
+#[os("linux")]
+#[c("SSL_write", "link -lssl -lcrypto")]
+fn c_openssl_write(ssl: i64, bytes: i64, len: i32) -> i32 {}
+
+#[os("linux")]
+#[c("SSL_pending", "link -lssl -lcrypto")]
+fn c_ssl_pending(ssl: i64) -> i32 {}
+
+#[os("linux")]
+#[c("SSL_shutdown", "link -lssl -lcrypto")]
+fn c_ssl_shutdown(ssl: i64) -> i32 {}
+
+#[os("linux")]
+#[c("ERR_clear_error", "link -lcrypto")]
+fn c_err_clear_error() {}
+
+#[os("linux")]
+#[c("BIO_get_new_index", "link -lcrypto")]
+fn c_bio_get_new_index() -> i32 {}
+
+#[os("linux")]
+#[c("BIO_meth_new", "link -lcrypto")]
+fn c_bio_meth_new(kind: i32, name: string) -> i64 {}
+
+#[os("linux")]
+#[c("BIO_meth_free", "link -lcrypto")]
+fn c_bio_meth_free(method: i64) {}
+
+/** *`int (*)(BIO *, const char *, int)`. */
+#[os("linux")]
+#[c("BIO_meth_set_write", "link -lcrypto")]
+fn c_bio_meth_set_write(method: i64, write: fn(i64, i64, i32) -> i32) -> i32 {}
+
+/** *`int (*)(BIO *, char *, int)`. */
+#[os("linux")]
+#[c("BIO_meth_set_read", "link -lcrypto")]
+fn c_bio_meth_set_read(method: i64, read: fn(i64, i64, i32) -> i32) -> i32 {}
+
+/** *`long (*)(BIO *, int, long, void *)`. */
+#[os("linux")]
+#[c("BIO_meth_set_ctrl", "link -lcrypto")]
+fn c_bio_meth_set_ctrl(method: i64, ctrl: fn(i64, i32, i64, i64) -> i64) -> i32 {}
+
+#[os("linux")]
+#[c("BIO_new", "link -lcrypto")]
+fn c_bio_new(method: i64) -> i64 {}
+
+/** *The BIO's data is the socket itself, as an address-sized value. */
+#[os("linux")]
+#[c("BIO_set_data", "link -lcrypto")]
+fn c_bio_set_data(bio: i64, data: i64) {}
+
+#[os("linux")]
+#[c("BIO_get_data", "link -lcrypto")]
+fn c_bio_get_data(bio: i64) -> i64 {}
+
+#[os("linux")]
+#[c("BIO_set_init", "link -lcrypto")]
+fn c_bio_set_init(bio: i64, init: i32) {}
+
+#[os("linux")]
+#[c("BIO_set_flags", "link -lcrypto")]
+fn c_bio_set_flags(bio: i64, flags: i32) {}
+
+#[os("linux")]
+#[c("BIO_clear_flags", "link -lcrypto")]
+fn c_bio_clear_flags(bio: i64, flags: i32) {}
+
+// --- name lookup and C memory, for both backends ---------------------------------------
+
+#[os("apple", "linux")]
 #[c("getaddrinfo")]
 fn c_getaddrinfo(host: string, service: string, hints: &[]i32, list: &mut []i64) -> i32 {}
 
-#[os("apple")]
+#[os("apple", "linux")]
 #[c("freeaddrinfo")]
 fn c_freeaddrinfo(list: i64) {}
 
 /** *`connect` to an address C handed over (an `addrinfo`'s `ai_addr`). */
-#[os("apple")]
+#[os("apple", "linux")]
 #[c("connect")]
 fn c_connect_at(fd: i32, addr: i64, len: u32) -> i32 {}
 
-/** *`recv` into a buffer C handed over (SecureTransport's own). */
-#[os("apple")]
+/** *`recv` into a buffer C handed over (the backend's own). */
+#[os("apple", "linux")]
 #[c("recv")]
 fn c_recv_at(fd: i32, into: i64, len: i64, flags: i32) -> i64 {}
 
 /** *`memcpy` between C's memory and a Loam cell: the `addrinfo` walk and */
 /** *the callbacks' length word. Only this module's wrappers call them, each */
 /** *with an address C just handed over and its exact size. */
-#[os("apple")]
+#[os("apple", "linux")]
 #[c("memcpy")]
 fn c_load_words(dst: &mut []i64, src: i64, n: i64) -> i64 {}
 

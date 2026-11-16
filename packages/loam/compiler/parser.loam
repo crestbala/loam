@@ -2248,6 +2248,47 @@ fn variadic_fixed_of(shape: string) -> int {
     return n
 }
 
+/** *The libraries of `"link -lA -framework B"` as `-lA -framework B`, or */
+/** *`""` when a word is not `-l` and a name, or `-framework` and a name (a */
+/** *name is letters, digits, `_`, `+`, `.` or `-`, not first). Only */
+/** *libraries: a binding cannot pass the linker any other flag. */
+fn link_libs_of(shape: string) -> string {
+    let words = str.split(str.slice_from(shape, 5), " ")
+    let mut out = ""
+    let mut i = 0
+    while i < words.len {
+        let word = words[i]
+        let mut unit = ""
+        if word == "-framework" && i + 1 < words.len && link_name_ok(words[i + 1], 0) {
+            unit = "-framework {{words[i + 1]}}"
+            i += 1
+        } else if word.len >= 3 && word[0] == '-' && word[1] == 'l' && link_name_ok(word, 2) {
+            unit = word
+        } else {
+            return ""
+        }
+        out = if out.len == 0 { unit } else { "{{out}} {{unit}}" }
+        i += 1
+    }
+    return out
+}
+
+/** *`word[from..]` is a library name: not empty, not starting with `-`. */
+fn link_name_ok(word: string, from: int) -> bool {
+    if word.len <= from || word[from] == '-' {
+        return false
+    }
+    for k in from..word.len {
+        let c = word[k]
+        let ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+            c == '_' || c == '+' || c == '.' || c == '-'
+        if !ok {
+            return false
+        }
+    }
+    return true
+}
+
 const FN_ASYNC: int = 1
 const FN_TEST: int = 2
 const FN_SERVER: int = 4
@@ -2290,6 +2331,8 @@ fn parse_program(p: &mut Parser) -> int {
         let mut has_c_sym = false
         // A variadic binding's fixed parameter count, plus one; 0 if not.
         let mut c_fixed = 0
+        // A binding's libraries (`"link -lssl -lcrypto"`), space-separated.
+        let mut c_link = ""
         let mut os_mask = 0
         let mut attr_failed = false
         let mut dir_seen = false
@@ -2343,22 +2386,36 @@ fn parse_program(p: &mut Parser) -> int {
                 if eat(p, Tok.Comma) {
                     // `"variadic after N"`: C declares the first N parameters
                     // and takes the rest through `...` (fcntl, ioctl, open).
+                    // `"link -lA -framework B"`: the libraries the symbol
+                    // lives in, linked only when a kept binding names them.
                     if !eat(p, Tok.String) {
-                        error(p, "#[c] second argument must be the string \"variadic after N\"")
+                        error(p, "#[c] second argument must be the string \"variadic after N\" or \"link -lNAME...\"")
                         attr_failed = true
                         break
                     }
                     let shape = tok_unescaped(p, p.prev)
-                    let fixed = variadic_fixed_of(shape)
-                    if fixed < 1 {
-                        if !p.had_error {
-                            diag(p, tloc(p, p.prev), clip95("#[c] second argument must be \"variadic after N\" (N >= 1), not \"{{shape}}\""))
-                            p.had_error = true
+                    if str.starts_with(shape, "link ") {
+                        c_link = link_libs_of(shape)
+                        if c_link.len == 0 {
+                            if !p.had_error {
+                                diag(p, tloc(p, p.prev), clip95("#[c] \"link\" takes -lNAME and -framework NAME separated by spaces, not \"{{shape}}\""))
+                                p.had_error = true
+                            }
+                            attr_failed = true
+                            break
                         }
-                        attr_failed = true
-                        break
+                    } else {
+                        let fixed = variadic_fixed_of(shape)
+                        if fixed < 1 {
+                            if !p.had_error {
+                                diag(p, tloc(p, p.prev), clip95("#[c] second argument must be \"variadic after N\" (N >= 1) or \"link -lNAME...\", not \"{{shape}}\""))
+                                p.had_error = true
+                            }
+                            attr_failed = true
+                            break
+                        }
+                        c_fixed = fixed + 1
                     }
-                    c_fixed = fixed + 1
                 }
                 consume(p, Tok.Rparen, "expected ) after #[c symbol")
             } else {
@@ -2432,6 +2489,9 @@ fn parse_program(p: &mut Parser) -> int {
                 ast.EXTRA[ast.ex_mut(f)].text = c_sym
                 ast.EXTRA[ast.ex_mut(f)].has_text = has_c_sym
                 ast.EXTRA[ast.ex_mut(f)].numb = os_mask
+                if c_link.len > 0 {
+                    ast.EXTRA[ast.ex_mut(f)].cbuiltin = c_link
+                }
                 push(kids, f)
                 decl_count = decl_count + 1
             }

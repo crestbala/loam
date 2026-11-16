@@ -65,6 +65,17 @@ if [ "$OS" = Linux ]; then
     say "libX11 ok (native GUI host)"
   fi
 
+  # OpenSSL headers for std:net's TLS client (linked only by programs that
+  # connect over TLS).
+  if [ -f /usr/include/openssl/ssl.h ] || { command -v pkg-config >/dev/null 2>&1 && pkg-config --exists openssl; }; then
+    say "OpenSSL ok (TLS client)"
+  else
+    say "OpenSSL headers not found (needed only by programs that connect over TLS)."
+    say "  Debian/Ubuntu:  sudo apt-get install -y libssl-dev"
+    say "  Fedora:         sudo dnf install -y openssl-devel"
+    say "  Arch:           sudo pacman -S --needed openssl"
+  fi
+
   if ! command -v node >/dev/null 2>&1; then
     say "Node.js not found (needed only for the Vite wasm dev servers)."
     say "  Debian/Ubuntu:  sudo apt-get install -y nodejs npm"

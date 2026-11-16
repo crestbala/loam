@@ -31,10 +31,20 @@ and Linux emitted the same C for the compiler and every fixture.
 same set for all four targets from a macOS machine — the quick local check,
 no runner needed. Each fixture links what the driver adds: `runtime/net.c`
 for std:net and every `#![c_source]` / `#![c_link]` of it and its packages.
+A library a kept binding names (`#[c("SSL_new", "link -lssl -lcrypto")]`)
+links a stub of it on Linux, since zig ships no OpenSSL: the link checks the
+rest, and `nob integration c_layouts` checks the bound names against
+OpenSSL's headers.
+
+**TLS.** `net.tls_connect` is SecureTransport on macOS and iOS and OpenSSL
+(1.1.1 or 3.x, `libssl-dev`) on Linux, with the system's CA store, the host
+name checked and TLS 1.2 at least. Its bindings name their libraries, so a
+program that never connects over TLS links neither Security.framework nor
+libssl. Android and Windows have no TLS client yet (`-1`).
 
 **Known gap: `std:net` on Windows.** TCP is Loam over BSD socket bindings
 (R5.1) with no Winsock port yet, so on Windows every TCP call answers `-1`
-and TLS (SecureTransport, macOS only) is unavailable. Every fixture links
+and TLS is unavailable. Every fixture links
 there; the ones that open sockets are left out of the Windows run
 (`tools/win-bundle.sh`). The compiler needs no networking, so this is outside
 the self-hosting work.
