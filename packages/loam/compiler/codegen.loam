@@ -4,7 +4,8 @@
 // Layout of the generated file:
 //   1. loam_rt.h pasted in, then zeus_rt.h / net_rt.h when those modules
 //      are loaded, then the integer helpers, core ops (moves, retains, drops)
-//      and vec pushes and pops the unit calls, then (wasm32) the C library
+//      and vec pushes and pops the unit calls, the runtime verbs it calls,
+//      then (wasm32) the C library
 //   2. struct typedefs, then definitions in by-value dependency order
 //   3. element hook and ownership helper prototypes, globals, prototypes,
 //      closure envs, `#[c]` bindings, fn-value trampolines
@@ -812,6 +813,7 @@ fn interp(x: &Inst) {
 
 /** *Append literal `s` to the key buffer `b`. */
 fn vk_lit(b: string, s: string) {
+    rt_note_name("loam_buf_push_str")
     w("loam_buf_push_str({{b}}, ")
     str_lit(s)
     w("); ")
@@ -841,6 +843,7 @@ fn value_key(t0: int, place: string, b: string) {
             w("loam_key_push_str({{b}}, {{place}}); ")
             break
         case TK.Bool:
+            rt_note_name("loam_buf_push_str")
             w("loam_buf_push_str({{b}}, ({{place}}) ? ")
             str_lit("b1")
             w(" : ")
@@ -1975,6 +1978,823 @@ fn wasm_libc_defs() {
     }
 }
 
+// --- runtime verbs ---------------------------------------------------------------------
+//
+// The C under std's bodyless fns (`buf`, `decimal`, `conv`, `floattext`,
+// `str.slice`, `sys`, `thread`, the wasm `async` bridges), the `fmt` writers
+// IR calls by name, and the `sys` shims `#[c]` bindings name. They used to sit
+// in the runtime header, in every program. Codegen notes a group when it
+// writes a call to one of its names, keeps a bodyless std fn, or keeps a
+// binding to one, and defines only those groups, after the header. The bodies
+// are the header's C, with its `#if` guards.
+
+let RT_VERB_NAMES: []string = []string {
+    "loam_fmt_write",
+    "loam_fmt_ewrite",
+    "loam_fmt_eq",
+    "loam_str_slice",
+    "loam_string_from_bytes",
+    "loam_string_from_u8",
+    "loam_buf_push_str",
+    "loam_buf_push_bytes",
+    "loam_buf_to_string",
+    "loam_buf_prefix_to_string",
+    "loam_buf_with_len",
+    "loam_decimal_digits_len",
+    "loam_decimal_text_of_digits",
+    "loam_decimal_push_digits",
+    "loam_decimal_write_digits",
+    "loam_conv_f32_bits",
+    "loam_floattext_bits_of",
+    "loam_floattext_of_bits",
+    "loam_floattext_text_len",
+    "loam_floattext_text_of",
+    "loam_floattext_write_text",
+    "loam_argv_set",
+    "loam_sys_argc",
+    "loam_sys_arg",
+    "loam_sys_wasm_exit",
+    "loam_sys_strerror",
+    "loam_sys_stat",
+    "loam_dir_names",
+    "loam_dir_name_at",
+    "loam_dir_free",
+    "loam_sys_lstat",
+    "loam_sys_argv_fill",
+    "loam_sys_errno",
+    "loam_sys_spawnp",
+    "loam_sys_read_fd",
+    "loam_async_wasm_now_ms",
+    "loam_async_wasm_sleep",
+    "loam_ch_tab_lock",
+    "loam_ch_tab_unlock",
+    "loam_ch_block_alloc",
+    "loam_ch_do_send",
+    "loam_ch_do_try_send",
+    "loam_ch_do_recv",
+    "loam_ch_do_pop",
+    "loam_ch_do_send_owned",
+    "loam_ch_do_try_send_owned",
+    "loam_ch_do_ready",
+    "loam_thread_spawn",
+    "loam_thread_running"
+}
+
+/** *`RT_VERB_GROUP[i]`: the group that defines `RT_VERB_NAMES[i]`. */
+let RT_VERB_GROUP: []int = []int { 0, 0, 0, 1, 2, 2, 3, 3, 3, 3, 3, 4, 4, 4, 4, 5, 6, 6, 6, 6, 6, 7, 7, 7, 8, 9, 10, 11, 11, 11, 12, 13, 14, 15, 16, 17, 17, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18 }
+const RT_VERB_GROUPS: int = 19
+
+let mut RT_GROUP_USED: []bool = []bool {}
+/** *Per IR text id: 0 not looked up yet, 1 no verb, else the group + 2. */
+let mut RT_TEXT_GROUP: []int = []int {}
+
+fn rt_verbs_reset() {
+    RT_GROUP_USED = []bool {}
+    for i in 0..RT_VERB_GROUPS {
+        push(RT_GROUP_USED, false)
+    }
+    RT_TEXT_GROUP = []int {}
+}
+
+/** *The group defining C name `name`, or -1. */
+fn rt_verb_group(name: string) -> int {
+    if !str.starts_with(name, "loam_") {
+        return -1
+    }
+    for i in 0..RT_VERB_NAMES.len {
+        if RT_VERB_NAMES[i] == name {
+            return RT_VERB_GROUP[i]
+        }
+    }
+    return -1
+}
+
+/** *A call to, or a kept declaration of, C name `name` was written. */
+fn rt_note_name(name: string) {
+    let gi = rt_verb_group(name)
+    if gi >= 0 {
+        if RT_GROUP_USED.len == 0 {
+            rt_verbs_reset()
+        }
+        RT_GROUP_USED[gi] = true
+    }
+}
+
+/** *As `rt_note_name`, for an IR call's interned name: one lookup per text. */
+fn rt_note_text(t: int) {
+    if t < 0 {
+        return
+    }
+    if RT_GROUP_USED.len == 0 {
+        rt_verbs_reset()
+    }
+    while RT_TEXT_GROUP.len <= t {
+        push(RT_TEXT_GROUP, 0)
+    }
+    if RT_TEXT_GROUP[t] == 0 {
+        RT_TEXT_GROUP[t] = rt_verb_group(ir.TEXTS[t]) + 2
+    }
+    if RT_TEXT_GROUP[t] >= 2 {
+        RT_GROUP_USED[RT_TEXT_GROUP[t] - 2] = true
+    }
+}
+
+fn rt_verb_def(gi: int) {
+    switch gi {
+        case 0: // fmt
+            w("static inline void loam_fmt_write(loam_str s) {\n")
+            w("    if (!s.ptr || s.len <= 0) return;\n")
+            w("    loam_write_bytes(s.ptr, (size_t)s.len);\n")
+            w("}\n")
+            w("\n")
+            w("/* The stderr twins of the writers above, for `fmt.eprintln` / `fmt.ewrite`:\n")
+            w("   diagnostics must not mix with output a program sends to stdout. */\n")
+            w("static inline void loam_fmt_ewrite(loam_str s) {\n")
+            w("    if (!s.ptr || s.len <= 0) return;\n")
+            w("    loam_ewrite_bytes(s.ptr, (size_t)s.len);\n")
+            w("}\n")
+            w("\n")
+            w("static inline bool loam_fmt_eq(loam_str a, loam_str b) {\n")
+            w("    if (a.len != b.len) return false;\n")
+            w("    if (a.len <= 0) return true;\n")
+            w("    if (!a.ptr || !b.ptr) return a.ptr == b.ptr;\n")
+            w("    return memcmp(a.ptr, b.ptr, (size_t)a.len) == 0;\n")
+            w("}\n")
+            break
+        case 1: // str_slice
+            w("/** std:str `slice`: `s[a..b]`, bounds clamped to the string, in one copy. */\n")
+            w("static inline loam_str loam_str_slice(loam_str s, int32_t a, int32_t b) {\n")
+            w("    int64_t lo = a < 0 ? 0 : a;\n")
+            w("    int64_t hi = b > s.len ? s.len : b;\n")
+            w("    if (lo >= hi) return (loam_str){\"\", 0, 0};\n")
+            w("    return loam_str_copy(s.ptr + lo, hi - lo);\n")
+            w("}\n")
+            break
+        case 2: // string_from
+            w("/* Takes ownership of `b` (IR_CALL steals []int). Trailing NUL for C hosts. */\n")
+            w("static inline loam_str loam_string_from_bytes(loam_vec b) {\n")
+            w("    int64_t n = b.len > 0 ? b.len : 0;\n")
+            w("    char *p = loam_str_bytes(n);\n")
+            w("    int32_t *el = (int32_t *)b.ptr;\n")
+            w("    int64_t i;\n")
+            w("    for (i = 0; i < n; i++)\n")
+            w("        p[i] = (char)(el ? (el[i] & 255) : 0);\n")
+            w("    p[n] = 0;\n")
+            w("    loam_vec_drop(&b);\n")
+            w("    return loam_str_owned(p, n);\n")
+            w("}\n")
+            w("\n")
+            w("/** `string_from_bytes` for a `[]u8`. A vec and a string share a layout, so\n")
+            w(" *  an unshared buffer with room for the NUL becomes the string: no copy. */\n")
+            w("static inline loam_str loam_string_from_u8(loam_vec b) {\n")
+            w("    if (b.ptr && b.cap > b.len && *loam_vec_rc(b.ptr) == 1) {\n")
+            w("        ((char *)b.ptr)[b.len] = 0;\n")
+            w("        return loam_str_owned((char *)b.ptr, b.len);\n")
+            w("    }\n")
+            w("    int64_t n = b.len > 0 ? b.len : 0;\n")
+            w("    char *p = loam_str_bytes(n);\n")
+            w("    if (n) memcpy(p, b.ptr, (size_t)n);\n")
+            w("    p[n] = 0;\n")
+            w("    loam_vec_drop(&b);\n")
+            w("    return loam_str_owned(p, n);\n")
+            w("}\n")
+            break
+        case 3: // buf
+            w("/* --- std:buf — byte builders over `[]u8` ----------------------------------\n")
+            w("   One memcpy per append, amortized O(1) growth from loam_vec_reserve: N pieces\n")
+            w("   cost O(total bytes), not the O(N^2) of re-concatenating strings. */\n")
+            w("static inline void loam_buf_push_str(loam_vec *b, loam_str s) {\n")
+            w("    if (!b || !s.ptr || s.len <= 0) return;\n")
+            w("    loam_vec_reserve(b, b->len + s.len, 1, \"buf.push_str\", 0);\n")
+            w("    memcpy((char *)b->ptr + b->len, s.ptr, (size_t)s.len);\n")
+            w("    b->len += s.len;\n")
+            w("}\n")
+            w("\n")
+            w("static inline void loam_buf_push_bytes(loam_vec *b, const loam_vec *src) {\n")
+            w("    /* The borrow rules keep `src` from being `b`; a copy-on-write sibling of\n")
+            w("       `b` keeps its own reference, so its bytes outlive the reserve below. */\n")
+            w("    if (!b || !src || !src->ptr || src->len <= 0) return;\n")
+            w("    int64_t n = src->len;\n")
+            w("    loam_vec_reserve(b, b->len + n, 1, \"buf.push_bytes\", 0);\n")
+            w("    memcpy((char *)b->ptr + b->len, src->ptr, (size_t)n);\n")
+            w("    b->len += n;\n")
+            w("}\n")
+            w("\n")
+            w("/** A string copy of the bytes; the buffer stays usable. */\n")
+            w("static inline loam_str loam_buf_to_string(const loam_vec *b) {\n")
+            w("    if (!b || !b->ptr || b->len <= 0) return (loam_str){\"\", 0};\n")
+            w("    return loam_str_copy((const char *)b->ptr, b->len);\n")
+            w("}\n")
+            w("\n")
+            w("/* `buf.prefix_to_string(b, n)`: the first `n` bytes (clamped to the length)\n")
+            w("   as a string, one exact copy. For a buffer the kernel filled part of. */\n")
+            w("static inline loam_str loam_buf_prefix_to_string(const loam_vec *b, int64_t n) {\n")
+            w("    if (!b || !b->ptr || n <= 0) return (loam_str){\"\", 0};\n")
+            w("    return loam_str_copy((const char *)b->ptr, n < b->len ? n : b->len);\n")
+            w("}\n")
+            w("\n")
+            w("/* `buf.with_len(n)`: one allocation of `n` zeroed bytes, for a buffer C fills\n")
+            w("   (`fread`, `getcwd`), instead of a push loop's check per byte. The spare\n")
+            w("   byte keeps `string_from_bytes` copy-free when `n` is a power of two. */\n")
+            w("static inline loam_vec loam_buf_with_len(int64_t n) {\n")
+            w("    loam_vec v = loam_vec_new();\n")
+            w("    if (n > 0) {\n")
+            w("        loam_vec_reserve(&v, n + 1, 1, \"buf.with_len\", 0);\n")
+            w("        memset(v.ptr, 0, (size_t)n);\n")
+            w("        v.len = n;\n")
+            w("    }\n")
+            w("    return v;\n")
+            w("}\n")
+            break
+        case 4: // decimal
+            w("/* std:decimal hands on `d[first..20]`, digits it made on the stack. */\n")
+            w("static inline int64_t loam_decimal_digits_len(int32_t first) {\n")
+            w("    if (first < 0 || first > 20) loam_panic(\"decimal\", 0, \"digits out of range\");\n")
+            w("    return 20 - (int64_t)first;\n")
+            w("}\n")
+            w("\n")
+            w("static inline loam_str loam_decimal_text_of_digits(const uint8_t *d, int32_t first) {\n")
+            w("    return loam_str_copy((const char *)d + first, loam_decimal_digits_len(first));\n")
+            w("}\n")
+            w("\n")
+            w("static inline void loam_decimal_push_digits(loam_vec *b, const uint8_t *d, int32_t first) {\n")
+            w("    int64_t n = loam_decimal_digits_len(first);\n")
+            w("    if (!b) return;\n")
+            w("    loam_vec_reserve(b, b->len + n, 1, \"buf.push_int\", 0);\n")
+            w("    memcpy((char *)b->ptr + b->len, d + first, (size_t)n);\n")
+            w("    b->len += n;\n")
+            w("}\n")
+            w("\n")
+            w("static inline void loam_decimal_write_digits(const uint8_t *d, int32_t first, bool to_err) {\n")
+            w("    int64_t n = loam_decimal_digits_len(first);\n")
+            w("    if (to_err) loam_ewrite_bytes((const char *)d + first, (size_t)n);\n")
+            w("    else loam_write_bytes((const char *)d + first, (size_t)n);\n")
+            w("}\n")
+            break
+        case 5: // conv
+            w("/* `std:key` reads a float's bytes for its content key. A value conversion\n")
+            w("   would round (`1.5 as u32` is 1); only `memcpy` sees the raw bytes. */\n")
+            w("static inline uint32_t loam_conv_f32_bits(float v) {\n")
+            w("    uint32_t out = 0;\n")
+            w("    memcpy(&out, &v, sizeof out);\n")
+            w("    return out;\n")
+            w("}\n")
+            break
+        case 6: // floattext
+            w("/* std:floattext: a double's bits both ways, and the text it made on the\n")
+            w("   stack, `d[0..len]`. */\n")
+            w("static inline uint64_t loam_floattext_bits_of(double v) {\n")
+            w("    uint64_t out = 0;\n")
+            w("    memcpy(&out, &v, sizeof out);\n")
+            w("    return out;\n")
+            w("}\n")
+            w("static inline double loam_floattext_of_bits(uint64_t u) {\n")
+            w("    double out = 0;\n")
+            w("    memcpy(&out, &u, sizeof out);\n")
+            w("    return out;\n")
+            w("}\n")
+            w("static inline int64_t loam_floattext_text_len(int32_t len) {\n")
+            w("    if (len < 0 || len > 32) loam_panic(\"floattext\", 0, \"text out of range\");\n")
+            w("    return (int64_t)len;\n")
+            w("}\n")
+            w("static inline loam_str loam_floattext_text_of(const uint8_t *d, int32_t len) {\n")
+            w("    return loam_str_copy((const char *)d, loam_floattext_text_len(len));\n")
+            w("}\n")
+            w("static inline void loam_floattext_write_text(const uint8_t *d, int32_t len, bool to_err) {\n")
+            w("    int64_t n = loam_floattext_text_len(len);\n")
+            w("    if (to_err) loam_ewrite_bytes((const char *)d, (size_t)n);\n")
+            w("    else loam_write_bytes((const char *)d, (size_t)n);\n")
+            w("}\n")
+            break
+        case 7: // argv
+            w("#ifdef __wasm32__\n")
+            w("/* No process and no command line in wasm: the host calls the entry with no\n")
+            w("   arguments, so `sys.argc()` is 0 and `sys.arg(i)` is empty. */\n")
+            w("static inline void loam_argv_set(int argc, char **argv) {\n")
+            w("    (void)argc;\n")
+            w("    (void)argv;\n")
+            w("}\n")
+            w("static inline int64_t loam_sys_argc(void) { return 0; }\n")
+            w("static inline loam_str loam_sys_arg(int64_t i) {\n")
+            w("    (void)i;\n")
+            w("    return (loam_str){\"\", 0};\n")
+            w("}\n")
+            w("#else\n")
+            w("/* The process's command line, handed over by the generated entry before any\n")
+            w("   other statement runs (`emit_main_args` in codegen_c.c). Zero on iOS and\n")
+            w("   Android, where the host owns `main` and passes nothing. */\n")
+            w("LOAM_RT_STATE int loam_argc;\n")
+            w("LOAM_RT_STATE char **loam_argv;\n")
+            w("\n")
+            w("static inline void loam_argv_set(int argc, char **argv) {\n")
+            w("    loam_argc = argc;\n")
+            w("    loam_argv = argv;\n")
+            w("#ifdef _WIN32\n")
+            w("    /* Bytes out are the bytes written: text mode would turn every `\\n` into\n")
+            w("       `\\r\\n`, and generated C must be identical on every platform. */\n")
+            w("    _setmode(1, 0x8000 /* _O_BINARY */);\n")
+            w("    _setmode(2, 0x8000);\n")
+            w("#endif\n")
+            w("}\n")
+            w("\n")
+            w("static inline int64_t loam_sys_argc(void) { return (int64_t)loam_argc; }\n")
+            w("\n")
+            w("/* Points straight into the process's own argument vector: it lives exactly as\n")
+            w("   long as the process does, so there is nothing to copy and nothing to free. */\n")
+            w("static inline loam_str loam_sys_arg(int64_t i) {\n")
+            w("    if (i < 0 || i >= (int64_t)loam_argc || !loam_argv || !loam_argv[i])\n")
+            w("        return (loam_str){\"\", 0};\n")
+            w("    return (loam_str){loam_argv[i], (int64_t)strlen(loam_argv[i])};\n")
+            w("}\n")
+            w("#endif\n")
+            break
+        case 8: // wasm_exit
+            w("#ifdef __wasm32__\n")
+            w("/* `sys.env` / `sys.env_set` / `sys.exit` live in `std/sys.loam` (R2.3c);\n")
+            w("   wasm's `exit` traps through this hook. */\n")
+            w("static inline void loam_sys_wasm_exit(void) { abort(); }\n")
+            w("#endif\n")
+            break
+        case 9: // strerror
+            w("#ifndef __wasm32__\n")
+            w("/* `strerror(errno)` for the `sys` Loam bindings: the error is always the\n")
+            w("   current one, so the binding takes no argument and C reads `errno` itself.\n")
+            w("   A `const char *`, the `#[c]` string-return ABI: the wrapper copies it (a\n")
+            w("   `loam_str` return would come back through a struct-return slot the wrapper\n")
+            w("   never passes). Declared here, defined once in the owning unit (the\n")
+            w("   `LOAM_RT_DEFINE_JMP` block below), like the trap state: the `#[c]` wrapper\n")
+            w("   references it as a symbol. */\n")
+            w("const char *loam_sys_strerror(void);\n")
+            w("#ifdef LOAM_RT_DEFINE_JMP\n")
+            w("const char *loam_sys_strerror(void) {\n")
+            w("    return strerror(errno);\n")
+            w("}\n")
+            w("#endif\n")
+            w("#endif\n")
+            break
+        case 10: // stat
+            w("#ifndef __wasm32__\n")
+            w("/* One `stat(2)` for the `sys` Loam bindings: the layout differs per OS, so\n")
+            w("   Loam cannot read the struct itself. `out` takes five slots\n")
+            w("   (mtime-sec, mtime-nsec, size, is-regular, is-dir); `1` when the path\n")
+            w("   stats, else `0`. The sub-second field is per target (macOS `st_mtimespec`,\n")
+            w("   Linux `st_mtim`, elsewhere whole seconds); the type tests use `S_ISREG` /\n")
+            w("   `S_ISDIR`, which are macros Loam cannot name. Declared here, defined once\n")
+            w("   in the owning unit (see `loam_sys_strerror` above): the `#[c]` wrapper\n")
+            w("   references it as a symbol. */\n")
+            w("int loam_sys_stat(const char *path, int64_t *out);\n")
+            w("#ifdef LOAM_RT_DEFINE_JMP\n")
+            w("int loam_sys_stat(const char *path, int64_t *out) {\n")
+            w("    struct stat st;\n")
+            w("    if (!path || !out || stat(path, &st) != 0) return 0;\n")
+            w("#if defined(__APPLE__)\n")
+            w("    out[0] = (int64_t)st.st_mtimespec.tv_sec;\n")
+            w("    out[1] = (int64_t)st.st_mtimespec.tv_nsec;\n")
+            w("#elif defined(__linux__)\n")
+            w("    out[0] = (int64_t)st.st_mtim.tv_sec;\n")
+            w("    out[1] = (int64_t)st.st_mtim.tv_nsec;\n")
+            w("#else\n")
+            w("    out[0] = (int64_t)st.st_mtime;\n")
+            w("    out[1] = 0;\n")
+            w("#endif\n")
+            w("    out[2] = (int64_t)st.st_size;\n")
+            w("    out[3] = S_ISREG(st.st_mode) ? 1 : 0;\n")
+            w("    out[4] = S_ISDIR(st.st_mode) ? 1 : 0;\n")
+            w("    return 1;\n")
+            w("}\n")
+            w("#endif\n")
+            w("#endif\n")
+            break
+        case 11: // dir
+            w("#ifndef __wasm32__\n")
+            w("/**\n")
+            w(" * Names in `dirpath`, `.` and `..` excluded, *unsorted*: sorting moved to\n")
+            w(" * Loam (`sys.list_dir`, R2.2), over a raw `strcmp` binding. Each name and the\n")
+            w(" * array belong to the caller (see `loam_dir_free`); `*out` is NULL when the\n")
+            w(" * directory cannot be read, which is not an error worth reporting — an\n")
+            w(" * unreadable directory is an empty one as far as a walk is concerned.\n")
+            w(" * Declared here, defined once in the owning unit (see `loam_sys_strerror`\n")
+            w(" * above): the `#[c]` wrappers reference these as symbols.\n")
+            w(" */\n")
+            w("int64_t loam_dir_names(const char *dirpath, char ***out);\n")
+            w("const char *loam_dir_name_at(char **names, int64_t i);\n")
+            w("void loam_dir_free(char **names, int64_t n);\n")
+            w("#ifdef LOAM_RT_DEFINE_JMP\n")
+            w("int64_t loam_dir_names(const char *dirpath, char ***out) {\n")
+            w("    DIR *d = opendir(dirpath);\n")
+            w("    struct dirent *e;\n")
+            w("    char **names = NULL;\n")
+            w("    int64_t n = 0, cap = 0;\n")
+            w("    if (!d) {\n")
+            w("        *out = NULL;\n")
+            w("        return 0;\n")
+            w("    }\n")
+            w("    while ((e = readdir(d)) != NULL) {\n")
+            w("        size_t len;\n")
+            w("        if (e->d_name[0] == '.' &&\n")
+            w("            (e->d_name[1] == 0 || (e->d_name[1] == '.' && e->d_name[2] == 0)))\n")
+            w("            continue;\n")
+            w("        if (n == cap) {\n")
+            w("            cap = cap ? cap * 2 : 32;\n")
+            w("            names = (char **)realloc(names, (size_t)cap * sizeof *names);\n")
+            w("            if (!names) {\n")
+            w("                closedir(d);\n")
+            w("                *out = NULL;\n")
+            w("                return 0;\n")
+            w("            }\n")
+            w("        }\n")
+            w("        len = strlen(e->d_name);\n")
+            w("        names[n] = (char *)malloc(len + 1);\n")
+            w("        if (!names[n]) break;\n")
+            w("        memcpy(names[n], e->d_name, len + 1);\n")
+            w("        n++;\n")
+            w("    }\n")
+            w("    closedir(d);\n")
+            w("    *out = names;\n")
+            w("    return n;\n")
+            w("}\n")
+            w("\n")
+            w("const char *loam_dir_name_at(char **names, int64_t i) {\n")
+            w("    return names ? names[i] : \"\";\n")
+            w("}\n")
+            w("\n")
+            w("void loam_dir_free(char **names, int64_t n) {\n")
+            w("    int64_t i;\n")
+            w("    for (i = 0; i < n; i++) free(names[i]);\n")
+            w("    free(names);\n")
+            w("}\n")
+            w("#endif\n")
+            w("#endif\n")
+            break
+        case 12: // lstat
+            w("#ifndef __wasm32__\n")
+            w("/* One `lstat(2)` for `remove_path`: like `loam_sys_stat` (same gate) but a\n")
+            w("   symlink stays a link — `stat` would follow it into its target's tree. */\n")
+            w("int loam_sys_lstat(const char *path, int64_t *out);\n")
+            w("#ifdef LOAM_RT_DEFINE_JMP\n")
+            w("int loam_sys_lstat(const char *path, int64_t *out) {\n")
+            w("    struct stat st;\n")
+            w("    if (!path || !out || lstat(path, &st) != 0) return 0;\n")
+            w("    out[0] = 1;\n")
+            w("    out[1] = S_ISDIR(st.st_mode) ? 1 : 0;\n")
+            w("    return 1;\n")
+            w("}\n")
+            w("#endif\n")
+            w("#endif\n")
+            break
+        case 13: // argv_fill
+            w("#ifndef __wasm32__\n")
+            w("/* `sys.spawn` lays a `char **` over Loam-owned slots (8 bytes each, so any\n")
+            w("   pointer width fits). */\n")
+            w("void loam_sys_argv_fill(char *block, const int64_t *offsets, int64_t n, int64_t *slots);\n")
+            w("#ifdef LOAM_RT_DEFINE_JMP\n")
+            w("void loam_sys_argv_fill(char *block, const int64_t *offsets, int64_t n, int64_t *slots) {\n")
+            w("    char **av = (char **)slots;\n")
+            w("    for (int64_t i = 0; i < n; i++) av[i] = block + offsets[i];\n")
+            w("    av[n] = NULL;\n")
+            w("}\n")
+            w("#endif\n")
+            w("#endif\n")
+            break
+        case 14: // errno
+            w("#ifndef __wasm32__\n")
+            w("/* `errno` is a macro no binding can name; `waitpid` retries on `EINTR`. */\n")
+            w("int loam_sys_errno(void);\n")
+            w("#ifdef LOAM_RT_DEFINE_JMP\n")
+            w("int loam_sys_errno(void) { return errno; }\n")
+            w("#endif\n")
+            w("#endif\n")
+            break
+        case 15: // spawnp
+            w("#if !defined(__wasm32__) && !defined(_WIN32)\n")
+            w("/* `environ` is a variable, which no binding can name. */\n")
+            w("#include <spawn.h>\n")
+            w("extern char **environ;\n")
+            w("int loam_sys_spawnp(int32_t *pid, const char *file, int64_t *argv);\n")
+            w("#ifdef LOAM_RT_DEFINE_JMP\n")
+            w("int loam_sys_spawnp(int32_t *pid, const char *file, int64_t *argv) {\n")
+            w("    pid_t p = 0;\n")
+            w("    int r = posix_spawnp(&p, file, NULL, NULL, (char **)argv, environ);\n")
+            w("    *pid = (int32_t)p;\n")
+            w("    return r;\n")
+            w("}\n")
+            w("#endif\n")
+            w("#endif\n")
+            break
+        case 16: // read_fd
+            w("#ifndef __wasm32__\n")
+            w("/* `sys.read_stdin` / `sys.read_line` live in `std/sys.loam` (R2.4), over\n")
+            w("   this one hook and raw `read`. `sys.read_fd(fd, n)`: up to `n` bytes of\n")
+            w("   `fd` into a fresh buffer whose length is what `read` returned, retried on\n")
+            w("   `EINTR`; no byte is unwritten and none is zeroed first. */\n")
+            w("static inline loam_vec loam_sys_read_fd(int64_t fd, int64_t n) {\n")
+            w("    loam_vec v = loam_vec_new();\n")
+            w("    if (n <= 0) return v;\n")
+            w("    loam_vec_reserve(&v, n + 1, 1, \"sys.read_fd\", 0);\n")
+            w("    while (v.len < n) {\n")
+            w("        ssize_t r = read((int)fd, (char *)v.ptr + v.len, (size_t)(n - v.len));\n")
+            w("        if (r < 0 && errno == EINTR) continue;\n")
+            w("        if (r <= 0) break;\n")
+            w("        v.len += r;\n")
+            w("    }\n")
+            w("    return v;\n")
+            w("}\n")
+            w("#endif\n")
+            break
+        case 17: // async_wasm
+            w("#ifdef __wasm32__\n")
+            w("/* `std:async` binds `clock_gettime` / `nanosleep` itself on native (`#[c]`);\n")
+            w("   wasm binds no libc, so the two wasm bridges live here (like `sys.wasm_exit`\n")
+            w("   bridges `abort`): the clock is the `zeus_js_now_ms` host import\n")
+            w("   (`loam_now_ms`, above), and the sleep is its spin. */\n")
+            w("static inline int64_t loam_async_wasm_now_ms(void) { return loam_now_ms(); }\n")
+            w("static inline void loam_async_wasm_sleep(int64_t ms) {\n")
+            w("    int64_t t0 = loam_now_ms();\n")
+            w("    while (loam_now_ms() - t0 < ms) {\n")
+            w("    }\n")
+            w("}\n")
+            w("#endif\n")
+            break
+        case 18: // thread
+            w("/* --- thread + channel: std/thread.loam. The ABI is a detached pthread and a ---\n")
+            w("   --- bounded FIFO of byte payloads guarded by a mutex + two condvars. All ---\n")
+            w("   --- queue/dispatch policy lives in Loam; this is only the synchronization. --- */\n")
+            w("\n")
+            w("#ifndef __wasm32__\n")
+            w("#include <pthread.h>\n")
+            w("\n")
+            w("LOAM_RT_STATE int64_t loam_thread_live;          /* detached workers still running */\n")
+            w("LOAM_RT_STATE pthread_mutex_t loam_thread_mtx LOAM_RT_INIT(PTHREAD_MUTEX_INITIALIZER);\n")
+            w("LOAM_RT_STATE pthread_mutex_t loam_ch_tab_mtx LOAM_RT_INIT(PTHREAD_MUTEX_INITIALIZER);\n")
+            w("\n")
+            w("/* The table lock for `std:thread`'s Loam id table: held across every table\n")
+            w("   read and write there, so a worker fetching a cookie races nothing. Plain\n")
+            w("   C functions (not `static inline`): the `#[c]` wrappers reference them as\n")
+            w("   symbols, like `loam_sys_stat` below. */\n")
+            w("int loam_ch_tab_lock(void);\n")
+            w("int loam_ch_tab_unlock(void);\n")
+            w("#ifdef LOAM_RT_DEFINE_JMP\n")
+            w("int loam_ch_tab_lock(void) {\n")
+            w("    return pthread_mutex_lock(&loam_ch_tab_mtx);\n")
+            w("}\n")
+            w("int loam_ch_tab_unlock(void) {\n")
+            w("    return pthread_mutex_unlock(&loam_ch_tab_mtx);\n")
+            w("}\n")
+            w("#endif\n")
+            w("\n")
+            w("/* --- channel: std/thread.loam. The ABI is a detached pthread and a bounded\n")
+            w("   FIFO of byte payloads guarded by a mutex + two condvars. R3.2: the id\n")
+            w("   table and S0 keys live in Loam (`ch_slots`); C owns one sync block per\n")
+            w("   channel (below), named by an opaque cookie, plus one atomic section per\n")
+            w("   op. A 0 cookie names nothing: the section no-ops, as a dead id did. */\n")
+            w("\n")
+            w("typedef struct {\n")
+            w("    unsigned char *buf;     /* cap * esz ring */\n")
+            w("    size_t esz;             /* payload byte size (sizeof T) */\n")
+            w("    int64_t cap;            /* slots */\n")
+            w("    int64_t head;           /* first live slot */\n")
+            w("    int64_t count;          /* live slots */\n")
+            w("    pthread_mutex_t mtx;\n")
+            w("    pthread_cond_t has_data, has_space;\n")
+            w("} loam_ch;\n")
+            w("\n")
+            w("/* The sync block for `cap` slots of `esz` bytes. The cookie is the block\n")
+            w("   address; Loam files it in its id table under the payload type's key.\n")
+            w("   Declared here, defined once in the owning unit (like `loam_sys_stat`):\n")
+            w("   the `#[c]` wrapper references it as a symbol. */\n")
+            w("int64_t loam_ch_block_alloc(int64_t cap, size_t esz);\n")
+            w("#ifdef LOAM_RT_DEFINE_JMP\n")
+            w("int64_t loam_ch_block_alloc(int64_t cap, size_t esz) {\n")
+            w("    loam_ch *c;\n")
+            w("    if (cap < 1) cap = 1;\n")
+            w("    if (esz < 1) esz = 1;\n")
+            w("    c = (loam_ch *)loam_new(sizeof(loam_ch), \"channel\", 0);\n")
+            w("    c->buf = (unsigned char *)loam_new((size_t)cap * esz, \"channel\", 0);\n")
+            w("    c->esz = esz;\n")
+            w("    c->cap = cap;\n")
+            w("    c->head = 0;\n")
+            w("    c->count = 0;\n")
+            w("    pthread_mutex_init(&c->mtx, NULL);\n")
+            w("    pthread_cond_init(&c->has_data, NULL);\n")
+            w("    pthread_cond_init(&c->has_space, NULL);\n")
+            w("    return (int64_t)(intptr_t)c;\n")
+            w("}\n")
+            w("#endif\n")
+            w("\n")
+            w("static inline loam_ch *loam_ch_from_cookie(int64_t cookie) {\n")
+            w("    if (!cookie) return NULL;\n")
+            w("    return (loam_ch *)(intptr_t)cookie;\n")
+            w("}\n")
+            w("\n")
+            w("static inline void loam_ch_do_send(int64_t cookie, const void *val, size_t sz) {\n")
+            w("    loam_ch *c = loam_ch_from_cookie(cookie);\n")
+            w("    if (!c || !val) return;\n")
+            w("    pthread_mutex_lock(&c->mtx);\n")
+            w("    while (c->count == c->cap) pthread_cond_wait(&c->has_space, &c->mtx);\n")
+            w("    if (sz > c->esz) sz = c->esz;\n")
+            w("    if (sz)\n")
+            w("        memcpy(c->buf + (size_t)((c->head + c->count) % c->cap) * c->esz, val, sz);\n")
+            w("    c->count++;\n")
+            w("    pthread_cond_signal(&c->has_data);\n")
+            w("    pthread_mutex_unlock(&c->mtx);\n")
+            w("}\n")
+            w("\n")
+            w("static inline int64_t loam_ch_do_try_send(int64_t cookie, const void *val, size_t sz) {\n")
+            w("    loam_ch *c = loam_ch_from_cookie(cookie);\n")
+            w("    if (!c || !val) return 0;\n")
+            w("    pthread_mutex_lock(&c->mtx);\n")
+            w("    if (c->count == c->cap) {\n")
+            w("        pthread_mutex_unlock(&c->mtx);\n")
+            w("        return 0;\n")
+            w("    }\n")
+            w("    if (sz > c->esz) sz = c->esz;\n")
+            w("    if (sz)\n")
+            w("        memcpy(c->buf + (size_t)((c->head + c->count) % c->cap) * c->esz, val, sz);\n")
+            w("    c->count++;\n")
+            w("    pthread_cond_signal(&c->has_data);\n")
+            w("    pthread_mutex_unlock(&c->mtx);\n")
+            w("    return 1;\n")
+            w("}\n")
+            w("\n")
+            w("static inline void loam_ch_do_recv(int64_t cookie, void *out, size_t sz) {\n")
+            w("    loam_ch *c = loam_ch_from_cookie(cookie);\n")
+            w("    if (!c || !out) return;\n")
+            w("    pthread_mutex_lock(&c->mtx);\n")
+            w("    while (c->count == 0) pthread_cond_wait(&c->has_data, &c->mtx);\n")
+            w("    if (sz > c->esz) sz = c->esz;\n")
+            w("    if (sz) memcpy(out, c->buf + (size_t)c->head * c->esz, sz);\n")
+            w("    c->head = (c->head + 1) % c->cap;\n")
+            w("    c->count--;\n")
+            w("    pthread_cond_signal(&c->has_space);\n")
+            w("    pthread_mutex_unlock(&c->mtx);\n")
+            w("}\n")
+            w("\n")
+            w("static inline int64_t loam_ch_do_pop(int64_t cookie, void *out, size_t sz) {\n")
+            w("    loam_ch *c = loam_ch_from_cookie(cookie);\n")
+            w("    if (!c || !out) return 0;\n")
+            w("    pthread_mutex_lock(&c->mtx);\n")
+            w("    if (c->count == 0) {\n")
+            w("        pthread_mutex_unlock(&c->mtx);\n")
+            w("        return 0;\n")
+            w("    }\n")
+            w("    if (sz > c->esz) sz = c->esz;\n")
+            w("    if (sz) memcpy(out, c->buf + (size_t)c->head * c->esz, sz);\n")
+            w("    c->head = (c->head + 1) % c->cap;\n")
+            w("    c->count--;\n")
+            w("    pthread_cond_signal(&c->has_space);\n")
+            w("    pthread_mutex_unlock(&c->mtx);\n")
+            w("    return 1;\n")
+            w("}\n")
+            w("\n")
+            w("/* --- channels with owning payloads --------------------------------------\n")
+            w("   A queued slot aliases the payload bytes, so the channel takes a reference\n")
+            w("   when it enqueues one; `recv`/`pop` copy the slot out and with it the\n")
+            w("   reference (the head advances past the slot, so the channel never releases\n")
+            w("   it). A payload still queued when the channel dies is not released — bounded,\n")
+            w("   and only when a producer enqueues what no consumer drains. */\n")
+            w("static inline void loam_ch_do_send_owned(int64_t cookie, const void *val, size_t sz,\n")
+            w("                                         loam_elem_fn retain) {\n")
+            w("    loam_ch *c = loam_ch_from_cookie(cookie);\n")
+            w("    if (!c || !val) return;\n")
+            w("    pthread_mutex_lock(&c->mtx);\n")
+            w("    while (c->count == c->cap) pthread_cond_wait(&c->has_space, &c->mtx);\n")
+            w("    if (retain) retain((void *)val);\n")
+            w("    if (sz > c->esz) sz = c->esz;\n")
+            w("    if (sz)\n")
+            w("        memcpy(c->buf + (size_t)((c->head + c->count) % c->cap) * c->esz, val, sz);\n")
+            w("    c->count++;\n")
+            w("    pthread_cond_signal(&c->has_data);\n")
+            w("    pthread_mutex_unlock(&c->mtx);\n")
+            w("}\n")
+            w("\n")
+            w("static inline int64_t loam_ch_do_try_send_owned(int64_t cookie, const void *val, size_t sz,\n")
+            w("                                                loam_elem_fn retain) {\n")
+            w("    loam_ch *c = loam_ch_from_cookie(cookie);\n")
+            w("    if (!c || !val) return 0;\n")
+            w("    pthread_mutex_lock(&c->mtx);\n")
+            w("    if (c->count == c->cap) {\n")
+            w("        pthread_mutex_unlock(&c->mtx);\n")
+            w("        return 0;\n")
+            w("    }\n")
+            w("    if (retain) retain((void *)val);\n")
+            w("    if (sz > c->esz) sz = c->esz;\n")
+            w("    if (sz)\n")
+            w("        memcpy(c->buf + (size_t)((c->head + c->count) % c->cap) * c->esz, val, sz);\n")
+            w("    c->count++;\n")
+            w("    pthread_cond_signal(&c->has_data);\n")
+            w("    pthread_mutex_unlock(&c->mtx);\n")
+            w("    return 1;\n")
+            w("}\n")
+            w("\n")
+            w("static inline int64_t loam_ch_do_ready(int64_t cookie) {\n")
+            w("    loam_ch *c = loam_ch_from_cookie(cookie);\n")
+            w("    int64_t r;\n")
+            w("    if (!c) return 0;\n")
+            w("    pthread_mutex_lock(&c->mtx);\n")
+            w("    r = c->count;\n")
+            w("    pthread_mutex_unlock(&c->mtx);\n")
+            w("    return r;\n")
+            w("}\n")
+            w("\n")
+            w("typedef struct {\n")
+            w("    loam_fn cb;\n")
+            w("} loam_thread_arg;\n")
+            w("\n")
+            w("static void *loam_thread_entry(void *p) {\n")
+            w("    loam_thread_arg *a = (loam_thread_arg *)p;\n")
+            w("    loam_fn cb = a->cb;\n")
+            w("    free(a);\n")
+            w("    ((void (*)(void *))cb.fn)(cb.env);\n")
+            w("    pthread_mutex_lock(&loam_thread_mtx);\n")
+            w("    loam_thread_live--;\n")
+            w("    pthread_mutex_unlock(&loam_thread_mtx);\n")
+            w("    return NULL;\n")
+            w("}\n")
+            w("\n")
+            w("/* Bodyless `thread.spawn(cb: fn())`. Detached: results come back through\n")
+            w("   channel<T>, never through join. The fn env is leaked by design (fn values\n")
+            w("   are never freed), so the worker outlives the spawn callsite safely. */\n")
+            w("static inline void loam_thread_spawn(loam_fn cb) {\n")
+            w("    pthread_t t;\n")
+            w("    loam_thread_arg *a;\n")
+            w("    if (!cb.fn) return;\n")
+            w("    a = (loam_thread_arg *)loam_new(sizeof(loam_thread_arg), \"thread.spawn\", 0);\n")
+            w("    a->cb = cb;\n")
+            w("    if (pthread_create(&t, NULL, loam_thread_entry, a) != 0) {\n")
+            w("        free(a);\n")
+            w("        loam_panic(__FILE__, __LINE__, \"thread.spawn: pthread_create failed\");\n")
+            w("    }\n")
+            w("    pthread_detach(t);\n")
+            w("    pthread_mutex_lock(&loam_thread_mtx);\n")
+            w("    loam_thread_live++;\n")
+            w("    pthread_mutex_unlock(&loam_thread_mtx);\n")
+            w("}\n")
+            w("\n")
+            w("static inline int64_t loam_thread_running(void) {\n")
+            w("    int64_t n;\n")
+            w("    pthread_mutex_lock(&loam_thread_mtx);\n")
+            w("    n = loam_thread_live;\n")
+            w("    pthread_mutex_unlock(&loam_thread_mtx);\n")
+            w("    return n;\n")
+            w("}\n")
+            w("#else /* __wasm32__: no threads; channel ops are inert so std:thread compiles */\n")
+            w("/* The cookies name nothing: the Loam table still hands out ids and checks\n")
+            w("   keys, but no bytes ever move. */\n")
+            w("static inline void loam_ch_do_send(int64_t cookie, const void *val, size_t sz) {\n")
+            w("    (void)cookie;\n")
+            w("    (void)val;\n")
+            w("    (void)sz;\n")
+            w("}\n")
+            w("static inline int64_t loam_ch_do_try_send(int64_t cookie, const void *val, size_t sz) {\n")
+            w("    (void)cookie;\n")
+            w("    (void)val;\n")
+            w("    (void)sz;\n")
+            w("    return 0;\n")
+            w("}\n")
+            w("static inline void loam_ch_do_send_owned(int64_t cookie, const void *val, size_t sz,\n")
+            w("                                         loam_elem_fn retain) {\n")
+            w("    (void)retain;\n")
+            w("    loam_ch_do_send(cookie, val, sz);\n")
+            w("}\n")
+            w("static inline int64_t loam_ch_do_try_send_owned(int64_t cookie, const void *val, size_t sz,\n")
+            w("                                                loam_elem_fn retain) {\n")
+            w("    (void)retain;\n")
+            w("    return loam_ch_do_try_send(cookie, val, sz);\n")
+            w("}\n")
+            w("static inline void loam_ch_do_recv(int64_t cookie, void *out, size_t sz) {\n")
+            w("    (void)cookie;\n")
+            w("    if (out) memset(out, 0, sz);\n")
+            w("}\n")
+            w("static inline int64_t loam_ch_do_pop(int64_t cookie, void *out, size_t sz) {\n")
+            w("    (void)cookie;\n")
+            w("    if (out) memset(out, 0, sz);\n")
+            w("    return 0;\n")
+            w("}\n")
+            w("static inline int64_t loam_ch_do_ready(int64_t cookie) {\n")
+            w("    (void)cookie;\n")
+            w("    return 0;\n")
+            w("}\n")
+            w("static inline void loam_thread_spawn(loam_fn cb) {\n")
+            w("    (void)cb; /* wasm has no threads; spawn is a no-op */\n")
+            w("}\n")
+            w("static inline int64_t loam_thread_running(void) { return 0; }\n")
+            w("#endif\n")
+            break
+    }
+}
+
+/** *A definition for every group the unit called, in header order. */
+fn rt_verb_defs() {
+    if RT_GROUP_USED.len == 0 {
+        return
+    }
+    for gi in 0..RT_VERB_GROUPS {
+        if RT_GROUP_USED[gi] {
+            rt_verb_def(gi)
+        }
+    }
+}
+
 // --- operators and casts ---------------------------------------------------------------
 
 /** *Trapping arithmetic helper for integer type `t` (`loam_add_i32`), "" */
@@ -2928,6 +3748,7 @@ fn builtin_call(x: &Inst) -> bool {
         }
         w("{ loam_vec _vk = {0}; ")
         value_key(x.ty, lv(arg_of(x, 0)), "&_vk")
+        rt_note_name("loam_string_from_u8")
         w("{{lv(x.dst)}} = loam_string_from_u8(_vk); }\n")
         return true
     }
@@ -3163,6 +3984,7 @@ fn builtin_call(x: &Inst) -> bool {
         return true
     }
     if name == "loam_ch_ready" && x.nargs >= 1 && has_dst {
+        rt_note_name("loam_ch_do_ready")
         w("{{lv(x.dst)}} = loam_ch_do_ready(loam_thread_ch_begin({{lv(arg_of(x, 0))}}, 0));\n")
         return true
     }
@@ -3202,6 +4024,9 @@ fn builtin_call(x: &Inst) -> bool {
 }
 
 fn call_inst(x: &Inst) {
+    if x.op == Op.Call {
+        rt_note_text(x.text)
+    }
     if builtin_call(x) {
         return
     }
@@ -3485,6 +4310,7 @@ fn inst(i: int) {
             }
             if (x.binop == Tok.EqEq || x.binop == Tok.BangEq) && tkind(at) == TK.String {
                 let neg = if x.binop == Tok.BangEq { "!" } else { "" }
+                rt_note_name("loam_fmt_eq")
                 w("{{lv(x.dst)}} = {{neg}}loam_fmt_eq({{lv(x.a)}}, {{lv(x.b)}});\n")
             } else if cf.len > 0 {
                 w("{{lv(x.dst)}} = {{cf}}({{lv(x.a)}}, {{lv(x.b)}}, ")
@@ -3922,6 +4748,7 @@ fn fn_body(f: int, is_main: bool) {
     w(" {\n")
     if fx.is_main {
         w("#if !defined(LOAM_IOS) && !defined(LOAM_ANDROID) && !defined(__wasm32__)\n")
+        rt_note_name("loam_argv_set")
         w("    loam_argv_set(argc, argv);\n")
         w("#endif\n")
     }
@@ -4492,6 +5319,7 @@ fn c_bindings() {
             if ast.NODES[d].kind != Kind.Fn || c_sym_of(d).len == 0 || !dce.keep(d) {
                 continue
             }
+            rt_note_name(c_sym_of(d))
             if !any {
                 any = true
                 w("#define LOAM_CSYM_S2(x) #x\n")
@@ -4725,6 +5553,7 @@ fn emit_c() {
     vec_push_reset()
     vec_pop_reset()
     core_ops_reset()
+    rt_verbs_reset()
     PRELUDE = OUT
     OUT = []u8 {}
     wc('\n')
@@ -4859,6 +5688,9 @@ fn emit_c() {
                 continue
             }
             if is_intrinsic(d) {
+                if std_mod {
+                    rt_note_name(fn_cname(d))
+                }
                 if std_mod || c_sym_of(d).len > 0 {
                     continue
                 }
@@ -5051,6 +5883,7 @@ fn emit_c() {
     PRELUDE = []u8 {}
     int_helper_defs()
     core_op_defs()
+    rt_verb_defs()
     vec_push_defs()
     vec_pop_defs()
     wasm_libc_defs()
