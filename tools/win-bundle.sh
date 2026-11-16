@@ -10,8 +10,7 @@
 #
 #   tools/win-bundle.sh OUTDIR
 #
-# A fixture whose C calls std:net also lists `runtime/net.c` in its `.deps`,
-# as the driver links it. A fixture's `.deps` also lists the libraries its kept bindings name for
+# A fixture's `.deps` lists the libraries its kept bindings name for
 # Windows (`link||-lws2_32` for std:net's Winsock calls).
 set -e
 ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
@@ -28,8 +27,6 @@ for f in packages/loam/tests/compile_pass/*.loam; do
     grep -qE "$gui" "$f" && continue
     bin/loamc "$f" --emit-c -o "$OUT/$b.c" >/dev/null 2>&1 || { rm -f "$OUT/$b.c"; continue; }
     deps_of "$f" | sort -u > "$OUT/$b.deps"
-    # The C below std:net, as the driver links it for a program that uses net.
-    grep -q 'loam_net_' "$OUT/$b.c" && echo "packages/loam/runtime|net.c|-Ipackages/loam/runtime" >> "$OUT/$b.deps"
     libs=$(binding_libs_for windows "$table" "$OUT/$b.c")
     [ -n "$libs" ] && echo "link||$libs" >> "$OUT/$b.deps"
     [ -f "packages/loam/tests/compile_pass/$b.expected" ] && cp "packages/loam/tests/compile_pass/$b.expected" "$OUT/"

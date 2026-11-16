@@ -313,9 +313,11 @@
     }
     /* True while a touch reports its hover. See `preloadRoute`. */
     let touching = false;
-    /* Instance exports; imports that finish asynchronously (fetch_rpc_async)
-       call back into these once `boot` has instantiated the module. */
+    /* Instance exports, once `boot` has instantiated the module. */
     let exp = null;
+    /* gRPC-Web replies by request handle (`fetch_start`), until wasm copies
+       them out and forgets them. */
+    const fetches = new Map();
     /* Browser WebSockets (wasm `http.ws_open`): the socket and an inbound
        message queue live here per slot; wasm polls and copies out. */
     let wsSlots = new Array(8).fill(null);
@@ -1510,23 +1512,24 @@
         }
         return d.fullscreenElement ? 1 : 0;
       },
-      fetch_rpc_async: (pathPtr, pathLen, bodyPtr, bodyLen, outPtr, cap, handle, sync) => {
-        /* `sync` 1: a blocking XHR, for `await` (its pump loop holds this
-           thread, so an async XHR would never complete under it). `sync` 0:
-           a real async XHR, so the page keeps painting while the server
-           works; the reply lands in the slot on a later frame. `zeus_fetch_done`
-           gets the byte count, -1 for no response, or -(1000 + status). */
+      /* gRPC-Web POSTs (`std:net` fetch slots). The reply stays here, by
+         `handle`, until wasm asks for it: `fetch_state` says how far it got,
+         `fetch_copy` copies it out at once into a buffer wasm sized for it, and
+         `fetch_forget` drops it, or drops it on arrival when wasm gave up. JS
+         never writes into wasm memory outside those calls. `sync` 1 is a
+         blocking XHR, for `await` (its pump loop holds this thread, so an
+         async XHR would never complete under it). */
+      fetch_start: (pathPtr, pathLen, bodyPtr, bodyLen, handle, sync) => {
+        const r = { state: -2, text: "" };
         const finish = (xhr) => {
-          if (!exp || !exp.zeus_fetch_done) return;
+          if (!fetches.has(handle)) return;
           if (xhr.status !== 200) {
-            exp.zeus_fetch_done(handle, xhr.status > 0 ? -(1000 + xhr.status) : -1);
-            return;
+            r.state = xhr.status > 0 ? -(1000 + xhr.status) : -1;
+          } else {
+            r.text = xhr.responseText || "";
+            r.state = r.text.length;
           }
-          const t = xhr.responseText || "";
-          const n = Math.min(t.length, Math.max(cap, 0));
-          const dst = u8();
-          for (let i = 0; i < n; i++) dst[outPtr + i] = t.charCodeAt(i) & 0xff;
-          exp.zeus_fetch_done(handle, n);
+          schedule(0);
         };
         try {
           const path = bytes(pathPtr, pathLen) || "/";
@@ -1534,9 +1537,12 @@
             bodyLen > 0 ? u8().slice(bodyPtr, bodyPtr + bodyLen) : new Uint8Array(0);
           const xhr = new XMLHttpRequest();
           xhr.open("POST", path, !sync);
+          /* Sync XHR forbids responseType = "arraybuffer". x-user-defined
+             keeps each byte as a Latin-1 code unit in responseText. */
           xhr.overrideMimeType("text/plain; charset=x-user-defined");
           xhr.setRequestHeader("Content-Type", "application/grpc-web+proto");
           xhr.setRequestHeader("Accept", "application/grpc-web+proto");
+          fetches.set(handle, r);
           if (sync) {
             xhr.send(body);
             finish(xhr);
@@ -1546,39 +1552,33 @@
             try {
               finish(xhr);
             } catch (e) {
-              console.warn("fetch_rpc_async", e);
+              console.warn("fetch_start", e);
             }
           };
           xhr.send(body);
           return 0;
         } catch (e) {
-          console.warn("fetch_rpc_async", e);
+          console.warn("fetch_start", e);
+          fetches.delete(handle);
           return -1;
         }
       },
-      fetch_rpc: (pathPtr, pathLen, bodyPtr, bodyLen, outPtr, cap) => {
-        try {
-          const path = bytes(pathPtr, pathLen) || "/";
-          const body =
-            bodyLen > 0 ? u8().slice(bodyPtr, bodyPtr + bodyLen) : new Uint8Array(0);
-          const xhr = new XMLHttpRequest();
-          xhr.open("POST", path, false);
-          /* Sync XHR forbids responseType = "arraybuffer". x-user-defined
-             keeps each byte as a Latin-1 code unit in responseText. */
-          xhr.overrideMimeType("text/plain; charset=x-user-defined");
-          xhr.setRequestHeader("Content-Type", "application/grpc-web+proto");
-          xhr.setRequestHeader("Accept", "application/grpc-web+proto");
-          xhr.send(body);
-          if (xhr.status !== 200) return 0;
-          const t = xhr.responseText || "";
-          const n = Math.min(t.length, Math.max(cap, 0));
-          const dst = u8();
-          for (let i = 0; i < n; i++) dst[outPtr + i] = t.charCodeAt(i) & 0xff;
-          return n;
-        } catch (e) {
-          console.warn("fetch_rpc", e);
-          return 0;
-        }
+      /* -2 pending, the byte count of a 200 reply, -1 no response, or
+         -(1000 + status). A forgotten or unknown handle reads as -1. */
+      fetch_state: (handle) => {
+        const r = fetches.get(handle);
+        return r ? r.state : -1;
+      },
+      fetch_copy: (handle, ptr, cap) => {
+        const r = fetches.get(handle);
+        if (!r || r.state <= 0) return 0;
+        const n = Math.min(r.text.length, Math.max(cap, 0));
+        const dst = u8();
+        for (let i = 0; i < n; i++) dst[ptr + i] = r.text.charCodeAt(i) & 0xff;
+        return n;
+      },
+      fetch_forget: (handle) => {
+        fetches.delete(handle);
       },
     },
   };

@@ -646,7 +646,7 @@ packages/zeus/hosts/web/loader.js        Canvas2D host
 packages/zeus/hosts/web/wasm.c           WASM entry / JS imports
 runtime/zeus_plat.c        shared C seam
 src/zeuscore/keymap.loam   keyboard
-runtime/net.c              TCP trampolines (`packages/http/src/http` is Loam)
+std/net.loam               TCP, TLS and the browser bridges, all Loam
 examples/zeus/counter/frontend   wasm UI (`http.client("").call`)
 examples/zeus/counter/macos      Cocoa UI (`http.client(api.native_addr())`)
 examples/zeus/counter/ios        Simulator UI (`http.client(api.native_addr())`)

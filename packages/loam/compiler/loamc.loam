@@ -869,7 +869,6 @@ fn cocoa_frameworks() -> []string {
 /** *flags, then output and inputs. `false` when a host object failed. */
 fn link_args(cpath: string, binpath: string, copt: &[]string, ld: string, extra_link: &[]string, app_in: &[]string, args: &mut []string) -> bool {
     let rt = loader.runtime_dir()
-    let net_c = "{{rt}}/net.c"
     push_all(args, copt)
     if uses_zeus() {
         let headless = want_headless()
@@ -885,9 +884,6 @@ fn link_args(cpath: string, binpath: string, copt: &[]string, ld: string, extra_
         push_all(args, app_in)
         push_list(args, []string { "-x", "none" })
         push_all(args, &objs)
-        if mods_use("http") || mods_use("net") {
-            push(args, net_c)
-        }
         push_all(args, extra_link)
         if on_mac() && !headless {
             let fws = cocoa_frameworks()
@@ -899,14 +895,6 @@ fn link_args(cpath: string, binpath: string, copt: &[]string, ld: string, extra_
         } else {
             push(args, "-lm")
         }
-        return true
-    }
-    if mods_use("http") || mods_use("net") {
-        push_list(args, []string { ld, "-o", binpath, "-I{{rt}}" })
-        push_all(args, app_in)
-        // `-x none`: net.c is compiled as what its name says.
-        push_list(args, []string { "-x", "none", net_c })
-        push_all(args, extra_link)
         return true
     }
     // The app's C: the file itself, or a shard build's cached objects.
@@ -1233,6 +1221,10 @@ fn client_c_ok() -> bool {
             if (TARGET_WASM && mask != 0 && off_wasm) || (!TARGET_WASM && typecheck.MODS[m].is_std) {
                 continue
             }
+            // An `#[os("wasm")]` binding is a web-host import, which is there.
+            if TARGET_WASM && codegen.is_host_import(d) {
+                continue
+            }
             fmt.eprintln("{{typecheck.MODS[m].path}}:{{ast.INFO[d].loc.line}}: error: #[c] fn '{{ast.INFO[d].name}}' is reachable, and C runs only on native builds. Keep it behind #[server] or out of this target")
             ok = false
         }
@@ -1329,7 +1321,6 @@ fn wasm_build(in_path: string, cpath: string, binpath: string, shard_dir: string
     }
     let maps = wasm_file_maps()
     let owns = if types.string_owns { "-DLOAM_STRING_OWNS" } else { "" }
-    let net_c = if mods_use("http") || mods_use("net") { "{{rt}}/net.c" } else { "" }
     // The allocation proof is a test harness, and a release is what visitors
     // download.
     let rel_flags = if release { []string { "-DLOAM_NO_TRAP_LOC", "-DLOAM_WEB_RELEASE" } } else { []string { "-DLOAM_ALLOC_TRACE" } }
@@ -1354,10 +1345,7 @@ fn wasm_build(in_path: string, cpath: string, binpath: string, shard_dir: string
                     push(unit_cc_set, unit_cc[i])
                 }
             }
-            let mut extra = []string { w_host, w_plat }
-            if net_c.len > 0 {
-                push(extra, net_c)
-            }
+            let extra = []string { w_host, w_plat }
             wasm_in = app_input(shard_dir, cpath, &unit_cc_set, &extra)
         }
         // clang runs wasm-opt after any link it sees -O for, which strips the
@@ -1379,15 +1367,12 @@ fn wasm_build(in_path: string, cpath: string, binpath: string, shard_dir: string
         push_list(&mut args, []string { "-Wl,--no-entry", "-Wl,--export-dynamic", "-Wl,--fatal-warnings", "-Wl,--export=__stack_pointer", "-Wl,-z,stack-size=4194304", "-Wl,--stack-first" })
         push_all(&mut args, &wasm_in)
         if !SHARD_LINKED {
-            push_list(&mut args, []string { "-x", "none", w_host, w_plat, net_c })
+            push_list(&mut args, []string { "-x", "none", w_host, w_plat })
         }
     } else {
         push_list(&mut args, []string { "-Oz", "-ffp-contract=off", owns, "-I{{rt}}/wasm_inc", "-I{{rt}}" })
         push_list(&mut args, []string { "-Wl,--no-entry", "-Wl,--export-dynamic", "-Wl,--export=main", "-Wl,--fatal-warnings", "-Wl,-z,stack-size=4194304", "-Wl,--stack-first" })
         push_list(&mut args, []string { "-x", "c", cpath })
-        if net_c.len > 0 {
-            push_list(&mut args, []string { "-x", "none", net_c })
-        }
     }
     push_list(&mut args, []string { "-o", binpath })
     let mut argv = []string {}
@@ -1453,7 +1438,7 @@ fn ios_sim_run(app: string, bid: string) -> bool {
 /** *list of headers they all read. */
 fn ios_obj(cc_args: &[]string, src: string, obj: string) -> bool {
     let rt = loader.runtime_dir()
-    let deps = []string { src, "{{rt}}/zeus_rt.h", "{{rt}}/loam_rt.h", "{{rt}}/net_rt.h", "{{zeus_dir()}}/hosts/apple/zeus_apple.h" }
+    let deps = []string { src, "{{rt}}/zeus_rt.h", "{{rt}}/loam_rt.h", "{{zeus_dir()}}/hosts/apple/zeus_apple.h" }
     if sys.exists(obj) == 1 {
         let mut stale = false
         for i in 0..deps.len {
@@ -1521,12 +1506,8 @@ fn ios_build(in_path: string, cpath: string, binpath: string, stem: string, shar
     let mut ios_mcc = []string {}
     push_all(&mut ios_mcc, &ios_cc)
     push_list(&mut ios_mcc, []string { "-x", "objective-c", "-fno-objc-arc", "-I{{zd}}/hosts/apple" })
-    let mut c_srcs = []string { "{{rt}}/zeus_plat.c" }
-    let mut c_names = []string { "zeus_plat" }
-    if mods_use("http") {
-        push(c_srcs, "{{rt}}/net.c")
-        push(c_names, "net")
-    }
+    let c_srcs = []string { "{{rt}}/zeus_plat.c" }
+    let c_names = []string { "zeus_plat" }
     let m_srcs = []string { "{{zd}}/hosts/ios/ios.m", "{{zd}}/hosts/apple/apple_draw.m", "{{zd}}/hosts/apple/apple_media.m" }
     let m_names = []string { "ios", "apple_draw", "apple_media" }
     let noowns = if types.string_owns { "" } else { ".noowns" }
@@ -1646,14 +1627,13 @@ fn android_app_id(stem: string) -> string {
     return "com.loam.{{buf.to_string(&out)}}"
 }
 
-fn android_cmake(uses_net: bool) -> string {
+fn android_cmake() -> string {
     let rt = loader.runtime_dir()
-    let net = if uses_net { "  \"{{rt}}/net.c\"\n" } else { "" }
     let owns = if types.string_owns { " LOAM_STRING_OWNS" } else { "" }
     // A dev build leaves only the app's code unoptimized, as on the native
     // targets: it is what an edit recompiles.
     let dev = if want_dev() { "set_source_files_properties(app.c PROPERTIES COMPILE_OPTIONS -O0)\n" } else { "" }
-    return "cmake_minimum_required(VERSION 3.22.1)\nproject(zeus C)\nadd_library(zeus SHARED\n  app.c\n  \"{{zeus_dir()}}/hosts/android/android.c\"\n  \"{{rt}}/zeus_plat.c\"\n{{net}})\ntarget_include_directories(zeus PRIVATE \"{{rt}}\")\ntarget_compile_definitions(zeus PRIVATE LOAM_ANDROID LOAM_ALLOC_TRACE{{owns}})\ntarget_compile_options(zeus PRIVATE -std=gnu99 -O1 -ffp-contract=off -fno-asynchronous-unwind-tables)\n{{dev}}target_link_libraries(zeus android log)\n"
+    return "cmake_minimum_required(VERSION 3.22.1)\nproject(zeus C)\nadd_library(zeus SHARED\n  app.c\n  \"{{zeus_dir()}}/hosts/android/android.c\"\n  \"{{rt}}/zeus_plat.c\"\n)\ntarget_include_directories(zeus PRIVATE \"{{rt}}\")\ntarget_compile_definitions(zeus PRIVATE LOAM_ANDROID LOAM_ALLOC_TRACE{{owns}})\ntarget_compile_options(zeus PRIVATE -std=gnu99 -O1 -ffp-contract=off -fno-asynchronous-unwind-tables)\n{{dev}}target_link_libraries(zeus android log)\n"
 }
 
 fn android_app_gradle(app_id: string) -> string {
@@ -1682,7 +1662,7 @@ fn android_emit_project(proj: string, cpath: string, app_id: string) -> bool {
             return false
         }
     }
-    if !write_with_dir("{{proj}}/app/src/main/cpp/CMakeLists.txt", android_cmake(mods_use("http") || mods_use("net"))) {
+    if !write_with_dir("{{proj}}/app/src/main/cpp/CMakeLists.txt", android_cmake()) {
         return false
     }
     if !write_with_dir("{{proj}}/app/build.gradle", android_app_gradle(app_id)) {

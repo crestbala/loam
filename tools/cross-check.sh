@@ -9,9 +9,9 @@
 # compiles and links the generated C of every non-GUI compile_pass fixture.
 # (The seed, bootstrap/loamc.c, is built natively by CI on Linux and Windows.)
 # It checks that the code builds and links; it does not run it (that needs the platform itself).
-# A fixture links what the driver would add: `runtime/net.c` when its C calls
-# into std:net, and every `#![c_source(path, flags...)]` / `#![c_link(...)]`
-# of the fixture and of the packages it imports. Fixtures that import a GUI
+# A fixture links what the driver would add: every `#![c_source(path,
+# flags...)]` / `#![c_link(...)]` of the fixture and of the packages it
+# imports. Fixtures that import a GUI
 # package (zeus, zui, maya, raygui) are skipped. Needs zig on PATH
 # (`brew install zig`). Each binary and object is deleted once its link is
 # checked; only zig's compile cache stays in out/cross/cache (`nob clean`).
@@ -32,7 +32,7 @@ export ZIG_GLOBAL_CACHE_DIR="$OUT/cache" ZIG_LOCAL_CACHE_DIR="$OUT/cache"
 if [ "${1:-}" = --link ]; then
     t=$2 b=$3 f=$4
     res="$OUT/res/$t/$b"
-    objs="$OUT/net-$t.o"; links=""; i=0
+    objs=""; links=""; i=0
     deps=$(deps_of "$f" | sort -u)
     IFS='
 '
@@ -73,7 +73,7 @@ rm -rf "$OUT/c" "$OUT/obj" "$OUT/res"
 mkdir -p "$OUT/cache" "$OUT/c" "$OUT/obj"
 for t in $targets; do mkdir -p "$OUT/res/$t"; done
 
-# 1. Each target's runtime/net.c object and each fixture's C, at once.
+# 1. Each target's binding stub libraries and each fixture's C, at once.
 # The libraries bindings name (`#[c("SSL_new", "link -lssl -lcrypto")]`),
 # with each binding's `#[os]`. On Windows they are MinGW's own (`ws2_32`).
 # On Linux zig ships no OpenSSL, so each library is a stub shared library
@@ -97,12 +97,6 @@ for t in $targets; do
         lib=$(basename "$c" .c)
         zig cc -target "$t" -shared -w "$c" -o "$OUT/stubs/$t/lib$lib.so" || echo "stub lib$lib" > "$OUT/res/$t.net"
     done
-done
-for t in $targets; do
-    (
-        e=$(zig cc -target "$t" -O1 -fno-sanitize=undefined -w -I packages/loam/runtime -c packages/loam/runtime/net.c -o "$OUT/net-$t.o" 2>&1 | grep -E "error" | head -3)
-        if [ -n "$e" ]; then echo "$e" > "$OUT/res/$t.net"; fi
-    ) &
 done
 list="$OUT/fixtures"
 : > "$list"
@@ -135,7 +129,7 @@ xargs -P "$jobs" -n 3 sh "$ROOT/tools/cross-check.sh" --link < "$work"
 fail=0
 for t in $targets; do
     if [ -e "$OUT/res/$t.net" ]; then
-        echo "cross-check $t: runtime/net.c: $(cat "$OUT/res/$t.net")"
+        echo "cross-check $t: binding stubs: $(cat "$OUT/res/$t.net")"
         fail=1
         continue
     fi

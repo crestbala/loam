@@ -1,7 +1,7 @@
 # Shared by tools/cross-check.sh and tools/win-bundle.sh (sourced, not run).
 # Which fixtures are GUI-only, and what extra C each fixture links: the
 # `#![c_source]` / `#![c_link]` directives of the fixture and of the packages
-# it imports. `runtime/net.c` is added by the callers when the C calls std:net.
+# it imports.
 
 skip='^(zeus_|maya_|raygui_|zui_|counter_panel)'
 gui='import "(zeus|maya|raygui|zui)'
