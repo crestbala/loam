@@ -182,6 +182,7 @@ safely today:
   | c. `#[os]` / `#[arch]` on structs and consts | per-OS layouts (`stat`, `rusage`) written once per target, not as offsets |
   | d. Variadic bindings (numbers and strings only): `#[c("fcntl", "variadic after 2")]`. **Done with R5.1.** | wrappers over `open` / `fcntl` / `ioctl` and the arm64 Apple variadic ABI trap |
   | e. Env-less fn pointers: a `#[c]` parameter of a fn type of numbers and bools takes a named module-level fn, passed as its own C symbol. **Done with R5.2.** | callback shims (`qsort`-style, run loops, library callbacks) |
+  | e2. Borrowed buffers: a `#[c]` parameter may be `&[]T` or `&mut []T` of numbers and bools. The wrapper passes the element pointer and does not retain or drop. **Done** (after R5.2). | no runtime C. The cost was a retain and a drop on every binding call that passed a module buffer |
   | f. Typed `objc_msgSend` bindings and selectors (`std:objc`) | the Cocoa and UIKit hosts (`mac.m`, `ios.m`, maya's `hosts/mac.m`; R7) |
 
 ## 5. Order and gates
@@ -219,7 +220,8 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       `wasm_inc`), hosts 4,871, vendored 346,122 (sqlite, monocypher, raygui
       and the generated tree-sitter parser).
 - [x] R0.2 The budget: `RUNTIME_LINE_BUDGET` in `nob.loam`, set at 9,939
-      and lowered by each step since (now **5,359**, after R5.2).
+      and lowered by each step since (now **5,359**; borrowed buffers
+      deleted no C, so the budget stayed).
       `nob trusted` and the unfiltered `nob test` fail if `runtime/` grows
       past it. Each step below lowers it to its new count in the same
       change.
@@ -695,7 +697,9 @@ straight to libc, so no C shim.
       vs 23.56 s (+1.6%), user CPU +0.25 s (about 8 ns a byte; kernel time
       equal). That residual is safe vec bookkeeping per byte (refcount,
       bounds and copy-on-write checks on the buffers) against C's stack
-      array; closing it needs borrowed `[]u8` params for `#[c]`. Seed
+      array; closing it needs borrowed `[]u8` params for `#[c]` (landed
+      with the borrowed-buffer step below: the retain is gone, and the
+      wall time was the syscall). Seed
       5,097,807 → 5,097,820 bytes, seed = stage 1 = stage 2. Suite:
       `sys_spawn` (pipes a child's stdin), `sys_exec`, `sys`, `compile_fail`
       (164), `thread`, `http`; the 8 stanzas plus `wasm_trap` (`lsp` speaks
@@ -1296,13 +1300,63 @@ done, so every R3 step is checked by `thread_tsan`).
       times its C's size, from checked conversions, bounds checks and a
       retain/drop around each binding call that passes a module buffer).
       Follow-up: borrowed `&[]T` / `&mut []T` binding parameters would drop
-      those retain/drop pairs from every binding. Seed 5,155,152 →
+      those retain/drop pairs from every binding (done in the next entry:
+      `http_https_live` `__text` 12,804 → 11,860). Seed 5,155,152 →
       5,176,131 bytes, seed = stage 1 = stage 2. Suite: `compile_pass`
       (710), `compile_fail` (173), `zeus` (455), `golden` (135), `http`
       (39), `net_`, `c_ffi`, `os_`; every integration stanza listed for
       R5.1 green; `cross-check.sh` Linux and Windows 125/125 on both CPUs.
       **Runtime: 5,813 → 5,359** (−454: `net.c` 862 → 419, `net_rt.h`
       42 → 31).
+- [x] Borrowed `#[c]` buffers (`&[]T` / `&mut []T`). Done 2026-11-15.
+      §4 e2. A `#[c]` parameter may be `&[]T` or `&mut []T` of numbers and
+      bools. The wrapper passes `->ptr` and does not retain or drop. An
+      owned `[]T` still does both, so the "[]T argument released" case
+      stays. A binding C writes is `&mut`; one that only reads is `&[]`.
+      A borrowed buffer is a pointer, so it also goes through `...`
+      unchanged (the Apple arm64 vararg path; `c_ffi`'s `vptr`). A borrow
+      of a string, a number, a `[]string` or a fixed array is rejected
+      (`compile_fail/c_attr_borrow`). Call sites auto-borrow a mutable
+      place; an immutable one cannot be passed as `&mut`.
+      `std:net`, `std:sys`, `std:async` and the raygui bindings take the
+      borrow wherever C only needs the element pointer for that call.
+      Public fns that own a buffer (`write_bytes`, `read_fd`) stay owned.
+      No C deleted: `string_bytes_at` stays, because a string is not a
+      buffer. **Runtime stays 5,359**, and `RUNTIME_LINE_BUDGET` stays
+      5,359.
+
+      This closes the R5.2 follow-up and the R2.4 note. `read_line` over
+      30,000 lines (540,000 bytes, one `read` a byte) is syscall-bound:
+      wall 371–377 vs 375–378 ms, user 0.08 s both. Instructions
+      2.449 B vs 2.455–2.459 B, about 12 fewer a byte, which is the
+      retain/drop. Cycles overlap (734–748 M vs 739–748 M).
+
+      Behaviour: a probe (clock, mkdir, realpath, a TCP echo, poll, three
+      `read_line`s) prints what HEAD prints. An HTTPS GET of
+      `example.com` returns the same 931 bytes. ASan+UBSan clean on the
+      probe, on `c_ffi` and on that GET (`detect_leaks` is unsupported
+      on this Mac; `leaks` is the leak check). `leaks` on the probe is 0
+      both. On the GET, 3 blocks / 96 bytes both, all
+      `CryptKit::FEEKeyInfoProvider` inside Security.framework during
+      `SSLHandshake` (the earlier 6 was a different probe). Benchmark vs
+      HEAD: TCP request/reply 1,809–1,891 vs 1,779–1,880 ms (3 runs) and
+      1 GiB sent by offsets 403–404 vs 399–431 ms, both moving
+      6,400,000 and 1,073,741,824 bytes. HTTPS, per successful GET,
+      14.7–15.0 M instructions against 14.6–15.3 M (6 runs of 20;
+      17–20 connects succeeded). Self-emit 0.16–0.22 s vs 0.18–0.21 s.
+      Binaries (new vs HEAD, `__text`): tiny 308 both, file 33,688 both;
+      `http_parse` 16,340 both, file 70,432 both; `http_https_live`
+      11,860 vs 12,804 (−944) and its file 38,976 vs 55,496 (one page);
+      `http_listen` 147,328 vs 148,476 and its file 211,552 vs 228,112;
+      `zeli` 512,296 vs 513,584, file 649,336 both; raygui 39,568 vs
+      40,108, file 90,648 both. The HTTPS client's C has 49 retains and
+      76 drops against HEAD's 65 and 92. Seed 5,176,131 → 5,179,265
+      bytes, seed = stage 1 = stage 2. Checks: `c_ffi`, `c_attr` (18,
+      including `c_attr_borrow`), `net_listen`, `sys_` (5), `async_`
+      (4 pass, 2 rejected), `http` (39), raygui headless (3 frames, RAM
+      growth 0). `wasm_smoke`, `wasm_trap`, `lsp`, `c_layouts`;
+      `cross-check.sh` Linux and Windows 125/125 on both CPUs. A wasm32
+      build of `zeus_async_rpc.loam` links.
 - [ ] R5.3 TLS on Linux (OpenSSL bindings: needs per-target link flags,
       §4 c, and a Linux machine to run on) and on Windows (after a Winsock
       port; TCP answers `-1` there today).

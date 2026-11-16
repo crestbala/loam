@@ -4370,6 +4370,8 @@ void loam_typecheck_cname_add(loam_str s);
 loam_str loam_typecheck_cname_claim(loam_str cname);
 bool loam_typecheck_c_scalar_type(int32_t t);
 bool loam_typecheck_c_plain_struct(int32_t t);
+bool loam_typecheck_c_number_buf(int32_t t);
+bool loam_typecheck_c_borrowed_buf(int32_t t);
 bool loam_typecheck_c_variadic_type(int32_t t);
 bool loam_typecheck_c_callback_type(int32_t t);
 bool loam_typecheck_c_param_type(int32_t t);
@@ -4816,6 +4818,7 @@ void loam_codegen_lit_template_use(const Inst * x, loam_str cn);
 void loam_codegen_lit_template_decls(void);
 void loam_codegen_lit_template_defs(void);
 void loam_codegen_own_helpers(void);
+bool loam_codegen_c_borrowed_buf(int32_t t);
 void loam_codegen_c_abi_type(int32_t t);
 loam_str loam_codegen_c_sym_of(int32_t d);
 void loam_codegen_c_bindings(void);
@@ -5080,9 +5083,8 @@ static inline loam_str loam_csym_str(const char *p) {
 }
 #if defined(__APPLE__) || defined(__linux__) || defined(_WIN32) || (!defined(__APPLE__) && !defined(__linux__) && !defined(_WIN32) && !defined(__wasm32__))
 extern void loam_async_c_clock_gettime__csym(void) LOAM_CSYM("clock_gettime");
-static int32_t loam_async_c_clock_gettime(int32_t clk, loam_vec ts) {
-    int32_t _r = ((int32_t (*)(int32_t, void *))(void *)loam_async_c_clock_gettime__csym)(clk, ts.ptr);
-    loam_vec_drop(&ts);
+static int32_t loam_async_c_clock_gettime(int32_t clk, loam_vec * ts) {
+    int32_t _r = ((int32_t (*)(int32_t, void *))(void *)loam_async_c_clock_gettime__csym)(clk, ts->ptr);
     return _r;
 }
 #endif
@@ -5203,9 +5205,8 @@ static int64_t loam_sys_c_ftell(int64_t f) {
 #endif
 #if defined(__APPLE__) || defined(__linux__) || defined(_WIN32) || (!defined(__APPLE__) && !defined(__linux__) && !defined(_WIN32) && !defined(__wasm32__))
 extern void loam_sys_c_fread__csym(void) LOAM_CSYM("fread");
-static int64_t loam_sys_c_fread(loam_vec buf, int64_t size, int64_t n, int64_t f) {
-    int64_t _r = ((int64_t (*)(void *, int64_t, int64_t, int64_t))(void *)loam_sys_c_fread__csym)(buf.ptr, size, n, f);
-    loam_vec_drop(&buf);
+static int64_t loam_sys_c_fread(loam_vec * buf, int64_t size, int64_t n, int64_t f) {
+    int64_t _r = ((int64_t (*)(void *, int64_t, int64_t, int64_t))(void *)loam_sys_c_fread__csym)(buf->ptr, size, n, f);
     return _r;
 }
 #endif
@@ -5219,68 +5220,58 @@ static loam_str loam_sys_c_strerror(void) {
 #endif
 #if defined(__APPLE__) || defined(__linux__) || defined(_WIN32) || (!defined(__APPLE__) && !defined(__linux__) && !defined(_WIN32) && !defined(__wasm32__))
 extern void loam_sys_c_fwrite_buf__csym(void) LOAM_CSYM("fwrite");
-static int64_t loam_sys_c_fwrite_buf(loam_vec b, int64_t size, int64_t n, int64_t f) {
-    int64_t _r = ((int64_t (*)(void *, int64_t, int64_t, int64_t))(void *)loam_sys_c_fwrite_buf__csym)(b.ptr, size, n, f);
-    loam_vec_drop(&b);
+static int64_t loam_sys_c_fwrite_buf(const loam_vec * b, int64_t size, int64_t n, int64_t f) {
+    int64_t _r = ((int64_t (*)(void *, int64_t, int64_t, int64_t))(void *)loam_sys_c_fwrite_buf__csym)(b->ptr, size, n, f);
     return _r;
 }
 #endif
 #if defined(__APPLE__) || defined(__linux__) || defined(_WIN32) || (!defined(__APPLE__) && !defined(__linux__) && !defined(_WIN32) && !defined(__wasm32__))
 extern void loam_sys_c_stat_raw__csym(void) LOAM_CSYM("loam_sys_stat");
-static int32_t loam_sys_c_stat_raw(loam_str path, loam_vec out) {
+static int32_t loam_sys_c_stat_raw(loam_str path, loam_vec * out) {
     char _cb0[256];
     char *_cs0 = loam_csym_cstr(path, _cb0, sizeof _cb0);
-    int32_t _r = ((int32_t (*)(const char *, void *))(void *)loam_sys_c_stat_raw__csym)(_cs0, out.ptr);
+    int32_t _r = ((int32_t (*)(const char *, void *))(void *)loam_sys_c_stat_raw__csym)(_cs0, out->ptr);
     if (_cs0 != _cb0) free(_cs0);
-    loam_vec_drop(&out);
     return _r;
 }
 #endif
 #if defined(__APPLE__) || defined(__linux__) || defined(_WIN32) || (!defined(__APPLE__) && !defined(__linux__) && !defined(_WIN32) && !defined(__wasm32__))
 extern void loam_sys_c_argv_fill__csym(void) LOAM_CSYM("loam_sys_argv_fill");
-static void loam_sys_c_argv_fill(loam_vec block, loam_vec offsets, int64_t n, loam_vec slots) {
-    ((void (*)(void *, void *, int64_t, void *))(void *)loam_sys_c_argv_fill__csym)(block.ptr, offsets.ptr, n, slots.ptr);
-    loam_vec_drop(&block);
-    loam_vec_drop(&offsets);
-    loam_vec_drop(&slots);
+static void loam_sys_c_argv_fill(const loam_vec * block, const loam_vec * offsets, int64_t n, loam_vec * slots) {
+    ((void (*)(void *, void *, int64_t, void *))(void *)loam_sys_c_argv_fill__csym)(block->ptr, offsets->ptr, n, slots->ptr);
 }
 #endif
 #if !defined(_WIN32) && !defined(__wasm32__)
 extern void loam_sys_c_spawnp__csym(void) LOAM_CSYM("loam_sys_spawnp");
-static int32_t loam_sys_c_spawnp(loam_vec pid, loam_str file, loam_vec argv) {
+static int32_t loam_sys_c_spawnp(loam_vec * pid, loam_str file, const loam_vec * argv) {
     char _cb1[256];
     char *_cs1 = loam_csym_cstr(file, _cb1, sizeof _cb1);
-    int32_t _r = ((int32_t (*)(void *, const char *, void *))(void *)loam_sys_c_spawnp__csym)(pid.ptr, _cs1, argv.ptr);
-    loam_vec_drop(&pid);
+    int32_t _r = ((int32_t (*)(void *, const char *, void *))(void *)loam_sys_c_spawnp__csym)(pid->ptr, _cs1, argv->ptr);
     if (_cs1 != _cb1) free(_cs1);
-    loam_vec_drop(&argv);
     return _r;
 }
 #endif
 #if defined(_WIN32)
 extern void loam_sys_c_spawnvp__csym(void) LOAM_CSYM("_spawnvp");
-static int64_t loam_sys_c_spawnvp(int32_t mode, loam_str file, loam_vec argv) {
+static int64_t loam_sys_c_spawnvp(int32_t mode, loam_str file, const loam_vec * argv) {
     char _cb1[256];
     char *_cs1 = loam_csym_cstr(file, _cb1, sizeof _cb1);
-    int64_t _r = ((int64_t (*)(int32_t, const char *, void *))(void *)loam_sys_c_spawnvp__csym)(mode, _cs1, argv.ptr);
+    int64_t _r = ((int64_t (*)(int32_t, const char *, void *))(void *)loam_sys_c_spawnvp__csym)(mode, _cs1, argv->ptr);
     if (_cs1 != _cb1) free(_cs1);
-    loam_vec_drop(&argv);
     return _r;
 }
 #endif
 #if !defined(_WIN32) && !defined(__wasm32__)
 extern void loam_sys_c_waitpid__csym(void) LOAM_CSYM("waitpid");
-static int32_t loam_sys_c_waitpid(int32_t pid, loam_vec status, int32_t options) {
-    int32_t _r = ((int32_t (*)(int32_t, void *, int32_t))(void *)loam_sys_c_waitpid__csym)(pid, status.ptr, options);
-    loam_vec_drop(&status);
+static int32_t loam_sys_c_waitpid(int32_t pid, loam_vec * status, int32_t options) {
+    int32_t _r = ((int32_t (*)(int32_t, void *, int32_t))(void *)loam_sys_c_waitpid__csym)(pid, status->ptr, options);
     return _r;
 }
 #endif
 #if defined(_WIN32)
 extern void loam_sys_c_cwait__csym(void) LOAM_CSYM("_cwait");
-static int64_t loam_sys_c_cwait(loam_vec status, int64_t h, int32_t action) {
-    int64_t _r = ((int64_t (*)(void *, int64_t, int32_t))(void *)loam_sys_c_cwait__csym)(status.ptr, h, action);
-    loam_vec_drop(&status);
+static int64_t loam_sys_c_cwait(loam_vec * status, int64_t h, int32_t action) {
+    int64_t _r = ((int64_t (*)(void *, int64_t, int32_t))(void *)loam_sys_c_cwait__csym)(status->ptr, h, action);
     return _r;
 }
 #endif
@@ -5326,34 +5317,31 @@ static int32_t loam_sys_c_rename(loam_str from, loam_str to) {
 #endif
 #if !defined(_WIN32) && !defined(__wasm32__)
 extern void loam_sys_c_realpath__csym(void) LOAM_CSYM("realpath");
-static int64_t loam_sys_c_realpath(loam_str path, loam_vec resolved) {
+static int64_t loam_sys_c_realpath(loam_str path, loam_vec * resolved) {
     char _cb0[256];
     char *_cs0 = loam_csym_cstr(path, _cb0, sizeof _cb0);
-    int64_t _r = ((int64_t (*)(const char *, void *))(void *)loam_sys_c_realpath__csym)(_cs0, resolved.ptr);
+    int64_t _r = ((int64_t (*)(const char *, void *))(void *)loam_sys_c_realpath__csym)(_cs0, resolved->ptr);
     if (_cs0 != _cb0) free(_cs0);
-    loam_vec_drop(&resolved);
     return _r;
 }
 #endif
 #if defined(_WIN32)
 extern void loam_sys_c_fullpath__csym(void) LOAM_CSYM("_fullpath");
-static int64_t loam_sys_c_fullpath(loam_vec resolved, loam_str path, int64_t max) {
+static int64_t loam_sys_c_fullpath(loam_vec * resolved, loam_str path, int64_t max) {
     char _cb1[256];
     char *_cs1 = loam_csym_cstr(path, _cb1, sizeof _cb1);
-    int64_t _r = ((int64_t (*)(void *, const char *, int64_t))(void *)loam_sys_c_fullpath__csym)(resolved.ptr, _cs1, max);
-    loam_vec_drop(&resolved);
+    int64_t _r = ((int64_t (*)(void *, const char *, int64_t))(void *)loam_sys_c_fullpath__csym)(resolved->ptr, _cs1, max);
     if (_cs1 != _cb1) free(_cs1);
     return _r;
 }
 #endif
 #if defined(__APPLE__) || defined(__linux__) || defined(_WIN32) || (!defined(__APPLE__) && !defined(__linux__) && !defined(_WIN32) && !defined(__wasm32__))
 extern void loam_sys_c_dir_names__csym(void) LOAM_CSYM("loam_dir_names");
-static int64_t loam_sys_c_dir_names(loam_str path, loam_vec out) {
+static int64_t loam_sys_c_dir_names(loam_str path, loam_vec * out) {
     char _cb0[256];
     char *_cs0 = loam_csym_cstr(path, _cb0, sizeof _cb0);
-    int64_t _r = ((int64_t (*)(const char *, void *))(void *)loam_sys_c_dir_names__csym)(_cs0, out.ptr);
+    int64_t _r = ((int64_t (*)(const char *, void *))(void *)loam_sys_c_dir_names__csym)(_cs0, out->ptr);
     if (_cs0 != _cb0) free(_cs0);
-    loam_vec_drop(&out);
     return _r;
 }
 #endif
@@ -5386,12 +5374,11 @@ static int32_t loam_sys_c_strcmp(loam_str a, loam_str b) {
 #endif
 #if defined(__APPLE__) || defined(__linux__) || defined(_WIN32) || (!defined(__APPLE__) && !defined(__linux__) && !defined(_WIN32) && !defined(__wasm32__))
 extern void loam_sys_c_lstat_raw__csym(void) LOAM_CSYM("loam_sys_lstat");
-static int32_t loam_sys_c_lstat_raw(loam_str path, loam_vec out) {
+static int32_t loam_sys_c_lstat_raw(loam_str path, loam_vec * out) {
     char _cb0[256];
     char *_cs0 = loam_csym_cstr(path, _cb0, sizeof _cb0);
-    int32_t _r = ((int32_t (*)(const char *, void *))(void *)loam_sys_c_lstat_raw__csym)(_cs0, out.ptr);
+    int32_t _r = ((int32_t (*)(const char *, void *))(void *)loam_sys_c_lstat_raw__csym)(_cs0, out->ptr);
     if (_cs0 != _cb0) free(_cs0);
-    loam_vec_drop(&out);
     return _r;
 }
 #endif
@@ -5417,17 +5404,15 @@ static int32_t loam_sys_c_remove(loam_str path) {
 #endif
 #if !defined(_WIN32) && !defined(__wasm32__)
 extern void loam_sys_c_getcwd__csym(void) LOAM_CSYM("getcwd");
-static int64_t loam_sys_c_getcwd(loam_vec buf, int64_t n) {
-    int64_t _r = ((int64_t (*)(void *, int64_t))(void *)loam_sys_c_getcwd__csym)(buf.ptr, n);
-    loam_vec_drop(&buf);
+static int64_t loam_sys_c_getcwd(loam_vec * buf, int64_t n) {
+    int64_t _r = ((int64_t (*)(void *, int64_t))(void *)loam_sys_c_getcwd__csym)(buf->ptr, n);
     return _r;
 }
 #endif
 #if defined(_WIN32)
 extern void loam_sys_c_getcwd_win__csym(void) LOAM_CSYM("_getcwd");
-static int64_t loam_sys_c_getcwd_win(loam_vec buf, int32_t n) {
-    int64_t _r = ((int64_t (*)(void *, int32_t))(void *)loam_sys_c_getcwd_win__csym)(buf.ptr, n);
-    loam_vec_drop(&buf);
+static int64_t loam_sys_c_getcwd_win(loam_vec * buf, int32_t n) {
+    int64_t _r = ((int64_t (*)(void *, int32_t))(void *)loam_sys_c_getcwd_win__csym)(buf->ptr, n);
     return _r;
 }
 #endif
@@ -8109,25 +8094,25 @@ void loam_sys__init(void) {
     loam_vec _l17 = {0};
     loam_vec _l18 = {0};
 bb0:;
-#line 627 "sys.loam"
+#line 626 "sys.loam"
     _l12 = loam_vec_new();
     loam_sys_spawned = loam_vec_retain(&_l12);
-#line 907
+#line 906
     _l13 = loam_vec_new();
     loam_sys_stdin_byte = loam_vec_retain(&_l13);
-#line 908
+#line 907
     _l14 = loam_vec_new();
     loam_sys_line_buf = loam_vec_retain(&_l14);
-#line 1528
+#line 1527
     _l15 = loam_vec_new();
     loam_sys_kevent_slots = loam_vec_retain(&_l15);
-#line 1529
+#line 1528
     _l16 = loam_vec_new();
     loam_sys_timespec_slots = loam_vec_retain(&_l16);
-#line 1583
+#line 1582
     _l17 = loam_vec_new();
     loam_sys_watch_queue_handles = loam_vec_retain(&_l17);
-#line 1584
+#line 1583
     _l18 = loam_vec_new();
     loam_sys_watch_queue_ids = loam_vec_retain(&_l18);
 #line 5
@@ -58755,7 +58740,39 @@ bb40:;
     return;
 }
 
-#line 3511
+#line 3513
+bool loam_codegen_c_borrowed_buf(int32_t t) {
+    int32_t _l55;
+    int32_t _l56;
+    bool _l57;
+    bool _l58;
+    int32_t _l59;
+    int32_t _l61;
+    int32_t _l62;
+    int32_t _l63;
+    bool _l64;
+bb0:;
+#line 3514
+    _l55 = loam_codegen_tkind(t);
+    _l56 = 6;
+    _l57 = (_l55 != _l56);
+    if (_l57) goto bb1; else goto bb2;
+bb1:;
+#line 3515
+    _l58 = false;
+    return _l58;
+bb2:;
+#line 3517
+    _l61 = loam_types_TYPES.len;
+    (void)loam_idx(t, _l61, "packages/loam/compiler/codegen.loam", 3517);
+    _l62 = ((Ty *)(loam_types_TYPES.ptr))[t].elem;
+    _l59 = loam_codegen_tkind(_l62);
+    _l63 = 11;
+    _l64 = (_l59 == _l63);
+    return _l64;
+}
+
+#line 3520
 void loam_codegen_c_abi_type(int32_t t) {
     int32_t _l55;
     int32_t _l56;
@@ -58763,57 +58780,66 @@ void loam_codegen_c_abi_type(int32_t t) {
     bool _l58;
     loam_str _l59 = {0};
     bool _l60;
-    int32_t _l61;
-    bool _l62;
-    int32_t _l63;
-    bool _l64;
-    loam_str _l65 = {0};
+    bool _l61;
+    int32_t _l62;
+    bool _l63;
+    int32_t _l64;
+    bool _l65;
+    bool _l66;
+    loam_str _l67 = {0};
 bb0:;
-#line 3512
+#line 3521
     _l55 = loam_codegen_tkind(t);
     _l56 = _l55;
-#line 3513
+#line 3522
     _l57 = 5;
     _l58 = (_l56 == _l57);
     if (_l58) goto bb1; else goto bb2;
 bb1:;
-#line 3514
+#line 3523
     _l59 = ((loam_str){(const char *)"const char *", 12});
     loam_codegen_w(_l59);
     goto bb3;
 bb2:;
-#line 3515
-    _l61 = 11;
-    _l62 = (_l56 == _l61);
-    _l60 = _l62;
-    if (_l62) goto bb5; else goto bb4;
+#line 3524
+    _l62 = 11;
+    _l63 = (_l56 == _l62);
+    _l61 = _l63;
+    if (_l63) goto bb5; else goto bb4;
 bb3:;
-#line 3511
-    loam_str_release(&_l65);
+#line 3520
+    loam_str_release(&_l67);
     loam_str_release(&_l59);
     return;
 bb4:;
-#line 3515
-    _l63 = 9;
-    _l64 = (_l56 == _l63);
-    _l60 = _l64;
+#line 3524
+    _l64 = 9;
+    _l65 = (_l56 == _l64);
+    _l61 = _l65;
     goto bb5;
 bb5:;
-    if (_l60) goto bb6; else goto bb7;
+    _l60 = _l61;
+    if (_l61) goto bb7; else goto bb6;
 bb6:;
-#line 3516
-    _l65 = ((loam_str){(const char *)"void *", 6});
-    loam_codegen_w(_l65);
-    goto bb8;
+    _l66 = loam_codegen_c_borrowed_buf(t);
+    _l60 = _l66;
+    goto bb7;
 bb7:;
-#line 3518
-    loam_codegen_w_ctype(t);
-    goto bb8;
+    if (_l60) goto bb8; else goto bb9;
 bb8:;
+#line 3525
+    _l67 = ((loam_str){(const char *)"void *", 6});
+    loam_codegen_w(_l67);
+    goto bb10;
+bb9:;
+#line 3527
+    loam_codegen_w_ctype(t);
+    goto bb10;
+bb10:;
     goto bb3;
 }
 
-#line 3522
+#line 3531
 loam_str loam_codegen_c_sym_of(int32_t d) {
     int32_t _l55;
     int32_t _l56;
@@ -58823,28 +58849,28 @@ loam_str loam_codegen_c_sym_of(int32_t d) {
     loam_str _l61;
     loam_str _l62;
 bb0:;
-#line 3523
+#line 3532
     _l55 = loam_ast_ex(d);
     _l56 = _l55;
-#line 3524
+#line 3533
     _l58 = loam_ast_EXTRA.len;
-    (void)loam_idx(_l56, _l58, "packages/loam/compiler/codegen.loam", 3524);
+    (void)loam_idx(_l56, _l58, "packages/loam/compiler/codegen.loam", 3533);
     _l59 = ((NodeExtra *)(loam_ast_EXTRA.ptr))[_l56].has_text;
     if (_l59) goto bb1; else goto bb2;
 bb1:;
-#line 3525
+#line 3534
     _l60 = loam_ast_EXTRA.len;
-    (void)loam_idx(_l56, _l60, "packages/loam/compiler/codegen.loam", 3525);
+    (void)loam_idx(_l56, _l60, "packages/loam/compiler/codegen.loam", 3534);
     _l61 = ((NodeExtra *)(loam_ast_EXTRA.ptr))[_l56].text;
     loam_str_retain(_l61);
     return _l61;
 bb2:;
-#line 3527
+#line 3536
     _l62 = ((loam_str){(const char *)"", 0});
     return _l62;
 }
 
-#line 3530
+#line 3539
 void loam_codegen_c_bindings(void) {
     bool _l54;
     bool _l55;
@@ -58985,65 +59011,71 @@ void loam_codegen_c_bindings(void) {
     int32_t _l192;
     int32_t _l193;
     int32_t _l194;
-    bool _l195;
-    loam_str _l196 = {0};
+    int32_t _l195;
+    bool _l196;
     loam_str _l197 = {0};
-    int32_t _l198;
-    bool _l199;
-    loam_str _l200 = {0};
+    loam_str _l198 = {0};
+    int32_t _l199;
+    bool _l200;
     loam_str _l201 = {0};
     loam_str _l202 = {0};
     loam_str _l203 = {0};
-    int32_t _l204;
+    loam_str _l204 = {0};
     bool _l205;
     loam_str _l206 = {0};
     loam_str _l207 = {0};
     loam_str _l208 = {0};
     loam_str _l209 = {0};
-    loam_str _l210 = {0};
-    loam_str _l211 = {0};
-    int32_t _l212;
-    int32_t _l213;
+    int32_t _l210;
+    bool _l211;
+    loam_str _l212 = {0};
+    loam_str _l213 = {0};
     loam_str _l214 = {0};
-    int32_t _l215;
-    bool _l216;
+    loam_str _l215 = {0};
+    loam_str _l216 = {0};
     loam_str _l217 = {0};
     int32_t _l218;
     int32_t _l219;
-    bool _l220;
+    loam_str _l220 = {0};
     int32_t _l221;
-    int32_t _l222;
-    int32_t _l223;
+    bool _l222;
+    loam_str _l223 = {0};
     int32_t _l224;
-    bool _l225;
-    loam_str _l226 = {0};
-    loam_str _l227 = {0};
-    loam_str _l228 = {0};
-    loam_str _l229 = {0};
-    loam_str _l230 = {0};
-    int32_t _l231;
-    bool _l232;
+    int32_t _l225;
+    bool _l226;
+    int32_t _l227;
+    int32_t _l228;
+    int32_t _l229;
+    int32_t _l230;
+    bool _l231;
+    loam_str _l232 = {0};
     loam_str _l233 = {0};
     loam_str _l234 = {0};
     loam_str _l235 = {0};
     loam_str _l236 = {0};
-    loam_str _l237 = {0};
-    int32_t _l238;
-    int32_t _l239;
-    int32_t _l240;
-    bool _l241;
+    int32_t _l237;
+    bool _l238;
+    loam_str _l239 = {0};
+    loam_str _l240 = {0};
+    loam_str _l241 = {0};
     loam_str _l242 = {0};
     loam_str _l243 = {0};
     int32_t _l244;
     int32_t _l245;
     int32_t _l246;
-    int32_t _l247;
-    int32_t _l248;
+    bool _l247;
+    loam_str _l248 = {0};
+    loam_str _l249 = {0};
+    int32_t _l250;
+    int32_t _l251;
+    int32_t _l252;
+    int32_t _l253;
+    int32_t _l254;
 bb0:;
-#line 3531
+#line 3540
     _l54 = false;
     _l55 = _l54;
-#line 3532
+#line 3541
     _l56 = 0;
     _l58 = loam_typecheck_MODS.len;
     _l59 = _l56;
@@ -59052,30 +59084,30 @@ bb1:;
     _l60 = (_l59 < _l58);
     if (_l60) goto bb2; else goto bb4;
 bb2:;
-#line 3533
+#line 3542
     _l61 = ((Module *)(loam_typecheck_MODS.ptr))[_l59].root;
     _l62 = _l61;
-#line 3534
+#line 3543
     _l63 = (_l62 == loam_codegen_NONE);
     if (_l63) goto bb5; else goto bb6;
 bb3:;
-#line 3532
-    _l246 = 1;
-    _l247 = (_l59 + _l246);
-    _l59 = _l247;
+#line 3541
+    _l252 = 1;
+    _l253 = (_l59 + _l252);
+    _l59 = _l253;
     goto bb1;
 bb4:;
-    if (_l55) goto bb71; else goto bb72;
+    if (_l55) goto bb74; else goto bb75;
 bb5:;
     goto bb3;
 bb6:;
-#line 3537
+#line 3546
     _l65 = loam_ast_NODES.len;
-    (void)loam_idx(_l62, _l65, "packages/loam/compiler/codegen.loam", 3537);
+    (void)loam_idx(_l62, _l65, "packages/loam/compiler/codegen.loam", 3546);
     _l66 = ((Node *)(loam_ast_NODES.ptr))[_l62].kids;
     loam_vec_retain(&_l66);
     _l67 = loam_vec_retain(&_l66);
-#line 3538
+#line 3547
     _l68 = 0;
     _l69 = _l67.len;
     _l70 = _l68;
@@ -59084,51 +59116,55 @@ bb7:;
     _l71 = (_l70 < _l69);
     if (_l71) goto bb8; else goto bb10;
 bb8:;
-#line 3539
+#line 3548
     _l72 = ((int32_t *)(_l67.ptr))[_l70];
     _l73 = _l72;
-#line 3540
+#line 3549
     _l76 = loam_ast_NODES.len;
-    (void)loam_idx(_l73, _l76, "packages/loam/compiler/codegen.loam", 3540);
+    (void)loam_idx(_l73, _l76, "packages/loam/compiler/codegen.loam", 3549);
     _l77 = ((Node *)(loam_ast_NODES.ptr))[_l73].kind;
     _l78 = 2;
     _l79 = (_l77 != _l78);
     _l75 = _l79;
     if (_l79) goto bb12; else goto bb11;
 bb9:;
-#line 3538
-    _l244 = 1;
-    _l245 = (_l70 + _l244);
-    _l70 = _l245;
+#line 3547
+    _l250 = 1;
+    _l251 = (_l70 + _l250);
+    _l70 = _l251;
     goto bb7;
 bb10:;
-#line 3532
+#line 3541
+    loam_str_release(&_l249);
+    loam_str_release(&_l248);
     loam_str_release(&_l243);
     loam_str_release(&_l242);
-    loam_str_release(&_l237);
+    loam_str_release(&_l241);
+    loam_str_release(&_l240);
+    loam_str_release(&_l239);
     loam_str_release(&_l236);
     loam_str_release(&_l235);
     loam_str_release(&_l234);
     loam_str_release(&_l233);
-    loam_str_release(&_l230);
-    loam_str_release(&_l229);
-    loam_str_release(&_l228);
-    loam_str_release(&_l227);
-    loam_str_release(&_l226);
+    loam_str_release(&_l232);
+    loam_str_release(&_l223);
+    loam_str_release(&_l220);
     loam_str_release(&_l217);
+    loam_str_release(&_l216);
+    loam_str_release(&_l215);
     loam_str_release(&_l214);
-    loam_str_release(&_l211);
-    loam_str_release(&_l210);
+    loam_str_release(&_l213);
+    loam_str_release(&_l212);
     loam_str_release(&_l209);
     loam_str_release(&_l208);
     loam_str_release(&_l207);
     loam_str_release(&_l206);
+    loam_str_release(&_l204);
     loam_str_release(&_l203);
     loam_str_release(&_l202);
     loam_str_release(&_l201);
-    loam_str_release(&_l200);
+    loam_str_release(&_l198);
     loam_str_release(&_l197);
-    loam_str_release(&_l196);
     loam_str_release(&_l190);
     loam_str_release(&_l184);
     loam_str_release(&_l183);
@@ -59190,7 +59226,7 @@ bb10:;
     loam_vec_drop(&_l66);
     goto bb3;
 bb11:;
-#line 3540
+#line 3549
     _l80 = loam_codegen_c_sym_of(_l73);
     _l81 = _l80.len;
     _l82 = 0;
@@ -59208,130 +59244,130 @@ bb13:;
 bb14:;
     if (_l74) goto bb15; else goto bb16;
 bb15:;
-#line 3541
+#line 3550
     loam_str_release(&_l80);
     goto bb9;
 bb16:;
-#line 3543
+#line 3552
     _l86 = (!_l55);
     if (_l86) goto bb17; else goto bb18;
 bb17:;
-#line 3544
+#line 3553
     _l87 = true;
     _l55 = _l87;
-#line 3545
+#line 3554
     _l88 = ((loam_str){(const char *)"#define LOAM_CSYM_S2(x) #x\n", 27});
     loam_codegen_w(_l88);
-#line 3546
+#line 3555
     _l89 = ((loam_str){(const char *)"#define LOAM_CSYM_S(x) LOAM_CSYM_S2(x)\n", 39});
     loam_codegen_w(_l89);
-#line 3547
+#line 3556
     _l90 = ((loam_str){(const char *)"#define LOAM_CSYM(s) __asm__(LOAM_CSYM_S(__USER_LABEL_PREFIX__) s)\n", 67});
     loam_codegen_w(_l90);
-#line 3552
+#line 3561
     _l91 = ((loam_str){(const char *)"static __attribute__((noinline, cold)) char *loam_csym_cstr_heap(loam_str s) {\n", 79});
     loam_codegen_w(_l91);
-#line 3553
+#line 3562
     _l92 = ((loam_str){(const char *)"    char *b = (char *)malloc((size_t)s.len + 1);\n", 49});
     loam_codegen_w(_l92);
-#line 3554
+#line 3563
     _l93 = ((loam_str){(const char *)"    if (!b) abort();\n", 21});
     loam_codegen_w(_l93);
-#line 3555
+#line 3564
     _l94 = ((loam_str){(const char *)"    memcpy(b, s.ptr, (size_t)s.len);\n", 37});
     loam_codegen_w(_l94);
-#line 3556
+#line 3565
     _l95 = ((loam_str){(const char *)"    b[s.len] = 0;\n", 18});
     loam_codegen_w(_l95);
-#line 3557
+#line 3566
     _l96 = ((loam_str){(const char *)"    return b;\n", 14});
     loam_codegen_w(_l96);
-#line 3558
+#line 3567
     _l97 = ((loam_str){(const char *)"}\n", 2});
     loam_codegen_w(_l97);
-#line 3559
+#line 3568
     _l98 = ((loam_str){(const char *)"static inline char *loam_csym_cstr(loam_str s, char *buf, size_t cap) {\n", 72});
     loam_codegen_w(_l98);
-#line 3560
+#line 3569
     _l99 = ((loam_str){(const char *)"    if ((size_t)s.len >= cap) return loam_csym_cstr_heap(s);\n", 61});
     loam_codegen_w(_l99);
-#line 3561
+#line 3570
     _l100 = ((loam_str){(const char *)"    if (s.len) memcpy(buf, s.ptr, (size_t)s.len);\n", 50});
     loam_codegen_w(_l100);
-#line 3562
+#line 3571
     _l101 = ((loam_str){(const char *)"    buf[s.len] = 0;\n", 20});
     loam_codegen_w(_l101);
-#line 3563
+#line 3572
     _l102 = ((loam_str){(const char *)"    return buf;\n", 16});
     loam_codegen_w(_l102);
-#line 3564
+#line 3573
     _l103 = ((loam_str){(const char *)"}\n", 2});
     loam_codegen_w(_l103);
-#line 3565
+#line 3574
     _l104 = ((loam_str){(const char *)"static inline loam_str loam_csym_str(const char *p) {\n", 54});
     loam_codegen_w(_l104);
-#line 3566
+#line 3575
     _l105 = ((loam_str){(const char *)"    if (!p) return (loam_str){\"\", 0, 0};\n", 41});
     loam_codegen_w(_l105);
-#line 3567
+#line 3576
     _l106 = ((loam_str){(const char *)"    int64_t n = (int64_t)strlen(p);\n", 36});
     loam_codegen_w(_l106);
-#line 3568
+#line 3577
     _l107 = ((loam_str){(const char *)"    char *b = loam_str_bytes(n);\n", 33});
     loam_codegen_w(_l107);
-#line 3569
+#line 3578
     _l108 = ((loam_str){(const char *)"    memcpy(b, p, (size_t)n);\n", 29});
     loam_codegen_w(_l108);
-#line 3570
+#line 3579
     _l109 = ((loam_str){(const char *)"    b[n] = 0;\n", 14});
     loam_codegen_w(_l109);
-#line 3571
+#line 3580
     _l110 = ((loam_str){(const char *)"    return loam_str_owned(b, n);\n", 33});
     loam_codegen_w(_l110);
-#line 3572
+#line 3581
     _l111 = ((loam_str){(const char *)"}\n", 2});
     loam_codegen_w(_l111);
     goto bb18;
 bb18:;
-#line 3574
+#line 3583
     _l112 = loam_codegen_fn_cname(_l73);
     _l113 = _l112;
     loam_str_retain(_l113);
-#line 3575
+#line 3584
     _l114 = loam_ast_NODES.len;
-    (void)loam_idx(_l73, _l114, "packages/loam/compiler/codegen.loam", 3575);
+    (void)loam_idx(_l73, _l114, "packages/loam/compiler/codegen.loam", 3584);
     _l115 = ((Node *)(loam_ast_NODES.ptr))[_l73].ty;
     _l116 = _l115;
-#line 3576
+#line 3585
     _l117 = loam_codegen_ret_type(_l116);
     _l118 = _l117;
-#line 3577
+#line 3586
     _l119 = loam_codegen_tkind(_l118);
     _l120 = _l119;
-#line 3578
+#line 3587
     _l121 = loam_ast_NODES.len;
-    (void)loam_idx(_l73, _l121, "packages/loam/compiler/codegen.loam", 3578);
+    (void)loam_idx(_l73, _l121, "packages/loam/compiler/codegen.loam", 3587);
     _l122 = ((Node *)(loam_ast_NODES.ptr))[_l73].kids.len;
     _l123 = _l122;
-#line 3579
+#line 3588
     loam_codegen_os_begin(_l73);
-#line 3580
+#line 3589
     _l125 = ((loam_str){(const char *)"extern void ", 12});
     _l126 = ((loam_str){(const char *)"__csym(void) LOAM_CSYM(\"", 24});
     _l127 = loam_codegen_c_sym_of(_l73);
     _l128 = ((loam_str){(const char *)"\");\n", 4});
     { int64_t _in = 0 + _l125.len + _l113.len + _l126.len + _l127.len + _l128.len; char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l125.len > 0) { memcpy(_ip + _io, _l125.ptr, (size_t)_l125.len); _io += _l125.len; } if (_l113.len > 0) { memcpy(_ip + _io, _l113.ptr, (size_t)_l113.len); _io += _l113.len; } if (_l126.len > 0) { memcpy(_ip + _io, _l126.ptr, (size_t)_l126.len); _io += _l126.len; } if (_l127.len > 0) { memcpy(_ip + _io, _l127.ptr, (size_t)_l127.len); _io += _l127.len; } if (_l128.len > 0) { memcpy(_ip + _io, _l128.ptr, (size_t)_l128.len); _io += _l128.len; } _ip[_in] = 0; _l124 = loam_str_owned(_ip, _in); }
     loam_codegen_w(_l124);
-#line 3581
+#line 3590
     _l129 = ((loam_str){(const char *)"static ", 7});
     loam_codegen_w(_l129);
-#line 3582
+#line 3591
     _l130 = false;
     loam_codegen_fn_sig(_l73, _l130);
-#line 3583
+#line 3592
     _l131 = ((loam_str){(const char *)" {\n", 3});
     loam_codegen_w(_l131);
-#line 3584
+#line 3593
     _l132 = 0;
     _l133 = _l132;
     goto bb19;
@@ -59339,33 +59375,33 @@ bb19:;
     _l134 = (_l133 < _l123);
     if (_l134) goto bb20; else goto bb22;
 bb20:;
-#line 3585
+#line 3594
     _l136 = loam_codegen_param_type(_l116, _l133);
     _l135 = loam_codegen_tkind(_l136);
     _l137 = 5;
     _l138 = (_l135 == _l137);
     if (_l138) goto bb23; else goto bb24;
 bb21:;
-#line 3584
+#line 3593
     _l150 = 1;
     _l151 = (_l133 + _l150);
     _l133 = _l151;
     goto bb19;
 bb22:;
-#line 3590
+#line 3599
     _l152 = ((loam_str){(const char *)"    ", 4});
     loam_codegen_w(_l152);
-#line 3591
+#line 3600
     _l153 = 5;
     _l154 = (_l120 == _l153);
     if (_l154) goto bb25; else goto bb26;
 bb23:;
-#line 3586
+#line 3595
     _l140 = ((loam_str){(const char *)"    char _cb", 12});
     _l141 = ((loam_str){(const char *)"[256];\n", 7});
     { uint8_t _id1[20]; int32_t _if1 = loam_decimal_fill(_id1, loam_decimal_magnitude_of((int64_t)(_l133)), (int64_t)(_l133) < 0); int64_t _in = 0 + _l140.len + (int64_t)(20 - _if1) + _l141.len; char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l140.len > 0) { memcpy(_ip + _io, _l140.ptr, (size_t)_l140.len); _io += _l140.len; } if ((int64_t)(20 - _if1) > 0) { memcpy(_ip + _io, (const char *)_id1 + _if1, (size_t)(int64_t)(20 - _if1)); _io += (int64_t)(20 - _if1); } if (_l141.len > 0) { memcpy(_ip + _io, _l141.ptr, (size_t)_l141.len); _io += _l141.len; } _ip[_in] = 0; _l139 = loam_str_owned(_ip, _in); }
     loam_codegen_w(_l139);
-#line 3587
+#line 3596
     _l143 = ((loam_str){(const char *)"    char *_cs", 13});
     _l144 = ((loam_str){(const char *)" = loam_csym_cstr(", 18});
     _l146 = loam_codegen_param_name(_l73, _l133);
@@ -59377,7 +59413,7 @@ bb23:;
     loam_codegen_w(_l142);
     goto bb24;
 bb24:;
-#line 3584
+#line 3593
     loam_str_release(&_l149);
     loam_str_release(&_l148);
     loam_str_release(&_l147);
@@ -59391,42 +59427,42 @@ bb24:;
     loam_str_release(&_l139);
     goto bb21;
 bb25:;
-#line 3592
+#line 3601
     _l155 = ((loam_str){(const char *)"const char *_p = ", 17});
     loam_codegen_w(_l155);
     goto bb27;
 bb26:;
-#line 3593
+#line 3602
     _l156 = 1;
     _l157 = (_l120 != _l156);
     if (_l157) goto bb28; else goto bb29;
 bb27:;
-#line 3597
+#line 3606
     _l159 = ((loam_str){(const char *)"((", 2});
     loam_codegen_w(_l159);
-#line 3598
+#line 3607
     loam_codegen_c_abi_type(_l118);
-#line 3599
+#line 3608
     _l160 = ((loam_str){(const char *)" (*)(", 5});
     loam_codegen_w(_l160);
-#line 3604
+#line 3613
     _l161 = loam_ast_c_variadic_fixed(_l73);
     _l162 = _l161;
-#line 3605
+#line 3614
     _l164 = 0;
     _l165 = (_l162 >= _l164);
     if (_l165) goto bb30; else goto bb31;
 bb28:;
-#line 3594
+#line 3603
     loam_codegen_w_ctype(_l118);
-#line 3595
+#line 3604
     _l158 = ((loam_str){(const char *)" _r = ", 6});
     loam_codegen_w(_l158);
     goto bb29;
 bb29:;
     goto bb27;
 bb30:;
-#line 3605
+#line 3614
     _l163 = _l162;
     goto bb32;
 bb31:;
@@ -59434,17 +59470,17 @@ bb31:;
     goto bb32;
 bb32:;
     _l166 = _l163;
-#line 3606
+#line 3615
     _l167 = 0;
     _l168 = (_l166 == _l167);
     if (_l168) goto bb33; else goto bb34;
 bb33:;
-#line 3607
+#line 3616
     _l169 = ((loam_str){(const char *)"void", 4});
     loam_codegen_w(_l169);
     goto bb34;
 bb34:;
-#line 3609
+#line 3618
     _l170 = 0;
     _l171 = _l170;
     goto bb35;
@@ -59452,45 +59488,45 @@ bb35:;
     _l172 = (_l171 < _l166);
     if (_l172) goto bb36; else goto bb38;
 bb36:;
-#line 3610
+#line 3619
     _l173 = 0;
     _l174 = (_l171 > _l173);
     if (_l174) goto bb39; else goto bb40;
 bb37:;
-#line 3609
+#line 3618
     _l177 = 1;
     _l178 = (_l171 + _l177);
     _l171 = _l178;
     goto bb35;
 bb38:;
-#line 3615
+#line 3624
     _l179 = 0;
     _l180 = (_l162 >= _l179);
     if (_l180) goto bb41; else goto bb42;
 bb39:;
-#line 3611
+#line 3620
     _l175 = ((loam_str){(const char *)", ", 2});
     loam_codegen_w(_l175);
     goto bb40;
 bb40:;
-#line 3613
+#line 3622
     _l176 = loam_codegen_param_type(_l116, _l171);
     loam_codegen_c_abi_type(_l176);
-#line 3609
+#line 3618
     loam_str_release(&_l175);
     goto bb37;
 bb41:;
-#line 3616
+#line 3625
     _l181 = ((loam_str){(const char *)", ...", 5});
     loam_codegen_w(_l181);
     goto bb42;
 bb42:;
-#line 3618
+#line 3627
     _l183 = ((loam_str){(const char *)"))(void *)", 10});
     _l184 = ((loam_str){(const char *)"__csym)(", 8});
     { int64_t _in = 0 + _l183.len + _l113.len + _l184.len; char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l183.len > 0) { memcpy(_ip + _io, _l183.ptr, (size_t)_l183.len); _io += _l183.len; } if (_l113.len > 0) { memcpy(_ip + _io, _l113.ptr, (size_t)_l113.len); _io += _l113.len; } if (_l184.len > 0) { memcpy(_ip + _io, _l184.ptr, (size_t)_l184.len); _io += _l184.len; } _ip[_in] = 0; _l182 = loam_str_owned(_ip, _in); }
     loam_codegen_w(_l182);
-#line 3619
+#line 3628
     _l185 = 0;
     _l186 = _l185;
     goto bb43;
@@ -59498,205 +59534,229 @@ bb43:;
     _l187 = (_l186 < _l123);
     if (_l187) goto bb44; else goto bb46;
 bb44:;
-#line 3620
+#line 3629
     _l188 = 0;
     _l189 = (_l186 > _l188);
     if (_l189) goto bb47; else goto bb48;
 bb45:;
-#line 3619
-    _l212 = 1;
-    _l213 = (_l186 + _l212);
-    _l186 = _l213;
+#line 3628
+    _l218 = 1;
+    _l219 = (_l186 + _l218);
+    _l186 = _l219;
     goto bb43;
 bb46:;
-#line 3634
-    _l214 = ((loam_str){(const char *)");\n", 3});
-    loam_codegen_w(_l214);
-#line 3635
-    _l215 = 5;
-    _l216 = (_l120 == _l215);
-    if (_l216) goto bb58; else goto bb59;
+#line 3647
+    _l220 = ((loam_str){(const char *)");\n", 3});
+    loam_codegen_w(_l220);
+#line 3648
+    _l221 = 5;
+    _l222 = (_l120 == _l221);
+    if (_l222) goto bb61; else goto bb62;
 bb47:;
-#line 3621
+#line 3630
     _l190 = ((loam_str){(const char *)", ", 2});
     loam_codegen_w(_l190);
     goto bb48;
 bb48:;
-#line 3623
-    _l192 = loam_codegen_param_type(_l116, _l186);
-    _l191 = loam_codegen_tkind(_l192);
-    _l193 = _l191;
-#line 3624
-    _l194 = 5;
-    _l195 = (_l193 == _l194);
-    if (_l195) goto bb49; else goto bb50;
+#line 3632
+    _l191 = loam_codegen_param_type(_l116, _l186);
+    _l192 = _l191;
+#line 3633
+    _l193 = loam_codegen_tkind(_l192);
+    _l194 = _l193;
+#line 3634
+    _l195 = 5;
+    _l196 = (_l194 == _l195);
+    if (_l196) goto bb49; else goto bb50;
 bb49:;
-#line 3625
-    _l197 = ((loam_str){(const char *)"_cs", 3});
-    { uint8_t _id1[20]; int32_t _if1 = loam_decimal_fill(_id1, loam_decimal_magnitude_of((int64_t)(_l186)), (int64_t)(_l186) < 0); int64_t _in = 0 + _l197.len + (int64_t)(20 - _if1); char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l197.len > 0) { memcpy(_ip + _io, _l197.ptr, (size_t)_l197.len); _io += _l197.len; } if ((int64_t)(20 - _if1) > 0) { memcpy(_ip + _io, (const char *)_id1 + _if1, (size_t)(int64_t)(20 - _if1)); _io += (int64_t)(20 - _if1); } _ip[_in] = 0; _l196 = loam_str_owned(_ip, _in); }
-    loam_codegen_w(_l196);
+#line 3635
+    _l198 = ((loam_str){(const char *)"_cs", 3});
+    { uint8_t _id1[20]; int32_t _if1 = loam_decimal_fill(_id1, loam_decimal_magnitude_of((int64_t)(_l186)), (int64_t)(_l186) < 0); int64_t _in = 0 + _l198.len + (int64_t)(20 - _if1); char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l198.len > 0) { memcpy(_ip + _io, _l198.ptr, (size_t)_l198.len); _io += _l198.len; } if ((int64_t)(20 - _if1) > 0) { memcpy(_ip + _io, (const char *)_id1 + _if1, (size_t)(int64_t)(20 - _if1)); _io += (int64_t)(20 - _if1); } _ip[_in] = 0; _l197 = loam_str_owned(_ip, _in); }
+    loam_codegen_w(_l197);
     goto bb51;
 bb50:;
-#line 3626
-    _l198 = 11;
-    _l199 = (_l193 == _l198);
-    if (_l199) goto bb52; else goto bb53;
+#line 3636
+    _l199 = 11;
+    _l200 = (_l194 == _l199);
+    if (_l200) goto bb52; else goto bb53;
 bb51:;
-#line 3619
-    loam_str_release(&_l211);
-    loam_str_release(&_l210);
+#line 3628
+    loam_str_release(&_l217);
+    loam_str_release(&_l216);
+    loam_str_release(&_l215);
+    loam_str_release(&_l214);
+    loam_str_release(&_l213);
+    loam_str_release(&_l212);
     loam_str_release(&_l209);
     loam_str_release(&_l208);
     loam_str_release(&_l207);
     loam_str_release(&_l206);
+    loam_str_release(&_l204);
     loam_str_release(&_l203);
     loam_str_release(&_l202);
     loam_str_release(&_l201);
-    loam_str_release(&_l200);
+    loam_str_release(&_l198);
     loam_str_release(&_l197);
-    loam_str_release(&_l196);
     loam_str_release(&_l190);
     goto bb45;
 bb52:;
-#line 3627
-    _l202 = loam_codegen_param_name(_l73, _l186);
-    _l201 = loam_codegen_cid(_l202);
-    _l203 = ((loam_str){(const char *)".ptr", 4});
-    { int64_t _in = 0 + _l201.len + _l203.len; char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l201.len > 0) { memcpy(_ip + _io, _l201.ptr, (size_t)_l201.len); _io += _l201.len; } if (_l203.len > 0) { memcpy(_ip + _io, _l203.ptr, (size_t)_l203.len); _io += _l203.len; } _ip[_in] = 0; _l200 = loam_str_owned(_ip, _in); }
-    loam_codegen_w(_l200);
+#line 3637
+    _l203 = loam_codegen_param_name(_l73, _l186);
+    _l202 = loam_codegen_cid(_l203);
+    _l204 = ((loam_str){(const char *)".ptr", 4});
+    { int64_t _in = 0 + _l202.len + _l204.len; char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l202.len > 0) { memcpy(_ip + _io, _l202.ptr, (size_t)_l202.len); _io += _l202.len; } if (_l204.len > 0) { memcpy(_ip + _io, _l204.ptr, (size_t)_l204.len); _io += _l204.len; } _ip[_in] = 0; _l201 = loam_str_owned(_ip, _in); }
+    loam_codegen_w(_l201);
     goto bb54;
 bb53:;
-#line 3628
-    _l204 = 9;
-    _l205 = (_l193 == _l204);
+#line 3638
+    _l205 = loam_codegen_c_borrowed_buf(_l192);
     if (_l205) goto bb55; else goto bb56;
 bb54:;
     goto bb51;
 bb55:;
-#line 3629
+#line 3640
     _l208 = loam_codegen_param_name(_l73, _l186);
     _l207 = loam_codegen_cid(_l208);
-    _l209 = ((loam_str){(const char *)".fn", 3});
+    _l209 = ((loam_str){(const char *)"->ptr", 5});
     { int64_t _in = 0 + _l207.len + _l209.len; char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l207.len > 0) { memcpy(_ip + _io, _l207.ptr, (size_t)_l207.len); _io += _l207.len; } if (_l209.len > 0) { memcpy(_ip + _io, _l209.ptr, (size_t)_l209.len); _io += _l209.len; } _ip[_in] = 0; _l206 = loam_str_owned(_ip, _in); }
     loam_codegen_w(_l206);
     goto bb57;
 bb56:;
-#line 3631
-    _l211 = loam_codegen_param_name(_l73, _l186);
-    _l210 = loam_codegen_cid(_l211);
-    loam_codegen_w(_l210);
-    goto bb57;
+#line 3641
+    _l210 = 9;
+    _l211 = (_l194 == _l210);
+    if (_l211) goto bb58; else goto bb59;
 bb57:;
     goto bb54;
 bb58:;
-#line 3636
-    _l217 = ((loam_str){(const char *)"    loam_str _r = loam_csym_str(_p);\n", 37});
-    loam_codegen_w(_l217);
-    goto bb59;
+#line 3642
+    _l214 = loam_codegen_param_name(_l73, _l186);
+    _l213 = loam_codegen_cid(_l214);
+    _l215 = ((loam_str){(const char *)".fn", 3});
+    { int64_t _in = 0 + _l213.len + _l215.len; char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l213.len > 0) { memcpy(_ip + _io, _l213.ptr, (size_t)_l213.len); _io += _l213.len; } if (_l215.len > 0) { memcpy(_ip + _io, _l215.ptr, (size_t)_l215.len); _io += _l215.len; } _ip[_in] = 0; _l212 = loam_str_owned(_ip, _in); }
+    loam_codegen_w(_l212);
+    goto bb60;
 bb59:;
-#line 3638
-    _l218 = 0;
-    _l219 = _l218;
+#line 3644
+    _l217 = loam_codegen_param_name(_l73, _l186);
+    _l216 = loam_codegen_cid(_l217);
+    loam_codegen_w(_l216);
     goto bb60;
 bb60:;
-    _l220 = (_l219 < _l123);
-    if (_l220) goto bb61; else goto bb63;
+    goto bb57;
 bb61:;
-#line 3639
-    _l222 = loam_codegen_param_type(_l116, _l219);
-    _l221 = loam_codegen_tkind(_l222);
-    _l223 = _l221;
-#line 3640
-    _l224 = 5;
-    _l225 = (_l223 == _l224);
-    if (_l225) goto bb64; else goto bb65;
-bb62:;
-#line 3638
-    _l238 = 1;
-    _l239 = (_l219 + _l238);
-    _l219 = _l239;
-    goto bb60;
-bb63:;
-#line 3646
-    _l240 = 1;
-    _l241 = (_l120 != _l240);
-    if (_l241) goto bb69; else goto bb70;
-bb64:;
-#line 3641
-    _l227 = ((loam_str){(const char *)"    if (_cs", 11});
-    _l228 = ((loam_str){(const char *)" != _cb", 7});
-    _l229 = ((loam_str){(const char *)") free(_cs", 10});
-    _l230 = ((loam_str){(const char *)");\n", 3});
-    { uint8_t _id1[20]; int32_t _if1 = loam_decimal_fill(_id1, loam_decimal_magnitude_of((int64_t)(_l219)), (int64_t)(_l219) < 0); uint8_t _id3[20]; int32_t _if3 = loam_decimal_fill(_id3, loam_decimal_magnitude_of((int64_t)(_l219)), (int64_t)(_l219) < 0); uint8_t _id5[20]; int32_t _if5 = loam_decimal_fill(_id5, loam_decimal_magnitude_of((int64_t)(_l219)), (int64_t)(_l219) < 0); int64_t _in = 0 + _l227.len + (int64_t)(20 - _if1) + _l228.len + (int64_t)(20 - _if3) + _l229.len + (int64_t)(20 - _if5) + _l230.len; char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l227.len > 0) { memcpy(_ip + _io, _l227.ptr, (size_t)_l227.len); _io += _l227.len; } if ((int64_t)(20 - _if1) > 0) { memcpy(_ip + _io, (const char *)_id1 + _if1, (size_t)(int64_t)(20 - _if1)); _io += (int64_t)(20 - _if1); } if (_l228.len > 0) { memcpy(_ip + _io, _l228.ptr, (size_t)_l228.len); _io += _l228.len; } if ((int64_t)(20 - _if3) > 0) { memcpy(_ip + _io, (const char *)_id3 + _if3, (size_t)(int64_t)(20 - _if3)); _io += (int64_t)(20 - _if3); } if (_l229.len > 0) { memcpy(_ip + _io, _l229.ptr, (size_t)_l229.len); _io += _l229.len; } if ((int64_t)(20 - _if5) > 0) { memcpy(_ip + _io, (const char *)_id5 + _if5, (size_t)(int64_t)(20 - _if5)); _io += (int64_t)(20 - _if5); } if (_l230.len > 0) { memcpy(_ip + _io, _l230.ptr, (size_t)_l230.len); _io += _l230.len; } _ip[_in] = 0; _l226 = loam_str_owned(_ip, _in); }
-    loam_codegen_w(_l226);
-    goto bb66;
-bb65:;
-#line 3642
-    _l231 = 11;
-    _l232 = (_l223 == _l231);
-    if (_l232) goto bb67; else goto bb68;
-bb66:;
-#line 3638
-    loam_str_release(&_l237);
-    loam_str_release(&_l236);
-    loam_str_release(&_l235);
-    loam_str_release(&_l234);
-    loam_str_release(&_l233);
-    loam_str_release(&_l230);
-    loam_str_release(&_l229);
-    loam_str_release(&_l228);
-    loam_str_release(&_l227);
-    loam_str_release(&_l226);
-    goto bb62;
-bb67:;
-#line 3643
-    _l234 = ((loam_str){(const char *)"    loam_vec_drop(&", 19});
-    _l236 = loam_codegen_param_name(_l73, _l219);
-    _l235 = loam_codegen_cid(_l236);
-    _l237 = ((loam_str){(const char *)");\n", 3});
-    { int64_t _in = 0 + _l234.len + _l235.len + _l237.len; char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l234.len > 0) { memcpy(_ip + _io, _l234.ptr, (size_t)_l234.len); _io += _l234.len; } if (_l235.len > 0) { memcpy(_ip + _io, _l235.ptr, (size_t)_l235.len); _io += _l235.len; } if (_l237.len > 0) { memcpy(_ip + _io, _l237.ptr, (size_t)_l237.len); _io += _l237.len; } _ip[_in] = 0; _l233 = loam_str_owned(_ip, _in); }
-    loam_codegen_w(_l233);
-    goto bb68;
-bb68:;
-    goto bb66;
-bb69:;
-#line 3647
-    _l242 = ((loam_str){(const char *)"    return _r;\n", 15});
-    loam_codegen_w(_l242);
-    goto bb70;
-bb70:;
 #line 3649
-    _l243 = ((loam_str){(const char *)"}\n", 2});
-    loam_codegen_w(_l243);
-#line 3650
-    loam_codegen_os_end(_l73);
-#line 3538
+    _l223 = ((loam_str){(const char *)"    loam_str _r = loam_csym_str(_p);\n", 37});
+    loam_codegen_w(_l223);
+    goto bb62;
+bb62:;
+#line 3651
+    _l224 = 0;
+    _l225 = _l224;
+    goto bb63;
+bb63:;
+    _l226 = (_l225 < _l123);
+    if (_l226) goto bb64; else goto bb66;
+bb64:;
+#line 3652
+    _l228 = loam_codegen_param_type(_l116, _l225);
+    _l227 = loam_codegen_tkind(_l228);
+    _l229 = _l227;
+#line 3653
+    _l230 = 5;
+    _l231 = (_l229 == _l230);
+    if (_l231) goto bb67; else goto bb68;
+bb65:;
+#line 3651
+    _l244 = 1;
+    _l245 = (_l225 + _l244);
+    _l225 = _l245;
+    goto bb63;
+bb66:;
+#line 3661
+    _l246 = 1;
+    _l247 = (_l120 != _l246);
+    if (_l247) goto bb72; else goto bb73;
+bb67:;
+#line 3654
+    _l233 = ((loam_str){(const char *)"    if (_cs", 11});
+    _l234 = ((loam_str){(const char *)" != _cb", 7});
+    _l235 = ((loam_str){(const char *)") free(_cs", 10});
+    _l236 = ((loam_str){(const char *)");\n", 3});
+    { uint8_t _id1[20]; int32_t _if1 = loam_decimal_fill(_id1, loam_decimal_magnitude_of((int64_t)(_l225)), (int64_t)(_l225) < 0); uint8_t _id3[20]; int32_t _if3 = loam_decimal_fill(_id3, loam_decimal_magnitude_of((int64_t)(_l225)), (int64_t)(_l225) < 0); uint8_t _id5[20]; int32_t _if5 = loam_decimal_fill(_id5, loam_decimal_magnitude_of((int64_t)(_l225)), (int64_t)(_l225) < 0); int64_t _in = 0 + _l233.len + (int64_t)(20 - _if1) + _l234.len + (int64_t)(20 - _if3) + _l235.len + (int64_t)(20 - _if5) + _l236.len; char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l233.len > 0) { memcpy(_ip + _io, _l233.ptr, (size_t)_l233.len); _io += _l233.len; } if ((int64_t)(20 - _if1) > 0) { memcpy(_ip + _io, (const char *)_id1 + _if1, (size_t)(int64_t)(20 - _if1)); _io += (int64_t)(20 - _if1); } if (_l234.len > 0) { memcpy(_ip + _io, _l234.ptr, (size_t)_l234.len); _io += _l234.len; } if ((int64_t)(20 - _if3) > 0) { memcpy(_ip + _io, (const char *)_id3 + _if3, (size_t)(int64_t)(20 - _if3)); _io += (int64_t)(20 - _if3); } if (_l235.len > 0) { memcpy(_ip + _io, _l235.ptr, (size_t)_l235.len); _io += _l235.len; } if ((int64_t)(20 - _if5) > 0) { memcpy(_ip + _io, (const char *)_id5 + _if5, (size_t)(int64_t)(20 - _if5)); _io += (int64_t)(20 - _if5); } if (_l236.len > 0) { memcpy(_ip + _io, _l236.ptr, (size_t)_l236.len); _io += _l236.len; } _ip[_in] = 0; _l232 = loam_str_owned(_ip, _in); }
+    loam_codegen_w(_l232);
+    goto bb69;
+bb68:;
+#line 3655
+    _l237 = 11;
+    _l238 = (_l229 == _l237);
+    if (_l238) goto bb70; else goto bb71;
+bb69:;
+#line 3651
     loam_str_release(&_l243);
     loam_str_release(&_l242);
-    loam_str_release(&_l237);
+    loam_str_release(&_l241);
+    loam_str_release(&_l240);
+    loam_str_release(&_l239);
     loam_str_release(&_l236);
     loam_str_release(&_l235);
     loam_str_release(&_l234);
     loam_str_release(&_l233);
-    loam_str_release(&_l230);
-    loam_str_release(&_l229);
-    loam_str_release(&_l228);
-    loam_str_release(&_l227);
-    loam_str_release(&_l226);
+    loam_str_release(&_l232);
+    goto bb65;
+bb70:;
+#line 3658
+    _l240 = ((loam_str){(const char *)"    loam_vec_drop(&", 19});
+    _l242 = loam_codegen_param_name(_l73, _l225);
+    _l241 = loam_codegen_cid(_l242);
+    _l243 = ((loam_str){(const char *)");\n", 3});
+    { int64_t _in = 0 + _l240.len + _l241.len + _l243.len; char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l240.len > 0) { memcpy(_ip + _io, _l240.ptr, (size_t)_l240.len); _io += _l240.len; } if (_l241.len > 0) { memcpy(_ip + _io, _l241.ptr, (size_t)_l241.len); _io += _l241.len; } if (_l243.len > 0) { memcpy(_ip + _io, _l243.ptr, (size_t)_l243.len); _io += _l243.len; } _ip[_in] = 0; _l239 = loam_str_owned(_ip, _in); }
+    loam_codegen_w(_l239);
+    goto bb71;
+bb71:;
+    goto bb69;
+bb72:;
+#line 3662
+    _l248 = ((loam_str){(const char *)"    return _r;\n", 15});
+    loam_codegen_w(_l248);
+    goto bb73;
+bb73:;
+#line 3664
+    _l249 = ((loam_str){(const char *)"}\n", 2});
+    loam_codegen_w(_l249);
+#line 3665
+    loam_codegen_os_end(_l73);
+#line 3547
+    loam_str_release(&_l249);
+    loam_str_release(&_l248);
+    loam_str_release(&_l243);
+    loam_str_release(&_l242);
+    loam_str_release(&_l241);
+    loam_str_release(&_l240);
+    loam_str_release(&_l239);
+    loam_str_release(&_l236);
+    loam_str_release(&_l235);
+    loam_str_release(&_l234);
+    loam_str_release(&_l233);
+    loam_str_release(&_l232);
+    loam_str_release(&_l223);
+    loam_str_release(&_l220);
     loam_str_release(&_l217);
+    loam_str_release(&_l216);
+    loam_str_release(&_l215);
     loam_str_release(&_l214);
-    loam_str_release(&_l211);
-    loam_str_release(&_l210);
+    loam_str_release(&_l213);
+    loam_str_release(&_l212);
     loam_str_release(&_l209);
     loam_str_release(&_l208);
     loam_str_release(&_l207);
     loam_str_release(&_l206);
+    loam_str_release(&_l204);
     loam_str_release(&_l203);
     loam_str_release(&_l202);
     loam_str_release(&_l201);
-    loam_str_release(&_l200);
+    loam_str_release(&_l198);
     loam_str_release(&_l197);
-    loam_str_release(&_l196);
     loam_str_release(&_l190);
     loam_str_release(&_l184);
     loam_str_release(&_l183);
@@ -59755,39 +59815,43 @@ bb70:;
     loam_str_release(&_l88);
     loam_str_release(&_l80);
     goto bb9;
-bb71:;
-#line 3654
-    _l248 = 10;
-    loam_codegen_wc(_l248);
-    goto bb72;
-bb72:;
-#line 3530
+bb74:;
+#line 3669
+    _l254 = 10;
+    loam_codegen_wc(_l254);
+    goto bb75;
+bb75:;
+#line 3539
+    loam_str_release(&_l249);
+    loam_str_release(&_l248);
     loam_str_release(&_l243);
     loam_str_release(&_l242);
-    loam_str_release(&_l237);
+    loam_str_release(&_l241);
+    loam_str_release(&_l240);
+    loam_str_release(&_l239);
     loam_str_release(&_l236);
     loam_str_release(&_l235);
     loam_str_release(&_l234);
     loam_str_release(&_l233);
-    loam_str_release(&_l230);
-    loam_str_release(&_l229);
-    loam_str_release(&_l228);
-    loam_str_release(&_l227);
-    loam_str_release(&_l226);
+    loam_str_release(&_l232);
+    loam_str_release(&_l223);
+    loam_str_release(&_l220);
     loam_str_release(&_l217);
+    loam_str_release(&_l216);
+    loam_str_release(&_l215);
     loam_str_release(&_l214);
-    loam_str_release(&_l211);
-    loam_str_release(&_l210);
+    loam_str_release(&_l213);
+    loam_str_release(&_l212);
     loam_str_release(&_l209);
     loam_str_release(&_l208);
     loam_str_release(&_l207);
     loam_str_release(&_l206);
+    loam_str_release(&_l204);
     loam_str_release(&_l203);
     loam_str_release(&_l202);
     loam_str_release(&_l201);
-    loam_str_release(&_l200);
+    loam_str_release(&_l198);
     loam_str_release(&_l197);
-    loam_str_release(&_l196);
     loam_str_release(&_l190);
     loam_str_release(&_l184);
     loam_str_release(&_l183);
@@ -59850,7 +59914,7 @@ bb72:;
     return;
 }
 
-#line 3661
+#line 3676
 void loam_codegen_as_fn_tramp(int32_t d, bool proto) {
     int32_t _l57;
     int32_t _l58;
@@ -59907,25 +59971,25 @@ void loam_codegen_as_fn_tramp(int32_t d, bool proto) {
     int32_t _l111;
     loam_str _l112;
 bb0:;
-#line 3662
+#line 3677
     _l57 = loam_ast_NODES.len;
-    (void)loam_idx(d, _l57, "packages/loam/compiler/codegen.loam", 3662);
+    (void)loam_idx(d, _l57, "packages/loam/compiler/codegen.loam", 3677);
     _l58 = ((Node *)(loam_ast_NODES.ptr))[d].ty;
     _l59 = _l58;
-#line 3663
+#line 3678
     _l60 = loam_codegen_ret_type(_l59);
     _l61 = _l60;
-#line 3664
+#line 3679
     _l62 = loam_ast_ex(d);
     _l63 = _l62;
-#line 3665
+#line 3680
     _l66 = loam_ast_EXTRA.len;
-    (void)loam_idx(_l63, _l66, "packages/loam/compiler/codegen.loam", 3665);
+    (void)loam_idx(_l63, _l66, "packages/loam/compiler/codegen.loam", 3680);
     _l67 = ((NodeExtra *)(loam_ast_EXTRA.ptr))[_l63].has_sname;
     if (_l67) goto bb1; else goto bb2;
 bb1:;
     _l68 = loam_ast_EXTRA.len;
-    (void)loam_idx(_l63, _l68, "packages/loam/compiler/codegen.loam", 3665);
+    (void)loam_idx(_l63, _l68, "packages/loam/compiler/codegen.loam", 3680);
     _l69 = ((NodeExtra *)(loam_ast_EXTRA.ptr))[_l63].sname;
     loam_str_retain(_l69);
     _l64 = _l69;
@@ -59933,7 +59997,7 @@ bb1:;
     goto bb3;
 bb2:;
     _l71 = loam_ast_INFO.len;
-    (void)loam_idx(d, _l71, "packages/loam/compiler/codegen.loam", 3665);
+    (void)loam_idx(d, _l71, "packages/loam/compiler/codegen.loam", 3680);
     _l72 = ((NodeInfo *)(loam_ast_INFO.ptr))[d].name;
     loam_str_retain(_l72);
     _l64 = _l72;
@@ -59942,7 +60006,7 @@ bb2:;
 bb3:;
     _l73 = _l64;
     loam_str_retain(_l73);
-#line 3666
+#line 3681
     _l75 = (!proto);
     _l74 = _l75;
     if (_l75) goto bb4; else goto bb5;
@@ -59955,23 +60019,23 @@ bb4:;
 bb5:;
     if (_l74) goto bb6; else goto bb7;
 bb6:;
-#line 3667
+#line 3682
     loam_codegen_shard_mark(_l73);
     goto bb7;
 bb7:;
-#line 3669
+#line 3684
     loam_codegen_w_ctype(_l61);
-#line 3670
+#line 3685
     _l80 = ((loam_str){(const char *)" ", 1});
     _l81 = ((loam_str){(const char *)"__as_fn(void *_env", 18});
     { int64_t _in = 0 + _l80.len + _l73.len + _l81.len; char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l80.len > 0) { memcpy(_ip + _io, _l80.ptr, (size_t)_l80.len); _io += _l80.len; } if (_l73.len > 0) { memcpy(_ip + _io, _l73.ptr, (size_t)_l73.len); _io += _l73.len; } if (_l81.len > 0) { memcpy(_ip + _io, _l81.ptr, (size_t)_l81.len); _io += _l81.len; } _ip[_in] = 0; _l79 = loam_str_owned(_ip, _in); }
     loam_codegen_w(_l79);
-#line 3671
+#line 3686
     _l82 = loam_ast_NODES.len;
-    (void)loam_idx(d, _l82, "packages/loam/compiler/codegen.loam", 3671);
+    (void)loam_idx(d, _l82, "packages/loam/compiler/codegen.loam", 3686);
     _l83 = ((Node *)(loam_ast_NODES.ptr))[d].kids.len;
     _l84 = _l83;
-#line 3672
+#line 3687
     _l85 = 0;
     _l86 = _l85;
     goto bb8;
@@ -59979,15 +60043,15 @@ bb8:;
     _l87 = (_l86 < _l84);
     if (_l87) goto bb9; else goto bb11;
 bb9:;
-#line 3673
+#line 3688
     _l88 = ((loam_str){(const char *)", ", 2});
     loam_codegen_w(_l88);
-#line 3674
+#line 3689
     _l89 = loam_codegen_param_type(_l59, _l86);
     _l91 = loam_codegen_param_name(d, _l86);
     _l90 = loam_codegen_cid(_l91);
     loam_codegen_var_decl(_l89, _l90);
-#line 3672
+#line 3687
     loam_str_release(&_l91);
     loam_str_release(&_l90);
     loam_str_release(&_l88);
@@ -60000,10 +60064,10 @@ bb10:;
 bb11:;
     if (proto) goto bb12; else goto bb13;
 bb12:;
-#line 3677
+#line 3692
     _l94 = ((loam_str){(const char *)");\n", 3});
     loam_codegen_w(_l94);
-#line 3678
+#line 3693
     loam_str_release(&_l94);
     loam_str_release(&_l91);
     loam_str_release(&_l90);
@@ -60017,25 +60081,25 @@ bb12:;
     loam_str_release(&_l64);
     return;
 bb13:;
-#line 3680
+#line 3695
     _l95 = ((loam_str){(const char *)") {\n    (void)_env;\n    ", 24});
     loam_codegen_w(_l95);
-#line 3681
+#line 3696
     _l96 = loam_codegen_tkind(_l61);
     _l97 = 1;
     _l98 = (_l96 != _l97);
     if (_l98) goto bb14; else goto bb15;
 bb14:;
-#line 3682
+#line 3697
     _l99 = ((loam_str){(const char *)"return ", 7});
     loam_codegen_w(_l99);
     goto bb15;
 bb15:;
-#line 3684
+#line 3699
     _l101 = ((loam_str){(const char *)"(", 1});
     { int64_t _in = 0 + _l73.len + _l101.len; char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l73.len > 0) { memcpy(_ip + _io, _l73.ptr, (size_t)_l73.len); _io += _l73.len; } if (_l101.len > 0) { memcpy(_ip + _io, _l101.ptr, (size_t)_l101.len); _io += _l101.len; } _ip[_in] = 0; _l100 = loam_str_owned(_ip, _in); }
     loam_codegen_w(_l100);
-#line 3685
+#line 3700
     _l102 = 0;
     _l103 = _l102;
     goto bb16;
@@ -60043,21 +60107,21 @@ bb16:;
     _l104 = (_l103 < _l84);
     if (_l104) goto bb17; else goto bb19;
 bb17:;
-#line 3686
+#line 3701
     _l105 = 0;
     _l106 = (_l103 > _l105);
     if (_l106) goto bb20; else goto bb21;
 bb18:;
-#line 3685
+#line 3700
     _l110 = 1;
     _l111 = (_l103 + _l110);
     _l103 = _l111;
     goto bb16;
 bb19:;
-#line 3691
+#line 3706
     _l112 = ((loam_str){(const char *)");\n}\n\n", 6});
     loam_codegen_w(_l112);
-#line 3661
+#line 3676
     loam_str_release(&_l112);
     loam_str_release(&_l109);
     loam_str_release(&_l108);
@@ -60078,23 +60142,23 @@ bb19:;
     loam_str_release(&_l64);
     return;
 bb20:;
-#line 3687
+#line 3702
     _l107 = ((loam_str){(const char *)", ", 2});
     loam_codegen_w(_l107);
     goto bb21;
 bb21:;
-#line 3689
+#line 3704
     _l109 = loam_codegen_param_name(d, _l103);
     _l108 = loam_codegen_cid(_l109);
     loam_codegen_w(_l108);
-#line 3685
+#line 3700
     loam_str_release(&_l109);
     loam_str_release(&_l108);
     loam_str_release(&_l107);
     goto bb18;
 }
 
-#line 3694
+#line 3709
 void loam_codegen_set_mono_subst(int32_t i) {
     int32_t _l56;
     int32_t _l57;
@@ -60110,18 +60174,18 @@ void loam_codegen_set_mono_subst(int32_t i) {
     int32_t _l68;
     loam_str _l69;
 bb0:;
-#line 3695
+#line 3710
     _l56 = loam_typecheck_MONOS.len;
-    (void)loam_idx(i, _l56, "packages/loam/compiler/codegen.loam", 3695);
+    (void)loam_idx(i, _l56, "packages/loam/compiler/codegen.loam", 3710);
     _l57 = ((Mono *)(loam_typecheck_MONOS.ptr))[i].fn_;
     _l58 = _l57;
-#line 3696
+#line 3711
     _l60 = (_l58 != loam_codegen_NONE);
     if (_l60) goto bb1; else goto bb2;
 bb1:;
     _l62 = loam_ast_ex(_l58);
     _l63 = loam_ast_EXTRA.len;
-    (void)loam_idx(_l62, _l63, "packages/loam/compiler/codegen.loam", 3696);
+    (void)loam_idx(_l62, _l63, "packages/loam/compiler/codegen.loam", 3711);
     _l64 = ((NodeExtra *)(loam_ast_EXTRA.ptr))[_l62].strs;
     loam_vec_retain(&_l64);
     _l59 = loam_vec_retain(&_l64);
@@ -60136,9 +60200,9 @@ bb3:;
         loam_codegen_SUBST_NAMES = loam_vec_retain(&_l59);
     loam_vec_drop_owned(&_repl, sizeof(loam_str), loam_elem_release_1);
     }
-#line 3697
+#line 3712
     _l66 = loam_typecheck_MONOS.len;
-    (void)loam_idx(i, _l66, "packages/loam/compiler/codegen.loam", 3697);
+    (void)loam_idx(i, _l66, "packages/loam/compiler/codegen.loam", 3712);
     _l67 = ((Mono *)(loam_typecheck_MONOS.ptr))[i].args;
     loam_vec_retain(&_l67);
     {
@@ -60146,9 +60210,9 @@ bb3:;
         loam_codegen_SUBST_ARGS = loam_vec_retain(&_l67);
     loam_vec_drop(&_repl);
     }
-#line 3698
+#line 3713
     _l68 = loam_typecheck_MONOS.len;
-    (void)loam_idx(i, _l68, "packages/loam/compiler/codegen.loam", 3698);
+    (void)loam_idx(i, _l68, "packages/loam/compiler/codegen.loam", 3713);
     _l69 = ((Mono *)(loam_typecheck_MONOS.ptr))[i].cname;
     loam_str_retain(_l69);
     {
@@ -60157,7 +60221,7 @@ bb3:;
             loam_str_retain(loam_codegen_CNAME_OVERRIDE);
     loam_str_release(&_repl);
     }
-#line 3694
+#line 3709
     loam_str_release(&_l69);
     loam_vec_drop(&_l67);
     loam_vec_drop_owned(&_l65, sizeof(loam_str), loam_elem_release_1);
@@ -60166,27 +60230,27 @@ bb3:;
     return;
 }
 
-#line 3701
+#line 3716
 void loam_codegen_clear_subst(void) {
     loam_vec _l54 = {0};
     loam_vec _l55 = {0};
     loam_str _l56;
 bb0:;
-#line 3702
+#line 3717
     _l54 = loam_vec_new();
     {
         loam_vec _repl = loam_codegen_SUBST_NAMES;
         loam_codegen_SUBST_NAMES = loam_vec_retain(&_l54);
     loam_vec_drop_owned(&_repl, sizeof(loam_str), loam_elem_release_1);
     }
-#line 3703
+#line 3718
     _l55 = loam_vec_new();
     {
         loam_vec _repl = loam_codegen_SUBST_ARGS;
         loam_codegen_SUBST_ARGS = loam_vec_retain(&_l55);
     loam_vec_drop(&_repl);
     }
-#line 3704
+#line 3719
     _l56 = ((loam_str){(const char *)"", 0});
     {
         loam_str _repl = loam_codegen_CNAME_OVERRIDE;
@@ -60194,30 +60258,30 @@ bb0:;
             loam_str_retain(loam_codegen_CNAME_OVERRIDE);
     loam_str_release(&_repl);
     }
-#line 3701
+#line 3716
     loam_str_release(&_l56);
     loam_vec_drop(&_l55);
     loam_vec_drop_owned(&_l54, sizeof(loam_str), loam_elem_release_1);
     return;
 }
 
-#line 3709
+#line 3724
 bool loam_codegen_is_fn(int32_t d) {
     int32_t _l56;
     int32_t _l57;
     int32_t _l58;
     bool _l59;
 bb0:;
-#line 3710
+#line 3725
     _l56 = loam_ast_NODES.len;
-    (void)loam_idx(d, _l56, "packages/loam/compiler/codegen.loam", 3710);
+    (void)loam_idx(d, _l56, "packages/loam/compiler/codegen.loam", 3725);
     _l57 = ((Node *)(loam_ast_NODES.ptr))[d].kind;
     _l58 = 2;
     _l59 = (_l57 == _l58);
     return _l59;
 }
 
-#line 3713
+#line 3728
 bool loam_codegen_is_generic(int32_t d) {
     int32_t _l56;
     int32_t _l57;
@@ -60225,17 +60289,17 @@ bool loam_codegen_is_generic(int32_t d) {
     int32_t _l59;
     bool _l60;
 bb0:;
-#line 3714
+#line 3729
     _l56 = loam_ast_ex(d);
     _l57 = loam_ast_EXTRA.len;
-    (void)loam_idx(_l56, _l57, "packages/loam/compiler/codegen.loam", 3714);
+    (void)loam_idx(_l56, _l57, "packages/loam/compiler/codegen.loam", 3729);
     _l58 = ((NodeExtra *)(loam_ast_EXTRA.ptr))[_l56].strs.len;
     _l59 = 0;
     _l60 = (_l58 > _l59);
     return _l60;
 }
 
-#line 3717
+#line 3732
 bool loam_codegen_is_intrinsic(int32_t d) {
     int32_t _l56;
     int32_t _l57;
@@ -60243,9 +60307,9 @@ bool loam_codegen_is_intrinsic(int32_t d) {
     int32_t _l60;
     bool _l61;
 bb0:;
-#line 3718
+#line 3733
     _l56 = loam_ast_INFO.len;
-    (void)loam_idx(d, _l56, "packages/loam/compiler/codegen.loam", 3718);
+    (void)loam_idx(d, _l56, "packages/loam/compiler/codegen.loam", 3733);
     _l57 = ((NodeInfo *)(loam_ast_INFO.ptr))[d].marks;
     _l59 = (_l57 & loam_ast_M_INTRINSIC);
     _l60 = 0;
@@ -60253,7 +60317,7 @@ bb0:;
     return _l61;
 }
 
-#line 3721
+#line 3736
 void loam_codegen_copy_runtime(void) {
     loam_str _l54 = {0};
     loam_str _l55;
@@ -60277,25 +60341,25 @@ void loam_codegen_copy_runtime(void) {
 bb0:;
     if (loam_codegen_SHARD) goto bb1; else goto bb2;
 bb1:;
-#line 3724
+#line 3739
     _l54 = ((loam_str){(const char *)"#ifdef LOAM_SHARD_DEFS\n", 23});
     loam_codegen_w(_l54);
     goto bb2;
 bb2:;
-#line 3726
+#line 3741
     _l55 = ((loam_str){(const char *)"#define LOAM_RT_DEFINE_JMP 1\n", 29});
     loam_codegen_w(_l55);
-#line 3727
+#line 3742
     _l56 = ((loam_str){(const char *)"#define LOAM_RT_DEFINE_ALLOC 1\n", 31});
     loam_codegen_w(_l56);
     if (loam_codegen_SHARD) goto bb3; else goto bb4;
 bb3:;
-#line 3729
+#line 3744
     _l57 = ((loam_str){(const char *)"#endif\n", 7});
     loam_codegen_w(_l57);
     goto bb4;
 bb4:;
-#line 3731
+#line 3746
     _l60 = loam_typecheck_RT_PATH.len;
     _l61 = 0;
     _l62 = (_l60 > _l61);
@@ -60315,20 +60379,20 @@ bb6:;
 bb7:;
     _l67 = _l58;
     loam_keep__Result__string(&_l67);
-#line 3732
+#line 3747
     _l68 = _l67.tag;
     _l69 = 0;
     _l70 = (_l68 == _l69);
     if (_l70) goto bb8; else goto bb9;
 bb8:;
-#line 3733
+#line 3748
     _l71 = _l67.val;
     loam_str_retain(_l71);
     loam_codegen_w(_l71);
-#line 3734
+#line 3749
     _l72 = 10;
     loam_codegen_wc(_l72);
-#line 3735
+#line 3750
     loam_str_release(&_l71);
     loam_rel__Result__string(&_l67);
     loam_str_release(&_l66);
@@ -60342,10 +60406,10 @@ bb8:;
     loam_str_release(&_l54);
     return;
 bb9:;
-#line 3737
+#line 3752
     _l73 = ((loam_str){(const char *)"#include <stdio.h>\n#include <stdint.h>\n#include <stdlib.h>\n#include <stdbool.h>\n\n", 81});
     loam_codegen_w(_l73);
-#line 3721
+#line 3736
     loam_str_release(&_l73);
     loam_rel__Result__string(&_l67);
     loam_str_release(&_l66);
@@ -60360,7 +60424,7 @@ bb9:;
     return;
 }
 
-#line 3743
+#line 3758
 void loam_codegen_emit_c(void) {
     bool _l55;
     bool _l57;
@@ -60882,57 +60946,57 @@ void loam_codegen_emit_c(void) {
     loam_str _l584 = {0};
     loam_vec _l585 = {0};
 bb0:;
-#line 3744
+#line 3759
     _l55 = (!loam_dce_SKIP);
     if (_l55) goto bb1; else goto bb2;
 bb1:;
-#line 3745
+#line 3760
     loam_dce_run();
     goto bb2;
 bb2:;
-#line 3749
+#line 3764
     _l57 = (!loam_ir_LOWERED);
     if (_l57) goto bb3; else goto bb4;
 bb3:;
-#line 3750
+#line 3765
     loam_ir_lower_modules();
     goto bb4;
 bb4:;
-#line 3752
+#line 3767
     loam_codegen_collect_elem_hooks();
-#line 3753
+#line 3768
     _l59 = loam_typecheck_MODS.len;
     _l60 = _l59;
-#line 3755
+#line 3770
     _l61 = ((loam_str){(const char *)"/* Generated by loam */\n", 24});
     loam_codegen_w(_l61);
-#line 3756
+#line 3771
     loam_codegen_copy_runtime();
-#line 3757
+#line 3772
     _l62 = loam_codegen_uses_zeus_handles();
     if (_l62) goto bb5; else goto bb6;
 bb5:;
-#line 3758
+#line 3773
     _l63 = ((loam_str){(const char *)"#include \"zeus_rt.h\"\n", 21});
     loam_codegen_w(_l63);
     goto bb6;
 bb6:;
-#line 3760
+#line 3775
     _l65 = ((loam_str){(const char *)"net", 3});
     _l64 = loam_codegen_mods_use(_l65);
     if (_l64) goto bb7; else goto bb8;
 bb7:;
-#line 3761
+#line 3776
     _l66 = ((loam_str){(const char *)"#include \"net_rt.h\"\n", 20});
     loam_codegen_w(_l66);
     goto bb8;
 bb8:;
-#line 3763
+#line 3778
     _l67 = 10;
     loam_codegen_wc(_l67);
-#line 3764
+#line 3779
     loam_codegen_flush();
-#line 3767
+#line 3782
     _l68 = 0;
     _l69 = _l68;
     goto bb9;
@@ -60940,35 +61004,35 @@ bb9:;
     _l70 = (_l69 < _l60);
     if (_l70) goto bb10; else goto bb12;
 bb10:;
-#line 3768
+#line 3783
     _l71 = loam_typecheck_MODS.len;
-    (void)loam_idx(_l69, _l71, "packages/loam/compiler/codegen.loam", 3768);
+    (void)loam_idx(_l69, _l71, "packages/loam/compiler/codegen.loam", 3783);
     _l72 = ((Module *)(loam_typecheck_MODS.ptr))[_l69].root;
     _l73 = _l72;
-#line 3769
+#line 3784
     _l74 = (_l73 == loam_codegen_NONE);
     if (_l74) goto bb13; else goto bb14;
 bb11:;
-#line 3767
+#line 3782
     _l107 = 1;
     _l108 = (_l69 + _l107);
     _l69 = _l108;
     goto bb9;
 bb12:;
-#line 3790
+#line 3805
     _l109 = 0;
     _l110 = _l109;
     goto bb32;
 bb13:;
     goto bb11;
 bb14:;
-#line 3772
+#line 3787
     _l76 = loam_ast_NODES.len;
-    (void)loam_idx(_l73, _l76, "packages/loam/compiler/codegen.loam", 3772);
+    (void)loam_idx(_l73, _l76, "packages/loam/compiler/codegen.loam", 3787);
     _l77 = ((Node *)(loam_ast_NODES.ptr))[_l73].kids;
     loam_vec_retain(&_l77);
     _l78 = loam_vec_retain(&_l77);
-#line 3773
+#line 3788
     _l79 = 0;
     _l80 = _l78.len;
     _l81 = _l79;
@@ -60977,32 +61041,32 @@ bb15:;
     _l82 = (_l81 < _l80);
     if (_l82) goto bb16; else goto bb18;
 bb16:;
-#line 3774
+#line 3789
     _l83 = ((int32_t *)(_l78.ptr))[_l81];
     _l84 = _l83;
-#line 3775
+#line 3790
     _l85 = loam_codegen_is_fn(_l84);
     if (_l85) goto bb19; else goto bb20;
 bb17:;
-#line 3773
+#line 3788
     _l105 = 1;
     _l106 = (_l81 + _l105);
     _l81 = _l106;
     goto bb15;
 bb18:;
-#line 3767
+#line 3782
     loam_vec_drop(&_l78);
     loam_vec_drop(&_l77);
     goto bb11;
 bb19:;
-#line 3776
+#line 3791
     _l87 = loam_codegen_is_generic(_l84);
     _l86 = _l87;
     if (_l87) goto bb23; else goto bb22;
 bb20:;
-#line 3784
+#line 3799
     _l99 = loam_ast_NODES.len;
-    (void)loam_idx(_l84, _l99, "packages/loam/compiler/codegen.loam", 3784);
+    (void)loam_idx(_l84, _l99, "packages/loam/compiler/codegen.loam", 3799);
     _l100 = ((Node *)(loam_ast_NODES.ptr))[_l84].kind;
     _l101 = 5;
     _l102 = (_l100 == _l101);
@@ -61010,7 +61074,7 @@ bb20:;
 bb21:;
     goto bb17;
 bb22:;
-#line 3776
+#line 3791
     _l88 = loam_dce_keep(_l84);
     _l89 = (!_l88);
     _l86 = _l89;
@@ -61020,12 +61084,12 @@ bb23:;
 bb24:;
     goto bb17;
 bb25:;
-#line 3780
+#line 3795
     _l90 = loam_codegen_SERVER_SPLIT;
     if (loam_codegen_SERVER_SPLIT) goto bb26; else goto bb27;
 bb26:;
     _l91 = loam_ast_NODES.len;
-    (void)loam_idx(_l84, _l91, "packages/loam/compiler/codegen.loam", 3780);
+    (void)loam_idx(_l84, _l91, "packages/loam/compiler/codegen.loam", 3795);
     _l92 = ((Node *)(loam_ast_NODES.ptr))[_l84].op;
     _l94 = (_l92 & loam_dce_FN_SERVER);
     _l95 = 0;
@@ -61037,42 +61101,42 @@ bb27:;
 bb28:;
     goto bb17;
 bb29:;
-#line 3783
+#line 3798
     _l97 = loam_ast_NODES.len;
-    (void)loam_idx(_l84, _l97, "packages/loam/compiler/codegen.loam", 3783);
+    (void)loam_idx(_l84, _l97, "packages/loam/compiler/codegen.loam", 3798);
     _l98 = ((Node *)(loam_ast_NODES.ptr))[_l84].b;
     loam_codegen_collect_clos(_l98);
     goto bb21;
 bb30:;
-#line 3785
+#line 3800
     _l103 = loam_ast_NODES.len;
-    (void)loam_idx(_l84, _l103, "packages/loam/compiler/codegen.loam", 3785);
+    (void)loam_idx(_l84, _l103, "packages/loam/compiler/codegen.loam", 3800);
     _l104 = ((Node *)(loam_ast_NODES.ptr))[_l84].b;
     loam_codegen_collect_clos(_l104);
     goto bb31;
 bb31:;
     goto bb21;
 bb32:;
-#line 3790
+#line 3805
     _l111 = (_l110 < _l60);
     if (_l111) goto bb33; else goto bb35;
 bb33:;
-#line 3791
+#line 3806
     _l112 = loam_typecheck_MODS.len;
-    (void)loam_idx(_l110, _l112, "packages/loam/compiler/codegen.loam", 3791);
+    (void)loam_idx(_l110, _l112, "packages/loam/compiler/codegen.loam", 3806);
     _l113 = ((Module *)(loam_typecheck_MODS.ptr))[_l110].root;
     _l114 = _l113;
-#line 3792
+#line 3807
     _l115 = (_l114 == loam_codegen_NONE);
     if (_l115) goto bb36; else goto bb37;
 bb34:;
-#line 3790
+#line 3805
     _l137 = 1;
     _l138 = (_l110 + _l137);
     _l110 = _l138;
     goto bb32;
 bb35:;
-#line 3809
+#line 3824
     _l139 = 0;
     _l141 = loam_typecheck_STRUCT_INSTS.len;
     _l142 = _l139;
@@ -61080,20 +61144,20 @@ bb35:;
 bb36:;
     goto bb34;
 bb37:;
-#line 3795
+#line 3810
     _l116 = loam_typecheck_MODS.len;
-    (void)loam_idx(_l110, _l116, "packages/loam/compiler/codegen.loam", 3795);
+    (void)loam_idx(_l110, _l116, "packages/loam/compiler/codegen.loam", 3810);
     _l117 = ((Module *)(loam_typecheck_MODS.ptr))[_l110].name;
     loam_str_retain(_l117);
     _l118 = _l117;
     loam_str_retain(_l118);
-#line 3796
+#line 3811
     _l119 = loam_ast_NODES.len;
-    (void)loam_idx(_l114, _l119, "packages/loam/compiler/codegen.loam", 3796);
+    (void)loam_idx(_l114, _l119, "packages/loam/compiler/codegen.loam", 3811);
     _l120 = ((Node *)(loam_ast_NODES.ptr))[_l114].kids;
     loam_vec_retain(&_l120);
     _l121 = loam_vec_retain(&_l120);
-#line 3797
+#line 3812
     _l122 = 0;
     _l123 = _l121.len;
     _l124 = _l122;
@@ -61102,24 +61166,24 @@ bb38:;
     _l125 = (_l124 < _l123);
     if (_l125) goto bb39; else goto bb41;
 bb39:;
-#line 3798
+#line 3813
     _l126 = ((int32_t *)(_l121.ptr))[_l124];
     _l127 = _l126;
-#line 3799
+#line 3814
     _l128 = loam_ast_NODES.len;
-    (void)loam_idx(_l127, _l128, "packages/loam/compiler/codegen.loam", 3799);
+    (void)loam_idx(_l127, _l128, "packages/loam/compiler/codegen.loam", 3814);
     _l129 = ((Node *)(loam_ast_NODES.ptr))[_l127].kind;
     _l130 = 3;
     _l131 = (_l129 != _l130);
     if (_l131) goto bb42; else goto bb43;
 bb40:;
-#line 3797
+#line 3812
     _l135 = 1;
     _l136 = (_l124 + _l135);
     _l124 = _l136;
     goto bb38;
 bb41:;
-#line 3790
+#line 3805
     loam_vec_drop(&_l121);
     loam_vec_drop(&_l120);
     loam_str_release(&_l118);
@@ -61128,7 +61192,7 @@ bb41:;
 bb42:;
     goto bb40;
 bb43:;
-#line 3803
+#line 3818
     _l133 = loam_codegen_zeus_handle_mod(_l118);
     _l132 = _l133;
     if (_l133) goto bb44; else goto bb45;
@@ -61141,28 +61205,28 @@ bb45:;
 bb46:;
     goto bb40;
 bb47:;
-#line 3806
+#line 3821
     loam_codegen_struct_decl(_l127);
     goto bb40;
 bb48:;
-#line 3809
+#line 3824
     _l143 = (_l142 < _l141);
     if (_l143) goto bb49; else goto bb51;
 bb49:;
-#line 3810
+#line 3825
     _l144 = ((int32_t *)(loam_typecheck_STRUCT_INSTS.ptr))[_l142];
     _l145 = _l144;
-#line 3811
+#line 3826
     _l146 = (_l145 == loam_codegen_NO_TYPE);
     if (_l146) goto bb52; else goto bb53;
 bb50:;
-#line 3809
+#line 3824
     _l162 = 1;
     _l163 = (_l142 + _l162);
     _l142 = _l163;
     goto bb48;
 bb51:;
-#line 3825
+#line 3840
     _l164 = 0;
     _l165 = loam_codegen_SE_NAMES.len;
     _l166 = _l164;
@@ -61170,30 +61234,30 @@ bb51:;
 bb52:;
     goto bb50;
 bb53:;
-#line 3814
+#line 3829
     _l148 = loam_types_TYPES.len;
-    (void)loam_idx(_l145, _l148, "packages/loam/compiler/codegen.loam", 3814);
+    (void)loam_idx(_l145, _l148, "packages/loam/compiler/codegen.loam", 3829);
     _l149 = ((Ty *)(loam_types_TYPES.ptr))[_l145].has_name;
     if (_l149) goto bb54; else goto bb55;
 bb54:;
-#line 3815
+#line 3830
     _l150 = loam_types_TYPES.len;
-    (void)loam_idx(_l145, _l150, "packages/loam/compiler/codegen.loam", 3815);
+    (void)loam_idx(_l145, _l150, "packages/loam/compiler/codegen.loam", 3830);
     _l151 = ((Ty *)(loam_types_TYPES.ptr))[_l145].name;
     loam_str_retain(_l151);
     _l152 = _l151;
     loam_str_retain(_l152);
-#line 3816
+#line 3831
     _l155 = ((loam_str){(const char *)"Signal", 6});
     _l156 = loam_fmt_eq(_l152, _l155);
     _l154 = _l156;
     if (_l156) goto bb57; else goto bb56;
 bb55:;
-#line 3820
+#line 3835
     _l161 = loam_codegen_struct_targs_concrete(_l145);
     if (_l161) goto bb62; else goto bb63;
 bb56:;
-#line 3816
+#line 3831
     _l157 = ((loam_str){(const char *)"Future", 6});
     _l158 = loam_fmt_eq(_l152, _l157);
     _l154 = _l158;
@@ -61209,7 +61273,7 @@ bb58:;
 bb59:;
     if (_l153) goto bb60; else goto bb61;
 bb60:;
-#line 3817
+#line 3832
     loam_str_release(&_l159);
     loam_str_release(&_l157);
     loam_str_release(&_l155);
@@ -61219,11 +61283,11 @@ bb60:;
 bb61:;
     goto bb55;
 bb62:;
-#line 3821
+#line 3836
     loam_codegen_se_add(_l145);
     goto bb63;
 bb63:;
-#line 3809
+#line 3824
     loam_str_release(&_l159);
     loam_str_release(&_l157);
     loam_str_release(&_l155);
@@ -61231,25 +61295,25 @@ bb63:;
     loam_str_release(&_l151);
     goto bb50;
 bb64:;
-#line 3825
+#line 3840
     _l167 = (_l166 < _l165);
     if (_l167) goto bb65; else goto bb67;
 bb65:;
-#line 3826
+#line 3841
     _l169 = ((loam_str){(const char *)"typedef struct ", 15});
     _l170 = loam_codegen_SE_NAMES.len;
-    (void)loam_idx(_l166, _l170, "packages/loam/compiler/codegen.loam", 3826);
+    (void)loam_idx(_l166, _l170, "packages/loam/compiler/codegen.loam", 3841);
     _l171 = ((loam_str *)(loam_codegen_SE_NAMES.ptr))[_l166];
     loam_str_retain(_l171);
     _l172 = ((loam_str){(const char *)" ", 1});
     _l173 = loam_codegen_SE_NAMES.len;
-    (void)loam_idx(_l166, _l173, "packages/loam/compiler/codegen.loam", 3826);
+    (void)loam_idx(_l166, _l173, "packages/loam/compiler/codegen.loam", 3841);
     _l174 = ((loam_str *)(loam_codegen_SE_NAMES.ptr))[_l166];
     loam_str_retain(_l174);
     _l175 = ((loam_str){(const char *)";\n", 2});
     { int64_t _in = 0 + _l169.len + _l171.len + _l172.len + _l174.len + _l175.len; char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l169.len > 0) { memcpy(_ip + _io, _l169.ptr, (size_t)_l169.len); _io += _l169.len; } if (_l171.len > 0) { memcpy(_ip + _io, _l171.ptr, (size_t)_l171.len); _io += _l171.len; } if (_l172.len > 0) { memcpy(_ip + _io, _l172.ptr, (size_t)_l172.len); _io += _l172.len; } if (_l174.len > 0) { memcpy(_ip + _io, _l174.ptr, (size_t)_l174.len); _io += _l174.len; } if (_l175.len > 0) { memcpy(_ip + _io, _l175.ptr, (size_t)_l175.len); _io += _l175.len; } _ip[_in] = 0; _l168 = loam_str_owned(_ip, _in); }
     loam_codegen_w(_l168);
-#line 3825
+#line 3840
     loam_str_release(&_l175);
     loam_str_release(&_l174);
     loam_str_release(&_l172);
@@ -61263,18 +61327,18 @@ bb66:;
     _l166 = _l177;
     goto bb64;
 bb67:;
-#line 3828
+#line 3843
     _l178 = loam_codegen_SE_NAMES.len;
     _l179 = 0;
     _l180 = (_l178 > _l179);
     if (_l180) goto bb68; else goto bb69;
 bb68:;
-#line 3829
+#line 3844
     _l181 = 10;
     loam_codegen_wc(_l181);
     goto bb69;
 bb69:;
-#line 3831
+#line 3846
     _l182 = 0;
     _l183 = loam_codegen_SE_NAMES.len;
     _l184 = _l182;
@@ -61283,29 +61347,29 @@ bb70:;
     _l185 = (_l184 < _l183);
     if (_l185) goto bb71; else goto bb73;
 bb71:;
-#line 3832
+#line 3847
     loam_codegen_se_emit(_l184);
-#line 3833
+#line 3848
     loam_codegen_flush_big();
     goto bb72;
 bb72:;
-#line 3831
+#line 3846
     _l186 = 1;
     _l187 = (_l184 + _l186);
     _l184 = _l187;
     goto bb70;
 bb73:;
-#line 3838
+#line 3853
     _l188 = 1;
     _l189 = 1;
-    _l190 = loam_add_i32(loam_codegen_ELEM_HOOK_MAX, _l189, "packages/loam/compiler/codegen.loam", 3838);
+    _l190 = loam_add_i32(loam_codegen_ELEM_HOOK_MAX, _l189, "packages/loam/compiler/codegen.loam", 3853);
     _l191 = _l188;
     goto bb74;
 bb74:;
     _l192 = (_l191 < _l190);
     if (_l192) goto bb75; else goto bb77;
 bb75:;
-#line 3839
+#line 3854
     _l194 = loam_codegen_unit_static();
     _l195 = ((loam_str){(const char *)"void loam_elem_retain_", 22});
     _l196 = ((loam_str){(const char *)"(void *p);\n", 11});
@@ -61314,7 +61378,7 @@ bb75:;
     _l199 = ((loam_str){(const char *)"(void *p);\n", 11});
     { uint8_t _id2[20]; int32_t _if2 = loam_decimal_fill(_id2, loam_decimal_magnitude_of((int64_t)(_l191)), (int64_t)(_l191) < 0); uint8_t _id6[20]; int32_t _if6 = loam_decimal_fill(_id6, loam_decimal_magnitude_of((int64_t)(_l191)), (int64_t)(_l191) < 0); int64_t _in = 0 + _l194.len + _l195.len + (int64_t)(20 - _if2) + _l196.len + _l197.len + _l198.len + (int64_t)(20 - _if6) + _l199.len; char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l194.len > 0) { memcpy(_ip + _io, _l194.ptr, (size_t)_l194.len); _io += _l194.len; } if (_l195.len > 0) { memcpy(_ip + _io, _l195.ptr, (size_t)_l195.len); _io += _l195.len; } if ((int64_t)(20 - _if2) > 0) { memcpy(_ip + _io, (const char *)_id2 + _if2, (size_t)(int64_t)(20 - _if2)); _io += (int64_t)(20 - _if2); } if (_l196.len > 0) { memcpy(_ip + _io, _l196.ptr, (size_t)_l196.len); _io += _l196.len; } if (_l197.len > 0) { memcpy(_ip + _io, _l197.ptr, (size_t)_l197.len); _io += _l197.len; } if (_l198.len > 0) { memcpy(_ip + _io, _l198.ptr, (size_t)_l198.len); _io += _l198.len; } if ((int64_t)(20 - _if6) > 0) { memcpy(_ip + _io, (const char *)_id6 + _if6, (size_t)(int64_t)(20 - _if6)); _io += (int64_t)(20 - _if6); } if (_l199.len > 0) { memcpy(_ip + _io, _l199.ptr, (size_t)_l199.len); _io += _l199.len; } _ip[_in] = 0; _l193 = loam_str_owned(_ip, _in); }
     loam_codegen_w(_l193);
-#line 3838
+#line 3853
     loam_str_release(&_l199);
     loam_str_release(&_l198);
     loam_str_release(&_l197);
@@ -61329,23 +61393,23 @@ bb76:;
     _l191 = _l201;
     goto bb74;
 bb77:;
-#line 3841
+#line 3856
     _l202 = loam_codegen_sig_store_linked();
     if (_l202) goto bb78; else goto bb79;
 bb78:;
-#line 3842
+#line 3857
     _l203 = ((loam_str){(const char *)"void loam_sigcells_payload_drop(int32_t kind, int32_t esz, int32_t hook, int32_t off);\n", 87});
     loam_codegen_w(_l203);
     goto bb79;
 bb79:;
-#line 3844
+#line 3859
     _l204 = 10;
     loam_codegen_wc(_l204);
-#line 3845
+#line 3860
     loam_codegen_own_helpers();
-#line 3846
+#line 3861
     loam_codegen_flush_big();
-#line 3848
+#line 3863
     _l205 = 0;
     _l207 = loam_typecheck_GVARS.len;
     _l208 = _l205;
@@ -61354,20 +61418,20 @@ bb80:;
     _l209 = (_l208 < _l207);
     if (_l209) goto bb81; else goto bb83;
 bb81:;
-#line 3849
+#line 3864
     _l210 = ((GVar *)(loam_typecheck_GVARS.ptr))[_l208].var;
     _l211 = _l210;
-#line 3850
+#line 3865
     _l212 = (_l211 == loam_codegen_NONE);
     if (_l212) goto bb84; else goto bb85;
 bb82:;
-#line 3848
+#line 3863
     _l234 = 1;
     _l235 = (_l208 + _l234);
     _l208 = _l235;
     goto bb80;
 bb83:;
-#line 3874
+#line 3889
     _l236 = loam_typecheck_GVARS.len;
     _l237 = 0;
     _l238 = (_l236 > _l237);
@@ -61375,12 +61439,12 @@ bb83:;
 bb84:;
     goto bb82;
 bb85:;
-#line 3853
+#line 3868
     _l213 = loam_ast_NODES.len;
-    (void)loam_idx(_l211, _l213, "packages/loam/compiler/codegen.loam", 3853);
+    (void)loam_idx(_l211, _l213, "packages/loam/compiler/codegen.loam", 3868);
     _l214 = ((Node *)(loam_ast_NODES.ptr))[_l211].b;
     _l215 = _l214;
-#line 3857
+#line 3872
     _l217 = loam_codegen_gvar_folds(_l211);
     if (_l217) goto bb86; else goto bb87;
 bb86:;
@@ -61398,53 +61462,53 @@ bb88:;
     loam_str_retain(_l220);
     if (loam_codegen_SHARD) goto bb89; else goto bb90;
 bb89:;
-#line 3859
+#line 3874
     _l222 = ((loam_str){(const char *)"extern ", 7});
     { int64_t _in = 0 + _l222.len + _l220.len; char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l222.len > 0) { memcpy(_ip + _io, _l222.ptr, (size_t)_l222.len); _io += _l222.len; } if (_l220.len > 0) { memcpy(_ip + _io, _l220.ptr, (size_t)_l220.len); _io += _l220.len; } _ip[_in] = 0; _l221 = loam_str_owned(_ip, _in); }
     loam_codegen_w(_l221);
-#line 3860
+#line 3875
     _l223 = loam_ast_NODES.len;
-    (void)loam_idx(_l211, _l223, "packages/loam/compiler/codegen.loam", 3860);
+    (void)loam_idx(_l211, _l223, "packages/loam/compiler/codegen.loam", 3875);
     _l224 = ((Node *)(loam_ast_NODES.ptr))[_l211].ty;
     _l225 = ((GVar *)(loam_typecheck_GVARS.ptr))[_l208].cname;
     loam_str_retain(_l225);
     loam_codegen_var_decl(_l224, _l225);
-#line 3861
+#line 3876
     _l226 = ((loam_str){(const char *)";\n#ifdef LOAM_SHARD_DEFS\n", 25});
     loam_codegen_w(_l226);
     goto bb90;
 bb90:;
-#line 3863
+#line 3878
     loam_codegen_w(_l220);
-#line 3864
+#line 3879
     _l227 = loam_ast_NODES.len;
-    (void)loam_idx(_l211, _l227, "packages/loam/compiler/codegen.loam", 3864);
+    (void)loam_idx(_l211, _l227, "packages/loam/compiler/codegen.loam", 3879);
     _l228 = ((Node *)(loam_ast_NODES.ptr))[_l211].ty;
     _l229 = ((GVar *)(loam_typecheck_GVARS.ptr))[_l208].cname;
     loam_str_retain(_l229);
     loam_codegen_var_decl(_l228, _l229);
-#line 3865
+#line 3880
     _l230 = loam_ir_static_data(_l215);
     if (_l230) goto bb91; else goto bb92;
 bb91:;
-#line 3866
+#line 3881
     _l231 = ((loam_str){(const char *)" = ", 3});
     loam_codegen_w(_l231);
-#line 3867
+#line 3882
     loam_codegen_const_init(_l215);
     goto bb92;
 bb92:;
-#line 3869
+#line 3884
     _l232 = ((loam_str){(const char *)";\n", 2});
     loam_codegen_w(_l232);
     if (loam_codegen_SHARD) goto bb93; else goto bb94;
 bb93:;
-#line 3871
+#line 3886
     _l233 = ((loam_str){(const char *)"#endif\n", 7});
     loam_codegen_w(_l233);
     goto bb94;
 bb94:;
-#line 3848
+#line 3863
     loam_str_release(&_l233);
     loam_str_release(&_l232);
     loam_str_release(&_l231);
@@ -61459,12 +61523,12 @@ bb94:;
     loam_str_release(&_l216);
     goto bb82;
 bb95:;
-#line 3875
+#line 3890
     _l239 = 10;
     loam_codegen_wc(_l239);
     goto bb96;
 bb96:;
-#line 3877
+#line 3892
     _l240 = 0;
     _l242 = loam_ir_FNS.len;
     _l243 = _l240;
@@ -61473,30 +61537,30 @@ bb97:;
     _l244 = (_l243 < _l242);
     if (_l244) goto bb98; else goto bb100;
 bb98:;
-#line 3878
+#line 3893
     _l246 = loam_codegen_is_init_fn(_l243);
     _l245 = _l246;
     if (_l246) goto bb101; else goto bb102;
 bb99:;
-#line 3877
+#line 3892
     _l252 = 1;
     _l253 = (_l243 + _l252);
     _l243 = _l253;
     goto bb97;
 bb100:;
-#line 3883
+#line 3898
     _l254 = 0;
     _l255 = _l254;
     goto bb105;
 bb101:;
-#line 3878
+#line 3893
     _l247 = ((IrFn *)(loam_ir_FNS.ptr))[_l243].has_cname;
     _l245 = _l247;
     goto bb102;
 bb102:;
     if (_l245) goto bb103; else goto bb104;
 bb103:;
-#line 3879
+#line 3894
     _l249 = ((loam_str){(const char *)"void ", 5});
     _l250 = ((IrFn *)(loam_ir_FNS.ptr))[_l243].cname;
     loam_str_retain(_l250);
@@ -61505,33 +61569,33 @@ bb103:;
     loam_codegen_w(_l248);
     goto bb104;
 bb104:;
-#line 3877
+#line 3892
     loam_str_release(&_l251);
     loam_str_release(&_l250);
     loam_str_release(&_l249);
     loam_str_release(&_l248);
     goto bb99;
 bb105:;
-#line 3883
+#line 3898
     _l256 = (_l255 < _l60);
     if (_l256) goto bb106; else goto bb108;
 bb106:;
-#line 3884
+#line 3899
     _l257 = loam_typecheck_MODS.len;
-    (void)loam_idx(_l255, _l257, "packages/loam/compiler/codegen.loam", 3884);
+    (void)loam_idx(_l255, _l257, "packages/loam/compiler/codegen.loam", 3899);
     _l258 = ((Module *)(loam_typecheck_MODS.ptr))[_l255].root;
     _l259 = _l258;
-#line 3885
+#line 3900
     _l260 = (_l259 == loam_codegen_NONE);
     if (_l260) goto bb109; else goto bb110;
 bb107:;
-#line 3883
+#line 3898
     _l301 = 1;
     _l302 = (_l255 + _l301);
     _l255 = _l302;
     goto bb105;
 bb108:;
-#line 3918
+#line 3933
     _l303 = 0;
     _l304 = loam_codegen_CLOS_NODES.len;
     _l305 = _l303;
@@ -61539,18 +61603,18 @@ bb108:;
 bb109:;
     goto bb107;
 bb110:;
-#line 3890
+#line 3905
     _l261 = loam_typecheck_MODS.len;
-    (void)loam_idx(_l255, _l261, "packages/loam/compiler/codegen.loam", 3890);
+    (void)loam_idx(_l255, _l261, "packages/loam/compiler/codegen.loam", 3905);
     _l262 = ((Module *)(loam_typecheck_MODS.ptr))[_l255].is_std;
     _l263 = _l262;
-#line 3891
+#line 3906
     _l264 = loam_ast_NODES.len;
-    (void)loam_idx(_l259, _l264, "packages/loam/compiler/codegen.loam", 3891);
+    (void)loam_idx(_l259, _l264, "packages/loam/compiler/codegen.loam", 3906);
     _l265 = ((Node *)(loam_ast_NODES.ptr))[_l259].kids;
     loam_vec_retain(&_l265);
     _l266 = loam_vec_retain(&_l265);
-#line 3892
+#line 3907
     _l267 = 0;
     _l268 = _l266.len;
     _l269 = _l267;
@@ -61559,24 +61623,24 @@ bb111:;
     _l270 = (_l269 < _l268);
     if (_l270) goto bb112; else goto bb114;
 bb112:;
-#line 3893
+#line 3908
     _l271 = ((int32_t *)(_l266.ptr))[_l269];
     _l272 = _l271;
-#line 3894
+#line 3909
     _l275 = loam_codegen_is_fn(_l272);
     _l276 = (!_l275);
     _l274 = _l276;
     if (_l276) goto bb116; else goto bb115;
 bb113:;
-#line 3892
+#line 3907
     _l299 = 1;
     _l300 = (_l269 + _l299);
     _l269 = _l300;
     goto bb111;
 bb114:;
-#line 3916
+#line 3931
     loam_codegen_flush_big();
-#line 3883
+#line 3898
     loam_str_release(&_l298);
     loam_str_release(&_l296);
     loam_str_release(&_l294);
@@ -61586,7 +61650,7 @@ bb114:;
     loam_vec_drop(&_l265);
     goto bb107;
 bb115:;
-#line 3894
+#line 3909
     _l277 = loam_codegen_is_generic(_l272);
     _l274 = _l277;
     goto bb116;
@@ -61603,21 +61667,21 @@ bb118:;
 bb119:;
     goto bb113;
 bb120:;
-#line 3897
+#line 3912
     _l280 = loam_codegen_is_intrinsic(_l272);
     if (_l280) goto bb121; else goto bb122;
 bb121:;
-#line 3898
+#line 3913
     _l281 = _l263;
     if (_l263) goto bb124; else goto bb123;
 bb122:;
-#line 3907
+#line 3922
     _l289 = 0;
     _l290 = (_l255 == _l289);
     _l288 = _l290;
     if (_l290) goto bb127; else goto bb128;
 bb123:;
-#line 3898
+#line 3913
     _l282 = loam_codegen_c_sym_of(_l272);
     _l283 = _l282.len;
     _l284 = 0;
@@ -61627,28 +61691,28 @@ bb123:;
 bb124:;
     if (_l281) goto bb125; else goto bb126;
 bb125:;
-#line 3899
+#line 3914
     loam_str_release(&_l282);
     goto bb113;
 bb126:;
-#line 3901
+#line 3916
     loam_codegen_os_begin(_l272);
-#line 3902
+#line 3917
     _l286 = false;
     loam_codegen_fn_sig(_l272, _l286);
-#line 3903
+#line 3918
     _l287 = ((loam_str){(const char *)";\n", 2});
     loam_codegen_w(_l287);
-#line 3904
+#line 3919
     loam_codegen_os_end(_l272);
-#line 3905
+#line 3920
     loam_str_release(&_l287);
     loam_str_release(&_l282);
     goto bb113;
 bb127:;
-#line 3907
+#line 3922
     _l292 = loam_ast_INFO.len;
-    (void)loam_idx(_l272, _l292, "packages/loam/compiler/codegen.loam", 3907);
+    (void)loam_idx(_l272, _l292, "packages/loam/compiler/codegen.loam", 3922);
     _l293 = ((NodeInfo *)(loam_ast_INFO.ptr))[_l272].name;
     _l294 = ((loam_str){(const char *)"main", 4});
     _l295 = loam_fmt_eq(_l293, _l294);
@@ -61657,26 +61721,26 @@ bb127:;
 bb128:;
     if (_l288) goto bb129; else goto bb130;
 bb129:;
-#line 3908
+#line 3923
     loam_str_release(&_l294);
     loam_str_release(&_l287);
     loam_str_release(&_l282);
     goto bb113;
 bb130:;
-#line 3910
+#line 3925
     loam_codegen_os_begin(_l272);
-#line 3911
+#line 3926
     _l296 = loam_codegen_fn_linkage(_l255, _l272);
     loam_codegen_w(_l296);
-#line 3912
+#line 3927
     _l297 = false;
     loam_codegen_fn_sig(_l272, _l297);
-#line 3913
+#line 3928
     _l298 = ((loam_str){(const char *)";\n", 2});
     loam_codegen_w(_l298);
-#line 3914
+#line 3929
     loam_codegen_os_end(_l272);
-#line 3892
+#line 3907
     loam_str_release(&_l298);
     loam_str_release(&_l296);
     loam_str_release(&_l294);
@@ -61684,24 +61748,24 @@ bb130:;
     loam_str_release(&_l282);
     goto bb113;
 bb131:;
-#line 3918
+#line 3933
     _l306 = (_l305 < _l304);
     if (_l306) goto bb132; else goto bb134;
 bb132:;
-#line 3919
+#line 3934
     _l307 = loam_codegen_CLOS_NODES.len;
-    (void)loam_idx(_l305, _l307, "packages/loam/compiler/codegen.loam", 3919);
+    (void)loam_idx(_l305, _l307, "packages/loam/compiler/codegen.loam", 3934);
     _l308 = ((int32_t *)(loam_codegen_CLOS_NODES.ptr))[_l305];
     loam_codegen_clos_env(_l308);
     goto bb133;
 bb133:;
-#line 3918
+#line 3933
     _l309 = 1;
     _l310 = (_l305 + _l309);
     _l305 = _l310;
     goto bb131;
 bb134:;
-#line 3921
+#line 3936
     _l311 = 0;
     _l312 = loam_codegen_CLOS_NODES.len;
     _l313 = _l311;
@@ -61710,26 +61774,26 @@ bb135:;
     _l314 = (_l313 < _l312);
     if (_l314) goto bb136; else goto bb138;
 bb136:;
-#line 3922
+#line 3937
     _l315 = loam_codegen_CLOS_NODES.len;
-    (void)loam_idx(_l313, _l315, "packages/loam/compiler/codegen.loam", 3922);
+    (void)loam_idx(_l313, _l315, "packages/loam/compiler/codegen.loam", 3937);
     _l316 = ((int32_t *)(loam_codegen_CLOS_NODES.ptr))[_l313];
     _l317 = true;
     loam_codegen_clos_sig(_l316, _l317);
     goto bb137;
 bb137:;
-#line 3921
+#line 3936
     _l318 = 1;
     _l319 = (_l313 + _l318);
     _l313 = _l319;
     goto bb135;
 bb138:;
-#line 3924
+#line 3939
     _l321 = 0;
     _l320 = loam_map_new__int(_l321);
     _l322 = _l320;
     loam_vec_retain(&_l322.entries);
-#line 3925
+#line 3940
     _l323 = 0;
     _l324 = loam_ir_FNS.len;
     _l325 = _l323;
@@ -61738,18 +61802,18 @@ bb139:;
     _l326 = (_l325 < _l324);
     if (_l326) goto bb140; else goto bb142;
 bb140:;
-#line 3926
+#line 3941
     _l327 = loam_codegen_is_mono_clos(_l325);
     _l328 = (!_l327);
     if (_l328) goto bb143; else goto bb144;
 bb141:;
-#line 3925
+#line 3940
     _l331 = 1;
     _l332 = (_l325 + _l331);
     _l325 = _l332;
     goto bb139;
 bb142:;
-#line 3932
+#line 3947
     _l333 = 0;
     _l335 = loam_typecheck_MONOS.len;
     _l336 = _l333;
@@ -61757,42 +61821,42 @@ bb142:;
 bb143:;
     goto bb141;
 bb144:;
-#line 3929
+#line 3944
     _l329 = &_l322;
     loam_codegen_mono_clos_env(_l325, _l329);
-#line 3930
+#line 3945
     _l330 = true;
     loam_codegen_mono_clos_sig(_l325, _l330);
     goto bb141;
 bb145:;
-#line 3932
+#line 3947
     _l337 = (_l336 < _l335);
     if (_l337) goto bb146; else goto bb148;
 bb146:;
-#line 3933
+#line 3948
     _l338 = ((Mono *)(loam_typecheck_MONOS.ptr))[_l336].fn_;
     _l339 = _l338;
-#line 3934
+#line 3949
     _l341 = (_l339 == loam_codegen_NONE);
     _l340 = _l341;
     if (_l341) goto bb150; else goto bb149;
 bb147:;
-#line 3932
+#line 3947
     _l346 = 1;
     _l347 = (_l336 + _l346);
     _l336 = _l347;
     goto bb145;
 bb148:;
-#line 3942
+#line 3957
     _l348 = 10;
     loam_codegen_wc(_l348);
-#line 3943
+#line 3958
     loam_codegen_c_bindings();
-#line 3944
+#line 3959
     loam_codegen_flush_big();
     if (loam_codegen_SHARD) goto bb153; else goto bb154;
 bb149:;
-#line 3934
+#line 3949
     _l342 = loam_dce_keep(_l339);
     _l343 = (!_l342);
     _l340 = _l343;
@@ -61802,27 +61866,27 @@ bb150:;
 bb151:;
     goto bb147;
 bb152:;
-#line 3937
+#line 3952
     loam_codegen_set_mono_subst(_l336);
-#line 3938
+#line 3953
     _l344 = false;
     loam_codegen_fn_sig(_l339, _l344);
-#line 3939
+#line 3954
     _l345 = ((loam_str){(const char *)";\n", 2});
     loam_codegen_w(_l345);
-#line 3940
+#line 3955
     loam_codegen_clear_subst();
-#line 3932
+#line 3947
     loam_str_release(&_l345);
     goto bb147;
 bb153:;
-#line 3950
+#line 3965
     loam_codegen_lit_template_decls();
     goto bb154;
 bb154:;
     if (loam_codegen_SHARD) goto bb155; else goto bb156;
 bb155:;
-#line 3952
+#line 3967
     _l350 = 2;
     _l349 = _l350;
     goto bb157;
@@ -61834,48 +61898,48 @@ bb157:;
     _l352 = _l349;
     goto bb158;
 bb158:;
-#line 3953
+#line 3968
     _l353 = 0;
     _l354 = (_l352 > _l353);
     if (_l354) goto bb159; else goto bb160;
 bb159:;
-#line 3954
+#line 3969
     _l355 = 1;
-    _l356 = loam_sub_i32(_l352, _l355, "packages/loam/compiler/codegen.loam", 3954);
+    _l356 = loam_sub_i32(_l352, _l355, "packages/loam/compiler/codegen.loam", 3969);
     _l352 = _l356;
-#line 3955
+#line 3970
     _l357 = 1;
     _l358 = (_l352 == _l357);
     _l359 = _l358;
-#line 3956
+#line 3971
     _l360 = 0;
     _l361 = _l360;
     goto bb161;
 bb160:;
-#line 3986
+#line 4001
     _l418 = (!loam_codegen_SHARD);
     if (_l418) goto bb191; else goto bb192;
 bb161:;
-#line 3956
+#line 3971
     _l362 = (_l361 < _l60);
     if (_l362) goto bb162; else goto bb164;
 bb162:;
-#line 3957
+#line 3972
     _l363 = loam_typecheck_MODS.len;
-    (void)loam_idx(_l361, _l363, "packages/loam/compiler/codegen.loam", 3957);
+    (void)loam_idx(_l361, _l363, "packages/loam/compiler/codegen.loam", 3972);
     _l364 = ((Module *)(loam_typecheck_MODS.ptr))[_l361].root;
     _l365 = _l364;
-#line 3958
+#line 3973
     _l366 = (_l365 == loam_codegen_NONE);
     if (_l366) goto bb165; else goto bb166;
 bb163:;
-#line 3956
+#line 3971
     _l416 = 1;
     _l417 = (_l361 + _l416);
     _l361 = _l417;
     goto bb161;
 bb164:;
-#line 3953
+#line 3968
     loam_str_release(&_l413);
     loam_str_release(&_l412);
     loam_str_release(&_l411);
@@ -61886,18 +61950,18 @@ bb164:;
 bb165:;
     goto bb163;
 bb166:;
-#line 3961
+#line 3976
     _l367 = loam_typecheck_MODS.len;
-    (void)loam_idx(_l361, _l367, "packages/loam/compiler/codegen.loam", 3961);
+    (void)loam_idx(_l361, _l367, "packages/loam/compiler/codegen.loam", 3976);
     _l368 = ((Module *)(loam_typecheck_MODS.ptr))[_l361].is_std;
     _l369 = _l368;
-#line 3962
+#line 3977
     _l370 = loam_ast_NODES.len;
-    (void)loam_idx(_l365, _l370, "packages/loam/compiler/codegen.loam", 3962);
+    (void)loam_idx(_l365, _l370, "packages/loam/compiler/codegen.loam", 3977);
     _l371 = ((Node *)(loam_ast_NODES.ptr))[_l365].kids;
     loam_vec_retain(&_l371);
     _l372 = loam_vec_retain(&_l371);
-#line 3963
+#line 3978
     _l373 = 0;
     _l374 = _l372.len;
     _l375 = _l373;
@@ -61906,21 +61970,21 @@ bb167:;
     _l376 = (_l375 < _l374);
     if (_l376) goto bb168; else goto bb170;
 bb168:;
-#line 3964
+#line 3979
     _l377 = ((int32_t *)(_l372.ptr))[_l375];
     _l378 = _l377;
-#line 3969
+#line 3984
     _l379 = loam_codegen_is_fn(_l378);
     _l380 = (!_l379);
     if (_l380) goto bb171; else goto bb172;
 bb169:;
-#line 3963
+#line 3978
     _l414 = 1;
     _l415 = (_l375 + _l414);
     _l375 = _l415;
     goto bb167;
 bb170:;
-#line 3956
+#line 3971
     loam_str_release(&_l413);
     loam_str_release(&_l412);
     loam_str_release(&_l411);
@@ -61931,12 +61995,12 @@ bb170:;
 bb171:;
     goto bb169;
 bb172:;
-#line 3972
+#line 3987
     _l381 = loam_typecheck_os_primary(_l378);
     _l382 = _l381;
-#line 3973
+#line 3988
     _l386 = loam_ast_INFO.len;
-    (void)loam_idx(_l382, _l386, "packages/loam/compiler/codegen.loam", 3973);
+    (void)loam_idx(_l382, _l386, "packages/loam/compiler/codegen.loam", 3988);
     _l387 = ((NodeInfo *)(loam_ast_INFO.ptr))[_l382].marks;
     _l389 = (_l387 & loam_ast_M_AS_VALUE);
     _l390 = 0;
@@ -61944,17 +62008,17 @@ bb172:;
     _l385 = _l391;
     if (_l391) goto bb173; else goto bb174;
 bb173:;
-#line 3974
+#line 3989
     _l394 = loam_codegen_is_intrinsic(_l378);
     _l395 = (!_l394);
     _l393 = _l395;
     if (_l395) goto bb176; else goto bb175;
 bb174:;
-#line 3973
+#line 3988
     _l384 = _l385;
     if (_l385) goto bb179; else goto bb180;
 bb175:;
-#line 3974
+#line 3989
     _l396 = loam_codegen_c_sym_of(_l378);
     _l397 = _l396.len;
     _l398 = 0;
@@ -61969,41 +62033,41 @@ bb177:;
     _l392 = _l400;
     goto bb178;
 bb178:;
-#line 3973
+#line 3988
     _l385 = _l392;
     goto bb174;
 bb179:;
-#line 3974
+#line 3989
     _l401 = loam_codegen_is_generic(_l378);
     _l402 = (!_l401);
-#line 3973
+#line 3988
     _l384 = _l402;
     goto bb180;
 bb180:;
     _l383 = _l384;
     if (_l384) goto bb181; else goto bb182;
 bb181:;
-#line 3974
+#line 3989
     _l403 = loam_dce_keep(_l378);
-#line 3973
+#line 3988
     _l383 = _l403;
     goto bb182;
 bb182:;
     if (_l383) goto bb183; else goto bb184;
 bb183:;
-#line 3975
+#line 3990
     _l406 = (!_l359);
     _l405 = _l406;
     if (_l406) goto bb185; else goto bb186;
 bb184:;
-#line 3963
+#line 3978
     loam_str_release(&_l413);
     loam_str_release(&_l412);
     loam_str_release(&_l411);
     loam_str_release(&_l396);
     goto bb169;
 bb185:;
-#line 3975
+#line 3990
     _l407 = loam_typecheck_os_mask(_l378);
     _l408 = 0;
     _l409 = (_l407 != _l408);
@@ -62019,28 +62083,28 @@ bb187:;
 bb188:;
     if (_l404) goto bb189; else goto bb190;
 bb189:;
-#line 3976
+#line 3991
     _l412 = loam_codegen_fn_cname(_l378);
     _l413 = ((loam_str){(const char *)"__as_fn", 7});
     { int64_t _in = 0 + _l412.len + _l413.len; char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l412.len > 0) { memcpy(_ip + _io, _l412.ptr, (size_t)_l412.len); _io += _l412.len; } if (_l413.len > 0) { memcpy(_ip + _io, _l413.ptr, (size_t)_l413.len); _io += _l413.len; } _ip[_in] = 0; _l411 = loam_str_owned(_ip, _in); }
     loam_codegen_shard_mark(_l411);
     goto bb190;
 bb190:;
-#line 3978
+#line 3993
     loam_codegen_os_begin(_l378);
-#line 3979
+#line 3994
     loam_codegen_as_fn_tramp(_l378, _l359);
-#line 3980
+#line 3995
     loam_codegen_os_end(_l378);
     goto bb184;
 bb191:;
-#line 3987
+#line 4002
     loam_codegen_lit_template_decls();
     goto bb192;
 bb192:;
-#line 3989
+#line 4004
     loam_codegen_flush_big();
-#line 3991
+#line 4006
     _l419 = 0;
     _l420 = loam_codegen_CLOS_NODES.len;
     _l421 = _l419;
@@ -62049,20 +62113,20 @@ bb193:;
     _l422 = (_l421 < _l420);
     if (_l422) goto bb194; else goto bb196;
 bb194:;
-#line 3992
+#line 4007
     _l423 = loam_codegen_CLOS_NODES.len;
-    (void)loam_idx(_l421, _l423, "packages/loam/compiler/codegen.loam", 3992);
+    (void)loam_idx(_l421, _l423, "packages/loam/compiler/codegen.loam", 4007);
     _l424 = ((int32_t *)(loam_codegen_CLOS_NODES.ptr))[_l421];
     loam_codegen_closure_fn(_l424);
     goto bb195;
 bb195:;
-#line 3991
+#line 4006
     _l425 = 1;
     _l426 = (_l421 + _l425);
     _l421 = _l426;
     goto bb193;
 bb196:;
-#line 3994
+#line 4009
     _l427 = 0;
     _l428 = loam_ir_FNS.len;
     _l429 = _l427;
@@ -62071,25 +62135,25 @@ bb197:;
     _l430 = (_l429 < _l428);
     if (_l430) goto bb198; else goto bb200;
 bb198:;
-#line 3995
+#line 4010
     _l432 = loam_codegen_is_mono_clos(_l429);
     _l433 = (!_l432);
     _l431 = _l433;
     if (_l433) goto bb202; else goto bb201;
 bb199:;
-#line 3994
+#line 4009
     _l439 = 1;
     _l440 = (_l429 + _l439);
     _l429 = _l440;
     goto bb197;
 bb200:;
-#line 4003
+#line 4018
     _l441 = 0;
     _l442 = loam_typecheck_MONOS.len;
     _l443 = _l441;
     goto bb205;
 bb201:;
-#line 3995
+#line 4010
     _l434 = ((IrFn *)(loam_ir_FNS.ptr))[_l429].lowered;
     _l435 = (!_l434);
     _l431 = _l435;
@@ -62099,45 +62163,45 @@ bb202:;
 bb203:;
     goto bb199;
 bb204:;
-#line 3998
+#line 4013
     _l436 = ((IrFn *)(loam_ir_FNS.ptr))[_l429].cname;
     loam_str_retain(_l436);
     loam_codegen_shard_mark(_l436);
-#line 3999
+#line 4014
     _l437 = false;
     loam_codegen_mono_clos_sig(_l429, _l437);
-#line 4000
+#line 4015
     _l438 = false;
     loam_codegen_fn_body(_l429, _l438);
-#line 3994
+#line 4009
     loam_str_release(&_l436);
     goto bb199;
 bb205:;
-#line 4003
+#line 4018
     _l444 = (_l443 < _l442);
     if (_l444) goto bb206; else goto bb208;
 bb206:;
-#line 4004
+#line 4019
     _l445 = ((Mono *)(loam_typecheck_MONOS.ptr))[_l443].fn_;
     _l446 = _l445;
-#line 4005
+#line 4020
     _l448 = (_l446 == loam_codegen_NONE);
     _l447 = _l448;
     if (_l448) goto bb210; else goto bb209;
 bb207:;
-#line 4003
+#line 4018
     _l453 = 1;
     _l454 = (_l443 + _l453);
     _l443 = _l454;
     goto bb205;
 bb208:;
-#line 4013
+#line 4028
     _l455 = 0;
     _l456 = loam_ir_FNS.len;
     _l457 = _l455;
     goto bb213;
 bb209:;
-#line 4005
+#line 4020
     _l449 = loam_dce_keep(_l446);
     _l450 = (!_l449);
     _l447 = _l450;
@@ -62147,41 +62211,41 @@ bb210:;
 bb211:;
     goto bb207;
 bb212:;
-#line 4008
+#line 4023
     loam_codegen_set_mono_subst(_l443);
-#line 4009
+#line 4024
     _l451 = false;
     _l452 = ((loam_str){(const char *)"", 0});
     loam_codegen_emit_fn(_l446, _l451, _l452);
-#line 4010
+#line 4025
     loam_codegen_clear_subst();
-#line 4003
+#line 4018
     loam_str_release(&_l452);
     goto bb207;
 bb213:;
-#line 4013
+#line 4028
     _l458 = (_l457 < _l456);
     if (_l458) goto bb214; else goto bb216;
 bb214:;
-#line 4014
+#line 4029
     _l460 = loam_codegen_is_init_fn(_l457);
     _l461 = (!_l460);
     _l459 = _l461;
     if (_l461) goto bb218; else goto bb217;
 bb215:;
-#line 4013
+#line 4028
     _l470 = 1;
     _l471 = (_l457 + _l470);
     _l457 = _l471;
     goto bb213;
 bb216:;
-#line 4022
+#line 4037
     _l472 = 1;
     _l473 = (_l60 - _l472);
     _l474 = _l473;
     goto bb221;
 bb217:;
-#line 4014
+#line 4029
     _l462 = ((IrFn *)(loam_ir_FNS.ptr))[_l457].lowered;
     _l463 = (!_l462);
     _l459 = _l463;
@@ -62191,21 +62255,21 @@ bb218:;
 bb219:;
     goto bb215;
 bb220:;
-#line 4017
+#line 4032
     _l464 = ((IrFn *)(loam_ir_FNS.ptr))[_l457].cname;
     loam_str_retain(_l464);
     loam_codegen_shard_mark(_l464);
-#line 4018
+#line 4033
     _l466 = ((loam_str){(const char *)"void ", 5});
     _l467 = ((IrFn *)(loam_ir_FNS.ptr))[_l457].cname;
     loam_str_retain(_l467);
     _l468 = ((loam_str){(const char *)"(void)", 6});
     { int64_t _in = 0 + _l466.len + _l467.len + _l468.len; char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l466.len > 0) { memcpy(_ip + _io, _l466.ptr, (size_t)_l466.len); _io += _l466.len; } if (_l467.len > 0) { memcpy(_ip + _io, _l467.ptr, (size_t)_l467.len); _io += _l467.len; } if (_l468.len > 0) { memcpy(_ip + _io, _l468.ptr, (size_t)_l468.len); _io += _l468.len; } _ip[_in] = 0; _l465 = loam_str_owned(_ip, _in); }
     loam_codegen_w(_l465);
-#line 4019
+#line 4034
     _l469 = false;
     loam_codegen_fn_body(_l457, _l469);
-#line 4013
+#line 4028
     loam_str_release(&_l468);
     loam_str_release(&_l467);
     loam_str_release(&_l466);
@@ -62213,42 +62277,42 @@ bb220:;
     loam_str_release(&_l464);
     goto bb215;
 bb221:;
-#line 4023
+#line 4038
     _l475 = 0;
     _l476 = (_l474 >= _l475);
     if (_l476) goto bb222; else goto bb223;
 bb222:;
-#line 4024
+#line 4039
     _l477 = loam_typecheck_MODS.len;
-    (void)loam_idx(_l474, _l477, "packages/loam/compiler/codegen.loam", 4024);
+    (void)loam_idx(_l474, _l477, "packages/loam/compiler/codegen.loam", 4039);
     _l478 = ((Module *)(loam_typecheck_MODS.ptr))[_l474].root;
     _l479 = _l478;
-#line 4025
+#line 4040
     _l480 = (_l479 != loam_codegen_NONE);
     if (_l480) goto bb224; else goto bb225;
 bb223:;
-#line 4059
+#line 4074
     _l536 = 0;
     _l537 = _l536;
     goto bb256;
 bb224:;
-#line 4026
+#line 4041
     _l481 = loam_ast_NODES.len;
-    (void)loam_idx(_l479, _l481, "packages/loam/compiler/codegen.loam", 4026);
+    (void)loam_idx(_l479, _l481, "packages/loam/compiler/codegen.loam", 4041);
     _l482 = ((Node *)(loam_ast_NODES.ptr))[_l479].kids;
     loam_vec_retain(&_l482);
     _l483 = loam_vec_retain(&_l482);
-#line 4027
+#line 4042
     _l484 = 0;
     _l485 = _l483.len;
     _l486 = _l484;
     goto bb226;
 bb225:;
-#line 4054
+#line 4069
     _l534 = 1;
-    _l535 = loam_sub_i32(_l474, _l534, "packages/loam/compiler/codegen.loam", 4054);
+    _l535 = loam_sub_i32(_l474, _l534, "packages/loam/compiler/codegen.loam", 4069);
     _l474 = _l535;
-#line 4023
+#line 4038
     loam_str_release(&_l531);
     loam_str_release(&_l530);
     loam_str_release(&_l529);
@@ -62262,20 +62326,20 @@ bb225:;
     loam_vec_drop(&_l482);
     goto bb221;
 bb226:;
-#line 4027
+#line 4042
     _l487 = (_l486 < _l485);
     if (_l487) goto bb227; else goto bb229;
 bb227:;
-#line 4028
+#line 4043
     _l488 = ((int32_t *)(_l483.ptr))[_l486];
     _l489 = _l488;
-#line 4029
+#line 4044
     _l493 = loam_codegen_is_fn(_l489);
     _l494 = (!_l493);
     _l492 = _l494;
     if (_l494) goto bb231; else goto bb230;
 bb228:;
-#line 4027
+#line 4042
     _l532 = 1;
     _l533 = (_l486 + _l532);
     _l486 = _l533;
@@ -62283,7 +62347,7 @@ bb228:;
 bb229:;
     goto bb225;
 bb230:;
-#line 4029
+#line 4044
     _l495 = loam_codegen_is_intrinsic(_l489);
     _l492 = _l495;
     goto bb231;
@@ -62307,14 +62371,14 @@ bb235:;
 bb236:;
     goto bb228;
 bb237:;
-#line 4032
+#line 4047
     _l500 = 0;
     _l501 = (_l474 == _l500);
     _l499 = _l501;
     if (_l501) goto bb238; else goto bb239;
 bb238:;
     _l502 = loam_ast_INFO.len;
-    (void)loam_idx(_l489, _l502, "packages/loam/compiler/codegen.loam", 4032);
+    (void)loam_idx(_l489, _l502, "packages/loam/compiler/codegen.loam", 4047);
     _l503 = ((NodeInfo *)(loam_ast_INFO.ptr))[_l489].name;
     _l504 = ((loam_str){(const char *)"main", 4});
     _l505 = loam_fmt_eq(_l503, _l504);
@@ -62322,7 +62386,7 @@ bb238:;
     goto bb239;
 bb239:;
     _l506 = _l499;
-#line 4034
+#line 4049
     _l507 = _l506;
     if (_l506) goto bb240; else goto bb241;
 bb240:;
@@ -62331,16 +62395,16 @@ bb240:;
 bb241:;
     if (_l507) goto bb242; else goto bb243;
 bb242:;
-#line 4035
+#line 4050
     loam_str_release(&_l504);
     goto bb228;
 bb243:;
-#line 4037
+#line 4052
     _l508 = loam_codegen_SERVER_SPLIT;
     if (loam_codegen_SERVER_SPLIT) goto bb244; else goto bb245;
 bb244:;
     _l509 = loam_ast_NODES.len;
-    (void)loam_idx(_l489, _l509, "packages/loam/compiler/codegen.loam", 4037);
+    (void)loam_idx(_l489, _l509, "packages/loam/compiler/codegen.loam", 4052);
     _l510 = ((Node *)(loam_ast_NODES.ptr))[_l489].op;
     _l511 = (_l510 & loam_dce_FN_SERVER);
     _l512 = 0;
@@ -62350,24 +62414,24 @@ bb244:;
 bb245:;
     if (_l508) goto bb246; else goto bb247;
 bb246:;
-#line 4040
+#line 4055
     _l514 = loam_ast_ex(_l489);
     _l515 = _l514;
-#line 4041
+#line 4056
     _l518 = loam_ast_EXTRA.len;
-    (void)loam_idx(_l515, _l518, "packages/loam/compiler/codegen.loam", 4041);
+    (void)loam_idx(_l515, _l518, "packages/loam/compiler/codegen.loam", 4056);
     _l519 = ((NodeExtra *)(loam_ast_EXTRA.ptr))[_l515].has_sname;
     if (_l519) goto bb248; else goto bb249;
 bb247:;
-#line 4046
+#line 4061
     _l525 = loam_typecheck_os_mask(_l489);
     _l526 = 0;
     _l527 = (_l525 != _l526);
     if (_l527) goto bb251; else goto bb252;
 bb248:;
-#line 4041
+#line 4056
     _l520 = loam_ast_EXTRA.len;
-    (void)loam_idx(_l515, _l520, "packages/loam/compiler/codegen.loam", 4041);
+    (void)loam_idx(_l515, _l520, "packages/loam/compiler/codegen.loam", 4056);
     _l521 = ((NodeExtra *)(loam_ast_EXTRA.ptr))[_l515].sname;
     loam_str_retain(_l521);
     _l516 = _l521;
@@ -62380,13 +62444,13 @@ bb249:;
     goto bb250;
 bb250:;
     loam_codegen_shard_mark(_l516);
-#line 4042
+#line 4057
     _l523 = false;
     loam_codegen_fn_sig(_l489, _l523);
-#line 4043
+#line 4058
     _l524 = ((loam_str){(const char *)" { loam_panic(\"<server>\", 0, \"server function excluded from client build\"); __builtin_unreachable(); }\n", 103});
     loam_codegen_w(_l524);
-#line 4044
+#line 4059
     loam_str_release(&_l524);
     loam_str_release(&_l522);
     loam_str_release(&_l521);
@@ -62394,16 +62458,16 @@ bb250:;
     loam_str_release(&_l504);
     goto bb228;
 bb251:;
-#line 4047
+#line 4062
     _l528 = loam_codegen_fn_cname(_l489);
     loam_codegen_shard_mark(_l528);
     goto bb252;
 bb252:;
-#line 4049
+#line 4064
     loam_codegen_os_begin(_l489);
     if (_l506) goto bb253; else goto bb254;
 bb253:;
-#line 4050
+#line 4065
     _l530 = ((loam_str){(const char *)"", 0});
     _l529 = _l530;
     loam_str_retain(_l529);
@@ -62415,9 +62479,9 @@ bb254:;
     goto bb255;
 bb255:;
     loam_codegen_emit_fn(_l489, _l506, _l529);
-#line 4051
+#line 4066
     loam_codegen_os_end(_l489);
-#line 4027
+#line 4042
     loam_str_release(&_l531);
     loam_str_release(&_l530);
     loam_str_release(&_l529);
@@ -62429,73 +62493,73 @@ bb255:;
     loam_str_release(&_l504);
     goto bb228;
 bb256:;
-#line 4060
+#line 4075
     _l538 = loam_codegen_ELEM_HOOK_TYPES.len;
     _l539 = (_l537 < _l538);
     if (_l539) goto bb257; else goto bb258;
 bb257:;
-#line 4061
+#line 4076
     _l540 = loam_codegen_ELEM_HOOK_TYPES.len;
-    (void)loam_idx(_l537, _l540, "packages/loam/compiler/codegen.loam", 4061);
+    (void)loam_idx(_l537, _l540, "packages/loam/compiler/codegen.loam", 4076);
     _l541 = ((int32_t *)(loam_codegen_ELEM_HOOK_TYPES.ptr))[_l537];
     _l542 = _l541;
-#line 4062
+#line 4077
     _l543 = loam_codegen_ctype(_l542);
     _l544 = _l543;
     loam_str_retain(_l544);
-#line 4063
+#line 4078
     _l545 = 1;
-    _l546 = loam_add_i32(_l537, _l545, "packages/loam/compiler/codegen.loam", 4063);
+    _l546 = loam_add_i32(_l537, _l545, "packages/loam/compiler/codegen.loam", 4078);
     _l547 = _l546;
-#line 4064
+#line 4079
     _l549 = ((loam_str){(const char *)"loam_elem_", 10});
     { uint8_t _id1[20]; int32_t _if1 = loam_decimal_fill(_id1, loam_decimal_magnitude_of((int64_t)(_l547)), (int64_t)(_l547) < 0); int64_t _in = 0 + _l549.len + (int64_t)(20 - _if1); char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l549.len > 0) { memcpy(_ip + _io, _l549.ptr, (size_t)_l549.len); _io += _l549.len; } if ((int64_t)(20 - _if1) > 0) { memcpy(_ip + _io, (const char *)_id1 + _if1, (size_t)(int64_t)(20 - _if1)); _io += (int64_t)(20 - _if1); } _ip[_in] = 0; _l548 = loam_str_owned(_ip, _in); }
     loam_codegen_shard_mark(_l548);
-#line 4065
+#line 4080
     _l551 = loam_codegen_unit_static();
     _l552 = ((loam_str){(const char *)"void loam_elem_retain_", 22});
     _l553 = ((loam_str){(const char *)"(void *p) {\n", 12});
     { uint8_t _id2[20]; int32_t _if2 = loam_decimal_fill(_id2, loam_decimal_magnitude_of((int64_t)(_l547)), (int64_t)(_l547) < 0); int64_t _in = 0 + _l551.len + _l552.len + (int64_t)(20 - _if2) + _l553.len; char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l551.len > 0) { memcpy(_ip + _io, _l551.ptr, (size_t)_l551.len); _io += _l551.len; } if (_l552.len > 0) { memcpy(_ip + _io, _l552.ptr, (size_t)_l552.len); _io += _l552.len; } if ((int64_t)(20 - _if2) > 0) { memcpy(_ip + _io, (const char *)_id2 + _if2, (size_t)(int64_t)(20 - _if2)); _io += (int64_t)(20 - _if2); } if (_l553.len > 0) { memcpy(_ip + _io, _l553.ptr, (size_t)_l553.len); _io += _l553.len; } _ip[_in] = 0; _l550 = loam_str_owned(_ip, _in); }
     loam_codegen_w(_l550);
-#line 4066
+#line 4081
     _l555 = ((loam_str){(const char *)"    ", 4});
     _l556 = ((loam_str){(const char *)" *_e = (", 8});
     _l557 = ((loam_str){(const char *)" *)p;\n", 6});
     { int64_t _in = 0 + _l555.len + _l544.len + _l556.len + _l544.len + _l557.len; char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l555.len > 0) { memcpy(_ip + _io, _l555.ptr, (size_t)_l555.len); _io += _l555.len; } if (_l544.len > 0) { memcpy(_ip + _io, _l544.ptr, (size_t)_l544.len); _io += _l544.len; } if (_l556.len > 0) { memcpy(_ip + _io, _l556.ptr, (size_t)_l556.len); _io += _l556.len; } if (_l544.len > 0) { memcpy(_ip + _io, _l544.ptr, (size_t)_l544.len); _io += _l544.len; } if (_l557.len > 0) { memcpy(_ip + _io, _l557.ptr, (size_t)_l557.len); _io += _l557.len; } _ip[_in] = 0; _l554 = loam_str_owned(_ip, _in); }
     loam_codegen_w(_l554);
-#line 4067
+#line 4082
     _l558 = ((loam_str){(const char *)"(*_e)", 5});
     _l559 = 1;
     loam_codegen_nested_keeps(_l558, _l542, _l559);
-#line 4068
+#line 4083
     _l560 = ((loam_str){(const char *)"}\n", 2});
     loam_codegen_w(_l560);
-#line 4069
+#line 4084
     _l562 = loam_codegen_unit_static();
     _l563 = ((loam_str){(const char *)"void loam_elem_release_", 23});
     _l564 = ((loam_str){(const char *)"(void *p) {\n", 12});
     { uint8_t _id2[20]; int32_t _if2 = loam_decimal_fill(_id2, loam_decimal_magnitude_of((int64_t)(_l547)), (int64_t)(_l547) < 0); int64_t _in = 0 + _l562.len + _l563.len + (int64_t)(20 - _if2) + _l564.len; char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l562.len > 0) { memcpy(_ip + _io, _l562.ptr, (size_t)_l562.len); _io += _l562.len; } if (_l563.len > 0) { memcpy(_ip + _io, _l563.ptr, (size_t)_l563.len); _io += _l563.len; } if ((int64_t)(20 - _if2) > 0) { memcpy(_ip + _io, (const char *)_id2 + _if2, (size_t)(int64_t)(20 - _if2)); _io += (int64_t)(20 - _if2); } if (_l564.len > 0) { memcpy(_ip + _io, _l564.ptr, (size_t)_l564.len); _io += _l564.len; } _ip[_in] = 0; _l561 = loam_str_owned(_ip, _in); }
     loam_codegen_w(_l561);
-#line 4070
+#line 4085
     _l566 = ((loam_str){(const char *)"    ", 4});
     _l567 = ((loam_str){(const char *)" *_e = (", 8});
     _l568 = ((loam_str){(const char *)" *)p;\n", 6});
     { int64_t _in = 0 + _l566.len + _l544.len + _l567.len + _l544.len + _l568.len; char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l566.len > 0) { memcpy(_ip + _io, _l566.ptr, (size_t)_l566.len); _io += _l566.len; } if (_l544.len > 0) { memcpy(_ip + _io, _l544.ptr, (size_t)_l544.len); _io += _l544.len; } if (_l567.len > 0) { memcpy(_ip + _io, _l567.ptr, (size_t)_l567.len); _io += _l567.len; } if (_l544.len > 0) { memcpy(_ip + _io, _l544.ptr, (size_t)_l544.len); _io += _l544.len; } if (_l568.len > 0) { memcpy(_ip + _io, _l568.ptr, (size_t)_l568.len); _io += _l568.len; } _ip[_in] = 0; _l565 = loam_str_owned(_ip, _in); }
     loam_codegen_w(_l565);
-#line 4071
+#line 4086
     _l569 = ((loam_str){(const char *)"(*_e)", 5});
     _l570 = 1;
     loam_codegen_drop_place(_l569, _l542, _l570);
-#line 4072
+#line 4087
     _l571 = ((loam_str){(const char *)"}\n", 2});
     loam_codegen_w(_l571);
-#line 4073
+#line 4088
     loam_codegen_flush_big();
-#line 4074
+#line 4089
     _l572 = 1;
-    _l573 = loam_add_i32(_l537, _l572, "packages/loam/compiler/codegen.loam", 4074);
+    _l573 = loam_add_i32(_l537, _l572, "packages/loam/compiler/codegen.loam", 4089);
     _l537 = _l573;
-#line 4060
+#line 4075
     loam_str_release(&_l571);
     loam_str_release(&_l569);
     loam_str_release(&_l568);
@@ -62522,39 +62586,39 @@ bb257:;
     loam_str_release(&_l543);
     goto bb256;
 bb258:;
-#line 4076
+#line 4091
     loam_codegen_sig_payload_drop_def();
     if (loam_codegen_SHARD) goto bb259; else goto bb260;
 bb259:;
-#line 4078
+#line 4093
     _l574 = ((loam_str){(const char *)"\n/*@D*/\n#ifdef LOAM_SHARD_DEFS\n", 31});
     loam_codegen_w(_l574);
     goto bb260;
 bb260:;
-#line 4080
+#line 4095
     loam_codegen_lit_template_defs();
     if (loam_codegen_SHARD) goto bb261; else goto bb262;
 bb261:;
-#line 4082
+#line 4097
     _l575 = ((loam_str){(const char *)"#endif\n", 7});
     loam_codegen_w(_l575);
     goto bb262;
 bb262:;
     if (loam_codegen_TEST_MODE) goto bb263; else goto bb264;
 bb263:;
-#line 4085
+#line 4100
     loam_codegen_test_runner();
     goto bb264;
 bb264:;
-#line 4087
+#line 4102
     loam_codegen_flush();
-#line 4088
+#line 4103
     _l576 = loam_codegen_SINK.len;
     _l577 = 0;
     _l578 = (_l576 > _l577);
     if (_l578) goto bb265; else goto bb266;
 bb265:;
-#line 4089
+#line 4104
         {
         loam_vec_retain(&loam_codegen_OUT);
     _l579 = loam_sys_write_bytes(loam_codegen_SINK, loam_codegen_OUT);
@@ -62563,7 +62627,7 @@ bb265:;
     _l581 = (_l579 != _l580);
     if (_l581) goto bb267; else goto bb268;
 bb266:;
-#line 3743
+#line 3758
     loam_vec_drop(&_l585);
     loam_str_release(&_l584);
     loam_str_release(&_l583);
@@ -62675,14 +62739,14 @@ bb266:;
     loam_str_release(&_l61);
     return;
 bb267:;
-#line 4090
+#line 4105
     _l583 = ((loam_str){(const char *)"cannot write '", 14});
     _l584 = ((loam_str){(const char *)"'", 1});
     { int64_t _in = 0 + _l583.len + loam_codegen_SINK.len + _l584.len; char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l583.len > 0) { memcpy(_ip + _io, _l583.ptr, (size_t)_l583.len); _io += _l583.len; } if (loam_codegen_SINK.len > 0) { memcpy(_ip + _io, loam_codegen_SINK.ptr, (size_t)loam_codegen_SINK.len); _io += loam_codegen_SINK.len; } if (_l584.len > 0) { memcpy(_ip + _io, _l584.ptr, (size_t)_l584.len); _io += _l584.len; } _ip[_in] = 0; _l582 = loam_str_owned(_ip, _in); }
     loam_codegen_fatal(_l582);
     goto bb268;
 bb268:;
-#line 4092
+#line 4107
     _l585 = loam_vec_new();
     {
         loam_vec _repl = loam_codegen_OUT;
@@ -152662,117 +152726,215 @@ bb16:;
     goto bb9;
 }
 
+#line 5580
+bool loam_typecheck_c_number_buf(int32_t t) {
+    bool _l63;
+    bool _l64;
+    int32_t _l65;
+    int32_t _l66;
+    bool _l67;
+    bool _l68;
+    int32_t _l70;
+    int32_t _l71;
+    int32_t _l72;
+    bool _l73;
+    bool _l74;
+    int32_t _l75;
+    int32_t _l76;
+    bool _l77;
+bb0:;
+#line 5581
+    _l64 = (t == loam_typecheck_NO_TYPE);
+    _l63 = _l64;
+    if (_l64) goto bb2; else goto bb1;
+bb1:;
+    _l65 = loam_typecheck_tk(t);
+    _l66 = 11;
+    _l67 = (_l65 != _l66);
+    _l63 = _l67;
+    goto bb2;
+bb2:;
+    if (_l63) goto bb3; else goto bb4;
+bb3:;
 #line 5582
-bool loam_typecheck_c_variadic_type(int32_t t) {
+    _l68 = false;
+    return _l68;
+bb4:;
+#line 5584
+    _l70 = loam_types_TYPES.len;
+    (void)loam_idx(t, _l70, "packages/loam/compiler/typecheck.loam", 5584);
+    _l71 = ((Ty *)(loam_types_TYPES.ptr))[t].elem;
+    _l72 = _l71;
+#line 5585
+    _l74 = loam_typecheck_c_scalar_type(_l72);
+    _l73 = _l74;
+    if (_l74) goto bb6; else goto bb5;
+bb5:;
+    _l75 = loam_typecheck_tk(_l72);
+    _l76 = 4;
+    _l77 = (_l75 == _l76);
+    _l73 = _l77;
+    goto bb6;
+bb6:;
+    return _l73;
+}
+
+#line 5590
+bool loam_typecheck_c_borrowed_buf(int32_t t) {
     bool _l63;
     bool _l64;
     bool _l65;
     int32_t _l66;
     int32_t _l67;
     bool _l68;
-    int32_t _l69;
+    bool _l69;
+    int32_t _l71;
+    int32_t _l72;
+bb0:;
+#line 5591
+    _l65 = (t != loam_typecheck_NO_TYPE);
+    _l64 = _l65;
+    if (_l65) goto bb1; else goto bb2;
+bb1:;
+    _l66 = loam_typecheck_tk(t);
+    _l67 = 6;
+    _l68 = (_l66 == _l67);
+    _l64 = _l68;
+    goto bb2;
+bb2:;
+    _l63 = _l64;
+    if (_l64) goto bb3; else goto bb4;
+bb3:;
+    _l71 = loam_types_TYPES.len;
+    (void)loam_idx(t, _l71, "packages/loam/compiler/typecheck.loam", 5591);
+    _l72 = ((Ty *)(loam_types_TYPES.ptr))[t].elem;
+    _l69 = loam_typecheck_c_number_buf(_l72);
+    _l63 = _l69;
+    goto bb4;
+bb4:;
+    return _l63;
+}
+
+#line 5597
+bool loam_typecheck_c_variadic_type(int32_t t) {
+    bool _l63;
+    bool _l64;
+    bool _l65;
+    bool _l66;
+    int32_t _l67;
+    int32_t _l68;
+    bool _l69;
     int32_t _l70;
-    bool _l71;
+    int32_t _l71;
     bool _l72;
     bool _l73;
     bool _l74;
     bool _l75;
-    int32_t _l77;
-    int32_t _l78;
+    bool _l76;
+    bool _l77;
     int32_t _l79;
-    bool _l80;
-    bool _l81;
+    int32_t _l80;
+    int32_t _l81;
     bool _l82;
-    int32_t _l83;
+    bool _l83;
     bool _l84;
-    bool _l85;
+    int32_t _l85;
     bool _l86;
     bool _l87;
     bool _l88;
-    int32_t _l89;
+    bool _l89;
     bool _l90;
     int32_t _l91;
     bool _l92;
+    int32_t _l93;
+    bool _l94;
 bb0:;
-#line 5583
+#line 5598
     _l63 = (t == loam_typecheck_NO_TYPE);
     if (_l63) goto bb1; else goto bb2;
 bb1:;
-#line 5584
+#line 5599
     _l64 = false;
     return _l64;
 bb2:;
-#line 5586
-    _l66 = loam_typecheck_tk(t);
-    _l67 = 5;
-    _l68 = (_l66 == _l67);
-    _l65 = _l68;
-    if (_l68) goto bb4; else goto bb3;
+#line 5602
+    _l67 = loam_typecheck_tk(t);
+    _l68 = 5;
+    _l69 = (_l67 == _l68);
+    _l66 = _l69;
+    if (_l69) goto bb4; else goto bb3;
 bb3:;
-    _l69 = loam_typecheck_tk(t);
-    _l70 = 11;
-    _l71 = (_l69 == _l70);
-    _l65 = _l71;
+    _l70 = loam_typecheck_tk(t);
+    _l71 = 11;
+    _l72 = (_l70 == _l71);
+    _l66 = _l72;
     goto bb4;
 bb4:;
-    if (_l65) goto bb5; else goto bb6;
+    _l65 = _l66;
+    if (_l66) goto bb6; else goto bb5;
 bb5:;
-#line 5587
-    _l72 = true;
-    return _l72;
+    _l73 = loam_typecheck_c_borrowed_buf(t);
+    _l65 = _l73;
+    goto bb6;
 bb6:;
-#line 5589
-    _l73 = loam_typecheck_c_scalar_type(t);
-    _l74 = (!_l73);
-    if (_l74) goto bb7; else goto bb8;
+    if (_l65) goto bb7; else goto bb8;
 bb7:;
-#line 5590
-    _l75 = false;
-    return _l75;
+#line 5603
+    _l74 = true;
+    return _l74;
 bb8:;
-#line 5592
-    _l77 = loam_types_TYPES.len;
-    (void)loam_idx(t, _l77, "packages/loam/compiler/typecheck.loam", 5592);
-    _l78 = ((Ty *)(loam_types_TYPES.ptr))[t].bits;
-    _l79 = _l78;
-#line 5593
-    _l82 = loam_types_is_float_kind(t);
-    _l81 = _l82;
-    if (_l82) goto bb9; else goto bb10;
+#line 5605
+    _l75 = loam_typecheck_c_scalar_type(t);
+    _l76 = (!_l75);
+    if (_l76) goto bb9; else goto bb10;
 bb9:;
-    _l83 = 64;
-    _l84 = (_l79 == _l83);
-    _l81 = _l84;
-    goto bb10;
+#line 5606
+    _l77 = false;
+    return _l77;
 bb10:;
-    _l80 = _l81;
-    if (_l81) goto bb12; else goto bb11;
+#line 5608
+    _l79 = loam_types_TYPES.len;
+    (void)loam_idx(t, _l79, "packages/loam/compiler/typecheck.loam", 5608);
+    _l80 = ((Ty *)(loam_types_TYPES.ptr))[t].bits;
+    _l81 = _l80;
+#line 5609
+    _l84 = loam_types_is_float_kind(t);
+    _l83 = _l84;
+    if (_l84) goto bb11; else goto bb12;
 bb11:;
-    _l86 = loam_types_is_float_kind(t);
-    _l87 = (!_l86);
-    _l85 = _l87;
-    if (_l87) goto bb13; else goto bb14;
-bb12:;
-    return _l80;
-bb13:;
-    _l89 = 32;
-    _l90 = (_l79 == _l89);
-    _l88 = _l90;
-    if (_l90) goto bb16; else goto bb15;
-bb14:;
-    _l80 = _l85;
+    _l85 = 64;
+    _l86 = (_l81 == _l85);
+    _l83 = _l86;
     goto bb12;
+bb12:;
+    _l82 = _l83;
+    if (_l83) goto bb14; else goto bb13;
+bb13:;
+    _l88 = loam_types_is_float_kind(t);
+    _l89 = (!_l88);
+    _l87 = _l89;
+    if (_l89) goto bb15; else goto bb16;
+bb14:;
+    return _l82;
 bb15:;
-    _l91 = 64;
-    _l92 = (_l79 == _l91);
-    _l88 = _l92;
-    goto bb16;
+    _l91 = 32;
+    _l92 = (_l81 == _l91);
+    _l90 = _l92;
+    if (_l92) goto bb18; else goto bb17;
 bb16:;
-    _l85 = _l88;
+    _l82 = _l87;
     goto bb14;
+bb17:;
+    _l93 = 64;
+    _l94 = (_l81 == _l93);
+    _l90 = _l94;
+    goto bb18;
+bb18:;
+    _l87 = _l90;
+    goto bb16;
 }
 
-#line 5598
+#line 5614
 bool loam_typecheck_c_callback_type(int32_t t) {
     int32_t _l63;
     int32_t _l64;
@@ -152811,23 +152973,23 @@ bool loam_typecheck_c_callback_type(int32_t t) {
     bool _l98;
     bool _l99;
 bb0:;
-#line 5599
+#line 5615
     _l63 = loam_typecheck_tk(t);
     _l64 = 9;
     _l65 = (_l63 != _l64);
     if (_l65) goto bb1; else goto bb2;
 bb1:;
-#line 5600
+#line 5616
     _l66 = false;
     return _l66;
 bb2:;
-#line 5602
+#line 5618
     _l68 = loam_types_TYPES.len;
-    (void)loam_idx(t, _l68, "packages/loam/compiler/typecheck.loam", 5602);
+    (void)loam_idx(t, _l68, "packages/loam/compiler/typecheck.loam", 5618);
     _l69 = ((Ty *)(loam_types_TYPES.ptr))[t].params;
     loam_vec_retain(&_l69);
     _l70 = loam_vec_retain(&_l69);
-#line 5603
+#line 5619
     _l71 = 0;
     _l72 = _l70.len;
     _l73 = _l71;
@@ -152836,7 +152998,7 @@ bb3:;
     _l74 = (_l73 < _l72);
     if (_l74) goto bb4; else goto bb6;
 bb4:;
-#line 5604
+#line 5620
     _l77 = ((int32_t *)(_l70.ptr))[_l73];
     _l76 = loam_typecheck_tk(_l77);
     _l78 = 4;
@@ -152844,23 +153006,23 @@ bb4:;
     _l75 = _l79;
     if (_l79) goto bb8; else goto bb7;
 bb5:;
-#line 5603
+#line 5619
     _l84 = 1;
     _l85 = (_l73 + _l84);
     _l73 = _l85;
     goto bb3;
 bb6:;
-#line 5608
+#line 5624
     _l86 = loam_types_TYPES.len;
-    (void)loam_idx(t, _l86, "packages/loam/compiler/typecheck.loam", 5608);
+    (void)loam_idx(t, _l86, "packages/loam/compiler/typecheck.loam", 5624);
     _l87 = ((Ty *)(loam_types_TYPES.ptr))[t].ret;
     _l88 = _l87;
-#line 5609
+#line 5625
     _l92 = (_l88 == loam_typecheck_NO_TYPE);
     _l91 = _l92;
     if (_l92) goto bb12; else goto bb11;
 bb7:;
-#line 5604
+#line 5620
     _l81 = ((int32_t *)(_l70.ptr))[_l73];
     _l80 = loam_typecheck_c_scalar_type(_l81);
     _l75 = _l80;
@@ -152869,7 +153031,7 @@ bb8:;
     _l82 = (!_l75);
     if (_l82) goto bb9; else goto bb10;
 bb9:;
-#line 5605
+#line 5621
     _l83 = false;
     loam_vec_drop(&_l70);
     loam_vec_drop(&_l69);
@@ -152877,7 +153039,7 @@ bb9:;
 bb10:;
     goto bb5;
 bb11:;
-#line 5609
+#line 5625
     _l93 = loam_typecheck_tk(_l88);
     _l94 = 1;
     _l95 = (_l93 == _l94);
@@ -152905,7 +153067,7 @@ bb16:;
     return _l89;
 }
 
-#line 5612
+#line 5628
 bool loam_typecheck_c_param_type(int32_t t) {
     bool _l63;
     bool _l64;
@@ -152924,36 +153086,26 @@ bool loam_typecheck_c_param_type(int32_t t) {
     bool _l77;
     bool _l78;
     bool _l79;
-    int32_t _l80;
-    int32_t _l81;
-    bool _l82;
-    bool _l83;
-    bool _l84;
-    int32_t _l86;
-    int32_t _l87;
-    int32_t _l88;
-    int32_t _l89;
-    int32_t _l90;
-    int32_t _l91;
-    bool _l92;
+    bool _l80;
+    bool _l81;
 bb0:;
-#line 5613
+#line 5629
     _l63 = (t == loam_typecheck_NO_TYPE);
     if (_l63) goto bb1; else goto bb2;
 bb1:;
-#line 5614
+#line 5630
     _l64 = false;
     return _l64;
 bb2:;
-#line 5616
+#line 5632
     _l65 = loam_typecheck_c_callback_type(t);
     if (_l65) goto bb3; else goto bb4;
 bb3:;
-#line 5617
+#line 5633
     _l66 = true;
     return _l66;
 bb4:;
-#line 5619
+#line 5635
     _l70 = loam_typecheck_tk(t);
     _l71 = 4;
     _l72 = (_l70 == _l71);
@@ -152982,40 +153134,23 @@ bb9:;
 bb10:;
     if (_l67) goto bb11; else goto bb12;
 bb11:;
-#line 5620
+#line 5636
     _l78 = true;
     return _l78;
 bb12:;
-#line 5623
-    _l80 = loam_typecheck_tk(t);
-    _l81 = 11;
-    _l82 = (_l80 == _l81);
-    _l79 = _l82;
-    if (_l82) goto bb13; else goto bb14;
+#line 5640
+    _l80 = loam_typecheck_c_number_buf(t);
+    _l79 = _l80;
+    if (_l80) goto bb14; else goto bb13;
 bb13:;
-    _l86 = loam_types_TYPES.len;
-    (void)loam_idx(t, _l86, "packages/loam/compiler/typecheck.loam", 5623);
-    _l87 = ((Ty *)(loam_types_TYPES.ptr))[t].elem;
-    _l84 = loam_typecheck_c_scalar_type(_l87);
-    _l83 = _l84;
-    if (_l84) goto bb16; else goto bb15;
+    _l81 = loam_typecheck_c_borrowed_buf(t);
+    _l79 = _l81;
+    goto bb14;
 bb14:;
     return _l79;
-bb15:;
-    _l89 = loam_types_TYPES.len;
-    (void)loam_idx(t, _l89, "packages/loam/compiler/typecheck.loam", 5623);
-    _l90 = ((Ty *)(loam_types_TYPES.ptr))[t].elem;
-    _l88 = loam_typecheck_tk(_l90);
-    _l91 = 4;
-    _l92 = (_l88 == _l91);
-    _l83 = _l92;
-    goto bb16;
-bb16:;
-    _l79 = _l83;
-    goto bb14;
 }
 
-#line 5627
+#line 5644
 void loam_typecheck_check_c_fn(int32_t d) {
     NodeBuild _l63;
     NodeBuild _l64;
@@ -153168,21 +153303,21 @@ void loam_typecheck_check_c_fn(int32_t d) {
     int32_t _l215;
     int32_t _l216;
 bb0:;
-#line 5628
+#line 5645
     _l63 = loam_ast_full(d);
     _l64 = _l63;
     loam_keep__NodeBuild(&_l64);
-#line 5629
+#line 5646
     _l65 = _l64.name;
     loam_str_retain(_l65);
     _l66 = _l65;
     loam_str_retain(_l66);
-#line 5630
+#line 5647
     _l67 = _l64.text;
     loam_str_retain(_l67);
     _l68 = _l67;
     loam_str_retain(_l68);
-#line 5631
+#line 5648
     _l70 = _l68.len;
     _l71 = 0;
     _l72 = (_l70 > _l71);
@@ -153191,7 +153326,7 @@ bb0:;
 bb1:;
     _l74 = 0;
     _l75 = _l68.len;
-    (void)loam_idx(_l74, _l75, "packages/loam/compiler/typecheck.loam", 5631);
+    (void)loam_idx(_l74, _l75, "packages/loam/compiler/typecheck.loam", 5648);
     _l76 = ((int64_t)(unsigned char)(_l68.ptr[_l74]));
     _l77 = 48;
     _l78 = (_l76 >= _l77);
@@ -153199,16 +153334,16 @@ bb1:;
     if (_l78) goto bb3; else goto bb4;
 bb2:;
     _l85 = _l69;
-#line 5632
+#line 5649
     _l86 = 0;
     _l87 = _l68.len;
     _l88 = _l86;
     goto bb5;
 bb3:;
-#line 5631
+#line 5648
     _l79 = 0;
     _l80 = _l68.len;
-    (void)loam_idx(_l79, _l80, "packages/loam/compiler/typecheck.loam", 5631);
+    (void)loam_idx(_l79, _l80, "packages/loam/compiler/typecheck.loam", 5648);
     _l81 = ((int64_t)(unsigned char)(_l68.ptr[_l79]));
     _l82 = 57;
     _l83 = (_l81 <= _l82);
@@ -153219,30 +153354,30 @@ bb4:;
     _l69 = _l84;
     goto bb2;
 bb5:;
-#line 5632
+#line 5649
     _l89 = (_l88 < _l87);
     if (_l89) goto bb6; else goto bb8;
 bb6:;
-#line 5633
+#line 5650
     _l90 = ((int64_t)(unsigned char)(_l68.ptr[_l88]));
     _l91 = _l90;
-#line 5634
+#line 5651
     _l93 = 95;
     _l94 = (_l91 == _l93);
     _l92 = _l94;
     if (_l94) goto bb10; else goto bb9;
 bb7:;
-#line 5632
+#line 5649
     _l98 = 1;
     _l99 = (_l88 + _l98);
     _l88 = _l99;
     goto bb5;
 bb8:;
-#line 5638
+#line 5655
     _l100 = (!_l85);
     if (_l100) goto bb13; else goto bb14;
 bb9:;
-#line 5634
+#line 5651
     _l95 = loam_typecheck_is_alnum(_l91);
     _l92 = _l95;
     goto bb10;
@@ -153250,14 +153385,14 @@ bb10:;
     _l96 = (!_l92);
     if (_l96) goto bb11; else goto bb12;
 bb11:;
-#line 5635
+#line 5652
     _l97 = false;
     _l85 = _l97;
     goto bb12;
 bb12:;
     goto bb7;
 bb13:;
-#line 5639
+#line 5656
     _l101 = _l64.loc;
     _l103 = ((loam_str){(const char *)"#[c] symbol '", 13});
     _l104 = ((loam_str){(const char *)"' is not a C identifier", 23});
@@ -153265,24 +153400,24 @@ bb13:;
     loam_typecheck_err(_l101, _l102);
     goto bb14;
 bb14:;
-#line 5641
+#line 5658
     _l105 = ((loam_str){(const char *)"main", 4});
     _l106 = loam_fmt_eq(_l66, _l105);
     if (_l106) goto bb15; else goto bb16;
 bb15:;
-#line 5642
+#line 5659
     _l107 = _l64.loc;
     _l108 = ((loam_str){(const char *)"#[c] cannot apply to main", 25});
     loam_typecheck_err(_l107, _l108);
     goto bb16;
 bb16:;
-#line 5644
+#line 5661
     _l109 = _l64.strs.len;
     _l110 = 0;
     _l111 = (_l109 > _l110);
     if (_l111) goto bb17; else goto bb18;
 bb17:;
-#line 5645
+#line 5662
     _l112 = _l64.loc;
     _l114 = ((loam_str){(const char *)"#[c] fn '", 9});
     _l115 = ((loam_str){(const char *)"' must not be generic", 21});
@@ -153290,10 +153425,10 @@ bb17:;
     loam_typecheck_err(_l112, _l113);
     goto bb18;
 bb18:;
-#line 5647
+#line 5664
     _l116 = _l64.b;
     _l117 = _l116;
-#line 5648
+#line 5665
     _l119 = (_l117 != loam_typecheck_NONE);
     _l118 = _l119;
     if (_l119) goto bb19; else goto bb20;
@@ -153307,7 +153442,7 @@ bb20:;
     if (_l118) goto bb23; else goto bb24;
 bb21:;
     _l125 = loam_ast_NODES.len;
-    (void)loam_idx(_l117, _l125, "packages/loam/compiler/typecheck.loam", 5648);
+    (void)loam_idx(_l117, _l125, "packages/loam/compiler/typecheck.loam", 5665);
     _l126 = ((Node *)(loam_ast_NODES.ptr))[_l117].kids.len;
     _l127 = 0;
     _l128 = (_l126 == _l127);
@@ -153318,7 +153453,7 @@ bb22:;
     _l118 = _l129;
     goto bb20;
 bb23:;
-#line 5649
+#line 5666
     _l130 = _l64.loc;
     _l132 = ((loam_str){(const char *)"#[c] fn '", 9});
     _l133 = ((loam_str){(const char *)"' must be bodyless: C provides it", 33});
@@ -153326,34 +153461,34 @@ bb23:;
     loam_typecheck_err(_l130, _l131);
     goto bb24;
 bb24:;
-#line 5651
+#line 5668
     _l134 = _l64.ty;
     _l135 = _l134;
-#line 5652
+#line 5669
     _l136 = (_l135 != loam_typecheck_NO_TYPE);
     if (_l136) goto bb25; else goto bb26;
 bb25:;
-#line 5653
+#line 5670
     _l138 = loam_types_TYPES.len;
-    (void)loam_idx(_l135, _l138, "packages/loam/compiler/typecheck.loam", 5653);
+    (void)loam_idx(_l135, _l138, "packages/loam/compiler/typecheck.loam", 5670);
     _l139 = ((Ty *)(loam_types_TYPES.ptr))[_l135].params;
     loam_vec_retain(&_l139);
     _l140 = loam_vec_retain(&_l139);
-#line 5654
+#line 5671
     _l141 = 0;
     _l142 = _l140.len;
     _l143 = _l141;
     goto bb27;
 bb26:;
-#line 5673
+#line 5690
     _l212 = loam_ast_INFO.len;
-    (void)loam_idx(d, _l212, "packages/loam/compiler/typecheck.loam", 5673);
+    (void)loam_idx(d, _l212, "packages/loam/compiler/typecheck.loam", 5690);
     _l213 = ((NodeInfo *)(loam_ast_INFO.ptr))[d].marks;
     _l215 = (_l213 | loam_ast_M_INTRINSIC);
     _l216 = loam_ast_INFO.len;
-    (void)loam_idx(d, _l216, "packages/loam/compiler/typecheck.loam", 5673);
+    (void)loam_idx(d, _l216, "packages/loam/compiler/typecheck.loam", 5690);
     ((NodeInfo *)(loam_ast_INFO.ptr))[d].marks = _l215;
-#line 5627
+#line 5644
     loam_str_release(&_l210);
     loam_str_release(&_l209);
     loam_str_release(&_l208);
@@ -153390,49 +153525,49 @@ bb26:;
     loam_rel__NodeBuild(&_l63);
     return;
 bb27:;
-#line 5654
+#line 5671
     _l144 = (_l143 < _l142);
     if (_l144) goto bb28; else goto bb30;
 bb28:;
-#line 5655
+#line 5672
     _l146 = ((int32_t *)(_l140.ptr))[_l143];
     _l145 = loam_typecheck_c_param_type(_l146);
     _l147 = (!_l145);
     if (_l147) goto bb31; else goto bb32;
 bb29:;
-#line 5654
+#line 5671
     _l155 = 1;
     _l156 = (_l143 + _l155);
     _l143 = _l156;
     goto bb27;
 bb30:;
-#line 5659
+#line 5676
     _l157 = loam_ast_c_variadic_fixed(d);
     _l158 = _l157;
-#line 5660
+#line 5677
     _l159 = _l140.len;
     _l160 = (_l158 > _l159);
     if (_l160) goto bb33; else goto bb34;
 bb31:;
-#line 5656
+#line 5673
     _l148 = _l64.loc;
     _l150 = ((loam_str){(const char *)"#[c] fn '", 9});
     _l151 = ((loam_str){(const char *)"': parameter ", 13});
     _l152 = 1;
     _l153 = (_l143 + _l152);
-    _l154 = ((loam_str){(const char *)" has a type C cannot take (use a number, bool, string, [] of numbers or bools, a struct of numbers and bools, or a fn of numbers and bools)", 139});
+    _l154 = ((loam_str){(const char *)" has a type C cannot take (use a number, bool, string, [] or &[] or &mut [] of numbers or bools, a struct of numbers and bools, or a fn of numbers and bools)", 157});
     { uint8_t _id3[20]; int32_t _if3 = loam_decimal_fill(_id3, loam_decimal_magnitude_of((int64_t)(_l153)), (int64_t)(_l153) < 0); int64_t _in = 0 + _l150.len + _l66.len + _l151.len + (int64_t)(20 - _if3) + _l154.len; char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l150.len > 0) { memcpy(_ip + _io, _l150.ptr, (size_t)_l150.len); _io += _l150.len; } if (_l66.len > 0) { memcpy(_ip + _io, _l66.ptr, (size_t)_l66.len); _io += _l66.len; } if (_l151.len > 0) { memcpy(_ip + _io, _l151.ptr, (size_t)_l151.len); _io += _l151.len; } if ((int64_t)(20 - _if3) > 0) { memcpy(_ip + _io, (const char *)_id3 + _if3, (size_t)(int64_t)(20 - _if3)); _io += (int64_t)(20 - _if3); } if (_l154.len > 0) { memcpy(_ip + _io, _l154.ptr, (size_t)_l154.len); _io += _l154.len; } _ip[_in] = 0; _l149 = loam_str_owned(_ip, _in); }
     loam_typecheck_err(_l148, _l149);
     goto bb32;
 bb32:;
-#line 5654
+#line 5671
     loam_str_release(&_l154);
     loam_str_release(&_l151);
     loam_str_release(&_l150);
     loam_str_release(&_l149);
     goto bb29;
 bb33:;
-#line 5661
+#line 5678
     _l161 = _l64.loc;
     _l163 = ((loam_str){(const char *)"#[c] fn '", 9});
     _l164 = ((loam_str){(const char *)"' is variadic after ", 20});
@@ -153442,7 +153577,7 @@ bb33:;
     loam_typecheck_err(_l161, _l162);
     goto bb34;
 bb34:;
-#line 5663
+#line 5680
     _l167 = 0;
     _l168 = _l140.len;
     _l169 = _l167;
@@ -153451,29 +153586,29 @@ bb35:;
     _l170 = (_l169 < _l168);
     if (_l170) goto bb36; else goto bb38;
 bb36:;
-#line 5664
+#line 5681
     _l173 = 0;
     _l174 = (_l158 >= _l173);
     _l172 = _l174;
     if (_l174) goto bb39; else goto bb40;
 bb37:;
-#line 5663
+#line 5680
     _l186 = 1;
     _l187 = (_l169 + _l186);
     _l169 = _l187;
     goto bb35;
 bb38:;
-#line 5668
+#line 5685
     _l188 = loam_types_TYPES.len;
-    (void)loam_idx(_l135, _l188, "packages/loam/compiler/typecheck.loam", 5668);
+    (void)loam_idx(_l135, _l188, "packages/loam/compiler/typecheck.loam", 5685);
     _l189 = ((Ty *)(loam_types_TYPES.ptr))[_l135].ret;
     _l190 = _l189;
-#line 5669
+#line 5686
     _l195 = (_l190 != loam_typecheck_NO_TYPE);
     _l194 = _l195;
     if (_l195) goto bb45; else goto bb46;
 bb39:;
-#line 5664
+#line 5681
     _l175 = (_l169 >= _l158);
     _l172 = _l175;
     goto bb40;
@@ -153489,25 +153624,25 @@ bb41:;
 bb42:;
     if (_l171) goto bb43; else goto bb44;
 bb43:;
-#line 5665
+#line 5682
     _l179 = _l64.loc;
     _l181 = ((loam_str){(const char *)"#[c] fn '", 9});
     _l182 = ((loam_str){(const char *)"': variadic parameter ", 22});
     _l183 = 1;
     _l184 = (_l169 + _l183);
-    _l185 = ((loam_str){(const char *)" must be an i32, u32, i64, u64, f64, string or [] buffer (what C's `...` reads unchanged)", 89});
+    _l185 = ((loam_str){(const char *)" must be an i32, u32, i64, u64, f64, string, or a [] / &[] / &mut [] buffer (what C's `...` reads unchanged)", 108});
     { uint8_t _id3[20]; int32_t _if3 = loam_decimal_fill(_id3, loam_decimal_magnitude_of((int64_t)(_l184)), (int64_t)(_l184) < 0); int64_t _in = 0 + _l181.len + _l66.len + _l182.len + (int64_t)(20 - _if3) + _l185.len; char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l181.len > 0) { memcpy(_ip + _io, _l181.ptr, (size_t)_l181.len); _io += _l181.len; } if (_l66.len > 0) { memcpy(_ip + _io, _l66.ptr, (size_t)_l66.len); _io += _l66.len; } if (_l182.len > 0) { memcpy(_ip + _io, _l182.ptr, (size_t)_l182.len); _io += _l182.len; } if ((int64_t)(20 - _if3) > 0) { memcpy(_ip + _io, (const char *)_id3 + _if3, (size_t)(int64_t)(20 - _if3)); _io += (int64_t)(20 - _if3); } if (_l185.len > 0) { memcpy(_ip + _io, _l185.ptr, (size_t)_l185.len); _io += _l185.len; } _ip[_in] = 0; _l180 = loam_str_owned(_ip, _in); }
     loam_typecheck_err(_l179, _l180);
     goto bb44;
 bb44:;
-#line 5663
+#line 5680
     loam_str_release(&_l185);
     loam_str_release(&_l182);
     loam_str_release(&_l181);
     loam_str_release(&_l180);
     goto bb37;
 bb45:;
-#line 5669
+#line 5686
     _l196 = loam_typecheck_tk(_l190);
     _l197 = 1;
     _l198 = (_l196 != _l197);
@@ -153542,7 +153677,7 @@ bb51:;
 bb52:;
     if (_l191) goto bb53; else goto bb54;
 bb53:;
-#line 5670
+#line 5687
     _l207 = _l64.loc;
     _l209 = ((loam_str){(const char *)"#[c] fn '", 9});
     _l210 = ((loam_str){(const char *)"' returns a type C cannot give (use a number, bool, or string)", 62});
@@ -153553,7 +153688,7 @@ bb54:;
     goto bb26;
 }
 
-#line 5676
+#line 5693
 bool loam_typecheck_user_symbol_mod(int32_t m) {
     bool _l63;
     int32_t _l64;
@@ -153572,14 +153707,14 @@ bool loam_typecheck_user_symbol_mod(int32_t m) {
     loam_str _l77 = {0};
     bool _l78;
 bb0:;
-#line 5677
+#line 5694
     _l64 = 0;
     _l65 = (m == _l64);
     _l63 = _l65;
     if (_l65) goto bb2; else goto bb1;
 bb1:;
     _l68 = loam_typecheck_MODS.len;
-    (void)loam_idx(m, _l68, "packages/loam/compiler/typecheck.loam", 5677);
+    (void)loam_idx(m, _l68, "packages/loam/compiler/typecheck.loam", 5694);
     _l69 = ((Module *)(loam_typecheck_MODS.ptr))[m].path.len;
     _l70 = 0;
     _l71 = (_l69 > _l70);
@@ -153591,7 +153726,7 @@ bb2:;
     return _l63;
 bb3:;
     _l73 = loam_typecheck_MODS.len;
-    (void)loam_idx(m, _l73, "packages/loam/compiler/typecheck.loam", 5677);
+    (void)loam_idx(m, _l73, "packages/loam/compiler/typecheck.loam", 5694);
     _l74 = ((Module *)(loam_typecheck_MODS.ptr))[m].path;
     loam_str_retain(_l74);
     _l72 = loam_typecheck_user_seam_mod(_l74);
@@ -153602,7 +153737,7 @@ bb4:;
     if (_l67) goto bb5; else goto bb6;
 bb5:;
     _l76 = loam_typecheck_MODS.len;
-    (void)loam_idx(m, _l76, "packages/loam/compiler/typecheck.loam", 5677);
+    (void)loam_idx(m, _l76, "packages/loam/compiler/typecheck.loam", 5694);
     _l77 = ((Module *)(loam_typecheck_MODS.ptr))[m].name;
     loam_str_retain(_l77);
     _l75 = loam_typecheck_is_ffi_mod(_l77);
@@ -153614,14 +153749,14 @@ bb6:;
     goto bb2;
 }
 
-#line 5680
+#line 5697
 bool loam_typecheck_ident_char(int32_t c) {
     bool _l63;
     bool _l64;
     int32_t _l65;
     bool _l66;
 bb0:;
-#line 5681
+#line 5698
     _l64 = loam_typecheck_is_alnum(c);
     _l63 = _l64;
     if (_l64) goto bb2; else goto bb1;
@@ -153634,7 +153769,7 @@ bb2:;
     return _l63;
 }
 
-#line 5685
+#line 5702
 void loam_typecheck_claim_runtime_cnames(void) {
     Result__string _l62;
     Result__string _l63;
@@ -153709,50 +153844,50 @@ void loam_typecheck_claim_runtime_cnames(void) {
     int32_t _l132;
     int32_t _l133;
 bb0:;
-#line 5686
+#line 5703
     _l62 = loam_sys_read(loam_typecheck_RT_PATH);
     _l63 = _l62;
     loam_keep__Result__string(&_l63);
-#line 5687
+#line 5704
     _l64 = _l63.tag;
     _l65 = 1;
     _l66 = (_l64 == _l65);
     if (_l66) goto bb1; else goto bb2;
 bb1:;
-#line 5688
+#line 5705
     loam_rel__Result__string(&_l63);
     loam_rel__Result__string(&_l62);
     return;
 bb2:;
-#line 5690
+#line 5707
     _l67 = _l63.val;
     loam_str_retain(_l67);
     _l68 = _l67;
     loam_str_retain(_l68);
-#line 5691
+#line 5708
     _l69 = _l68.len;
     _l70 = _l69;
-#line 5692
+#line 5709
     _l71 = 0;
     _l72 = _l71;
     goto bb3;
 bb3:;
-#line 5693
+#line 5710
     _l73 = 5;
-    _l74 = loam_add_i32(_l72, _l73, "packages/loam/compiler/typecheck.loam", 5693);
+    _l74 = loam_add_i32(_l72, _l73, "packages/loam/compiler/typecheck.loam", 5710);
     _l75 = (_l74 <= _l70);
     if (_l75) goto bb4; else goto bb5;
 bb4:;
-#line 5694
+#line 5711
     _l80 = _l68.len;
-    (void)loam_idx(_l72, _l80, "packages/loam/compiler/typecheck.loam", 5694);
+    (void)loam_idx(_l72, _l80, "packages/loam/compiler/typecheck.loam", 5711);
     _l81 = ((int64_t)(unsigned char)(_l68.ptr[_l72]));
     _l82 = 108;
     _l83 = (_l81 == _l82);
     _l79 = _l83;
     if (_l83) goto bb6; else goto bb7;
 bb5:;
-#line 5685
+#line 5702
     loam_str_release(&_l129);
     loam_str_release(&_l68);
     loam_str_release(&_l67);
@@ -153760,11 +153895,11 @@ bb5:;
     loam_rel__Result__string(&_l62);
     return;
 bb6:;
-#line 5694
+#line 5711
     _l84 = 1;
-    _l85 = loam_add_i32(_l72, _l84, "packages/loam/compiler/typecheck.loam", 5694);
+    _l85 = loam_add_i32(_l72, _l84, "packages/loam/compiler/typecheck.loam", 5711);
     _l86 = _l68.len;
-    (void)loam_idx(_l85, _l86, "packages/loam/compiler/typecheck.loam", 5694);
+    (void)loam_idx(_l85, _l86, "packages/loam/compiler/typecheck.loam", 5711);
     _l87 = ((int64_t)(unsigned char)(_l68.ptr[_l85]));
     _l88 = 111;
     _l89 = (_l87 == _l88);
@@ -153775,9 +153910,9 @@ bb7:;
     if (_l79) goto bb8; else goto bb9;
 bb8:;
     _l90 = 2;
-    _l91 = loam_add_i32(_l72, _l90, "packages/loam/compiler/typecheck.loam", 5694);
+    _l91 = loam_add_i32(_l72, _l90, "packages/loam/compiler/typecheck.loam", 5711);
     _l92 = _l68.len;
-    (void)loam_idx(_l91, _l92, "packages/loam/compiler/typecheck.loam", 5694);
+    (void)loam_idx(_l91, _l92, "packages/loam/compiler/typecheck.loam", 5711);
     _l93 = ((int64_t)(unsigned char)(_l68.ptr[_l91]));
     _l94 = 97;
     _l95 = (_l93 == _l94);
@@ -153788,9 +153923,9 @@ bb9:;
     if (_l78) goto bb10; else goto bb11;
 bb10:;
     _l96 = 3;
-    _l97 = loam_add_i32(_l72, _l96, "packages/loam/compiler/typecheck.loam", 5694);
+    _l97 = loam_add_i32(_l72, _l96, "packages/loam/compiler/typecheck.loam", 5711);
     _l98 = _l68.len;
-    (void)loam_idx(_l97, _l98, "packages/loam/compiler/typecheck.loam", 5694);
+    (void)loam_idx(_l97, _l98, "packages/loam/compiler/typecheck.loam", 5711);
     _l99 = ((int64_t)(unsigned char)(_l68.ptr[_l97]));
     _l100 = 109;
     _l101 = (_l99 == _l100);
@@ -153801,9 +153936,9 @@ bb11:;
     if (_l77) goto bb12; else goto bb13;
 bb12:;
     _l102 = 4;
-    _l103 = loam_add_i32(_l72, _l102, "packages/loam/compiler/typecheck.loam", 5694);
+    _l103 = loam_add_i32(_l72, _l102, "packages/loam/compiler/typecheck.loam", 5711);
     _l104 = _l68.len;
-    (void)loam_idx(_l103, _l104, "packages/loam/compiler/typecheck.loam", 5694);
+    (void)loam_idx(_l103, _l104, "packages/loam/compiler/typecheck.loam", 5711);
     _l105 = ((int64_t)(unsigned char)(_l68.ptr[_l103]));
     _l106 = 95;
     _l107 = (_l105 == _l106);
@@ -153813,22 +153948,22 @@ bb13:;
     _l108 = (!_l76);
     if (_l108) goto bb14; else goto bb15;
 bb14:;
-#line 5695
+#line 5712
     _l109 = 1;
-    _l110 = loam_add_i32(_l72, _l109, "packages/loam/compiler/typecheck.loam", 5695);
+    _l110 = loam_add_i32(_l72, _l109, "packages/loam/compiler/typecheck.loam", 5712);
     _l72 = _l110;
     goto bb3;
 bb15:;
-#line 5698
+#line 5715
     _l112 = 0;
     _l113 = (_l72 > _l112);
     _l111 = _l113;
     if (_l113) goto bb16; else goto bb17;
 bb16:;
     _l115 = 1;
-    _l116 = loam_sub_i32(_l72, _l115, "packages/loam/compiler/typecheck.loam", 5698);
+    _l116 = loam_sub_i32(_l72, _l115, "packages/loam/compiler/typecheck.loam", 5715);
     _l117 = _l68.len;
-    (void)loam_idx(_l116, _l117, "packages/loam/compiler/typecheck.loam", 5698);
+    (void)loam_idx(_l116, _l117, "packages/loam/compiler/typecheck.loam", 5715);
     _l118 = ((int64_t)(unsigned char)(_l68.ptr[_l116]));
     _l114 = loam_typecheck_ident_char(_l118);
     _l111 = _l114;
@@ -153836,37 +153971,37 @@ bb16:;
 bb17:;
     if (_l111) goto bb18; else goto bb19;
 bb18:;
-#line 5699
+#line 5716
     _l119 = 1;
-    _l120 = loam_add_i32(_l72, _l119, "packages/loam/compiler/typecheck.loam", 5699);
+    _l120 = loam_add_i32(_l72, _l119, "packages/loam/compiler/typecheck.loam", 5716);
     _l72 = _l120;
     goto bb3;
 bb19:;
-#line 5702
+#line 5719
     _l121 = _l72;
     goto bb20;
 bb20:;
-#line 5703
+#line 5720
     _l123 = (_l121 < _l70);
     _l122 = _l123;
     if (_l123) goto bb23; else goto bb24;
 bb21:;
-#line 5704
+#line 5721
     _l127 = 1;
-    _l128 = loam_add_i32(_l121, _l127, "packages/loam/compiler/typecheck.loam", 5704);
+    _l128 = loam_add_i32(_l121, _l127, "packages/loam/compiler/typecheck.loam", 5721);
     _l121 = _l128;
     goto bb20;
 bb22:;
-#line 5706
+#line 5723
     _l129 = loam_typecheck_substr(_l68, _l72, _l121);
     loam_typecheck_cname_add(_l129);
-#line 5708
+#line 5725
     _l131 = (_l121 < _l70);
     if (_l131) goto bb25; else goto bb26;
 bb23:;
-#line 5703
+#line 5720
     _l125 = _l68.len;
-    (void)loam_idx(_l121, _l125, "packages/loam/compiler/typecheck.loam", 5703);
+    (void)loam_idx(_l121, _l125, "packages/loam/compiler/typecheck.loam", 5720);
     _l126 = ((int64_t)(unsigned char)(_l68.ptr[_l121]));
     _l124 = loam_typecheck_ident_char(_l126);
     _l122 = _l124;
@@ -153874,9 +154009,9 @@ bb23:;
 bb24:;
     if (_l122) goto bb21; else goto bb22;
 bb25:;
-#line 5708
+#line 5725
     _l132 = 1;
-    _l133 = loam_add_i32(_l121, _l132, "packages/loam/compiler/typecheck.loam", 5708);
+    _l133 = loam_add_i32(_l121, _l132, "packages/loam/compiler/typecheck.loam", 5725);
     _l130 = _l133;
     goto bb27;
 bb26:;
@@ -153884,12 +154019,12 @@ bb26:;
     goto bb27;
 bb27:;
     _l72 = _l130;
-#line 5693
+#line 5710
     loam_str_release(&_l129);
     goto bb3;
 }
 
-#line 5712
+#line 5729
 bool loam_typecheck_is_intrinsic(int32_t d) {
     int32_t _l64;
     int32_t _l65;
@@ -153897,9 +154032,9 @@ bool loam_typecheck_is_intrinsic(int32_t d) {
     int32_t _l68;
     bool _l69;
 bb0:;
-#line 5713
+#line 5730
     _l64 = loam_ast_INFO.len;
-    (void)loam_idx(d, _l64, "packages/loam/compiler/typecheck.loam", 5713);
+    (void)loam_idx(d, _l64, "packages/loam/compiler/typecheck.loam", 5730);
     _l65 = ((NodeInfo *)(loam_ast_INFO.ptr))[d].marks;
     _l67 = (_l65 & loam_ast_M_INTRINSIC);
     _l68 = 0;
@@ -153907,7 +154042,7 @@ bb0:;
     return _l69;
 }
 
-#line 5717
+#line 5734
 void loam_typecheck_dedupe_fn_cnames(void) {
     int32_t _l62;
     int32_t _l63;
@@ -153998,7 +154133,7 @@ void loam_typecheck_dedupe_fn_cnames(void) {
     int32_t _l150;
     int32_t _l151;
 bb0:;
-#line 5718
+#line 5735
     _l62 = 0;
     _l63 = 2;
     _l64 = _l62;
@@ -154007,19 +154142,19 @@ bb1:;
     _l65 = (_l64 < _l63);
     if (_l65) goto bb2; else goto bb4;
 bb2:;
-#line 5719
+#line 5736
     _l66 = 0;
     _l67 = loam_typecheck_MODS.len;
     _l68 = _l66;
     goto bb5;
 bb3:;
-#line 5718
+#line 5735
     _l150 = 1;
     _l151 = (_l64 + _l150);
     _l64 = _l151;
     goto bb1;
 bb4:;
-#line 5717
+#line 5734
     loam_str_release(&_l143);
     loam_str_release(&_l140);
     loam_str_release(&_l139);
@@ -154035,32 +154170,32 @@ bb4:;
     loam_vec_drop(&_l72);
     return;
 bb5:;
-#line 5719
+#line 5736
     _l69 = (_l68 < _l67);
     if (_l69) goto bb6; else goto bb8;
 bb6:;
-#line 5720
+#line 5737
     _l70 = loam_typecheck_user_symbol_mod(_l68);
     _l71 = _l70;
-#line 5721
+#line 5738
     _l73 = loam_typecheck_MODS.len;
-    (void)loam_idx(_l68, _l73, "packages/loam/compiler/typecheck.loam", 5721);
+    (void)loam_idx(_l68, _l73, "packages/loam/compiler/typecheck.loam", 5738);
     _l74 = ((Module *)(loam_typecheck_MODS.ptr))[_l68].root;
     _l72 = loam_typecheck_decls_of(_l74);
     _l75 = loam_vec_move(&_l72);
-#line 5722
+#line 5739
     _l76 = 0;
     _l77 = _l75.len;
     _l78 = _l76;
     goto bb9;
 bb7:;
-#line 5719
+#line 5736
     _l148 = 1;
     _l149 = (_l68 + _l148);
     _l68 = _l149;
     goto bb5;
 bb8:;
-#line 5718
+#line 5735
     loam_str_release(&_l143);
     loam_str_release(&_l140);
     loam_str_release(&_l139);
@@ -154076,26 +154211,26 @@ bb8:;
     loam_vec_drop(&_l72);
     goto bb3;
 bb9:;
-#line 5722
+#line 5739
     _l79 = (_l78 < _l77);
     if (_l79) goto bb10; else goto bb12;
 bb10:;
-#line 5723
+#line 5740
     _l80 = ((int32_t *)(_l75.ptr))[_l78];
     _l81 = _l80;
-#line 5724
+#line 5741
     _l84 = 0;
     _l85 = (_l64 == _l84);
     _l83 = _l85;
     if (_l85) goto bb13; else goto bb14;
 bb11:;
-#line 5722
+#line 5739
     _l146 = 1;
     _l147 = (_l78 + _l146);
     _l78 = _l147;
     goto bb9;
 bb12:;
-#line 5719
+#line 5736
     loam_str_release(&_l143);
     loam_str_release(&_l140);
     loam_str_release(&_l139);
@@ -154111,7 +154246,7 @@ bb12:;
     loam_vec_drop(&_l72);
     goto bb7;
 bb13:;
-#line 5724
+#line 5741
     _l86 = (!_l71);
     _l83 = _l86;
     goto bb14;
@@ -154127,22 +154262,22 @@ bb15:;
 bb16:;
     if (_l82) goto bb17; else goto bb18;
 bb17:;
-#line 5725
+#line 5742
     _l91 = ((loam_str){(const char *)"loam_", 5});
     _l92 = loam_typecheck_MODS.len;
-    (void)loam_idx(_l68, _l92, "packages/loam/compiler/typecheck.loam", 5725);
+    (void)loam_idx(_l68, _l92, "packages/loam/compiler/typecheck.loam", 5742);
     _l93 = ((Module *)(loam_typecheck_MODS.ptr))[_l68].name;
     loam_str_retain(_l93);
     _l94 = ((loam_str){(const char *)"_", 1});
     _l96 = loam_ast_INFO.len;
-    (void)loam_idx(_l81, _l96, "packages/loam/compiler/typecheck.loam", 5725);
+    (void)loam_idx(_l81, _l96, "packages/loam/compiler/typecheck.loam", 5742);
     _l97 = ((NodeInfo *)(loam_ast_INFO.ptr))[_l81].name;
     loam_str_retain(_l97);
     { int64_t _in = 0 + _l91.len + _l93.len + _l94.len + _l97.len; char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l91.len > 0) { memcpy(_ip + _io, _l91.ptr, (size_t)_l91.len); _io += _l91.len; } if (_l93.len > 0) { memcpy(_ip + _io, _l93.ptr, (size_t)_l93.len); _io += _l93.len; } if (_l94.len > 0) { memcpy(_ip + _io, _l94.ptr, (size_t)_l94.len); _io += _l94.len; } if (_l97.len > 0) { memcpy(_ip + _io, _l97.ptr, (size_t)_l97.len); _io += _l97.len; } _ip[_in] = 0; _l90 = loam_str_owned(_ip, _in); }
     loam_typecheck_cname_add(_l90);
     goto bb18;
 bb18:;
-#line 5727
+#line 5744
     _l99 = loam_typecheck_kind(_l81);
     _l100 = 2;
     _l101 = (_l99 != _l100);
@@ -154151,7 +154286,7 @@ bb18:;
 bb19:;
     _l103 = loam_ast_ex(_l81);
     _l104 = loam_ast_EXTRA.len;
-    (void)loam_idx(_l103, _l104, "packages/loam/compiler/typecheck.loam", 5727);
+    (void)loam_idx(_l103, _l104, "packages/loam/compiler/typecheck.loam", 5744);
     _l105 = ((NodeExtra *)(loam_ast_EXTRA.ptr))[_l103].has_sname;
     _l106 = (!_l105);
     _l98 = _l106;
@@ -154159,7 +154294,7 @@ bb19:;
 bb20:;
     if (_l98) goto bb21; else goto bb22;
 bb21:;
-#line 5728
+#line 5745
     loam_str_release(&_l97);
     loam_str_release(&_l94);
     loam_str_release(&_l93);
@@ -154167,21 +154302,21 @@ bb21:;
     loam_str_release(&_l90);
     goto bb11;
 bb22:;
-#line 5730
+#line 5747
     _l108 = loam_typecheck_is_intrinsic(_l81);
     _l107 = _l108;
     if (_l108) goto bb23; else goto bb24;
 bb23:;
     _l109 = loam_ast_ex(_l81);
     _l110 = loam_ast_EXTRA.len;
-    (void)loam_idx(_l109, _l110, "packages/loam/compiler/typecheck.loam", 5730);
+    (void)loam_idx(_l109, _l110, "packages/loam/compiler/typecheck.loam", 5747);
     _l111 = ((NodeExtra *)(loam_ast_EXTRA.ptr))[_l109].has_text;
     _l112 = (!_l111);
     _l107 = _l112;
     goto bb24;
 bb24:;
     _l113 = _l107;
-#line 5731
+#line 5748
     _l116 = (!_l71);
     _l115 = _l116;
     if (_l116) goto bb26; else goto bb25;
@@ -154194,7 +154329,7 @@ bb26:;
 bb27:;
     _l117 = loam_ast_ex(_l81);
     _l118 = loam_ast_EXTRA.len;
-    (void)loam_idx(_l117, _l118, "packages/loam/compiler/typecheck.loam", 5731);
+    (void)loam_idx(_l117, _l118, "packages/loam/compiler/typecheck.loam", 5748);
     _l119 = ((NodeExtra *)(loam_ast_EXTRA.ptr))[_l117].sname;
     _l120 = ((loam_str){(const char *)"main", 4});
     _l121 = loam_fmt_eq(_l119, _l120);
@@ -154202,7 +154337,7 @@ bb27:;
     goto bb28;
 bb28:;
     _l122 = _l114;
-#line 5732
+#line 5749
     _l124 = 0;
     _l125 = (_l64 == _l124);
     _l123 = _l125;
@@ -154213,16 +154348,16 @@ bb29:;
 bb30:;
     if (_l123) goto bb31; else goto bb32;
 bb31:;
-#line 5733
+#line 5750
     _l126 = loam_ast_ex(_l81);
     _l127 = loam_ast_EXTRA.len;
-    (void)loam_idx(_l126, _l127, "packages/loam/compiler/typecheck.loam", 5733);
+    (void)loam_idx(_l126, _l127, "packages/loam/compiler/typecheck.loam", 5750);
     _l128 = ((NodeExtra *)(loam_ast_EXTRA.ptr))[_l126].sname;
     loam_str_retain(_l128);
     loam_typecheck_cname_add(_l128);
     goto bb32;
 bb32:;
-#line 5735
+#line 5752
     _l130 = 1;
     _l131 = (_l64 == _l130);
     _l129 = _l131;
@@ -154234,14 +154369,14 @@ bb33:;
 bb34:;
     if (_l129) goto bb35; else goto bb36;
 bb35:;
-#line 5737
+#line 5754
     _l133 = loam_typecheck_os_primary(_l81);
     _l134 = _l133;
-#line 5738
+#line 5755
     _l136 = (_l134 != _l81);
     if (_l136) goto bb37; else goto bb38;
 bb36:;
-#line 5722
+#line 5739
     loam_str_release(&_l143);
     loam_str_release(&_l140);
     loam_str_release(&_l139);
@@ -154255,10 +154390,10 @@ bb36:;
     loam_str_release(&_l90);
     goto bb11;
 bb37:;
-#line 5738
+#line 5755
     _l137 = loam_ast_ex(_l134);
     _l138 = loam_ast_EXTRA.len;
-    (void)loam_idx(_l137, _l138, "packages/loam/compiler/typecheck.loam", 5738);
+    (void)loam_idx(_l137, _l138, "packages/loam/compiler/typecheck.loam", 5755);
     _l139 = ((NodeExtra *)(loam_ast_EXTRA.ptr))[_l137].sname;
     loam_str_retain(_l139);
     _l135 = _l139;
@@ -154267,7 +154402,7 @@ bb37:;
 bb38:;
     _l141 = loam_ast_ex(_l81);
     _l142 = loam_ast_EXTRA.len;
-    (void)loam_idx(_l141, _l142, "packages/loam/compiler/typecheck.loam", 5738);
+    (void)loam_idx(_l141, _l142, "packages/loam/compiler/typecheck.loam", 5755);
     _l143 = ((NodeExtra *)(loam_ast_EXTRA.ptr))[_l141].sname;
     loam_str_retain(_l143);
     _l140 = loam_typecheck_cname_claim(_l143);
@@ -154277,7 +154412,7 @@ bb38:;
 bb39:;
     _l144 = loam_ast_ex_mut(_l81);
     _l145 = loam_ast_EXTRA.len;
-    (void)loam_idx(_l144, _l145, "packages/loam/compiler/typecheck.loam", 5738);
+    (void)loam_idx(_l144, _l145, "packages/loam/compiler/typecheck.loam", 5755);
     {
         loam_str _repl = ((NodeExtra *)(loam_ast_EXTRA.ptr))[_l144].sname;
         ((NodeExtra *)(loam_ast_EXTRA.ptr))[_l144].sname = _l135;
@@ -154287,7 +154422,7 @@ bb39:;
     goto bb36;
 }
 
-#line 5746
+#line 5763
 int32_t loam_typecheck_typecheck_modules(void) {
     Map__int _l62;
     int32_t _l63;
@@ -154624,9 +154759,9 @@ int32_t loam_typecheck_typecheck_modules(void) {
     int32_t _l400;
     int32_t _l401;
 bb0:;
-#line 5747
+#line 5764
     loam_typecheck_lookup_reset();
-#line 5748
+#line 5765
     _l63 = 1;
     _l64 = (-_l63);
     _l62 = loam_map_new__int(_l64);
@@ -154636,72 +154771,72 @@ bb0:;
     _l62.entries.ptr = NULL; _l62.entries.len = 0; _l62.entries.cap = 0;
     loam_vec_drop_owned(&_repl.entries, sizeof(Entry__int), loam_elem_release_6);
     }
-#line 5749
+#line 5766
     _l65 = loam_vec_new();
     {
         loam_vec _repl = loam_typecheck_OS_DECLS;
         loam_typecheck_OS_DECLS = loam_vec_retain(&_l65);
     loam_vec_drop(&_repl);
     }
-#line 5750
+#line 5767
     _l66 = 0;
     loam_typecheck_Gerr = _l66;
-#line 5751
+#line 5768
     _l67 = 0;
     loam_typecheck_Gcur = _l67;
-#line 5752
+#line 5769
     loam_typecheck_scopes_clear();
-#line 5753
+#line 5770
     _l68 = loam_vec_new();
     {
         loam_vec _repl = loam_typecheck_MONOS;
         loam_typecheck_MONOS = loam_vec_retain(&_l68);
     loam_vec_drop_owned(&_repl, sizeof(Mono), loam_elem_release_14);
     }
-#line 5754
+#line 5771
     _l69 = loam_vec_new();
     {
         loam_vec _repl = loam_typecheck_STRUCT_INSTS;
         loam_typecheck_STRUCT_INSTS = loam_vec_retain(&_l69);
     loam_vec_drop(&_repl);
     }
-#line 5755
+#line 5772
     _l70 = loam_vec_new();
     {
         loam_vec _repl = loam_typecheck_GVARS;
         loam_typecheck_GVARS = loam_vec_retain(&_l70);
     loam_vec_drop_owned(&_repl, sizeof(GVar), loam_elem_release_15);
     }
-#line 5756
+#line 5773
     _l71 = 1;
     loam_typecheck_next_clos_id = _l71;
-#line 5757
+#line 5774
     _l72 = loam_vec_new();
     {
         loam_vec _repl = loam_typecheck_cur_tparams;
         loam_typecheck_cur_tparams = loam_vec_retain(&_l72);
     loam_vec_drop_owned(&_repl, sizeof(loam_str), loam_elem_release_1);
     }
-#line 5758
+#line 5775
     loam_typecheck_cur_clos = loam_typecheck_NONE;
-#line 5759
+#line 5776
     _l73 = -1;
     loam_typecheck_clos_scope = _l73;
-#line 5760
+#line 5777
     _l74 = loam_vec_new();
     {
         loam_vec _repl = loam_typecheck_clos_stack;
         loam_typecheck_clos_stack = loam_vec_retain(&_l74);
     loam_vec_drop(&_repl);
     }
-#line 5761
+#line 5778
     _l75 = loam_vec_new();
     {
         loam_vec _repl = loam_typecheck_clos_scope_stack;
         loam_typecheck_clos_scope_stack = loam_vec_retain(&_l75);
     loam_vec_drop(&_repl);
     }
-#line 5762
+#line 5779
     _l77 = 0;
     _l76 = loam_map_new__int(_l77);
     {
@@ -154710,7 +154845,7 @@ bb0:;
     _l76.entries.ptr = NULL; _l76.entries.len = 0; _l76.entries.cap = 0;
     loam_vec_drop_owned(&_repl.entries, sizeof(Entry__int), loam_elem_release_6);
     }
-#line 5763
+#line 5780
     _l78 = 0;
     _l79 = loam_typecheck_MODS.len;
     _l80 = _l78;
@@ -154719,201 +154854,201 @@ bb1:;
     _l81 = (_l80 < _l79);
     if (_l81) goto bb2; else goto bb4;
 bb2:;
-#line 5764
+#line 5781
     _l83 = loam_typecheck_MODS.len;
-    (void)loam_idx(_l80, _l83, "packages/loam/compiler/typecheck.loam", 5764);
+    (void)loam_idx(_l80, _l83, "packages/loam/compiler/typecheck.loam", 5781);
     _l84 = ((Module *)(loam_typecheck_MODS.ptr))[_l80].root;
     _l82 = loam_typecheck_decls_of(_l84);
     _l85 = loam_vec_move(&_l82);
-#line 5765
+#line 5782
     _l86 = 0;
     _l87 = _l85.len;
     _l88 = _l86;
     goto bb5;
 bb3:;
-#line 5763
+#line 5780
     _l93 = 1;
     _l94 = (_l80 + _l93);
     _l80 = _l94;
     goto bb1;
 bb4:;
-#line 5771
+#line 5788
     _l95 = 0;
     _l96 = loam_typecheck_MODS.len;
     _l97 = _l95;
     goto bb9;
 bb5:;
-#line 5765
+#line 5782
     _l89 = (_l88 < _l87);
     if (_l89) goto bb6; else goto bb8;
 bb6:;
-#line 5766
+#line 5783
     _l90 = ((int32_t *)(_l85.ptr))[_l88];
     loam_typecheck_note_decl_mod(_l90, _l80);
     goto bb7;
 bb7:;
-#line 5765
+#line 5782
     _l91 = 1;
     _l92 = (_l88 + _l91);
     _l88 = _l92;
     goto bb5;
 bb8:;
-#line 5763
+#line 5780
     loam_vec_drop(&_l85);
     loam_vec_drop(&_l82);
     goto bb3;
 bb9:;
-#line 5771
+#line 5788
     _l98 = (_l97 < _l96);
     if (_l98) goto bb10; else goto bb12;
 bb10:;
-#line 5772
+#line 5789
     _l100 = loam_typecheck_MODS.len;
-    (void)loam_idx(_l97, _l100, "packages/loam/compiler/typecheck.loam", 5772);
+    (void)loam_idx(_l97, _l100, "packages/loam/compiler/typecheck.loam", 5789);
     _l101 = ((Module *)(loam_typecheck_MODS.ptr))[_l97].root;
     _l99 = loam_typecheck_decls_of(_l101);
     _l102 = loam_vec_move(&_l99);
-#line 5773
+#line 5790
     _l103 = 0;
     _l104 = _l102.len;
     _l105 = _l103;
     goto bb13;
 bb11:;
-#line 5771
+#line 5788
     _l126 = 1;
     _l127 = (_l97 + _l126);
     _l97 = _l127;
     goto bb9;
 bb12:;
-#line 5787
+#line 5804
     _l128 = 0;
     _l129 = loam_typecheck_MODS.len;
     _l130 = _l128;
     goto bb25;
 bb13:;
-#line 5773
+#line 5790
     _l106 = (_l105 < _l104);
     if (_l106) goto bb14; else goto bb16;
 bb14:;
-#line 5774
+#line 5791
     _l108 = ((int32_t *)(_l102.ptr))[_l105];
     _l107 = loam_typecheck_kind(_l108);
     _l109 = 3;
     _l110 = (_l107 == _l109);
     if (_l110) goto bb17; else goto bb18;
 bb15:;
-#line 5773
+#line 5790
     _l113 = 1;
     _l114 = (_l105 + _l113);
     _l105 = _l114;
     goto bb13;
 bb16:;
-#line 5778
+#line 5795
     _l115 = 0;
     _l116 = _l102.len;
     _l117 = _l115;
     goto bb19;
 bb17:;
-#line 5775
+#line 5792
     _l112 = ((int32_t *)(_l102.ptr))[_l105];
     _l111 = loam_typecheck_struct_type_of(_l112);
     goto bb18;
 bb18:;
     goto bb15;
 bb19:;
-#line 5778
+#line 5795
     _l118 = (_l117 < _l116);
     if (_l118) goto bb20; else goto bb22;
 bb20:;
-#line 5779
+#line 5796
     _l120 = ((int32_t *)(_l102.ptr))[_l117];
     _l119 = loam_typecheck_kind(_l120);
     _l121 = 3;
     _l122 = (_l119 == _l121);
     if (_l122) goto bb23; else goto bb24;
 bb21:;
-#line 5778
+#line 5795
     _l124 = 1;
     _l125 = (_l117 + _l124);
     _l117 = _l125;
     goto bb19;
 bb22:;
-#line 5783
+#line 5800
     loam_typecheck_check_duplicate_decls(_l97);
-#line 5784
+#line 5801
     loam_typecheck_inject_proto_codecs(_l97);
-#line 5785
+#line 5802
     loam_typecheck_inject_json_codecs(_l97);
-#line 5771
+#line 5788
     loam_vec_drop(&_l102);
     loam_vec_drop(&_l99);
     goto bb11;
 bb23:;
-#line 5780
+#line 5797
     _l123 = ((int32_t *)(_l102.ptr))[_l117];
     loam_typecheck_check_struct_size(_l123);
     goto bb24;
 bb24:;
     goto bb21;
 bb25:;
-#line 5787
+#line 5804
     _l131 = (_l130 < _l129);
     if (_l131) goto bb26; else goto bb28;
 bb26:;
-#line 5788
+#line 5805
     _l132 = 0;
     _l133 = (_l130 == _l132);
     _l134 = _l133;
-#line 5789
+#line 5806
     _l136 = loam_typecheck_MODS.len;
-    (void)loam_idx(_l130, _l136, "packages/loam/compiler/typecheck.loam", 5789);
+    (void)loam_idx(_l130, _l136, "packages/loam/compiler/typecheck.loam", 5806);
     _l137 = ((Module *)(loam_typecheck_MODS.ptr))[_l130].root;
     _l135 = loam_typecheck_decls_of(_l137);
     _l138 = loam_vec_move(&_l135);
-#line 5790
+#line 5807
     _l139 = 0;
     _l140 = _l138.len;
     _l141 = _l139;
     goto bb29;
 bb27:;
-#line 5787
+#line 5804
     _l265 = 1;
     _l266 = (_l130 + _l265);
     _l130 = _l266;
     goto bb25;
 bb28:;
-#line 5834
+#line 5851
     loam_typecheck_check_os_variants();
-#line 5835
+#line 5852
     loam_typecheck_claim_runtime_cnames();
-#line 5836
+#line 5853
     loam_typecheck_dedupe_fn_cnames();
-#line 5839
+#line 5856
     _l267 = 0;
     _l268 = loam_typecheck_MODS.len;
     _l269 = _l267;
     goto bb75;
 bb29:;
-#line 5790
+#line 5807
     _l142 = (_l141 < _l140);
     if (_l142) goto bb30; else goto bb32;
 bb30:;
-#line 5791
+#line 5808
     _l143 = ((int32_t *)(_l138.ptr))[_l141];
     _l144 = _l143;
-#line 5792
+#line 5809
     _l145 = loam_typecheck_kind(_l144);
     _l146 = 2;
     _l147 = (_l145 != _l146);
     if (_l147) goto bb33; else goto bb34;
 bb31:;
-#line 5790
+#line 5807
     _l263 = 1;
     _l264 = (_l141 + _l263);
     _l141 = _l264;
     goto bb29;
 bb32:;
-#line 5787
+#line 5804
     loam_str_release(&_l257);
     loam_str_release(&_l256);
     loam_str_release(&_l255);
@@ -154953,13 +155088,13 @@ bb32:;
 bb33:;
     goto bb31;
 bb34:;
-#line 5795
+#line 5812
     _l148 = loam_typecheck_fn_type_of(_l144);
-#line 5796
+#line 5813
     _l149 = loam_ast_full(_l144);
     _l150 = _l149;
     loam_keep__NodeBuild(&_l150);
-#line 5797
+#line 5814
     _l151 = _l150.op;
     _l152 = 2;
     _l153 = (_l151 & _l152);
@@ -154967,17 +155102,17 @@ bb34:;
     _l155 = (_l153 != _l154);
     if (_l155) goto bb35; else goto bb36;
 bb35:;
-#line 5798
+#line 5815
     _l156 = _l150.kids.len;
     _l157 = 0;
     _l158 = (_l156 != _l157);
     if (_l158) goto bb37; else goto bb38;
 bb36:;
-#line 5808
+#line 5825
     _l179 = _l150.has_text;
     if (_l179) goto bb43; else goto bb44;
 bb37:;
-#line 5799
+#line 5816
     _l159 = _l150.loc;
     _l161 = ((loam_str){(const char *)"#[test] fn '", 12});
     _l162 = _l150.name;
@@ -154987,12 +155122,12 @@ bb37:;
     loam_typecheck_err(_l159, _l160);
     goto bb38;
 bb38:;
-#line 5801
+#line 5818
     _l164 = _l150.a;
     _l165 = (_l164 != loam_typecheck_NONE);
     if (_l165) goto bb39; else goto bb40;
 bb39:;
-#line 5802
+#line 5819
     _l166 = _l150.loc;
     _l168 = ((loam_str){(const char *)"#[test] fn '", 12});
     _l169 = _l150.name;
@@ -155002,13 +155137,13 @@ bb39:;
     loam_typecheck_err(_l166, _l167);
     goto bb40;
 bb40:;
-#line 5804
+#line 5821
     _l171 = _l150.strs.len;
     _l172 = 0;
     _l173 = (_l171 > _l172);
     if (_l173) goto bb41; else goto bb42;
 bb41:;
-#line 5805
+#line 5822
     _l174 = _l150.loc;
     _l176 = ((loam_str){(const char *)"#[test] fn '", 12});
     _l177 = _l150.name;
@@ -155020,13 +155155,13 @@ bb41:;
 bb42:;
     goto bb36;
 bb43:;
-#line 5809
+#line 5826
     loam_typecheck_check_c_fn(_l144);
     goto bb44;
 bb44:;
-#line 5811
+#line 5828
     _l182 = loam_typecheck_MODS.len;
-    (void)loam_idx(_l130, _l182, "packages/loam/compiler/typecheck.loam", 5811);
+    (void)loam_idx(_l130, _l182, "packages/loam/compiler/typecheck.loam", 5828);
     _l183 = ((Module *)(loam_typecheck_MODS.ptr))[_l130].name;
     loam_str_retain(_l183);
     _l181 = loam_typecheck_is_ffi_mod(_l183);
@@ -155034,7 +155169,7 @@ bb44:;
     if (_l181) goto bb46; else goto bb45;
 bb45:;
     _l185 = loam_typecheck_MODS.len;
-    (void)loam_idx(_l130, _l185, "packages/loam/compiler/typecheck.loam", 5811);
+    (void)loam_idx(_l130, _l185, "packages/loam/compiler/typecheck.loam", 5828);
     _l186 = ((Module *)(loam_typecheck_MODS.ptr))[_l130].path;
     loam_str_retain(_l186);
     _l184 = loam_typecheck_user_seam_mod(_l186);
@@ -155043,21 +155178,21 @@ bb45:;
 bb46:;
     if (_l180) goto bb47; else goto bb48;
 bb47:;
-#line 5812
+#line 5829
     _l188 = loam_ast_NODES.len;
-    (void)loam_idx(_l144, _l188, "packages/loam/compiler/typecheck.loam", 5812);
+    (void)loam_idx(_l144, _l188, "packages/loam/compiler/typecheck.loam", 5829);
     _l189 = ((Node *)(loam_ast_NODES.ptr))[_l144].b;
     _l190 = _l189;
-#line 5813
+#line 5830
     _l192 = (_l190 == loam_typecheck_NONE);
     _l191 = _l192;
     if (_l192) goto bb50; else goto bb49;
 bb48:;
-#line 5824
+#line 5841
     _l239 = _l134;
     if (_l134) goto bb67; else goto bb68;
 bb49:;
-#line 5813
+#line 5830
     _l194 = loam_typecheck_kind(_l190);
     _l195 = 6;
     _l196 = (_l194 == _l195);
@@ -155067,7 +155202,7 @@ bb50:;
     if (_l191) goto bb53; else goto bb54;
 bb51:;
     _l197 = loam_ast_NODES.len;
-    (void)loam_idx(_l190, _l197, "packages/loam/compiler/typecheck.loam", 5813);
+    (void)loam_idx(_l190, _l197, "packages/loam/compiler/typecheck.loam", 5830);
     _l198 = ((Node *)(loam_ast_NODES.ptr))[_l190].kids.len;
     _l199 = 0;
     _l200 = (_l198 == _l199);
@@ -155077,7 +155212,7 @@ bb52:;
     _l191 = _l193;
     goto bb50;
 bb53:;
-#line 5814
+#line 5831
     _l201 = _l150.name;
     _l202 = ((loam_str){(const char *)"main", 4});
     _l203 = !loam_fmt_eq(_l201, _l202);
@@ -155085,28 +155220,28 @@ bb53:;
 bb54:;
     goto bb48;
 bb55:;
-#line 5815
+#line 5832
     _l205 = loam_ast_INFO.len;
-    (void)loam_idx(_l144, _l205, "packages/loam/compiler/typecheck.loam", 5815);
+    (void)loam_idx(_l144, _l205, "packages/loam/compiler/typecheck.loam", 5832);
     _l206 = ((NodeInfo *)(loam_ast_INFO.ptr))[_l144].marks;
     _l208 = (_l206 | loam_ast_M_INTRINSIC);
     _l209 = loam_ast_INFO.len;
-    (void)loam_idx(_l144, _l209, "packages/loam/compiler/typecheck.loam", 5815);
+    (void)loam_idx(_l144, _l209, "packages/loam/compiler/typecheck.loam", 5832);
     ((NodeInfo *)(loam_ast_INFO.ptr))[_l144].marks = _l208;
     goto bb56;
 bb56:;
-#line 5817
+#line 5834
     _l211 = loam_ast_NODES.len;
-    (void)loam_idx(_l144, _l211, "packages/loam/compiler/typecheck.loam", 5817);
+    (void)loam_idx(_l144, _l211, "packages/loam/compiler/typecheck.loam", 5834);
     _l212 = ((Node *)(loam_ast_NODES.ptr))[_l144].ty;
     _l213 = (_l212 != loam_typecheck_NO_TYPE);
     if (_l213) goto bb57; else goto bb58;
 bb57:;
     _l215 = loam_ast_NODES.len;
-    (void)loam_idx(_l144, _l215, "packages/loam/compiler/typecheck.loam", 5817);
+    (void)loam_idx(_l144, _l215, "packages/loam/compiler/typecheck.loam", 5834);
     _l216 = ((Node *)(loam_ast_NODES.ptr))[_l144].ty;
     _l217 = loam_types_TYPES.len;
-    (void)loam_idx(_l216, _l217, "packages/loam/compiler/typecheck.loam", 5817);
+    (void)loam_idx(_l216, _l217, "packages/loam/compiler/typecheck.loam", 5834);
     _l218 = ((Ty *)(loam_types_TYPES.ptr))[_l216].ret;
     _l210 = _l218;
     goto bb59;
@@ -155115,7 +155250,7 @@ bb58:;
     goto bb59;
 bb59:;
     _l219 = _l210;
-#line 5818
+#line 5835
     _l221 = loam_typecheck_is_intrinsic(_l144);
     _l220 = _l221;
     if (_l221) goto bb60; else goto bb61;
@@ -155128,7 +155263,7 @@ bb60:;
 bb61:;
     if (_l220) goto bb62; else goto bb63;
 bb62:;
-#line 5819
+#line 5836
     _l226 = _l150.a;
     _l227 = (_l226 != loam_typecheck_NONE);
     if (_l227) goto bb64; else goto bb65;
@@ -155137,7 +155272,7 @@ bb63:;
 bb64:;
     _l228 = _l150.a;
     _l229 = loam_ast_INFO.len;
-    (void)loam_idx(_l228, _l229, "packages/loam/compiler/typecheck.loam", 5819);
+    (void)loam_idx(_l228, _l229, "packages/loam/compiler/typecheck.loam", 5836);
     _l230 = ((NodeInfo *)(loam_ast_INFO.ptr))[_l228].loc;
     _l225 = _l230;
     goto bb66;
@@ -155147,7 +155282,7 @@ bb65:;
     goto bb66;
 bb66:;
     _l232 = _l225;
-#line 5820
+#line 5837
     _l234 = ((loam_str){(const char *)"C hook '", 8});
     _l235 = _l150.name;
     loam_str_retain(_l235);
@@ -155158,7 +155293,7 @@ bb66:;
     loam_typecheck_err(_l232, _l233);
     goto bb63;
 bb67:;
-#line 5824
+#line 5841
     _l240 = _l150.name;
     _l241 = ((loam_str){(const char *)"main", 4});
     _l242 = loam_fmt_eq(_l240, _l241);
@@ -155167,11 +155302,11 @@ bb67:;
 bb68:;
     if (_l239) goto bb69; else goto bb70;
 bb69:;
-#line 5825
+#line 5842
     _l243 = ((loam_str){(const char *)"main", 4});
     _l245 = loam_ast_ex_mut(_l144);
     _l246 = loam_ast_EXTRA.len;
-    (void)loam_idx(_l245, _l246, "packages/loam/compiler/typecheck.loam", 5825);
+    (void)loam_idx(_l245, _l246, "packages/loam/compiler/typecheck.loam", 5842);
     {
         loam_str _repl = ((NodeExtra *)(loam_ast_EXTRA.ptr))[_l245].sname;
         ((NodeExtra *)(loam_ast_EXTRA.ptr))[_l245].sname = _l243;
@@ -155182,13 +155317,13 @@ bb69:;
 bb70:;
     if (_l134) goto bb72; else goto bb73;
 bb71:;
-#line 5831
+#line 5848
     _l260 = true;
     _l261 = loam_ast_ex_mut(_l144);
     _l262 = loam_ast_EXTRA.len;
-    (void)loam_idx(_l261, _l262, "packages/loam/compiler/typecheck.loam", 5831);
+    (void)loam_idx(_l261, _l262, "packages/loam/compiler/typecheck.loam", 5848);
     ((NodeExtra *)(loam_ast_EXTRA.ptr))[_l261].has_sname = _l260;
-#line 5790
+#line 5807
     loam_str_release(&_l257);
     loam_str_release(&_l256);
     loam_str_release(&_l255);
@@ -155224,14 +155359,14 @@ bb71:;
     loam_rel__NodeBuild(&_l149);
     goto bb31;
 bb72:;
-#line 5827
+#line 5844
     _l248 = ((loam_str){(const char *)"loam_", 5});
     _l249 = _l150.name;
     loam_str_retain(_l249);
     { int64_t _in = 0 + _l248.len + _l249.len; char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l248.len > 0) { memcpy(_ip + _io, _l248.ptr, (size_t)_l248.len); _io += _l248.len; } if (_l249.len > 0) { memcpy(_ip + _io, _l249.ptr, (size_t)_l249.len); _io += _l249.len; } _ip[_in] = 0; _l247 = loam_str_owned(_ip, _in); }
     _l250 = loam_ast_ex_mut(_l144);
     _l251 = loam_ast_EXTRA.len;
-    (void)loam_idx(_l250, _l251, "packages/loam/compiler/typecheck.loam", 5827);
+    (void)loam_idx(_l250, _l251, "packages/loam/compiler/typecheck.loam", 5844);
     {
         loam_str _repl = ((NodeExtra *)(loam_ast_EXTRA.ptr))[_l250].sname;
         ((NodeExtra *)(loam_ast_EXTRA.ptr))[_l250].sname = _l247;
@@ -155240,10 +155375,10 @@ bb72:;
     }
     goto bb74;
 bb73:;
-#line 5829
+#line 5846
     _l253 = ((loam_str){(const char *)"loam_", 5});
     _l254 = loam_typecheck_MODS.len;
-    (void)loam_idx(_l130, _l254, "packages/loam/compiler/typecheck.loam", 5829);
+    (void)loam_idx(_l130, _l254, "packages/loam/compiler/typecheck.loam", 5846);
     _l255 = ((Module *)(loam_typecheck_MODS.ptr))[_l130].name;
     loam_str_retain(_l255);
     _l256 = ((loam_str){(const char *)"_", 1});
@@ -155252,7 +155387,7 @@ bb73:;
     { int64_t _in = 0 + _l253.len + _l255.len + _l256.len + _l257.len; char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l253.len > 0) { memcpy(_ip + _io, _l253.ptr, (size_t)_l253.len); _io += _l253.len; } if (_l255.len > 0) { memcpy(_ip + _io, _l255.ptr, (size_t)_l255.len); _io += _l255.len; } if (_l256.len > 0) { memcpy(_ip + _io, _l256.ptr, (size_t)_l256.len); _io += _l256.len; } if (_l257.len > 0) { memcpy(_ip + _io, _l257.ptr, (size_t)_l257.len); _io += _l257.len; } _ip[_in] = 0; _l252 = loam_str_owned(_ip, _in); }
     _l258 = loam_ast_ex_mut(_l144);
     _l259 = loam_ast_EXTRA.len;
-    (void)loam_idx(_l258, _l259, "packages/loam/compiler/typecheck.loam", 5829);
+    (void)loam_idx(_l258, _l259, "packages/loam/compiler/typecheck.loam", 5846);
     {
         loam_str _repl = ((NodeExtra *)(loam_ast_EXTRA.ptr))[_l258].sname;
         ((NodeExtra *)(loam_ast_EXTRA.ptr))[_l258].sname = _l252;
@@ -155263,46 +155398,46 @@ bb73:;
 bb74:;
     goto bb71;
 bb75:;
-#line 5839
+#line 5856
     _l270 = (_l269 < _l268);
     if (_l270) goto bb76; else goto bb78;
 bb76:;
-#line 5840
+#line 5857
     _l271 = 0;
     _l272 = loam_typecheck_MODS.len;
     _l273 = _l271;
     goto bb79;
 bb77:;
-#line 5839
+#line 5856
     _l336 = 1;
     _l337 = (_l269 + _l336);
     _l269 = _l337;
     goto bb75;
 bb78:;
-#line 5874
+#line 5891
     _l338 = 0;
     _l339 = loam_typecheck_MODS.len;
     _l340 = _l338;
     goto bb103;
 bb79:;
-#line 5840
+#line 5857
     _l274 = (_l273 < _l272);
     if (_l274) goto bb80; else goto bb82;
 bb80:;
-#line 5841
+#line 5858
     _l275 = loam_typecheck_MODS.len;
-    (void)loam_idx(_l273, _l275, "packages/loam/compiler/typecheck.loam", 5841);
+    (void)loam_idx(_l273, _l275, "packages/loam/compiler/typecheck.loam", 5858);
     _l276 = ((Module *)(loam_typecheck_MODS.ptr))[_l273].rank;
     _l277 = (_l276 != _l269);
     if (_l277) goto bb83; else goto bb84;
 bb81:;
-#line 5840
+#line 5857
     _l334 = 1;
     _l335 = (_l273 + _l334);
     _l273 = _l335;
     goto bb79;
 bb82:;
-#line 5839
+#line 5856
     loam_str_release(&_l324);
     loam_str_release(&_l322);
     loam_str_release(&_l319);
@@ -155327,11 +155462,11 @@ bb82:;
 bb83:;
     goto bb81;
 bb84:;
-#line 5844
+#line 5861
     loam_typecheck_Gcur = _l273;
-#line 5845
+#line 5862
     _l278 = loam_typecheck_MODS.len;
-    (void)loam_idx(_l273, _l278, "packages/loam/compiler/typecheck.loam", 5845);
+    (void)loam_idx(_l273, _l278, "packages/loam/compiler/typecheck.loam", 5862);
     _l279 = ((Module *)(loam_typecheck_MODS.ptr))[_l273].name;
     loam_str_retain(_l279);
     {
@@ -155340,17 +155475,17 @@ bb84:;
             loam_str_retain(loam_typecheck_cur_mod_name);
     loam_str_release(&_repl);
     }
-#line 5846
+#line 5863
     loam_typecheck_check_selective_imports(_l273);
-#line 5847
+#line 5864
     loam_typecheck_scope_push();
-#line 5848
+#line 5865
     _l281 = loam_typecheck_MODS.len;
-    (void)loam_idx(_l273, _l281, "packages/loam/compiler/typecheck.loam", 5848);
+    (void)loam_idx(_l273, _l281, "packages/loam/compiler/typecheck.loam", 5865);
     _l282 = ((Module *)(loam_typecheck_MODS.ptr))[_l273].root;
     _l280 = loam_typecheck_decls_of(_l282);
     _l283 = loam_vec_move(&_l280);
-#line 5849
+#line 5866
     _l284 = 0;
     _l285 = _l283.len;
     _l286 = _l284;
@@ -155359,24 +155494,24 @@ bb85:;
     _l287 = (_l286 < _l285);
     if (_l287) goto bb86; else goto bb88;
 bb86:;
-#line 5850
+#line 5867
     _l288 = ((int32_t *)(_l283.ptr))[_l286];
     _l289 = _l288;
-#line 5851
+#line 5868
     _l290 = loam_typecheck_kind(_l289);
     _l291 = 5;
     _l292 = (_l290 != _l291);
     if (_l292) goto bb89; else goto bb90;
 bb87:;
-#line 5849
+#line 5866
     _l332 = 1;
     _l333 = (_l286 + _l332);
     _l286 = _l333;
     goto bb85;
 bb88:;
-#line 5869
+#line 5886
     loam_typecheck_scope_pop();
-#line 5840
+#line 5857
     loam_str_release(&_l324);
     loam_str_release(&_l322);
     loam_str_release(&_l319);
@@ -155401,16 +155536,16 @@ bb88:;
 bb89:;
     goto bb87;
 bb90:;
-#line 5854
+#line 5871
     loam_typecheck_check_stmt(_l289);
-#line 5855
+#line 5872
     _l293 = loam_typecheck_GVARS.len;
     _l294 = (_l293 >= loam_typecheck_LOAM_MAX_GLOBALS);
     if (_l294) goto bb91; else goto bb92;
 bb91:;
-#line 5856
+#line 5873
     _l295 = loam_ast_INFO.len;
-    (void)loam_idx(_l289, _l295, "packages/loam/compiler/typecheck.loam", 5856);
+    (void)loam_idx(_l289, _l295, "packages/loam/compiler/typecheck.loam", 5873);
     _l296 = ((NodeInfo *)(loam_ast_INFO.ptr))[_l289].loc;
     _l298 = ((loam_str){(const char *)"too many module globals (max ", 29});
     _l299 = ((loam_str){(const char *)")", 1});
@@ -155418,12 +155553,12 @@ bb91:;
     loam_typecheck_err(_l296, _l297);
     goto bb93;
 bb92:;
-#line 5858
+#line 5875
     _l301 = 0;
     _l302 = (_l273 == _l301);
     if (_l302) goto bb94; else goto bb95;
 bb93:;
-#line 5849
+#line 5866
     loam_str_release(&_l324);
     loam_str_release(&_l322);
     loam_str_release(&_l319);
@@ -155443,10 +155578,10 @@ bb93:;
     loam_str_release(&_l297);
     goto bb87;
 bb94:;
-#line 5858
+#line 5875
     _l304 = ((loam_str){(const char *)"loam_", 5});
     _l305 = loam_ast_INFO.len;
-    (void)loam_idx(_l289, _l305, "packages/loam/compiler/typecheck.loam", 5858);
+    (void)loam_idx(_l289, _l305, "packages/loam/compiler/typecheck.loam", 5875);
     _l306 = ((NodeInfo *)(loam_ast_INFO.ptr))[_l289].name;
     loam_str_retain(_l306);
     { int64_t _in = 0 + _l304.len + _l306.len; char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l304.len > 0) { memcpy(_ip + _io, _l304.ptr, (size_t)_l304.len); _io += _l304.len; } if (_l306.len > 0) { memcpy(_ip + _io, _l306.ptr, (size_t)_l306.len); _io += _l306.len; } _ip[_in] = 0; _l303 = loam_str_owned(_ip, _in); }
@@ -155456,12 +155591,12 @@ bb94:;
 bb95:;
     _l308 = ((loam_str){(const char *)"loam_", 5});
     _l309 = loam_typecheck_MODS.len;
-    (void)loam_idx(_l273, _l309, "packages/loam/compiler/typecheck.loam", 5858);
+    (void)loam_idx(_l273, _l309, "packages/loam/compiler/typecheck.loam", 5875);
     _l310 = ((Module *)(loam_typecheck_MODS.ptr))[_l273].name;
     loam_str_retain(_l310);
     _l311 = ((loam_str){(const char *)"_", 1});
     _l312 = loam_ast_INFO.len;
-    (void)loam_idx(_l289, _l312, "packages/loam/compiler/typecheck.loam", 5858);
+    (void)loam_idx(_l289, _l312, "packages/loam/compiler/typecheck.loam", 5875);
     _l313 = ((NodeInfo *)(loam_ast_INFO.ptr))[_l289].name;
     loam_str_retain(_l313);
     { int64_t _in = 0 + _l308.len + _l310.len + _l311.len + _l313.len; char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (_l308.len > 0) { memcpy(_ip + _io, _l308.ptr, (size_t)_l308.len); _io += _l308.len; } if (_l310.len > 0) { memcpy(_ip + _io, _l310.ptr, (size_t)_l310.len); _io += _l310.len; } if (_l311.len > 0) { memcpy(_ip + _io, _l311.ptr, (size_t)_l311.len); _io += _l311.len; } if (_l313.len > 0) { memcpy(_ip + _io, _l313.ptr, (size_t)_l313.len); _io += _l313.len; } _ip[_in] = 0; _l307 = loam_str_owned(_ip, _in); }
@@ -155471,7 +155606,7 @@ bb95:;
 bb96:;
     _l314 = _l300;
     loam_str_retain(_l314);
-#line 5859
+#line 5876
     _l316 = _l314.len;
     _l317 = 255;
     _l318 = (_l316 > _l317);
@@ -155490,11 +155625,11 @@ bb98:;
 bb99:;
     _l322 = _l315;
     loam_str_retain(_l322);
-#line 5860
+#line 5877
     _l323 = loam_typecheck_user_symbol_mod(_l273);
     if (_l323) goto bb100; else goto bb101;
 bb100:;
-#line 5861
+#line 5878
     _l324 = loam_typecheck_cname_claim(_l322);
     {
         loam_str _repl = _l322;
@@ -155504,34 +155639,34 @@ bb100:;
     }
     goto bb102;
 bb101:;
-#line 5863
+#line 5880
     loam_typecheck_cname_add(_l322);
     goto bb102;
 bb102:;
-#line 5865
+#line 5882
     _l325 = &loam_typecheck_GVARS;
     _l326 = (GVar){ .var = _l289, .cname = _l322, .mod = _l273 };
     loam_str_retain(_l326.cname);
-    loam_vec_push_take(_l325, &_l326, sizeof(GVar), loam_elem_retain_15, "packages/loam/compiler/typecheck.loam", 5865);
-#line 5866
+    loam_vec_push_take(_l325, &_l326, sizeof(GVar), loam_elem_retain_15, "packages/loam/compiler/typecheck.loam", 5882);
+#line 5883
     _l327 = loam_ast_INFO.len;
-    (void)loam_idx(_l289, _l327, "packages/loam/compiler/typecheck.loam", 5866);
+    (void)loam_idx(_l289, _l327, "packages/loam/compiler/typecheck.loam", 5883);
     _l328 = ((NodeInfo *)(loam_ast_INFO.ptr))[_l289].marks;
     _l330 = (_l328 | loam_ast_M_GLOBAL_VAR);
     _l331 = loam_ast_INFO.len;
-    (void)loam_idx(_l289, _l331, "packages/loam/compiler/typecheck.loam", 5866);
+    (void)loam_idx(_l289, _l331, "packages/loam/compiler/typecheck.loam", 5883);
     ((NodeInfo *)(loam_ast_INFO.ptr))[_l289].marks = _l330;
     goto bb93;
 bb103:;
-#line 5874
+#line 5891
     _l341 = (_l340 < _l339);
     if (_l341) goto bb104; else goto bb106;
 bb104:;
-#line 5875
+#line 5892
     loam_typecheck_Gcur = _l340;
-#line 5876
+#line 5893
     _l342 = loam_typecheck_MODS.len;
-    (void)loam_idx(_l340, _l342, "packages/loam/compiler/typecheck.loam", 5876);
+    (void)loam_idx(_l340, _l342, "packages/loam/compiler/typecheck.loam", 5893);
     _l343 = ((Module *)(loam_typecheck_MODS.ptr))[_l340].name;
     loam_str_retain(_l343);
     {
@@ -155540,27 +155675,27 @@ bb104:;
             loam_str_retain(loam_typecheck_cur_mod_name);
     loam_str_release(&_repl);
     }
-#line 5877
+#line 5894
     loam_typecheck_scope_push();
-#line 5878
+#line 5895
     _l344 = 0;
     _l345 = loam_typecheck_GVARS.len;
     _l346 = _l344;
     goto bb107;
 bb105:;
-#line 5874
+#line 5891
     _l400 = 1;
     _l401 = (_l340 + _l400);
     _l340 = _l401;
     goto bb103;
 bb106:;
-#line 5898
+#line 5915
     loam_typecheck_check_boxed_tparams();
-#line 5899
+#line 5916
     loam_typecheck_instantiate_nested();
-#line 5900
+#line 5917
     loam_typecheck_scopes_clear();
-#line 5901
+#line 5918
     loam_str_release(&_l391);
     loam_str_release(&_l382);
     loam_vec_drop(&_l368);
@@ -155637,30 +155772,30 @@ bb106:;
     loam_vec_drop_owned(&_l62.entries, sizeof(Entry__int), loam_elem_release_6);
     return loam_typecheck_Gerr;
 bb107:;
-#line 5878
+#line 5895
     _l347 = (_l346 < _l345);
     if (_l347) goto bb108; else goto bb110;
 bb108:;
-#line 5879
+#line 5896
     _l348 = loam_typecheck_GVARS.len;
-    (void)loam_idx(_l346, _l348, "packages/loam/compiler/typecheck.loam", 5879);
+    (void)loam_idx(_l346, _l348, "packages/loam/compiler/typecheck.loam", 5896);
     _l349 = ((GVar *)(loam_typecheck_GVARS.ptr))[_l346].mod;
     _l350 = (_l349 != _l340);
     if (_l350) goto bb111; else goto bb112;
 bb109:;
-#line 5878
+#line 5895
     _l363 = 1;
     _l364 = (_l346 + _l363);
     _l346 = _l364;
     goto bb107;
 bb110:;
-#line 5885
+#line 5902
     _l366 = loam_typecheck_MODS.len;
-    (void)loam_idx(_l340, _l366, "packages/loam/compiler/typecheck.loam", 5885);
+    (void)loam_idx(_l340, _l366, "packages/loam/compiler/typecheck.loam", 5902);
     _l367 = ((Module *)(loam_typecheck_MODS.ptr))[_l340].root;
     _l365 = loam_typecheck_decls_of(_l367);
     _l368 = loam_vec_move(&_l365);
-#line 5886
+#line 5903
     _l369 = 0;
     _l370 = _l368.len;
     _l371 = _l369;
@@ -155668,54 +155803,54 @@ bb110:;
 bb111:;
     goto bb109;
 bb112:;
-#line 5882
+#line 5899
     _l351 = loam_typecheck_GVARS.len;
-    (void)loam_idx(_l346, _l351, "packages/loam/compiler/typecheck.loam", 5882);
+    (void)loam_idx(_l346, _l351, "packages/loam/compiler/typecheck.loam", 5899);
     _l352 = ((GVar *)(loam_typecheck_GVARS.ptr))[_l346].var;
     _l353 = _l352;
-#line 5883
+#line 5900
     _l354 = loam_ast_INFO.len;
-    (void)loam_idx(_l353, _l354, "packages/loam/compiler/typecheck.loam", 5883);
+    (void)loam_idx(_l353, _l354, "packages/loam/compiler/typecheck.loam", 5900);
     _l355 = ((NodeInfo *)(loam_ast_INFO.ptr))[_l353].name;
     loam_str_retain(_l355);
     _l356 = loam_ast_NODES.len;
-    (void)loam_idx(_l353, _l356, "packages/loam/compiler/typecheck.loam", 5883);
+    (void)loam_idx(_l353, _l356, "packages/loam/compiler/typecheck.loam", 5900);
     _l357 = ((Node *)(loam_ast_NODES.ptr))[_l353].ty;
     _l358 = loam_ast_NODES.len;
-    (void)loam_idx(_l353, _l358, "packages/loam/compiler/typecheck.loam", 5883);
+    (void)loam_idx(_l353, _l358, "packages/loam/compiler/typecheck.loam", 5900);
     _l359 = ((Node *)(loam_ast_NODES.ptr))[_l353].op;
     _l360 = 0;
     _l361 = loam_ast_INFO.len;
-    (void)loam_idx(_l353, _l361, "packages/loam/compiler/typecheck.loam", 5883);
+    (void)loam_idx(_l353, _l361, "packages/loam/compiler/typecheck.loam", 5900);
     _l362 = ((NodeInfo *)(loam_ast_INFO.ptr))[_l353].loc;
     loam_typecheck_scope_add(_l355, _l357, _l359, _l360, _l362, _l353);
-#line 5878
+#line 5895
     loam_str_release(&_l355);
     goto bb109;
 bb113:;
-#line 5886
+#line 5903
     _l372 = (_l371 < _l370);
     if (_l372) goto bb114; else goto bb116;
 bb114:;
-#line 5887
+#line 5904
     _l373 = ((int32_t *)(_l368.ptr))[_l371];
     _l374 = _l373;
-#line 5888
+#line 5905
     _l377 = loam_typecheck_kind(_l374);
     _l378 = 3;
     _l379 = (_l377 == _l378);
     _l376 = _l379;
     if (_l379) goto bb117; else goto bb118;
 bb115:;
-#line 5886
+#line 5903
     _l398 = 1;
     _l399 = (_l371 + _l398);
     _l371 = _l399;
     goto bb113;
 bb116:;
-#line 5895
+#line 5912
     loam_typecheck_scope_pop();
-#line 5874
+#line 5891
     loam_str_release(&_l391);
     loam_str_release(&_l382);
     loam_vec_drop(&_l368);
@@ -155724,9 +155859,9 @@ bb116:;
     loam_str_release(&_l343);
     goto bb105;
 bb117:;
-#line 5888
+#line 5905
     _l380 = loam_ast_INFO.len;
-    (void)loam_idx(_l374, _l380, "packages/loam/compiler/typecheck.loam", 5888);
+    (void)loam_idx(_l374, _l380, "packages/loam/compiler/typecheck.loam", 5905);
     _l381 = ((NodeInfo *)(loam_ast_INFO.ptr))[_l374].name;
     _l382 = ((loam_str){(const char *)"Box", 3});
     _l383 = loam_fmt_eq(_l381, _l382);
@@ -155738,7 +155873,7 @@ bb118:;
 bb119:;
     _l384 = loam_ast_ex(_l374);
     _l385 = loam_ast_EXTRA.len;
-    (void)loam_idx(_l384, _l385, "packages/loam/compiler/typecheck.loam", 5888);
+    (void)loam_idx(_l384, _l385, "packages/loam/compiler/typecheck.loam", 5905);
     _l386 = ((NodeExtra *)(loam_ast_EXTRA.ptr))[_l384].strs.len;
     _l387 = 0;
     _l388 = (_l386 > _l387);
@@ -155747,15 +155882,15 @@ bb119:;
 bb120:;
     if (_l375) goto bb121; else goto bb122;
 bb121:;
-#line 5889
+#line 5906
     _l389 = loam_ast_INFO.len;
-    (void)loam_idx(_l374, _l389, "packages/loam/compiler/typecheck.loam", 5889);
+    (void)loam_idx(_l374, _l389, "packages/loam/compiler/typecheck.loam", 5906);
     _l390 = ((NodeInfo *)(loam_ast_INFO.ptr))[_l374].loc;
     _l391 = ((loam_str){(const char *)"'Box' is the heap-box keyword; a struct named Box cannot take type arguments — name it something else", 103});
     loam_typecheck_err(_l390, _l391);
     goto bb122;
 bb122:;
-#line 5891
+#line 5908
     _l393 = loam_typecheck_kind(_l374);
     _l394 = 2;
     _l395 = (_l393 == _l394);
@@ -155769,11 +155904,11 @@ bb123:;
 bb124:;
     if (_l392) goto bb125; else goto bb126;
 bb125:;
-#line 5892
+#line 5909
     loam_typecheck_check_fn(_l374);
     goto bb126;
 bb126:;
-#line 5886
+#line 5903
     loam_str_release(&_l391);
     loam_str_release(&_l382);
     goto bb115;
@@ -161635,26 +161770,27 @@ static loam_str loam_sys_exec_os(loam_str cmd) {
     int32_t _l35;
     bool _l36;
     int64_t _l37;
-    int64_t _l38;
+    loam_vec * _l38;
     int64_t _l39;
-    int32_t _l40;
+    int64_t _l40;
     int32_t _l41;
     int32_t _l42;
-    bool _l43;
-    loam_vec * _l44;
-    const loam_vec * _l45;
-    int32_t _l46;
+    int32_t _l43;
+    bool _l44;
+    loam_vec * _l45;
+    const loam_vec * _l46;
     int32_t _l47;
-    bool _l48;
-    loam_vec * _l49;
-    int32_t _l50;
-    uint8_t _l51;
-    int32_t _l52;
+    int32_t _l48;
+    bool _l49;
+    loam_vec * _l50;
+    int32_t _l51;
+    uint8_t _l52;
     int32_t _l53;
     int32_t _l54;
     int32_t _l55;
-    loam_str _l56;
-    loam_vec _l57;
+    int32_t _l56;
+    loam_str _l57;
+    loam_vec _l58;
 bb0:;
 #line 315
     _l14 = cmd.len;
@@ -161711,59 +161847,57 @@ bb7:;
     if (_l36) goto bb8; else goto bb9;
 bb8:;
 #line 327
-    _l38 = 1;
-    _l39 = 512;
-        {
-        loam_vec_retain(&_l33);
-    _l37 = loam_sys_c_fread(_l33, _l38, _l39, _l24);
-    }
-    _l40 = loam_conv_i32((int64_t)_l37, "sys.loam", 327);
-    _l41 = _l40;
+    _l38 = &_l33;
+    _l39 = 1;
+    _l40 = 512;
+    _l37 = loam_sys_c_fread(_l38, _l39, _l40, _l24);
+    _l41 = loam_conv_i32((int64_t)_l37, "sys.loam", 327);
+    _l42 = _l41;
 #line 328
-    _l42 = 512;
-    _l43 = (_l41 == _l42);
-    if (_l43) goto bb10; else goto bb11;
+    _l43 = 512;
+    _l44 = (_l42 == _l43);
+    if (_l44) goto bb10; else goto bb11;
 bb9:;
 #line 337
-    _l55 = loam_sys_c_pclose(_l24);
-    _l54 = loam_sys_exit_code(_l55);
-    loam_sys_last_status = _l54;
+    _l56 = loam_sys_c_pclose(_l24);
+    _l55 = loam_sys_exit_code(_l56);
+    loam_sys_last_status = _l55;
 #line 338
-    _l57 = loam_vec_move(&_l30);
-    _l56 = loam_string_from_u8(_l57);
+    _l58 = loam_vec_move(&_l30);
+    _l57 = loam_string_from_u8(_l58);
     loam_vec_drop(&_l33);
     loam_vec_drop(&_l31);
     loam_vec_drop(&_l30);
     loam_vec_drop(&_l29);
     loam_str_release(&_l23);
-    return _l56;
+    return _l57;
 bb10:;
 #line 329
-    _l44 = &_l30;
-    _l45 = &_l33;
-    loam_buf_push_bytes(_l44, _l45);
+    _l45 = &_l30;
+    _l46 = &_l33;
+    loam_buf_push_bytes(_l45, _l46);
     goto bb7;
 bb11:;
 #line 332
-    _l46 = 0;
-    _l47 = _l46;
+    _l47 = 0;
+    _l48 = _l47;
     goto bb12;
 bb12:;
-    _l48 = (_l47 < _l41);
-    if (_l48) goto bb13; else goto bb15;
+    _l49 = (_l48 < _l42);
+    if (_l49) goto bb13; else goto bb15;
 bb13:;
 #line 333
-    _l49 = &_l30;
-    _l50 = _l33.len;
-    (void)loam_idx(_l47, _l50, "sys.loam", 333);
-    _l51 = ((uint8_t *)(_l33.ptr))[_l47];
-    loam_vec_push(_l49, &_l51, sizeof(uint8_t), "sys.loam", 333);
+    _l50 = &_l30;
+    _l51 = _l33.len;
+    (void)loam_idx(_l48, _l51, "sys.loam", 333);
+    _l52 = ((uint8_t *)(_l33.ptr))[_l48];
+    loam_vec_push(_l50, &_l52, sizeof(uint8_t), "sys.loam", 333);
     goto bb14;
 bb14:;
 #line 332
-    _l52 = 1;
-    _l53 = (_l47 + _l52);
-    _l47 = _l53;
+    _l53 = 1;
+    _l54 = (_l48 + _l53);
+    _l48 = _l54;
     goto bb12;
 bb15:;
     goto bb9;
@@ -161925,26 +162059,27 @@ static loam_str loam_sys_read_sized(loam_str path) {
     int32_t _l60;
     loam_vec _l61;
     int64_t _l62;
-    int64_t _l63;
+    loam_vec * _l63;
     int64_t _l64;
-    bool _l65;
+    int64_t _l65;
     bool _l66;
-    int32_t _l67;
+    bool _l67;
     int32_t _l68;
-    bool _l69;
-    loam_str _l70 = {0};
-    int32_t _l71;
-    int64_t _l72;
-    bool _l73;
-    loam_str _l74;
+    int32_t _l69;
+    bool _l70;
+    loam_str _l71 = {0};
+    int32_t _l72;
+    int64_t _l73;
+    bool _l74;
     loam_str _l75;
-    loam_vec _l76;
-    loam_str _l77;
+    loam_str _l76;
+    loam_vec _l77;
     loam_str _l78;
-    bool _l79;
-    loam_str _l80 = {0};
-    int32_t _l81;
+    loam_str _l79;
+    bool _l80;
+    loam_str _l81 = {0};
     int32_t _l82;
+    int32_t _l83;
 bb0:;
 #line 420
     _l14 = path.len;
@@ -162068,16 +162203,14 @@ bb15:;
     _l59 = loam_buf_with_len(_l60);
     _l61 = loam_vec_move(&_l59);
 #line 443
-    _l63 = 1;
-        {
-        loam_vec_retain(&_l61);
-    _l62 = loam_sys_c_fread(_l61, _l63, _l43, _l29);
-    }
-    _l64 = _l62;
+    _l63 = &_l61;
+    _l64 = 1;
+    _l62 = loam_sys_c_fread(_l63, _l64, _l43, _l29);
+    _l65 = _l62;
 #line 444
-    _l66 = (_l64 < _l43);
-    _l65 = _l66;
-    if (_l66) goto bb19; else goto bb20;
+    _l67 = (_l65 < _l43);
+    _l66 = _l67;
+    if (_l67) goto bb19; else goto bb20;
 bb16:;
 #line 437
     _l52 = ((loam_str){(const char *)"not a regular file", 18});
@@ -162107,67 +162240,67 @@ bb18:;
     return _l55;
 bb19:;
 #line 444
-    _l67 = loam_sys_c_ferror(_l29);
-    _l68 = 0;
-    _l69 = (_l67 != _l68);
-    _l65 = _l69;
+    _l68 = loam_sys_c_ferror(_l29);
+    _l69 = 0;
+    _l70 = (_l68 != _l69);
+    _l66 = _l70;
     goto bb20;
 bb20:;
-    if (_l65) goto bb21; else goto bb22;
+    if (_l66) goto bb21; else goto bb22;
 bb21:;
 #line 445
-    _l70 = ((loam_str){(const char *)"read error", 10});
+    _l71 = ((loam_str){(const char *)"read error", 10});
     {
         loam_str _repl = loam_sys_last_error;
-        loam_sys_last_error = _l70;
+        loam_sys_last_error = _l71;
             loam_str_retain(loam_sys_last_error);
     loam_str_release(&_repl);
     }
     goto bb22;
 bb22:;
 #line 447
-    _l71 = loam_sys_c_fclose(_l29);
+    _l72 = loam_sys_c_fclose(_l29);
 #line 448
-    _l72 = 0;
-    _l73 = (_l64 == _l72);
-    if (_l73) goto bb23; else goto bb24;
+    _l73 = 0;
+    _l74 = (_l65 == _l73);
+    if (_l74) goto bb23; else goto bb24;
 bb23:;
 #line 449
-    _l74 = ((loam_str){(const char *)"", 0});
-    loam_str_release(&_l70);
+    _l75 = ((loam_str){(const char *)"", 0});
+    loam_str_release(&_l71);
     loam_vec_drop(&_l61);
     loam_vec_drop(&_l59);
     loam_str_release(&_l28);
-    return _l74;
+    return _l75;
 bb24:;
 #line 451
-    _l76 = loam_vec_move(&_l61);
-    _l75 = loam_string_from_u8(_l76);
-    _l77 = _l75;
-    loam_str_retain(_l77);
-#line 452
-    _l79 = (_l64 < _l43);
-    if (_l79) goto bb25; else goto bb26;
-bb25:;
-    _l81 = 0;
-    _l82 = loam_conv_i32((int64_t)_l64, "sys.loam", 452);
-    _l80 = loam_str_slice(_l77, _l81, _l82);
-    _l78 = _l80;
+    _l77 = loam_vec_move(&_l61);
+    _l76 = loam_string_from_u8(_l77);
+    _l78 = _l76;
     loam_str_retain(_l78);
+#line 452
+    _l80 = (_l65 < _l43);
+    if (_l80) goto bb25; else goto bb26;
+bb25:;
+    _l82 = 0;
+    _l83 = loam_conv_i32((int64_t)_l65, "sys.loam", 452);
+    _l81 = loam_str_slice(_l78, _l82, _l83);
+    _l79 = _l81;
+    loam_str_retain(_l79);
     goto bb27;
 bb26:;
-    _l78 = _l77;
-    loam_str_retain(_l78);
+    _l79 = _l78;
+    loam_str_retain(_l79);
     goto bb27;
 bb27:;
-    loam_str_release(&_l80);
-    loam_str_release(&_l77);
-    loam_str_release(&_l75);
-    loam_str_release(&_l70);
+    loam_str_release(&_l81);
+    loam_str_release(&_l78);
+    loam_str_release(&_l76);
+    loam_str_release(&_l71);
     loam_vec_drop(&_l61);
     loam_vec_drop(&_l59);
     loam_str_release(&_l28);
-    return _l78;
+    return _l79;
 }
 
 #endif
@@ -162265,15 +162398,16 @@ static int32_t loam_sys_write_bytes_os(loam_str path, loam_vec b) {
     int32_t _l22;
     bool _l23;
     int64_t _l24;
-    int64_t _l25;
-    int32_t _l26;
-    int64_t _l27;
-    int32_t _l28;
-    int64_t _l29;
-    bool _l30;
-    int32_t _l31;
+    const loam_vec * _l25;
+    int64_t _l26;
+    int32_t _l27;
+    int64_t _l28;
+    int32_t _l29;
+    int64_t _l30;
+    bool _l31;
     int32_t _l32;
     int32_t _l33;
+    int32_t _l34;
 bb0:;
 #line 512
     _l15 = ((loam_str){(const char *)"wb", 2});
@@ -162297,34 +162431,32 @@ bb2:;
     _l20 = _l23;
     if (_l23) goto bb3; else goto bb4;
 bb3:;
-    _l25 = 1;
-    _l26 = b.len;
-    _l27 = (int64_t)_l26;
-        {
-        loam_vec_retain(&b);
-    _l24 = loam_sys_c_fwrite_buf(b, _l25, _l27, _l16);
-    }
-    _l28 = b.len;
-    _l29 = (int64_t)_l28;
-    _l30 = (_l24 != _l29);
-    _l20 = _l30;
+    _l25 = &b;
+    _l26 = 1;
+    _l27 = b.len;
+    _l28 = (int64_t)_l27;
+    _l24 = loam_sys_c_fwrite_buf(_l25, _l26, _l28, _l16);
+    _l29 = b.len;
+    _l30 = (int64_t)_l29;
+    _l31 = (_l24 != _l30);
+    _l20 = _l31;
     goto bb4;
 bb4:;
     if (_l20) goto bb5; else goto bb6;
 bb5:;
 #line 517
-    _l31 = loam_sys_c_fclose(_l16);
+    _l32 = loam_sys_c_fclose(_l16);
 #line 518
-    _l32 = 1;
-    loam_str_release(&_l15);
-    loam_vec_drop(&b);
-    return _l32;
-bb6:;
-#line 520
-    _l33 = loam_sys_c_fclose(_l16);
+    _l33 = 1;
     loam_str_release(&_l15);
     loam_vec_drop(&b);
     return _l33;
+bb6:;
+#line 520
+    _l34 = loam_sys_c_fclose(_l16);
+    loam_str_release(&_l15);
+    loam_vec_drop(&b);
+    return _l34;
 }
 
 #endif
@@ -162340,17 +162472,17 @@ bb0:;
 }
 
 #endif
-#line 538
+#line 537
 static int64_t loam_sys_mtime(loam_str path) {
     int64_t _l13;
 bb0:;
-#line 539
+#line 538
     _l13 = loam_sys_mtime_os(path);
     return _l13;
 }
 
 #if defined(__APPLE__) || defined(__linux__) || defined(_WIN32) || (!defined(__APPLE__) && !defined(__linux__) && !defined(_WIN32) && !defined(__wasm32__))
-#line 544
+#line 543
 static int64_t loam_sys_mtime_os(loam_str path) {
     Result__LRi64 _l13;
     Result__LRi64 _l14;
@@ -162370,36 +162502,36 @@ static int64_t loam_sys_mtime_os(loam_str path) {
     int64_t _l28;
     int64_t _l29;
 bb0:;
-#line 545
+#line 544
     _l13 = loam_sys_c_stat(path);
     _l14 = _l13;
     loam_keep__Result__LRi64(&_l14);
-#line 546
+#line 545
     _l15 = _l14.tag;
     _l16 = 1;
     _l17 = (_l15 == _l16);
     if (_l17) goto bb1; else goto bb2;
 bb1:;
-#line 547
+#line 546
     _l18 = -1;
     loam_rel__Result__LRi64(&_l14);
     loam_rel__Result__LRi64(&_l13);
     return _l18;
 bb2:;
-#line 549
+#line 548
     _l19 = 0;
     _l20 = _l14.val.len;
-    (void)loam_idx(_l19, _l20, "sys.loam", 549);
+    (void)loam_idx(_l19, _l20, "sys.loam", 548);
     _l21 = ((int64_t *)(_l14.val.ptr))[_l19];
     _l22 = 1000;
-    _l23 = loam_mul_i64(_l21, _l22, "sys.loam", 549);
+    _l23 = loam_mul_i64(_l21, _l22, "sys.loam", 548);
     _l24 = 1;
     _l25 = _l14.val.len;
-    (void)loam_idx(_l24, _l25, "sys.loam", 549);
+    (void)loam_idx(_l24, _l25, "sys.loam", 548);
     _l26 = ((int64_t *)(_l14.val.ptr))[_l24];
     _l27 = 1000000;
-    _l28 = loam_div_i64(_l26, _l27, "sys.loam", 549);
-    _l29 = loam_add_i64(_l23, _l28, "sys.loam", 549);
+    _l28 = loam_div_i64(_l26, _l27, "sys.loam", 548);
+    _l29 = loam_add_i64(_l23, _l28, "sys.loam", 548);
     loam_rel__Result__LRi64(&_l14);
     loam_rel__Result__LRi64(&_l13);
     return _l29;
@@ -162407,17 +162539,17 @@ bb2:;
 
 #endif
 #if defined(__wasm32__)
-#line 554
+#line 553
 static int64_t loam_sys_mtime_os(loam_str path) {
     int64_t _l13;
 bb0:;
-#line 555
+#line 554
     _l13 = -1;
     return _l13;
 }
 
 #endif
-#line 563
+#line 562
 static loam_str loam_sys_stamp(loam_str path) {
     Result__string _l13;
     Result__string _l14;
@@ -162427,23 +162559,23 @@ static loam_str loam_sys_stamp(loam_str path) {
     loam_str _l18;
     loam_str _l19;
 bb0:;
-#line 564
+#line 563
     _l13 = loam_sys_stamp_os(path);
     _l14 = _l13;
     loam_keep__Result__string(&_l14);
-#line 565
+#line 564
     _l15 = _l14.tag;
     _l16 = 1;
     _l17 = (_l15 == _l16);
     if (_l17) goto bb1; else goto bb2;
 bb1:;
-#line 566
+#line 565
     _l18 = ((loam_str){(const char *)"", 0});
     loam_rel__Result__string(&_l14);
     loam_rel__Result__string(&_l13);
     return _l18;
 bb2:;
-#line 568
+#line 567
     _l19 = _l14.val;
     loam_str_retain(_l19);
     loam_rel__Result__string(&_l14);
@@ -162452,7 +162584,7 @@ bb2:;
 }
 
 #if defined(__APPLE__) || defined(__linux__) || defined(_WIN32) || (!defined(__APPLE__) && !defined(__linux__) && !defined(_WIN32) && !defined(__wasm32__))
-#line 573
+#line 572
 static Result__string loam_sys_stamp_os(loam_str path) {
     Result__LRi64 _l13;
     Result__LRi64 _l14;
@@ -162484,17 +162616,17 @@ static Result__string loam_sys_stamp_os(loam_str path) {
     int32_t _l40;
     int64_t _l41;
 bb0:;
-#line 574
+#line 573
     _l13 = loam_sys_c_stat(path);
     _l14 = _l13;
     loam_keep__Result__LRi64(&_l14);
-#line 575
+#line 574
     _l15 = _l14.tag;
     _l16 = 1;
     _l17 = (_l15 == _l16);
     if (_l17) goto bb1; else goto bb2;
 bb1:;
-#line 576
+#line 575
     _l19 = ((loam_str){(const char *)"", 0});
     _l20 = ((loam_str){(const char *)"", 0});
     _l18 = loam_result_res_err__string(_l19, _l20);
@@ -162504,16 +162636,16 @@ bb1:;
     loam_rel__Result__LRi64(&_l13);
     return _l18;
 bb2:;
-#line 580
+#line 579
     _l21 = 3;
     _l22 = _l14.val.len;
-    (void)loam_idx(_l21, _l22, "sys.loam", 580);
+    (void)loam_idx(_l21, _l22, "sys.loam", 579);
     _l23 = ((int64_t *)(_l14.val.ptr))[_l21];
     _l24 = 0;
     _l25 = (_l23 == _l24);
     if (_l25) goto bb3; else goto bb4;
 bb3:;
-#line 581
+#line 580
     _l27 = ((loam_str){(const char *)"", 0});
     _l28 = ((loam_str){(const char *)"", 0});
     _l26 = loam_result_res_err__string(_l27, _l28);
@@ -162523,20 +162655,20 @@ bb3:;
     loam_rel__Result__LRi64(&_l13);
     return _l26;
 bb4:;
-#line 583
+#line 582
     _l31 = 0;
     _l32 = _l14.val.len;
-    (void)loam_idx(_l31, _l32, "sys.loam", 583);
+    (void)loam_idx(_l31, _l32, "sys.loam", 582);
     _l33 = ((int64_t *)(_l14.val.ptr))[_l31];
     _l34 = ((loam_str){(const char *)" ", 1});
     _l35 = 1;
     _l36 = _l14.val.len;
-    (void)loam_idx(_l35, _l36, "sys.loam", 583);
+    (void)loam_idx(_l35, _l36, "sys.loam", 582);
     _l37 = ((int64_t *)(_l14.val.ptr))[_l35];
     _l38 = ((loam_str){(const char *)" ", 1});
     _l39 = 2;
     _l40 = _l14.val.len;
-    (void)loam_idx(_l39, _l40, "sys.loam", 583);
+    (void)loam_idx(_l39, _l40, "sys.loam", 582);
     _l41 = ((int64_t *)(_l14.val.ptr))[_l39];
     { uint8_t _id0[20]; int32_t _if0 = loam_decimal_fill(_id0, loam_decimal_magnitude_of((int64_t)(_l33)), (int64_t)(_l33) < 0); uint8_t _id2[20]; int32_t _if2 = loam_decimal_fill(_id2, loam_decimal_magnitude_of((int64_t)(_l37)), (int64_t)(_l37) < 0); uint8_t _id4[20]; int32_t _if4 = loam_decimal_fill(_id4, loam_decimal_magnitude_of((int64_t)(_l41)), (int64_t)(_l41) < 0); int64_t _in = 0 + (int64_t)(20 - _if0) + _l34.len + (int64_t)(20 - _if2) + _l38.len + (int64_t)(20 - _if4); char *_ip = loam_str_bytes(_in); int64_t _io = 0; if ((int64_t)(20 - _if0) > 0) { memcpy(_ip + _io, (const char *)_id0 + _if0, (size_t)(int64_t)(20 - _if0)); _io += (int64_t)(20 - _if0); } if (_l34.len > 0) { memcpy(_ip + _io, _l34.ptr, (size_t)_l34.len); _io += _l34.len; } if ((int64_t)(20 - _if2) > 0) { memcpy(_ip + _io, (const char *)_id2 + _if2, (size_t)(int64_t)(20 - _if2)); _io += (int64_t)(20 - _if2); } if (_l38.len > 0) { memcpy(_ip + _io, _l38.ptr, (size_t)_l38.len); _io += _l38.len; } if ((int64_t)(20 - _if4) > 0) { memcpy(_ip + _io, (const char *)_id4 + _if4, (size_t)(int64_t)(20 - _if4)); _io += (int64_t)(20 - _if4); } _ip[_in] = 0; _l30 = loam_str_owned(_ip, _in); }
     _l29 = loam_result_res_ok__string(_l30);
@@ -162550,13 +162682,13 @@ bb4:;
 
 #endif
 #if defined(__wasm32__)
-#line 588
+#line 587
 static Result__string loam_sys_stamp_os(loam_str path) {
     Result__string _l13;
     loam_str _l14;
     loam_str _l15;
 bb0:;
-#line 589
+#line 588
     _l14 = ((loam_str){(const char *)"", 0});
     _l15 = ((loam_str){(const char *)"", 0});
     _l13 = loam_result_res_err__string(_l14, _l15);
@@ -162567,7 +162699,7 @@ bb0:;
 
 #endif
 #if defined(__APPLE__) || defined(__linux__) || defined(_WIN32) || (!defined(__APPLE__) && !defined(__linux__) && !defined(_WIN32) && !defined(__wasm32__))
-#line 601
+#line 600
 static Result__LRi64 loam_sys_c_stat(loam_str path) {
     int64_t _l13;
     int64_t _l14;
@@ -162577,76 +162709,75 @@ static Result__LRi64 loam_sys_c_stat(loam_str path) {
     loam_vec _l18 = {0};
     loam_vec _l19;
     int32_t _l20;
-    int32_t _l21;
-    bool _l22;
-    Result__LRi64 _l23;
-    loam_str _l24;
-    Result__LRi64 _l25;
+    loam_vec * _l21;
+    int32_t _l22;
+    bool _l23;
+    Result__LRi64 _l24;
+    loam_str _l25;
+    Result__LRi64 _l26;
 bb0:;
-#line 602
+#line 601
     _l13 = 0;
     _l14 = 0;
     _l15 = 0;
     _l16 = 0;
     _l17 = 0;
     _l18 = loam_vec_new();
-    loam_vec_push(&_l18, &_l13, sizeof(int64_t), "sys.loam", 602);
-    loam_vec_push(&_l18, &_l14, sizeof(int64_t), "sys.loam", 602);
-    loam_vec_push(&_l18, &_l15, sizeof(int64_t), "sys.loam", 602);
-    loam_vec_push(&_l18, &_l16, sizeof(int64_t), "sys.loam", 602);
-    loam_vec_push(&_l18, &_l17, sizeof(int64_t), "sys.loam", 602);
+    loam_vec_push(&_l18, &_l13, sizeof(int64_t), "sys.loam", 601);
+    loam_vec_push(&_l18, &_l14, sizeof(int64_t), "sys.loam", 601);
+    loam_vec_push(&_l18, &_l15, sizeof(int64_t), "sys.loam", 601);
+    loam_vec_push(&_l18, &_l16, sizeof(int64_t), "sys.loam", 601);
+    loam_vec_push(&_l18, &_l17, sizeof(int64_t), "sys.loam", 601);
     _l19 = loam_vec_move(&_l18);
-#line 604
-        {
-        loam_vec_retain(&_l19);
-    _l20 = loam_sys_c_stat_raw(path, _l19);
-    }
-    _l21 = 0;
-    _l22 = (_l20 == _l21);
-    if (_l22) goto bb1; else goto bb2;
+#line 603
+    _l21 = &_l19;
+    _l20 = loam_sys_c_stat_raw(path, _l21);
+    _l22 = 0;
+    _l23 = (_l20 == _l22);
+    if (_l23) goto bb1; else goto bb2;
 bb1:;
-#line 605
-    _l24 = ((loam_str){(const char *)"", 0});
+#line 604
+    _l25 = ((loam_str){(const char *)"", 0});
         {
         loam_vec_retain(&_l19);
-    _l23 = loam_result_res_err__vi64(_l24, _l19);
+    _l24 = loam_result_res_err__vi64(_l25, _l19);
     }
-    loam_str_release(&_l24);
+    loam_str_release(&_l25);
     loam_vec_drop(&_l19);
     loam_vec_drop(&_l18);
-    return _l23;
+    return _l24;
 bb2:;
-#line 607
+#line 606
         {
         loam_vec_retain(&_l19);
-    _l25 = loam_result_res_ok__vi64(_l19);
+    _l26 = loam_result_res_ok__vi64(_l19);
     }
     loam_vec_drop(&_l19);
     loam_vec_drop(&_l18);
-    return _l25;
+    return _l26;
 }
 
 #endif
-#line 614
+#line 613
 static int32_t loam_sys_spawn(const loam_vec * argv) {
     int32_t _l13;
 bb0:;
-#line 615
+#line 614
     _l13 = loam_sys_spawn_os(argv);
     return _l13;
 }
 
-#line 620
+#line 619
 static int32_t loam_sys_wait(int32_t handle) {
     int32_t _l13;
 bb0:;
-#line 621
+#line 620
     _l13 = loam_sys_wait_os(handle);
     return _l13;
 }
 
 #if defined(__APPLE__) || defined(__linux__) || defined(_WIN32) || (!defined(__APPLE__) && !defined(__linux__) && !defined(_WIN32) && !defined(__wasm32__))
-#line 636
+#line 635
 static int32_t loam_sys_spawn_os(const loam_vec * argv) {
     int32_t _l13;
     int32_t _l14;
@@ -162712,61 +162843,64 @@ static int32_t loam_sys_spawn_os(const loam_vec * argv) {
     loam_vec * _l74;
     int32_t _l75;
     int64_t _l76;
-    int64_t _l77;
-    int64_t _l78;
+    const loam_vec * _l77;
+    const loam_vec * _l78;
     int64_t _l79;
-    int32_t _l80;
+    loam_vec * _l80;
     int64_t _l81;
-    bool _l82;
+    int64_t _l82;
     int32_t _l83;
-    int32_t _l84;
-    int32_t _l85;
+    int64_t _l84;
+    bool _l85;
     int32_t _l86;
+    int32_t _l87;
+    int32_t _l88;
+    int32_t _l89;
 bb0:;
-#line 637
+#line 636
     _l13 = (argv)->len;
     _l14 = _l13;
-#line 638
+#line 637
     _l15 = 0;
     _l16 = (_l14 <= _l15);
     if (_l16) goto bb1; else goto bb2;
 bb1:;
-#line 639
+#line 638
     _l17 = -1;
     return _l17;
 bb2:;
-#line 641
+#line 640
     _l18 = loam_sys_spawned.len;
     _l19 = 0;
     _l20 = (_l18 == _l19);
     if (_l20) goto bb3; else goto bb4;
 bb3:;
-#line 642
+#line 641
     _l21 = 0;
     _l22 = _l21;
     goto bb5;
 bb4:;
-#line 646
+#line 645
     _l29 = 1;
     _l30 = (-_l29);
     _l31 = _l30;
-#line 647
+#line 646
     _l32 = 0;
     _l33 = _l32;
     goto bb9;
 bb5:;
-#line 642
+#line 641
     _l23 = (_l22 < loam_sys_SPAWN_MAX);
     if (_l23) goto bb6; else goto bb8;
 bb6:;
-#line 643
+#line 642
     _l24 = &loam_sys_spawned;
     _l25 = 0;
     _l26 = (int64_t)_l25;
-    loam_vec_push(_l24, &_l26, sizeof(int64_t), "sys.loam", 643);
+    loam_vec_push(_l24, &_l26, sizeof(int64_t), "sys.loam", 642);
     goto bb7;
 bb7:;
-#line 642
+#line 641
     _l27 = 1;
     _l28 = (_l22 + _l27);
     _l22 = _l28;
@@ -162774,54 +162908,54 @@ bb7:;
 bb8:;
     goto bb4;
 bb9:;
-#line 647
+#line 646
     _l34 = (_l33 < loam_sys_SPAWN_MAX);
     if (_l34) goto bb10; else goto bb12;
 bb10:;
-#line 648
+#line 647
     _l35 = loam_sys_spawned.len;
-    (void)loam_idx(_l33, _l35, "sys.loam", 648);
+    (void)loam_idx(_l33, _l35, "sys.loam", 647);
     _l36 = ((int64_t *)(loam_sys_spawned.ptr))[_l33];
     _l37 = 0;
     _l38 = (int64_t)_l37;
     _l39 = (_l36 == _l38);
     if (_l39) goto bb13; else goto bb14;
 bb11:;
-#line 647
+#line 646
     _l40 = 1;
     _l41 = (_l33 + _l40);
     _l33 = _l41;
     goto bb9;
 bb12:;
-#line 653
+#line 652
     _l42 = 0;
     _l43 = (_l31 < _l42);
     if (_l43) goto bb15; else goto bb16;
 bb13:;
-#line 649
+#line 648
     _l31 = _l33;
     goto bb12;
 bb14:;
     goto bb11;
 bb15:;
-#line 654
+#line 653
     _l44 = -1;
     return _l44;
 bb16:;
-#line 656
+#line 655
     _l45 = loam_vec_new();
     _l46 = loam_vec_move(&_l45);
-#line 657
+#line 656
     _l47 = loam_vec_new();
     _l48 = loam_vec_move(&_l47);
-#line 658
+#line 657
     _l49 = loam_vec_new();
     _l50 = loam_vec_move(&_l49);
-#line 659
+#line 658
     _l51 = ((loam_str){(const char *)"", 0});
     _l52 = _l51;
     loam_str_retain(_l52);
-#line 660
+#line 659
     _l53 = 0;
     _l54 = _l53;
     goto bb17;
@@ -162829,51 +162963,49 @@ bb17:;
     _l55 = (_l54 < _l14);
     if (_l55) goto bb18; else goto bb20;
 bb18:;
-#line 661
+#line 660
     _l57 = (argv)->len;
-    (void)loam_idx(_l54, _l57, "sys.loam", 661);
+    (void)loam_idx(_l54, _l57, "sys.loam", 660);
     _l58 = ((loam_str *)(argv)->ptr)[_l54];
     loam_str_retain(_l58);
     _l56 = loam_sys_spawn_arg(_l58);
     _l59 = _l56;
     loam_str_retain(_l59);
-#line 662
+#line 661
     _l60 = 0;
     _l61 = (_l54 == _l60);
     if (_l61) goto bb21; else goto bb22;
 bb19:;
-#line 660
+#line 659
     _l72 = 1;
     _l73 = (_l54 + _l72);
     _l54 = _l73;
     goto bb17;
 bb20:;
-#line 670
+#line 669
     _l74 = &_l50;
     _l75 = 0;
     _l76 = (int64_t)_l75;
-    loam_vec_push(_l74, &_l76, sizeof(int64_t), "sys.loam", 670);
+    loam_vec_push(_l74, &_l76, sizeof(int64_t), "sys.loam", 669);
+#line 670
+    _l77 = &_l46;
+    _l78 = &_l48;
+    _l79 = (int64_t)_l14;
+    _l80 = &_l50;
+    loam_sys_c_argv_fill(_l77, _l78, _l79, _l80);
 #line 671
-    _l77 = (int64_t)_l14;
         {
-        loam_vec_retain(&_l46);
-        loam_vec_retain(&_l48);
         loam_vec_retain(&_l50);
-    loam_sys_c_argv_fill(_l46, _l48, _l77, _l50);
+    _l81 = loam_sys_start_child(_l52, _l50);
     }
+    _l82 = _l81;
 #line 672
-        {
-        loam_vec_retain(&_l50);
-    _l78 = loam_sys_start_child(_l52, _l50);
-    }
-    _l79 = _l78;
-#line 673
-    _l80 = 0;
-    _l81 = (int64_t)_l80;
-    _l82 = (_l79 == _l81);
-    if (_l82) goto bb23; else goto bb24;
+    _l83 = 0;
+    _l84 = (int64_t)_l83;
+    _l85 = (_l82 == _l84);
+    if (_l85) goto bb23; else goto bb24;
 bb21:;
-#line 663
+#line 662
     {
         loam_str _repl = _l52;
         _l52 = _l59;
@@ -162882,52 +163014,32 @@ bb21:;
     }
     goto bb22;
 bb22:;
-#line 665
+#line 664
     _l62 = &_l48;
     _l63 = _l46.len;
     _l64 = (int64_t)_l63;
-    loam_vec_push(_l62, &_l64, sizeof(int64_t), "sys.loam", 665);
-#line 666
+    loam_vec_push(_l62, &_l64, sizeof(int64_t), "sys.loam", 664);
+#line 665
     _l65 = &_l46;
     loam_buf_push_str(_l65, _l59);
-#line 667
+#line 666
     _l66 = &_l46;
     _l67 = 0;
     _l68 = (uint8_t)_l67;
-    loam_vec_push(_l66, &_l68, sizeof(uint8_t), "sys.loam", 667);
-#line 668
+    loam_vec_push(_l66, &_l68, sizeof(uint8_t), "sys.loam", 666);
+#line 667
     _l69 = &_l50;
     _l70 = 0;
     _l71 = (int64_t)_l70;
-    loam_vec_push(_l69, &_l71, sizeof(int64_t), "sys.loam", 668);
-#line 660
+    loam_vec_push(_l69, &_l71, sizeof(int64_t), "sys.loam", 667);
+#line 659
     loam_str_release(&_l59);
     loam_str_release(&_l58);
     loam_str_release(&_l56);
     goto bb19;
 bb23:;
-#line 674
-    _l83 = -1;
-    loam_str_release(&_l59);
-    loam_str_release(&_l58);
-    loam_str_release(&_l56);
-    loam_str_release(&_l52);
-    loam_str_release(&_l51);
-    loam_vec_drop(&_l50);
-    loam_vec_drop(&_l49);
-    loam_vec_drop(&_l48);
-    loam_vec_drop(&_l47);
-    loam_vec_drop(&_l46);
-    loam_vec_drop(&_l45);
-    return _l83;
-bb24:;
-#line 676
-    _l84 = loam_sys_spawned.len;
-    (void)loam_idx(_l31, _l84, "sys.loam", 676);
-    ((int64_t *)(loam_sys_spawned.ptr))[_l31] = _l79;
-#line 677
-    _l85 = 1;
-    _l86 = loam_add_i32(_l31, _l85, "sys.loam", 677);
+#line 673
+    _l86 = -1;
     loam_str_release(&_l59);
     loam_str_release(&_l58);
     loam_str_release(&_l56);
@@ -162940,22 +163052,42 @@ bb24:;
     loam_vec_drop(&_l46);
     loam_vec_drop(&_l45);
     return _l86;
+bb24:;
+#line 675
+    _l87 = loam_sys_spawned.len;
+    (void)loam_idx(_l31, _l87, "sys.loam", 675);
+    ((int64_t *)(loam_sys_spawned.ptr))[_l31] = _l82;
+#line 676
+    _l88 = 1;
+    _l89 = loam_add_i32(_l31, _l88, "sys.loam", 676);
+    loam_str_release(&_l59);
+    loam_str_release(&_l58);
+    loam_str_release(&_l56);
+    loam_str_release(&_l52);
+    loam_str_release(&_l51);
+    loam_vec_drop(&_l50);
+    loam_vec_drop(&_l49);
+    loam_vec_drop(&_l48);
+    loam_vec_drop(&_l47);
+    loam_vec_drop(&_l46);
+    loam_vec_drop(&_l45);
+    return _l89;
 }
 
 #endif
 #if defined(__wasm32__)
-#line 682
+#line 681
 static int32_t loam_sys_spawn_os(const loam_vec * argv) {
     int32_t _l13;
 bb0:;
-#line 683
+#line 682
     _l13 = -1;
     return _l13;
 }
 
 #endif
 #if defined(__APPLE__) || defined(__linux__) || defined(_WIN32) || (!defined(__APPLE__) && !defined(__linux__) && !defined(_WIN32) && !defined(__wasm32__))
-#line 689
+#line 688
 static int32_t loam_sys_wait_os(int32_t handle) {
     int32_t _l13;
     int32_t _l14;
@@ -162980,11 +163112,11 @@ static int32_t loam_sys_wait_os(int32_t handle) {
     int32_t _l33;
     int32_t _l34;
 bb0:;
-#line 690
+#line 689
     _l13 = 1;
-    _l14 = loam_sub_i32(handle, _l13, "sys.loam", 690);
+    _l14 = loam_sub_i32(handle, _l13, "sys.loam", 689);
     _l15 = _l14;
-#line 691
+#line 690
     _l18 = 0;
     _l19 = (_l15 < _l18);
     _l17 = _l19;
@@ -162999,7 +163131,7 @@ bb2:;
     if (_l17) goto bb4; else goto bb3;
 bb3:;
     _l22 = loam_sys_spawned.len;
-    (void)loam_idx(_l15, _l22, "sys.loam", 691);
+    (void)loam_idx(_l15, _l22, "sys.loam", 690);
     _l23 = ((int64_t *)(loam_sys_spawned.ptr))[_l15];
     _l24 = 0;
     _l25 = (int64_t)_l24;
@@ -163009,40 +163141,40 @@ bb3:;
 bb4:;
     if (_l16) goto bb5; else goto bb6;
 bb5:;
-#line 692
+#line 691
     _l27 = -1;
     return _l27;
 bb6:;
-#line 694
+#line 693
     _l28 = loam_sys_spawned.len;
-    (void)loam_idx(_l15, _l28, "sys.loam", 694);
+    (void)loam_idx(_l15, _l28, "sys.loam", 693);
     _l29 = ((int64_t *)(loam_sys_spawned.ptr))[_l15];
     _l30 = _l29;
-#line 695
+#line 694
     _l31 = 0;
     _l32 = (int64_t)_l31;
     _l33 = loam_sys_spawned.len;
-    (void)loam_idx(_l15, _l33, "sys.loam", 695);
+    (void)loam_idx(_l15, _l33, "sys.loam", 694);
     ((int64_t *)(loam_sys_spawned.ptr))[_l15] = _l32;
-#line 696
+#line 695
     _l34 = loam_sys_wait_child(_l30);
     return _l34;
 }
 
 #endif
 #if defined(__wasm32__)
-#line 701
+#line 700
 static int32_t loam_sys_wait_os(int32_t handle) {
     int32_t _l13;
 bb0:;
-#line 702
+#line 701
     _l13 = -1;
     return _l13;
 }
 
 #endif
 #if !defined(_WIN32) && !defined(__wasm32__)
-#line 707
+#line 706
 static loam_str loam_sys_spawn_arg(loam_str a) {
 bb0:;
     loam_str_retain(a);
@@ -163051,7 +163183,7 @@ bb0:;
 
 #endif
 #if defined(_WIN32)
-#line 715
+#line 714
 static loam_str loam_sys_spawn_arg(loam_str a) {
     int32_t _l13;
     int32_t _l14;
@@ -163137,12 +163269,12 @@ static loam_str loam_sys_spawn_arg(loam_str a) {
     loam_str _l94;
     loam_vec _l95;
 bb0:;
-#line 716
+#line 715
     _l13 = a.len;
     _l14 = 0;
     _l15 = (_l13 > _l14);
     _l16 = _l15;
-#line 717
+#line 716
     _l17 = 0;
     _l18 = a.len;
     _l19 = _l17;
@@ -163151,14 +163283,14 @@ bb1:;
     _l20 = (_l19 < _l18);
     if (_l20) goto bb2; else goto bb4;
 bb2:;
-#line 718
+#line 717
     _l23 = ((int64_t)(unsigned char)(a.ptr[_l19]));
     _l24 = 32;
     _l25 = (_l23 == _l24);
     _l22 = _l25;
     if (_l25) goto bb6; else goto bb5;
 bb3:;
-#line 717
+#line 716
     _l33 = 1;
     _l34 = (_l19 + _l33);
     _l19 = _l34;
@@ -163166,7 +163298,7 @@ bb3:;
 bb4:;
     if (_l16) goto bb11; else goto bb12;
 bb5:;
-#line 718
+#line 717
     _l26 = ((int64_t)(unsigned char)(a.ptr[_l19]));
     _l27 = 9;
     _l28 = (_l26 == _l27);
@@ -163184,7 +163316,7 @@ bb7:;
 bb8:;
     if (_l21) goto bb9; else goto bb10;
 bb9:;
-#line 719
+#line 718
     _l32 = false;
     _l16 = _l32;
     goto bb10;
@@ -163194,66 +163326,66 @@ bb11:;
     loam_str_retain(a);
     return a;
 bb12:;
-#line 725
+#line 724
     _l35 = loam_vec_new();
     _l36 = loam_vec_move(&_l35);
-#line 726
+#line 725
     _l37 = &_l36;
     _l38 = 34;
     _l39 = (uint8_t)_l38;
-    loam_vec_push(_l37, &_l39, sizeof(uint8_t), "sys.loam", 726);
-#line 727
+    loam_vec_push(_l37, &_l39, sizeof(uint8_t), "sys.loam", 725);
+#line 726
     _l40 = 0;
     _l41 = _l40;
     goto bb13;
 bb13:;
-#line 728
+#line 727
     _l42 = a.len;
     _l43 = (_l41 < _l42);
     if (_l43) goto bb14; else goto bb15;
 bb14:;
-#line 729
+#line 728
     _l44 = 0;
     _l45 = _l44;
     goto bb16;
 bb15:;
-#line 748
+#line 747
     _l91 = &_l36;
     _l92 = 34;
     _l93 = (uint8_t)_l92;
-    loam_vec_push(_l91, &_l93, sizeof(uint8_t), "sys.loam", 748);
-#line 749
+    loam_vec_push(_l91, &_l93, sizeof(uint8_t), "sys.loam", 747);
+#line 748
     _l95 = loam_vec_move(&_l36);
     _l94 = loam_string_from_u8(_l95);
     loam_vec_drop(&_l36);
     loam_vec_drop(&_l35);
     return _l94;
 bb16:;
-#line 730
+#line 729
     _l47 = a.len;
     _l48 = (_l41 < _l47);
     _l46 = _l48;
     if (_l48) goto bb19; else goto bb20;
 bb17:;
-#line 731
+#line 730
     _l53 = 1;
-    _l54 = loam_add_i32(_l45, _l53, "sys.loam", 731);
+    _l54 = loam_add_i32(_l45, _l53, "sys.loam", 730);
     _l45 = _l54;
-#line 732
+#line 731
     _l55 = 1;
-    _l56 = loam_add_i32(_l41, _l55, "sys.loam", 732);
+    _l56 = loam_add_i32(_l41, _l55, "sys.loam", 731);
     _l41 = _l56;
     goto bb16;
 bb18:;
-#line 735
+#line 734
     _l58 = a.len;
     _l59 = (_l41 == _l58);
     _l57 = _l59;
     if (_l59) goto bb22; else goto bb21;
 bb19:;
-#line 730
+#line 729
     _l49 = a.len;
-    (void)loam_idx(_l41, _l49, "sys.loam", 730);
+    (void)loam_idx(_l41, _l49, "sys.loam", 729);
     _l50 = ((int64_t)(unsigned char)(a.ptr[_l41]));
     _l51 = 92;
     _l52 = (_l50 == _l51);
@@ -163262,9 +163394,9 @@ bb19:;
 bb20:;
     if (_l46) goto bb17; else goto bb18;
 bb21:;
-#line 735
+#line 734
     _l60 = a.len;
-    (void)loam_idx(_l41, _l60, "sys.loam", 735);
+    (void)loam_idx(_l41, _l60, "sys.loam", 734);
     _l61 = ((int64_t)(unsigned char)(a.ptr[_l41]));
     _l62 = 34;
     _l63 = (_l61 == _l62);
@@ -163272,12 +163404,12 @@ bb21:;
     goto bb22;
 bb22:;
     _l64 = _l57;
-#line 736
+#line 735
     _l65 = 0;
     if (_l64) goto bb23; else goto bb24;
 bb23:;
     _l67 = 2;
-    _l68 = loam_mul_i32(_l45, _l67, "sys.loam", 736);
+    _l68 = loam_mul_i32(_l45, _l67, "sys.loam", 735);
     _l66 = _l68;
     goto bb25;
 bb24:;
@@ -163290,172 +163422,171 @@ bb26:;
     _l70 = (_l69 < _l66);
     if (_l70) goto bb27; else goto bb29;
 bb27:;
-#line 737
+#line 736
     _l71 = &_l36;
     _l72 = 92;
     _l73 = (uint8_t)_l72;
-    loam_vec_push(_l71, &_l73, sizeof(uint8_t), "sys.loam", 737);
+    loam_vec_push(_l71, &_l73, sizeof(uint8_t), "sys.loam", 736);
     goto bb28;
 bb28:;
-#line 736
+#line 735
     _l74 = 1;
     _l75 = (_l69 + _l74);
     _l69 = _l75;
     goto bb26;
 bb29:;
-#line 739
+#line 738
     _l76 = a.len;
     _l77 = (_l41 == _l76);
     if (_l77) goto bb30; else goto bb31;
 bb30:;
     goto bb15;
 bb31:;
-#line 742
+#line 741
     _l78 = a.len;
-    (void)loam_idx(_l41, _l78, "sys.loam", 742);
+    (void)loam_idx(_l41, _l78, "sys.loam", 741);
     _l79 = ((int64_t)(unsigned char)(a.ptr[_l41]));
     _l80 = 34;
     _l81 = (_l79 == _l80);
     if (_l81) goto bb32; else goto bb33;
 bb32:;
-#line 743
+#line 742
     _l82 = &_l36;
     _l83 = 92;
     _l84 = (uint8_t)_l83;
-    loam_vec_push(_l82, &_l84, sizeof(uint8_t), "sys.loam", 743);
+    loam_vec_push(_l82, &_l84, sizeof(uint8_t), "sys.loam", 742);
     goto bb33;
 bb33:;
-#line 745
+#line 744
     _l85 = &_l36;
     _l86 = a.len;
-    (void)loam_idx(_l41, _l86, "sys.loam", 745);
+    (void)loam_idx(_l41, _l86, "sys.loam", 744);
     _l87 = ((int64_t)(unsigned char)(a.ptr[_l41]));
     _l88 = (uint8_t)_l87;
-    loam_vec_push(_l85, &_l88, sizeof(uint8_t), "sys.loam", 745);
-#line 746
+    loam_vec_push(_l85, &_l88, sizeof(uint8_t), "sys.loam", 744);
+#line 745
     _l89 = 1;
-    _l90 = loam_add_i32(_l41, _l89, "sys.loam", 746);
+    _l90 = loam_add_i32(_l41, _l89, "sys.loam", 745);
     _l41 = _l90;
     goto bb13;
 }
 
 #endif
 #if !defined(_WIN32) && !defined(__wasm32__)
-#line 755
+#line 754
 static int64_t loam_sys_start_child(loam_str file, loam_vec argv) {
     int32_t _l14;
     loam_vec _l15 = {0};
     loam_vec _l16;
     int32_t _l17;
-    int32_t _l18;
-    bool _l19;
+    loam_vec * _l18;
+    const loam_vec * _l19;
     int32_t _l20;
-    int64_t _l21;
+    bool _l21;
     int32_t _l22;
-    int32_t _l23;
+    int64_t _l23;
     int32_t _l24;
-    int64_t _l25;
+    int32_t _l25;
+    int32_t _l26;
+    int64_t _l27;
 bb0:;
-#line 756
+#line 755
     _l14 = 0;
     _l15 = loam_vec_new();
-    loam_vec_push(&_l15, &_l14, sizeof(int32_t), "sys.loam", 756);
+    loam_vec_push(&_l15, &_l14, sizeof(int32_t), "sys.loam", 755);
     _l16 = loam_vec_move(&_l15);
-#line 757
-        {
-        loam_vec_retain(&_l16);
-        loam_vec_retain(&argv);
-    _l17 = loam_sys_c_spawnp(_l16, file, argv);
-    }
-    _l18 = 0;
-    _l19 = (_l17 != _l18);
-    if (_l19) goto bb1; else goto bb2;
-bb1:;
-#line 758
+#line 756
+    _l18 = &_l16;
+    _l19 = &argv;
+    _l17 = loam_sys_c_spawnp(_l18, file, _l19);
     _l20 = 0;
-    _l21 = (int64_t)_l20;
-    loam_vec_drop(&_l16);
-    loam_vec_drop(&_l15);
-    loam_vec_drop(&argv);
-    return _l21;
-bb2:;
-#line 760
+    _l21 = (_l17 != _l20);
+    if (_l21) goto bb1; else goto bb2;
+bb1:;
+#line 757
     _l22 = 0;
-    _l23 = _l16.len;
-    (void)loam_idx(_l22, _l23, "sys.loam", 760);
-    _l24 = ((int32_t *)(_l16.ptr))[_l22];
-    _l25 = (int64_t)_l24;
+    _l23 = (int64_t)_l22;
     loam_vec_drop(&_l16);
     loam_vec_drop(&_l15);
     loam_vec_drop(&argv);
-    return _l25;
+    return _l23;
+bb2:;
+#line 759
+    _l24 = 0;
+    _l25 = _l16.len;
+    (void)loam_idx(_l24, _l25, "sys.loam", 759);
+    _l26 = ((int32_t *)(_l16.ptr))[_l24];
+    _l27 = (int64_t)_l26;
+    loam_vec_drop(&_l16);
+    loam_vec_drop(&_l15);
+    loam_vec_drop(&argv);
+    return _l27;
 }
 
 #endif
 #if defined(_WIN32)
-#line 765
+#line 764
 static int64_t loam_sys_start_child(loam_str file, loam_vec argv) {
     int64_t _l14;
     int32_t _l15;
-    int64_t _l16;
+    const loam_vec * _l16;
     int64_t _l17;
-    int32_t _l18;
+    int64_t _l18;
     int32_t _l19;
-    int64_t _l20;
-    bool _l21;
-    int32_t _l22;
-    int64_t _l23;
+    int32_t _l20;
+    int64_t _l21;
+    bool _l22;
+    int32_t _l23;
+    int64_t _l24;
 bb0:;
-#line 766
+#line 765
     _l15 = 1;
-        {
-        loam_vec_retain(&argv);
-    _l14 = loam_sys_c_spawnvp(_l15, file, argv);
-    }
-    _l16 = _l14;
-#line 767
-    _l18 = 1;
-    _l19 = (-_l18);
-    _l20 = (int64_t)_l19;
-    _l21 = (_l16 == _l20);
-    if (_l21) goto bb1; else goto bb2;
+    _l16 = &argv;
+    _l14 = loam_sys_c_spawnvp(_l15, file, _l16);
+    _l17 = _l14;
+#line 766
+    _l19 = 1;
+    _l20 = (-_l19);
+    _l21 = (int64_t)_l20;
+    _l22 = (_l17 == _l21);
+    if (_l22) goto bb1; else goto bb2;
 bb1:;
-    _l22 = 0;
-    _l23 = (int64_t)_l22;
-    _l17 = _l23;
+    _l23 = 0;
+    _l24 = (int64_t)_l23;
+    _l18 = _l24;
     goto bb3;
 bb2:;
-    _l17 = _l16;
+    _l18 = _l17;
     goto bb3;
 bb3:;
     loam_vec_drop(&argv);
-    return _l17;
+    return _l18;
 }
 
 #endif
 #if !defined(_WIN32) && !defined(__wasm32__)
-#line 774
+#line 773
 static int32_t loam_sys_wait_child(int64_t id) {
     int32_t _l13;
     loam_vec _l14 = {0};
     loam_vec _l15;
     int32_t _l16;
     int32_t _l17;
-    int32_t _l18;
+    loam_vec * _l18;
     int32_t _l19;
-    bool _l20;
-    int32_t _l21;
+    int32_t _l20;
+    bool _l21;
     int32_t _l22;
-    bool _l23;
-    int32_t _l24;
+    int32_t _l23;
+    bool _l24;
     int32_t _l25;
     int32_t _l26;
     int32_t _l27;
     int32_t _l28;
     int32_t _l29;
     int32_t _l30;
-    bool _l31;
-    int32_t _l32;
+    int32_t _l31;
+    bool _l32;
     int32_t _l33;
     int32_t _l34;
     int32_t _l35;
@@ -163464,126 +163595,124 @@ static int32_t loam_sys_wait_child(int64_t id) {
     int32_t _l38;
     int32_t _l39;
     int32_t _l40;
+    int32_t _l41;
 bb0:;
-#line 775
+#line 774
     _l13 = 0;
     _l14 = loam_vec_new();
-    loam_vec_push(&_l14, &_l13, sizeof(int32_t), "sys.loam", 775);
+    loam_vec_push(&_l14, &_l13, sizeof(int32_t), "sys.loam", 774);
     _l15 = loam_vec_move(&_l14);
     goto bb1;
 bb1:;
-#line 776
-    _l17 = loam_conv_i32((int64_t)id, "sys.loam", 776);
-    _l18 = 0;
-        {
-        loam_vec_retain(&_l15);
-    _l16 = loam_sys_c_waitpid(_l17, _l15, _l18);
-    }
+#line 775
+    _l17 = loam_conv_i32((int64_t)id, "sys.loam", 775);
+    _l18 = &_l15;
     _l19 = 0;
-    _l20 = (_l16 < _l19);
-    if (_l20) goto bb2; else goto bb3;
+    _l16 = loam_sys_c_waitpid(_l17, _l18, _l19);
+    _l20 = 0;
+    _l21 = (_l16 < _l20);
+    if (_l21) goto bb2; else goto bb3;
 bb2:;
-#line 777
-    _l21 = loam_sys_c_errno();
-    _l22 = 4;
-    _l23 = (_l21 != _l22);
-    if (_l23) goto bb4; else goto bb5;
+#line 776
+    _l22 = loam_sys_c_errno();
+    _l23 = 4;
+    _l24 = (_l22 != _l23);
+    if (_l24) goto bb4; else goto bb5;
 bb3:;
-#line 781
-    _l25 = 0;
-    _l26 = _l15.len;
-    (void)loam_idx(_l25, _l26, "sys.loam", 781);
-    _l27 = ((int32_t *)(_l15.ptr))[_l25];
-    _l28 = 127;
-    _l29 = (_l27 & _l28);
-    _l30 = 0;
-    _l31 = (_l29 != _l30);
-    if (_l31) goto bb6; else goto bb7;
+#line 780
+    _l26 = 0;
+    _l27 = _l15.len;
+    (void)loam_idx(_l26, _l27, "sys.loam", 780);
+    _l28 = ((int32_t *)(_l15.ptr))[_l26];
+    _l29 = 127;
+    _l30 = (_l28 & _l29);
+    _l31 = 0;
+    _l32 = (_l30 != _l31);
+    if (_l32) goto bb6; else goto bb7;
 bb4:;
-#line 778
-    _l24 = -1;
+#line 777
+    _l25 = -1;
     loam_vec_drop(&_l15);
     loam_vec_drop(&_l14);
-    return _l24;
+    return _l25;
 bb5:;
     goto bb1;
 bb6:;
-#line 782
-    _l32 = -1;
+#line 781
+    _l33 = -1;
     loam_vec_drop(&_l15);
     loam_vec_drop(&_l14);
-    return _l32;
+    return _l33;
 bb7:;
-#line 784
-    _l33 = 0;
-    _l34 = _l15.len;
-    (void)loam_idx(_l33, _l34, "sys.loam", 784);
-    _l35 = ((int32_t *)(_l15.ptr))[_l33];
-    _l36 = 8;
-    _l37 = loam_shr_i32(_l35, _l36, "sys.loam", 784);
-    _l38 = 255;
-    _l39 = (_l37 & _l38);
-    _l40 = (int32_t)_l39;
+#line 783
+    _l34 = 0;
+    _l35 = _l15.len;
+    (void)loam_idx(_l34, _l35, "sys.loam", 783);
+    _l36 = ((int32_t *)(_l15.ptr))[_l34];
+    _l37 = 8;
+    _l38 = loam_shr_i32(_l36, _l37, "sys.loam", 783);
+    _l39 = 255;
+    _l40 = (_l38 & _l39);
+    _l41 = (int32_t)_l40;
     loam_vec_drop(&_l15);
     loam_vec_drop(&_l14);
-    return _l40;
+    return _l41;
 }
 
 #endif
 #if defined(_WIN32)
-#line 789
+#line 788
 static int32_t loam_sys_wait_child(int64_t id) {
     int32_t _l13;
     loam_vec _l14 = {0};
     loam_vec _l15;
     int64_t _l16;
-    int32_t _l17;
+    loam_vec * _l17;
     int32_t _l18;
     int32_t _l19;
-    int64_t _l20;
-    bool _l21;
-    int32_t _l22;
+    int32_t _l20;
+    int64_t _l21;
+    bool _l22;
     int32_t _l23;
     int32_t _l24;
     int32_t _l25;
     int32_t _l26;
+    int32_t _l27;
 bb0:;
-#line 790
+#line 789
     _l13 = 0;
     _l14 = loam_vec_new();
-    loam_vec_push(&_l14, &_l13, sizeof(int32_t), "sys.loam", 790);
+    loam_vec_push(&_l14, &_l13, sizeof(int32_t), "sys.loam", 789);
     _l15 = loam_vec_move(&_l14);
-#line 791
-    _l17 = 0;
-        {
-        loam_vec_retain(&_l15);
-    _l16 = loam_sys_c_cwait(_l15, id, _l17);
-    }
-    _l18 = 1;
-    _l19 = (-_l18);
-    _l20 = (int64_t)_l19;
-    _l21 = (_l16 == _l20);
-    if (_l21) goto bb1; else goto bb2;
+#line 790
+    _l17 = &_l15;
+    _l18 = 0;
+    _l16 = loam_sys_c_cwait(_l17, id, _l18);
+    _l19 = 1;
+    _l20 = (-_l19);
+    _l21 = (int64_t)_l20;
+    _l22 = (_l16 == _l21);
+    if (_l22) goto bb1; else goto bb2;
 bb1:;
-#line 792
-    _l22 = -1;
+#line 791
+    _l23 = -1;
     loam_vec_drop(&_l15);
     loam_vec_drop(&_l14);
-    return _l22;
+    return _l23;
 bb2:;
-#line 794
-    _l23 = 0;
-    _l24 = _l15.len;
-    (void)loam_idx(_l23, _l24, "sys.loam", 794);
-    _l25 = ((int32_t *)(_l15.ptr))[_l23];
-    _l26 = (int32_t)_l25;
+#line 793
+    _l24 = 0;
+    _l25 = _l15.len;
+    (void)loam_idx(_l24, _l25, "sys.loam", 793);
+    _l26 = ((int32_t *)(_l15.ptr))[_l24];
+    _l27 = (int32_t)_l26;
     loam_vec_drop(&_l15);
     loam_vec_drop(&_l14);
-    return _l26;
+    return _l27;
 }
 
 #endif
-#line 829
+#line 828
 static int32_t loam_sys_run(const loam_vec * argv) {
     int32_t _l13;
     int32_t _l14;
@@ -163594,26 +163723,26 @@ static int32_t loam_sys_run(const loam_vec * argv) {
     int32_t _l19;
     int32_t _l20;
 bb0:;
-#line 830
+#line 829
     _l13 = loam_sys_spawn(argv);
     _l14 = _l13;
-#line 831
+#line 830
     _l15 = 0;
     _l16 = (_l14 < _l15);
     if (_l16) goto bb1; else goto bb2;
 bb1:;
-#line 832
+#line 831
     _l17 = 0;
     _l18 = 1;
     _l19 = (_l17 - _l18);
     return _l19;
 bb2:;
-#line 834
+#line 833
     _l20 = loam_sys_wait(_l14);
     return _l20;
 }
 
-#line 963
+#line 962
 static bool loam_sys_is_abs(loam_str path) {
     int32_t _l13;
     int32_t _l14;
@@ -163677,20 +163806,20 @@ static bool loam_sys_is_abs(loam_str path) {
     int32_t _l72;
     bool _l73;
 bb0:;
-#line 964
+#line 963
     _l13 = path.len;
     _l14 = 0;
     _l15 = (_l13 == _l14);
     if (_l15) goto bb1; else goto bb2;
 bb1:;
-#line 965
+#line 964
     _l16 = false;
     return _l16;
 bb2:;
-#line 967
+#line 966
     _l18 = 0;
     _l19 = path.len;
-    (void)loam_idx(_l18, _l19, "sys.loam", 967);
+    (void)loam_idx(_l18, _l19, "sys.loam", 966);
     _l20 = ((int64_t)(unsigned char)(path.ptr[_l18]));
     _l21 = 47;
     _l22 = (_l20 == _l21);
@@ -163699,7 +163828,7 @@ bb2:;
 bb3:;
     _l23 = 0;
     _l24 = path.len;
-    (void)loam_idx(_l23, _l24, "sys.loam", 967);
+    (void)loam_idx(_l23, _l24, "sys.loam", 966);
     _l25 = ((int64_t)(unsigned char)(path.ptr[_l23]));
     _l26 = 92;
     _l27 = (_l25 == _l26);
@@ -163708,11 +163837,11 @@ bb3:;
 bb4:;
     if (_l17) goto bb5; else goto bb6;
 bb5:;
-#line 968
+#line 967
     _l28 = true;
     return _l28;
 bb6:;
-#line 970
+#line 969
     _l32 = path.len;
     _l33 = 3;
     _l34 = (_l32 >= _l33);
@@ -163721,7 +163850,7 @@ bb6:;
 bb7:;
     _l35 = 1;
     _l36 = path.len;
-    (void)loam_idx(_l35, _l36, "sys.loam", 970);
+    (void)loam_idx(_l35, _l36, "sys.loam", 969);
     _l37 = ((int64_t)(unsigned char)(path.ptr[_l35]));
     _l38 = 58;
     _l39 = (_l37 == _l38);
@@ -163733,7 +163862,7 @@ bb8:;
 bb9:;
     _l41 = 2;
     _l42 = path.len;
-    (void)loam_idx(_l41, _l42, "sys.loam", 970);
+    (void)loam_idx(_l41, _l42, "sys.loam", 969);
     _l43 = ((int64_t)(unsigned char)(path.ptr[_l41]));
     _l44 = 47;
     _l45 = (_l43 == _l44);
@@ -163745,7 +163874,7 @@ bb10:;
 bb11:;
     _l46 = 2;
     _l47 = path.len;
-    (void)loam_idx(_l46, _l47, "sys.loam", 970);
+    (void)loam_idx(_l46, _l47, "sys.loam", 969);
     _l48 = ((int64_t)(unsigned char)(path.ptr[_l46]));
     _l49 = 92;
     _l50 = (_l48 == _l49);
@@ -163755,10 +163884,10 @@ bb12:;
     _l30 = _l40;
     goto bb10;
 bb13:;
-#line 971
+#line 970
     _l53 = 0;
     _l54 = path.len;
-    (void)loam_idx(_l53, _l54, "sys.loam", 971);
+    (void)loam_idx(_l53, _l54, "sys.loam", 970);
     _l55 = ((int64_t)(unsigned char)(path.ptr[_l53]));
     _l56 = 97;
     _l57 = (_l55 >= _l56);
@@ -163769,7 +163898,7 @@ bb14:;
 bb15:;
     _l58 = 0;
     _l59 = path.len;
-    (void)loam_idx(_l58, _l59, "sys.loam", 971);
+    (void)loam_idx(_l58, _l59, "sys.loam", 970);
     _l60 = ((int64_t)(unsigned char)(path.ptr[_l58]));
     _l61 = 122;
     _l62 = (_l60 <= _l61);
@@ -163781,21 +163910,21 @@ bb16:;
 bb17:;
     _l64 = 0;
     _l65 = path.len;
-    (void)loam_idx(_l64, _l65, "sys.loam", 971);
+    (void)loam_idx(_l64, _l65, "sys.loam", 970);
     _l66 = ((int64_t)(unsigned char)(path.ptr[_l64]));
     _l67 = 65;
     _l68 = (_l66 >= _l67);
     _l63 = _l68;
     if (_l68) goto bb19; else goto bb20;
 bb18:;
-#line 970
+#line 969
     _l29 = _l51;
     goto bb14;
 bb19:;
-#line 971
+#line 970
     _l69 = 0;
     _l70 = path.len;
-    (void)loam_idx(_l69, _l70, "sys.loam", 971);
+    (void)loam_idx(_l69, _l70, "sys.loam", 970);
     _l71 = ((int64_t)(unsigned char)(path.ptr[_l69]));
     _l72 = 90;
     _l73 = (_l71 <= _l72);
@@ -163806,17 +163935,17 @@ bb20:;
     goto bb18;
 }
 
-#line 976
+#line 975
 static int32_t loam_sys_mkdir(loam_str path) {
     int32_t _l13;
 bb0:;
-#line 977
+#line 976
     _l13 = loam_sys_mkdir_os(path);
     return _l13;
 }
 
 #if defined(__APPLE__) || defined(__linux__) || defined(_WIN32) || (!defined(__APPLE__) && !defined(__linux__) && !defined(_WIN32) && !defined(__wasm32__))
-#line 985
+#line 984
 static int32_t loam_sys_mkdir_os(loam_str path) {
     int32_t _l13;
     int32_t _l14;
@@ -163865,32 +163994,32 @@ static int32_t loam_sys_mkdir_os(loam_str path) {
     int32_t _l57;
     int32_t _l58;
 bb0:;
-#line 986
+#line 985
     _l13 = path.len;
     _l14 = _l13;
-#line 987
+#line 986
     _l15 = 1;
     _l16 = _l15;
     goto bb1;
 bb1:;
-#line 988
+#line 987
     _l17 = (_l16 <= _l14);
     if (_l17) goto bb2; else goto bb3;
 bb2:;
-#line 989
+#line 988
     _l20 = (_l16 != _l14);
     _l19 = _l20;
     if (_l20) goto bb4; else goto bb5;
 bb3:;
-#line 1004
+#line 1003
     _l58 = 0;
     loam_str_release(&_l43);
     loam_str_release(&_l41);
     return _l58;
 bb4:;
-#line 989
+#line 988
     _l21 = path.len;
-    (void)loam_idx(_l16, _l21, "sys.loam", 989);
+    (void)loam_idx(_l16, _l21, "sys.loam", 988);
     _l22 = ((int64_t)(unsigned char)(path.ptr[_l16]));
     _l23 = 47;
     _l24 = (_l22 != _l23);
@@ -163901,7 +164030,7 @@ bb5:;
     if (_l19) goto bb6; else goto bb7;
 bb6:;
     _l25 = path.len;
-    (void)loam_idx(_l16, _l25, "sys.loam", 989);
+    (void)loam_idx(_l16, _l25, "sys.loam", 988);
     _l26 = ((int64_t)(unsigned char)(path.ptr[_l16]));
     _l27 = 92;
     _l28 = (_l26 != _l27);
@@ -163910,13 +164039,13 @@ bb6:;
 bb7:;
     if (_l18) goto bb8; else goto bb9;
 bb8:;
-#line 990
+#line 989
     _l29 = 1;
-    _l30 = loam_add_i32(_l16, _l29, "sys.loam", 990);
+    _l30 = loam_add_i32(_l16, _l29, "sys.loam", 989);
     _l16 = _l30;
     goto bb1;
 bb9:;
-#line 994
+#line 993
     _l32 = 2;
     _l33 = (_l16 == _l32);
     _l31 = _l33;
@@ -163924,7 +164053,7 @@ bb9:;
 bb10:;
     _l34 = 1;
     _l35 = path.len;
-    (void)loam_idx(_l34, _l35, "sys.loam", 994);
+    (void)loam_idx(_l34, _l35, "sys.loam", 993);
     _l36 = ((int64_t)(unsigned char)(path.ptr[_l34]));
     _l37 = 58;
     _l38 = (_l36 == _l37);
@@ -163933,18 +164062,18 @@ bb10:;
 bb11:;
     if (_l31) goto bb12; else goto bb13;
 bb12:;
-#line 995
+#line 994
     _l39 = 1;
-    _l40 = loam_add_i32(_l16, _l39, "sys.loam", 995);
+    _l40 = loam_add_i32(_l16, _l39, "sys.loam", 994);
     _l16 = _l40;
     goto bb1;
 bb13:;
-#line 998
+#line 997
     _l42 = 0;
     _l41 = loam_str_slice(path, _l42, _l16);
     _l43 = _l41;
     loam_str_retain(_l43);
-#line 999
+#line 998
     _l46 = _l43.len;
     _l47 = 0;
     _l48 = (_l46 > _l47);
@@ -163968,17 +164097,17 @@ bb16:;
 bb17:;
     if (_l44) goto bb18; else goto bb19;
 bb18:;
-#line 1000
+#line 999
     _l55 = 1;
     loam_str_release(&_l43);
     loam_str_release(&_l41);
     return _l55;
 bb19:;
-#line 1002
+#line 1001
     _l56 = 1;
-    _l57 = loam_add_i32(_l16, _l56, "sys.loam", 1002);
+    _l57 = loam_add_i32(_l16, _l56, "sys.loam", 1001);
     _l16 = _l57;
-#line 988
+#line 987
     loam_str_release(&_l43);
     loam_str_release(&_l41);
     goto bb1;
@@ -163986,23 +164115,23 @@ bb19:;
 
 #endif
 #if defined(__wasm32__)
-#line 1009
+#line 1008
 static int32_t loam_sys_mkdir_os(loam_str path) {
     int32_t _l13;
 bb0:;
-#line 1010
+#line 1009
     _l13 = 1;
     return _l13;
 }
 
 #endif
 #if !defined(_WIN32) && !defined(__wasm32__)
-#line 1015
+#line 1014
 static int32_t loam_sys_mkdir_level(loam_str path) {
     int32_t _l13;
     int32_t _l14;
 bb0:;
-#line 1016
+#line 1015
     _l14 = 493;
     _l13 = loam_sys_c_mkdir(path, _l14);
     return _l13;
@@ -164010,27 +164139,27 @@ bb0:;
 
 #endif
 #if defined(_WIN32)
-#line 1021
+#line 1020
 static int32_t loam_sys_mkdir_level(loam_str path) {
     int32_t _l13;
 bb0:;
-#line 1022
+#line 1021
     _l13 = loam_sys_c_mkdir_win(path);
     return _l13;
 }
 
 #endif
-#line 1036
+#line 1035
 static int32_t loam_sys_rename(loam_str from, loam_str to) {
     int32_t _l14;
 bb0:;
-#line 1037
+#line 1036
     _l14 = loam_sys_rename_os(from, to);
     return _l14;
 }
 
 #if defined(__APPLE__) || defined(__linux__) || defined(_WIN32) || (!defined(__APPLE__) && !defined(__linux__) && !defined(_WIN32) && !defined(__wasm32__))
-#line 1043
+#line 1042
 static int32_t loam_sys_rename_os(loam_str from, loam_str to) {
     int32_t _l14;
     int32_t _l15;
@@ -164046,17 +164175,17 @@ static int32_t loam_sys_rename_os(loam_str from, loam_str to) {
     int32_t _l25;
     int32_t _l26;
 bb0:;
-#line 1044
+#line 1043
     _l14 = loam_sys_c_rename(from, to);
     _l15 = 0;
     _l16 = (_l14 == _l15);
     if (_l16) goto bb1; else goto bb2;
 bb1:;
-#line 1045
+#line 1044
     _l17 = 0;
     return _l17;
 bb2:;
-#line 1047
+#line 1046
     _l19 = loam_sys_c_remove(to);
     _l20 = 0;
     _l21 = (_l19 == _l20);
@@ -164071,38 +164200,38 @@ bb3:;
 bb4:;
     if (_l18) goto bb5; else goto bb6;
 bb5:;
-#line 1048
+#line 1047
     _l25 = 0;
     return _l25;
 bb6:;
-#line 1050
+#line 1049
     _l26 = 1;
     return _l26;
 }
 
 #endif
 #if defined(__wasm32__)
-#line 1055
+#line 1054
 static int32_t loam_sys_rename_os(loam_str from, loam_str to) {
     int32_t _l14;
 bb0:;
-#line 1056
+#line 1055
     _l14 = 1;
     return _l14;
 }
 
 #endif
-#line 1082
+#line 1081
 static int32_t loam_sys_exists(loam_str path) {
     int32_t _l13;
 bb0:;
-#line 1083
+#line 1082
     _l13 = loam_sys_exists_os(path);
     return _l13;
 }
 
 #if defined(__APPLE__) || defined(__linux__) || defined(_WIN32) || (!defined(__APPLE__) && !defined(__linux__) && !defined(_WIN32) && !defined(__wasm32__))
-#line 1088
+#line 1087
 static int32_t loam_sys_exists_os(loam_str path) {
     Result__LRi64 _l13;
     Result__LRi64 _l14;
@@ -164113,11 +164242,11 @@ static int32_t loam_sys_exists_os(loam_str path) {
     int32_t _l19;
     int32_t _l20;
 bb0:;
-#line 1089
+#line 1088
     _l13 = loam_sys_c_stat(path);
     _l14 = _l13;
     loam_keep__Result__LRi64(&_l14);
-#line 1090
+#line 1089
     _l16 = _l14.tag;
     _l17 = 1;
     _l18 = (_l16 == _l17);
@@ -164138,27 +164267,27 @@ bb3:;
 
 #endif
 #if defined(__wasm32__)
-#line 1095
+#line 1094
 static int32_t loam_sys_exists_os(loam_str path) {
     int32_t _l13;
 bb0:;
-#line 1096
+#line 1095
     _l13 = 0;
     return _l13;
 }
 
 #endif
-#line 1100
+#line 1099
 static int32_t loam_sys_is_dir(loam_str path) {
     int32_t _l13;
 bb0:;
-#line 1101
+#line 1100
     _l13 = loam_sys_is_dir_os(path);
     return _l13;
 }
 
 #if defined(__APPLE__) || defined(__linux__) || defined(_WIN32) || (!defined(__APPLE__) && !defined(__linux__) && !defined(_WIN32) && !defined(__wasm32__))
-#line 1106
+#line 1105
 static int32_t loam_sys_is_dir_os(loam_str path) {
     Result__LRi64 _l13;
     Result__LRi64 _l14;
@@ -164171,28 +164300,28 @@ static int32_t loam_sys_is_dir_os(loam_str path) {
     int64_t _l21;
     int32_t _l22;
 bb0:;
-#line 1107
+#line 1106
     _l13 = loam_sys_c_stat(path);
     _l14 = _l13;
     loam_keep__Result__LRi64(&_l14);
-#line 1108
+#line 1107
     _l15 = _l14.tag;
     _l16 = 1;
     _l17 = (_l15 == _l16);
     if (_l17) goto bb1; else goto bb2;
 bb1:;
-#line 1109
+#line 1108
     _l18 = 0;
     loam_rel__Result__LRi64(&_l14);
     loam_rel__Result__LRi64(&_l13);
     return _l18;
 bb2:;
-#line 1111
+#line 1110
     _l19 = 4;
     _l20 = _l14.val.len;
-    (void)loam_idx(_l19, _l20, "sys.loam", 1111);
+    (void)loam_idx(_l19, _l20, "sys.loam", 1110);
     _l21 = ((int64_t *)(_l14.val.ptr))[_l19];
-    _l22 = loam_conv_i32((int64_t)_l21, "sys.loam", 1111);
+    _l22 = loam_conv_i32((int64_t)_l21, "sys.loam", 1110);
     loam_rel__Result__LRi64(&_l14);
     loam_rel__Result__LRi64(&_l13);
     return _l22;
@@ -164200,27 +164329,27 @@ bb2:;
 
 #endif
 #if defined(__wasm32__)
-#line 1116
+#line 1115
 static int32_t loam_sys_is_dir_os(loam_str path) {
     int32_t _l13;
 bb0:;
-#line 1117
+#line 1116
     _l13 = 0;
     return _l13;
 }
 
 #endif
-#line 1123
+#line 1122
 static loam_str loam_sys_realpath(loam_str path) {
     loam_str _l13;
 bb0:;
-#line 1124
+#line 1123
     _l13 = loam_sys_realpath_os(path);
     return _l13;
 }
 
 #if !defined(_WIN32) && !defined(__wasm32__)
-#line 1137
+#line 1136
 static loam_str loam_sys_realpath_os(loam_str path) {
     loam_vec _l13;
     int32_t _l14;
@@ -164230,52 +164359,51 @@ static loam_str loam_sys_realpath_os(loam_str path) {
     int32_t _l18;
     bool _l19;
     int64_t _l20;
-    int64_t _l21;
-    bool _l22;
-    loam_str _l23;
+    loam_vec * _l21;
+    int64_t _l22;
+    bool _l23;
     loam_str _l24;
+    loam_str _l25;
 bb0:;
-#line 1138
+#line 1137
     _l14 = 4096;
     _l13 = loam_buf_with_len(_l14);
     _l15 = loam_vec_move(&_l13);
-#line 1139
+#line 1138
     _l17 = path.len;
     _l18 = 0;
     _l19 = (_l17 == _l18);
     _l16 = _l19;
     if (_l19) goto bb2; else goto bb1;
 bb1:;
-        {
-        loam_vec_retain(&_l15);
-    _l20 = loam_sys_c_realpath(path, _l15);
-    }
-    _l21 = 0;
-    _l22 = (_l20 == _l21);
-    _l16 = _l22;
+    _l21 = &_l15;
+    _l20 = loam_sys_c_realpath(path, _l21);
+    _l22 = 0;
+    _l23 = (_l20 == _l22);
+    _l16 = _l23;
     goto bb2;
 bb2:;
     if (_l16) goto bb3; else goto bb4;
 bb3:;
-#line 1140
-    _l23 = ((loam_str){(const char *)"", 0});
-    loam_vec_drop(&_l15);
-    loam_vec_drop(&_l13);
-    return _l23;
-bb4:;
-#line 1142
-        {
-        loam_vec_retain(&_l15);
-    _l24 = loam_sys_until_nul(_l15);
-    }
+#line 1139
+    _l24 = ((loam_str){(const char *)"", 0});
     loam_vec_drop(&_l15);
     loam_vec_drop(&_l13);
     return _l24;
+bb4:;
+#line 1141
+        {
+        loam_vec_retain(&_l15);
+    _l25 = loam_sys_until_nul(_l15);
+    }
+    loam_vec_drop(&_l15);
+    loam_vec_drop(&_l13);
+    return _l25;
 }
 
 #endif
 #if defined(_WIN32)
-#line 1148
+#line 1147
 static loam_str loam_sys_realpath_os(loam_str path) {
     loam_vec _l13;
     int32_t _l14;
@@ -164285,85 +164413,84 @@ static loam_str loam_sys_realpath_os(loam_str path) {
     int32_t _l18;
     bool _l19;
     int64_t _l20;
-    int32_t _l21;
-    int64_t _l22;
+    loam_vec * _l21;
+    int32_t _l22;
     int64_t _l23;
-    bool _l24;
-    loam_str _l25;
+    int64_t _l24;
+    bool _l25;
     loam_str _l26;
     loam_str _l27;
     loam_str _l28;
     loam_str _l29;
-    int32_t _l30;
+    loam_str _l30;
     int32_t _l31;
-    bool _l32;
-    loam_str _l33 = {0};
+    int32_t _l32;
+    bool _l33;
+    loam_str _l34 = {0};
 bb0:;
-#line 1149
+#line 1148
     _l14 = 4096;
     _l13 = loam_buf_with_len(_l14);
     _l15 = loam_vec_move(&_l13);
-#line 1150
+#line 1149
     _l17 = path.len;
     _l18 = 0;
     _l19 = (_l17 == _l18);
     _l16 = _l19;
     if (_l19) goto bb2; else goto bb1;
 bb1:;
-    _l21 = 4096;
-    _l22 = (int64_t)_l21;
-        {
-        loam_vec_retain(&_l15);
-    _l20 = loam_sys_c_fullpath(_l15, path, _l22);
-    }
-    _l23 = 0;
-    _l24 = (_l20 == _l23);
-    _l16 = _l24;
+    _l21 = &_l15;
+    _l22 = 4096;
+    _l23 = (int64_t)_l22;
+    _l20 = loam_sys_c_fullpath(_l21, path, _l23);
+    _l24 = 0;
+    _l25 = (_l20 == _l24);
+    _l16 = _l25;
     goto bb2;
 bb2:;
     if (_l16) goto bb3; else goto bb4;
 bb3:;
-#line 1151
-    _l25 = ((loam_str){(const char *)"", 0});
+#line 1150
+    _l26 = ((loam_str){(const char *)"", 0});
     loam_vec_drop(&_l15);
     loam_vec_drop(&_l13);
-    return _l25;
+    return _l26;
 bb4:;
-#line 1153
+#line 1152
         {
         loam_vec_retain(&_l15);
-    _l27 = loam_sys_until_nul(_l15);
+    _l28 = loam_sys_until_nul(_l15);
     }
-    _l26 = loam_sys_forward_slashes(_l27);
-    _l28 = _l26;
-    loam_str_retain(_l28);
-#line 1154
-    _l30 = loam_sys_exists_os(_l28);
-    _l31 = 1;
-    _l32 = (_l30 == _l31);
-    if (_l32) goto bb5; else goto bb6;
-bb5:;
-    _l29 = _l28;
+    _l27 = loam_sys_forward_slashes(_l28);
+    _l29 = _l27;
     loam_str_retain(_l29);
+#line 1153
+    _l31 = loam_sys_exists_os(_l29);
+    _l32 = 1;
+    _l33 = (_l31 == _l32);
+    if (_l33) goto bb5; else goto bb6;
+bb5:;
+    _l30 = _l29;
+    loam_str_retain(_l30);
     goto bb7;
 bb6:;
-    _l33 = ((loam_str){(const char *)"", 0});
-    _l29 = _l33;
-    loam_str_retain(_l29);
+    _l34 = ((loam_str){(const char *)"", 0});
+    _l30 = _l34;
+    loam_str_retain(_l30);
     goto bb7;
 bb7:;
-    loam_str_release(&_l33);
+    loam_str_release(&_l34);
+    loam_str_release(&_l29);
     loam_str_release(&_l28);
     loam_str_release(&_l27);
-    loam_str_release(&_l26);
     loam_vec_drop(&_l15);
     loam_vec_drop(&_l13);
-    return _l29;
+    return _l30;
 }
 
 #endif
 #if defined(_WIN32)
-#line 1165
+#line 1164
 static loam_str loam_sys_forward_slashes(loam_str p) {
     loam_vec _l13 = {0};
     loam_vec _l14;
@@ -164384,10 +164511,10 @@ static loam_str loam_sys_forward_slashes(loam_str p) {
     loam_str _l29;
     loam_vec _l30;
 bb0:;
-#line 1166
+#line 1165
     _l13 = loam_vec_new();
     _l14 = loam_vec_move(&_l13);
-#line 1167
+#line 1166
     _l15 = 0;
     _l16 = p.len;
     _l17 = _l15;
@@ -164396,27 +164523,27 @@ bb1:;
     _l18 = (_l17 < _l16);
     if (_l18) goto bb2; else goto bb4;
 bb2:;
-#line 1168
+#line 1167
     _l19 = &_l14;
     _l21 = ((int64_t)(unsigned char)(p.ptr[_l17]));
     _l22 = 92;
     _l23 = (_l21 == _l22);
     if (_l23) goto bb5; else goto bb6;
 bb3:;
-#line 1167
+#line 1166
     _l27 = 1;
     _l28 = (_l17 + _l27);
     _l17 = _l28;
     goto bb1;
 bb4:;
-#line 1170
+#line 1169
     _l30 = loam_vec_move(&_l14);
     _l29 = loam_string_from_u8(_l30);
     loam_vec_drop(&_l14);
     loam_vec_drop(&_l13);
     return _l29;
 bb5:;
-#line 1168
+#line 1167
     _l24 = 47;
     _l20 = _l24;
     goto bb7;
@@ -164425,34 +164552,34 @@ bb6:;
     _l20 = _l25;
     goto bb7;
 bb7:;
-    _l26 = loam_conv_u8((int64_t)_l20, "sys.loam", 1168);
-    loam_vec_push(_l19, &_l26, sizeof(uint8_t), "sys.loam", 1168);
+    _l26 = loam_conv_u8((int64_t)_l20, "sys.loam", 1167);
+    loam_vec_push(_l19, &_l26, sizeof(uint8_t), "sys.loam", 1167);
     goto bb3;
 }
 
 #endif
 #if defined(__wasm32__)
-#line 1175
+#line 1174
 static loam_str loam_sys_realpath_os(loam_str path) {
     loam_str _l13;
 bb0:;
-#line 1176
+#line 1175
     _l13 = ((loam_str){(const char *)"", 0});
     return _l13;
 }
 
 #endif
-#line 1228
+#line 1227
 static loam_vec loam_sys_list_dir(loam_str path) {
     loam_vec _l13;
 bb0:;
-#line 1229
+#line 1228
     _l13 = loam_sys_list_dir_os(path);
     return _l13;
 }
 
 #if defined(__APPLE__) || defined(__linux__) || defined(_WIN32) || (!defined(__APPLE__) && !defined(__linux__) && !defined(_WIN32) && !defined(__wasm32__))
-#line 1236
+#line 1235
 static loam_vec loam_sys_list_dir_os(loam_str path) {
     Result__DirNames _l13;
     Result__DirNames _l14;
@@ -164505,26 +164632,26 @@ static loam_vec loam_sys_list_dir_os(loam_str path) {
     int32_t _l61;
     int32_t _l62;
 bb0:;
-#line 1237
+#line 1236
     _l13 = loam_sys_dir_names_raw(path);
     _l14 = _l13;
     loam_str_retain(_l14.err);
-#line 1238
+#line 1237
     _l15 = _l14.tag;
     _l16 = 1;
     _l17 = (_l15 == _l16);
     if (_l17) goto bb1; else goto bb2;
 bb1:;
-#line 1239
+#line 1238
     _l18 = loam_vec_new();
     loam_str_release(&_l14.err);
     loam_str_release(&_l13.err);
     return _l18;
 bb2:;
-#line 1241
+#line 1240
     _l19 = loam_vec_new();
     _l20 = loam_vec_move(&_l19);
-#line 1242
+#line 1241
     _l21 = 0;
     _l22 = _l14.val.n;
     _l23 = _l21;
@@ -164533,25 +164660,25 @@ bb3:;
     _l24 = (_l23 < _l22);
     if (_l24) goto bb4; else goto bb6;
 bb4:;
-#line 1243
+#line 1242
     _l25 = &_l20;
     _l27 = _l14.val.ptr;
     _l28 = (int64_t)_l23;
     _l26 = loam_sys_c_dir_name(_l27, _l28);
-    loam_vec_push_take(_l25, &_l26, sizeof(loam_str), loam_elem_retain_1, "sys.loam", 1243);
+    loam_vec_push_take(_l25, &_l26, sizeof(loam_str), loam_elem_retain_1, "sys.loam", 1242);
     goto bb5;
 bb5:;
-#line 1242
+#line 1241
     _l29 = 1;
     _l30 = (_l23 + _l29);
     _l23 = _l30;
     goto bb3;
 bb6:;
-#line 1245
+#line 1244
     _l31 = _l14.val.ptr;
     _l32 = _l14.val.n;
     loam_sys_c_dir_free(_l31, _l32);
-#line 1247
+#line 1246
     _l33 = 1;
     _l34 = _l20.len;
     _l35 = _l33;
@@ -164560,26 +164687,26 @@ bb7:;
     _l36 = (_l35 < _l34);
     if (_l36) goto bb8; else goto bb10;
 bb8:;
-#line 1248
+#line 1247
     _l37 = _l20.len;
-    (void)loam_idx(_l35, _l37, "sys.loam", 1248);
+    (void)loam_idx(_l35, _l37, "sys.loam", 1247);
     _l38 = ((loam_str *)(_l20.ptr))[_l35];
     loam_str_retain(_l38);
     _l39 = _l38;
     loam_str_retain(_l39);
-#line 1249
+#line 1248
     _l40 = 1;
     _l41 = (_l35 - _l40);
     _l42 = _l41;
     goto bb11;
 bb9:;
-#line 1247
+#line 1246
     _l61 = 1;
     _l62 = (_l35 + _l61);
     _l35 = _l62;
     goto bb7;
 bb10:;
-#line 1256
+#line 1255
     loam_str_release(&_l52);
     loam_str_release(&_l48);
     loam_str_release(&_l39);
@@ -164589,57 +164716,57 @@ bb10:;
     loam_str_release(&_l13.err);
     return _l20;
 bb11:;
-#line 1250
+#line 1249
     _l44 = 0;
     _l45 = (_l42 >= _l44);
     _l43 = _l45;
     if (_l45) goto bb14; else goto bb15;
 bb12:;
-#line 1251
+#line 1250
     _l51 = _l20.len;
-    (void)loam_idx(_l42, _l51, "sys.loam", 1251);
+    (void)loam_idx(_l42, _l51, "sys.loam", 1250);
     _l52 = ((loam_str *)(_l20.ptr))[_l42];
     loam_str_retain(_l52);
     _l53 = 1;
-    _l54 = loam_add_i32(_l42, _l53, "sys.loam", 1251);
+    _l54 = loam_add_i32(_l42, _l53, "sys.loam", 1250);
     _l55 = _l20.len;
-    (void)loam_idx(_l54, _l55, "sys.loam", 1251);
+    (void)loam_idx(_l54, _l55, "sys.loam", 1250);
     {
         loam_str _repl = ((loam_str *)(_l20.ptr))[_l54];
         ((loam_str *)(_l20.ptr))[_l54] = _l52;
             loam_str_retain(((loam_str *)(_l20.ptr))[_l54]);
     loam_str_release(&_repl);
     }
-#line 1252
+#line 1251
     _l56 = 1;
-    _l57 = loam_sub_i32(_l42, _l56, "sys.loam", 1252);
+    _l57 = loam_sub_i32(_l42, _l56, "sys.loam", 1251);
     _l42 = _l57;
-#line 1250
+#line 1249
     loam_str_release(&_l52);
     loam_str_release(&_l48);
     goto bb11;
 bb13:;
-#line 1254
+#line 1253
     _l58 = 1;
-    _l59 = loam_add_i32(_l42, _l58, "sys.loam", 1254);
+    _l59 = loam_add_i32(_l42, _l58, "sys.loam", 1253);
     _l60 = _l20.len;
-    (void)loam_idx(_l59, _l60, "sys.loam", 1254);
+    (void)loam_idx(_l59, _l60, "sys.loam", 1253);
     {
         loam_str _repl = ((loam_str *)(_l20.ptr))[_l59];
         ((loam_str *)(_l20.ptr))[_l59] = _l39;
             loam_str_retain(((loam_str *)(_l20.ptr))[_l59]);
     loam_str_release(&_repl);
     }
-#line 1247
+#line 1246
     loam_str_release(&_l52);
     loam_str_release(&_l48);
     loam_str_release(&_l39);
     loam_str_release(&_l38);
     goto bb9;
 bb14:;
-#line 1250
+#line 1249
     _l47 = _l20.len;
-    (void)loam_idx(_l42, _l47, "sys.loam", 1250);
+    (void)loam_idx(_l42, _l47, "sys.loam", 1249);
     _l48 = ((loam_str *)(_l20.ptr))[_l42];
     loam_str_retain(_l48);
     _l46 = loam_sys_c_strcmp(_l48, _l39);
@@ -164653,97 +164780,96 @@ bb15:;
 
 #endif
 #if defined(__wasm32__)
-#line 1261
+#line 1260
 static loam_vec loam_sys_list_dir_os(loam_str path) {
     loam_vec _l13 = {0};
 bb0:;
-#line 1262
+#line 1261
     _l13 = loam_vec_new();
     return _l13;
 }
 
 #endif
 #if defined(__APPLE__) || defined(__linux__) || defined(_WIN32) || (!defined(__APPLE__) && !defined(__linux__) && !defined(_WIN32) && !defined(__wasm32__))
-#line 1297
+#line 1296
 static Result__DirNames loam_sys_dir_names_raw(loam_str path) {
     int64_t _l13;
     loam_vec _l14 = {0};
     loam_vec _l15;
     int64_t _l16;
-    int64_t _l17;
-    int32_t _l18;
+    loam_vec * _l17;
+    int64_t _l18;
     int32_t _l19;
-    int64_t _l20;
+    int32_t _l20;
     int64_t _l21;
-    bool _l22;
-    Result__DirNames _l23;
-    loam_str _l24;
-    int64_t _l25;
-    int32_t _l26;
-    DirNames _l27;
-    Result__DirNames _l28;
-    int32_t _l29;
+    int64_t _l22;
+    bool _l23;
+    Result__DirNames _l24;
+    loam_str _l25;
+    int64_t _l26;
+    int32_t _l27;
+    DirNames _l28;
+    Result__DirNames _l29;
     int32_t _l30;
-    int64_t _l31;
-    int32_t _l32;
-    DirNames _l33;
+    int32_t _l31;
+    int64_t _l32;
+    int32_t _l33;
+    DirNames _l34;
 bb0:;
-#line 1298
+#line 1297
     _l13 = 0;
     _l14 = loam_vec_new();
-    loam_vec_push(&_l14, &_l13, sizeof(int64_t), "sys.loam", 1298);
+    loam_vec_push(&_l14, &_l13, sizeof(int64_t), "sys.loam", 1297);
     _l15 = loam_vec_move(&_l14);
+#line 1298
+    _l17 = &_l15;
+    _l16 = loam_sys_c_dir_names(path, _l17);
+    _l18 = _l16;
 #line 1299
-        {
-        loam_vec_retain(&_l15);
-    _l16 = loam_sys_c_dir_names(path, _l15);
-    }
-    _l17 = _l16;
-#line 1300
-    _l18 = 0;
-    _l19 = _l15.len;
-    (void)loam_idx(_l18, _l19, "sys.loam", 1300);
-    _l20 = ((int64_t *)(_l15.ptr))[_l18];
-    _l21 = 0;
-    _l22 = (_l20 == _l21);
-    if (_l22) goto bb1; else goto bb2;
+    _l19 = 0;
+    _l20 = _l15.len;
+    (void)loam_idx(_l19, _l20, "sys.loam", 1299);
+    _l21 = ((int64_t *)(_l15.ptr))[_l19];
+    _l22 = 0;
+    _l23 = (_l21 == _l22);
+    if (_l23) goto bb1; else goto bb2;
 bb1:;
-#line 1301
-    _l24 = loam_sys_c_strerror();
-    _l25 = 0;
+#line 1300
+    _l25 = loam_sys_c_strerror();
     _l26 = 0;
-    _l27 = (DirNames){ .ptr = _l25, .n = _l26 };
-    _l23 = loam_result_res_err__DirNames(_l24, _l27);
-    loam_str_release(&_l24);
+    _l27 = 0;
+    _l28 = (DirNames){ .ptr = _l26, .n = _l27 };
+    _l24 = loam_result_res_err__DirNames(_l25, _l28);
+    loam_str_release(&_l25);
     loam_vec_drop(&_l15);
     loam_vec_drop(&_l14);
-    return _l23;
+    return _l24;
 bb2:;
-#line 1303
-    _l29 = 0;
-    _l30 = _l15.len;
-    (void)loam_idx(_l29, _l30, "sys.loam", 1303);
-    _l31 = ((int64_t *)(_l15.ptr))[_l29];
-    _l32 = loam_conv_i32((int64_t)_l17, "sys.loam", 1303);
-    _l33 = (DirNames){ .ptr = _l31, .n = _l32 };
-    _l28 = loam_result_res_ok__DirNames(_l33);
+#line 1302
+    _l30 = 0;
+    _l31 = _l15.len;
+    (void)loam_idx(_l30, _l31, "sys.loam", 1302);
+    _l32 = ((int64_t *)(_l15.ptr))[_l30];
+    _l33 = loam_conv_i32((int64_t)_l18, "sys.loam", 1302);
+    _l34 = (DirNames){ .ptr = _l32, .n = _l33 };
+    _l29 = loam_result_res_ok__DirNames(_l34);
     loam_vec_drop(&_l15);
     loam_vec_drop(&_l14);
-    return _l28;
+    return _l29;
 }
 
 #endif
-#line 1308
+#line 1307
 static int32_t loam_sys_remove_path(loam_str path) {
     int32_t _l13;
 bb0:;
-#line 1309
+#line 1308
     _l13 = loam_sys_remove_path_os(path);
     return _l13;
 }
 
 #if defined(__APPLE__) || defined(__linux__) || defined(_WIN32) || (!defined(__APPLE__) && !defined(__linux__) && !defined(_WIN32) && !defined(__wasm32__))
-#line 1317
+#line 1316
 static int32_t loam_sys_remove_path_os(loam_str path) {
     Result__LRi64 _l13;
     Result__LRi64 _l14;
@@ -164783,54 +164909,54 @@ static int32_t loam_sys_remove_path_os(loam_str path) {
     int32_t _l48;
     int32_t _l49;
 bb0:;
-#line 1318
+#line 1317
     _l13 = loam_sys_c_lstat(path);
     _l14 = _l13;
     loam_keep__Result__LRi64(&_l14);
-#line 1319
+#line 1318
     _l15 = _l14.tag;
     _l16 = 1;
     _l17 = (_l15 == _l16);
     if (_l17) goto bb1; else goto bb2;
 bb1:;
-#line 1320
+#line 1319
     _l18 = 0;
     loam_rel__Result__LRi64(&_l14);
     loam_rel__Result__LRi64(&_l13);
     return _l18;
 bb2:;
-#line 1322
+#line 1321
     _l19 = 1;
     _l20 = _l14.val.len;
-    (void)loam_idx(_l19, _l20, "sys.loam", 1322);
+    (void)loam_idx(_l19, _l20, "sys.loam", 1321);
     _l21 = ((int64_t *)(_l14.val.ptr))[_l19];
     _l22 = 0;
     _l23 = (_l21 != _l22);
     if (_l23) goto bb3; else goto bb4;
 bb3:;
-#line 1323
+#line 1322
     _l24 = loam_sys_dir_names_raw(path);
     _l25 = _l24;
     loam_str_retain(_l25.err);
-#line 1324
+#line 1323
     _l26 = _l25.tag;
     _l27 = 0;
     _l28 = (_l26 == _l27);
     if (_l28) goto bb5; else goto bb6;
 bb4:;
-#line 1336
+#line 1335
     _l49 = loam_sys_c_remove(path);
     loam_rel__Result__LRi64(&_l14);
     loam_rel__Result__LRi64(&_l13);
     return _l49;
 bb5:;
-#line 1325
+#line 1324
     _l29 = 0;
     _l30 = _l25.val.n;
     _l31 = _l29;
     goto bb7;
 bb6:;
-#line 1334
+#line 1333
     _l48 = loam_sys_c_rmdir(path);
     loam_str_release(&_l39);
     loam_str_release(&_l38);
@@ -164843,44 +164969,44 @@ bb6:;
     loam_rel__Result__LRi64(&_l13);
     return _l48;
 bb7:;
-#line 1325
+#line 1324
     _l32 = (_l31 < _l30);
     if (_l32) goto bb8; else goto bb10;
 bb8:;
-#line 1326
+#line 1325
     _l34 = _l25.val.ptr;
     _l35 = (int64_t)_l31;
     _l33 = loam_sys_c_dir_name(_l34, _l35);
     _l36 = _l33;
     loam_str_retain(_l36);
-#line 1327
+#line 1326
     _l38 = ((loam_str){(const char *)"/", 1});
     { int64_t _in = 0 + path.len + _l38.len + _l36.len; char *_ip = loam_str_bytes(_in); int64_t _io = 0; if (path.len > 0) { memcpy(_ip + _io, path.ptr, (size_t)path.len); _io += path.len; } if (_l38.len > 0) { memcpy(_ip + _io, _l38.ptr, (size_t)_l38.len); _io += _l38.len; } if (_l36.len > 0) { memcpy(_ip + _io, _l36.ptr, (size_t)_l36.len); _io += _l36.len; } _ip[_in] = 0; _l37 = loam_str_owned(_ip, _in); }
     _l39 = _l37;
     loam_str_retain(_l39);
-#line 1328
+#line 1327
     _l40 = _l39.len;
     _l41 = 4096;
     _l42 = (_l40 < _l41);
     if (_l42) goto bb11; else goto bb12;
 bb9:;
-#line 1325
+#line 1324
     _l44 = 1;
     _l45 = (_l31 + _l44);
     _l31 = _l45;
     goto bb7;
 bb10:;
-#line 1332
+#line 1331
     _l46 = _l25.val.ptr;
     _l47 = _l25.val.n;
     loam_sys_c_dir_free(_l46, _l47);
     goto bb6;
 bb11:;
-#line 1329
+#line 1328
     _l43 = loam_sys_remove_path_os(_l39);
     goto bb12;
 bb12:;
-#line 1325
+#line 1324
     loam_str_release(&_l39);
     loam_str_release(&_l38);
     loam_str_release(&_l37);
@@ -164891,174 +165017,171 @@ bb12:;
 
 #endif
 #if defined(__wasm32__)
-#line 1341
+#line 1340
 static int32_t loam_sys_remove_path_os(loam_str path) {
     int32_t _l13;
 bb0:;
-#line 1342
+#line 1341
     _l13 = 1;
     return _l13;
 }
 
 #endif
 #if defined(__APPLE__) || defined(__linux__) || defined(_WIN32) || (!defined(__APPLE__) && !defined(__linux__) && !defined(_WIN32) && !defined(__wasm32__))
-#line 1353
+#line 1352
 static Result__LRi64 loam_sys_c_lstat(loam_str path) {
     int64_t _l13;
     int64_t _l14;
     loam_vec _l15 = {0};
     loam_vec _l16;
     int32_t _l17;
-    int32_t _l18;
-    bool _l19;
-    Result__LRi64 _l20;
-    loam_str _l21;
-    Result__LRi64 _l22;
+    loam_vec * _l18;
+    int32_t _l19;
+    bool _l20;
+    Result__LRi64 _l21;
+    loam_str _l22;
+    Result__LRi64 _l23;
 bb0:;
-#line 1354
+#line 1353
     _l13 = 0;
     _l14 = 0;
     _l15 = loam_vec_new();
-    loam_vec_push(&_l15, &_l13, sizeof(int64_t), "sys.loam", 1354);
-    loam_vec_push(&_l15, &_l14, sizeof(int64_t), "sys.loam", 1354);
+    loam_vec_push(&_l15, &_l13, sizeof(int64_t), "sys.loam", 1353);
+    loam_vec_push(&_l15, &_l14, sizeof(int64_t), "sys.loam", 1353);
     _l16 = loam_vec_move(&_l15);
-#line 1356
-        {
-        loam_vec_retain(&_l16);
-    _l17 = loam_sys_c_lstat_raw(path, _l16);
-    }
-    _l18 = 0;
-    _l19 = (_l17 == _l18);
-    if (_l19) goto bb1; else goto bb2;
+#line 1355
+    _l18 = &_l16;
+    _l17 = loam_sys_c_lstat_raw(path, _l18);
+    _l19 = 0;
+    _l20 = (_l17 == _l19);
+    if (_l20) goto bb1; else goto bb2;
 bb1:;
-#line 1357
-    _l21 = ((loam_str){(const char *)"", 0});
+#line 1356
+    _l22 = ((loam_str){(const char *)"", 0});
         {
         loam_vec_retain(&_l16);
-    _l20 = loam_result_res_err__vi64(_l21, _l16);
+    _l21 = loam_result_res_err__vi64(_l22, _l16);
     }
-    loam_str_release(&_l21);
+    loam_str_release(&_l22);
     loam_vec_drop(&_l16);
     loam_vec_drop(&_l15);
-    return _l20;
+    return _l21;
 bb2:;
-#line 1359
+#line 1358
         {
         loam_vec_retain(&_l16);
-    _l22 = loam_result_res_ok__vi64(_l16);
+    _l23 = loam_result_res_ok__vi64(_l16);
     }
     loam_vec_drop(&_l16);
     loam_vec_drop(&_l15);
-    return _l22;
+    return _l23;
 }
 
 #endif
-#line 1374
+#line 1373
 static loam_str loam_sys_cwd(void) {
     loam_str _l12;
 bb0:;
-#line 1375
+#line 1374
     _l12 = loam_sys_cwd_os();
     return _l12;
 }
 
 #if !defined(_WIN32) && !defined(__wasm32__)
-#line 1381
+#line 1380
 static loam_str loam_sys_cwd_os(void) {
     loam_vec _l12;
     int32_t _l13;
     loam_vec _l14;
     int64_t _l15;
-    int32_t _l16;
-    int64_t _l17;
-    int64_t _l18;
-    bool _l19;
-    loam_str _l20;
-    loam_str _l21;
-bb0:;
-#line 1382
-    _l13 = 4096;
-    _l12 = loam_buf_with_len(_l13);
-    _l14 = loam_vec_move(&_l12);
-#line 1383
-    _l16 = 4096;
-    _l17 = (int64_t)_l16;
-        {
-        loam_vec_retain(&_l14);
-    _l15 = loam_sys_c_getcwd(_l14, _l17);
-    }
-    _l18 = 0;
-    _l19 = (_l15 == _l18);
-    if (_l19) goto bb1; else goto bb2;
-bb1:;
-#line 1384
-    _l20 = ((loam_str){(const char *)"", 0});
-    loam_vec_drop(&_l14);
-    loam_vec_drop(&_l12);
-    return _l20;
-bb2:;
-#line 1386
-        {
-        loam_vec_retain(&_l14);
-    _l21 = loam_sys_until_nul(_l14);
-    }
-    loam_vec_drop(&_l14);
-    loam_vec_drop(&_l12);
-    return _l21;
-}
-
-#endif
-#if defined(_WIN32)
-#line 1391
-static loam_str loam_sys_cwd_os(void) {
-    loam_vec _l12;
-    int32_t _l13;
-    loam_vec _l14;
-    int64_t _l15;
-    int32_t _l16;
+    loam_vec * _l16;
     int32_t _l17;
     int64_t _l18;
-    bool _l19;
-    loam_str _l20;
+    int64_t _l19;
+    bool _l20;
     loam_str _l21;
     loam_str _l22;
 bb0:;
-#line 1392
+#line 1381
     _l13 = 4096;
     _l12 = loam_buf_with_len(_l13);
     _l14 = loam_vec_move(&_l12);
-#line 1393
-    _l16 = 4096;
-    _l17 = (int32_t)_l16;
-        {
-        loam_vec_retain(&_l14);
-    _l15 = loam_sys_c_getcwd_win(_l14, _l17);
-    }
-    _l18 = 0;
-    _l19 = (_l15 == _l18);
-    if (_l19) goto bb1; else goto bb2;
+#line 1382
+    _l16 = &_l14;
+    _l17 = 4096;
+    _l18 = (int64_t)_l17;
+    _l15 = loam_sys_c_getcwd(_l16, _l18);
+    _l19 = 0;
+    _l20 = (_l15 == _l19);
+    if (_l20) goto bb1; else goto bb2;
 bb1:;
-#line 1394
-    _l20 = ((loam_str){(const char *)"", 0});
+#line 1383
+    _l21 = ((loam_str){(const char *)"", 0});
     loam_vec_drop(&_l14);
     loam_vec_drop(&_l12);
-    return _l20;
+    return _l21;
 bb2:;
-#line 1396
+#line 1385
         {
         loam_vec_retain(&_l14);
     _l22 = loam_sys_until_nul(_l14);
     }
-    _l21 = loam_sys_forward_slashes(_l22);
-    loam_str_release(&_l22);
+    loam_vec_drop(&_l14);
+    loam_vec_drop(&_l12);
+    return _l22;
+}
+
+#endif
+#if defined(_WIN32)
+#line 1390
+static loam_str loam_sys_cwd_os(void) {
+    loam_vec _l12;
+    int32_t _l13;
+    loam_vec _l14;
+    int64_t _l15;
+    loam_vec * _l16;
+    int32_t _l17;
+    int32_t _l18;
+    int64_t _l19;
+    bool _l20;
+    loam_str _l21;
+    loam_str _l22;
+    loam_str _l23;
+bb0:;
+#line 1391
+    _l13 = 4096;
+    _l12 = loam_buf_with_len(_l13);
+    _l14 = loam_vec_move(&_l12);
+#line 1392
+    _l16 = &_l14;
+    _l17 = 4096;
+    _l18 = (int32_t)_l17;
+    _l15 = loam_sys_c_getcwd_win(_l16, _l18);
+    _l19 = 0;
+    _l20 = (_l15 == _l19);
+    if (_l20) goto bb1; else goto bb2;
+bb1:;
+#line 1393
+    _l21 = ((loam_str){(const char *)"", 0});
     loam_vec_drop(&_l14);
     loam_vec_drop(&_l12);
     return _l21;
+bb2:;
+#line 1395
+        {
+        loam_vec_retain(&_l14);
+    _l23 = loam_sys_until_nul(_l14);
+    }
+    _l22 = loam_sys_forward_slashes(_l23);
+    loam_str_release(&_l23);
+    loam_vec_drop(&_l14);
+    loam_vec_drop(&_l12);
+    return _l22;
 }
 
 #endif
 #if defined(__APPLE__) || defined(__linux__) || defined(_WIN32) || (!defined(__APPLE__) && !defined(__linux__) && !defined(_WIN32) && !defined(__wasm32__))
-#line 1401
+#line 1400
 static loam_str loam_sys_until_nul(loam_vec b) {
     int32_t _l13;
     int32_t _l14;
@@ -165084,34 +165207,34 @@ static loam_str loam_sys_until_nul(loam_vec b) {
     loam_str _l34;
     loam_vec _l35;
 bb0:;
-#line 1402
+#line 1401
     _l13 = 0;
     _l14 = _l13;
     goto bb1;
 bb1:;
-#line 1403
+#line 1402
     _l16 = b.len;
     _l17 = (_l14 < _l16);
     _l15 = _l17;
     if (_l17) goto bb4; else goto bb5;
 bb2:;
-#line 1404
+#line 1403
     _l22 = 1;
-    _l23 = loam_add_i32(_l14, _l22, "sys.loam", 1404);
+    _l23 = loam_add_i32(_l14, _l22, "sys.loam", 1403);
     _l14 = _l23;
     goto bb1;
 bb3:;
-#line 1406
+#line 1405
     _l24 = loam_vec_new();
     _l25 = loam_vec_move(&_l24);
-#line 1407
+#line 1406
     _l26 = 0;
     _l27 = _l26;
     goto bb6;
 bb4:;
-#line 1403
+#line 1402
     _l18 = b.len;
-    (void)loam_idx(_l14, _l18, "sys.loam", 1403);
+    (void)loam_idx(_l14, _l18, "sys.loam", 1402);
     _l19 = ((uint8_t *)(b.ptr))[_l14];
     _l20 = 0;
     _l21 = (_l19 != _l20);
@@ -165120,25 +165243,25 @@ bb4:;
 bb5:;
     if (_l15) goto bb2; else goto bb3;
 bb6:;
-#line 1407
+#line 1406
     _l28 = (_l27 < _l14);
     if (_l28) goto bb7; else goto bb9;
 bb7:;
-#line 1408
+#line 1407
     _l29 = &_l25;
     _l30 = b.len;
-    (void)loam_idx(_l27, _l30, "sys.loam", 1408);
+    (void)loam_idx(_l27, _l30, "sys.loam", 1407);
     _l31 = ((uint8_t *)(b.ptr))[_l27];
-    loam_vec_push(_l29, &_l31, sizeof(uint8_t), "sys.loam", 1408);
+    loam_vec_push(_l29, &_l31, sizeof(uint8_t), "sys.loam", 1407);
     goto bb8;
 bb8:;
-#line 1407
+#line 1406
     _l32 = 1;
     _l33 = (_l27 + _l32);
     _l27 = _l33;
     goto bb6;
 bb9:;
-#line 1410
+#line 1409
     _l35 = loam_vec_move(&_l25);
     _l34 = loam_string_from_u8(_l35);
     loam_vec_drop(&_l25);
@@ -165149,11 +165272,11 @@ bb9:;
 
 #endif
 #if defined(__wasm32__)
-#line 1415
+#line 1414
 static loam_str loam_sys_cwd_os(void) {
     loam_str _l12;
 bb0:;
-#line 1416
+#line 1415
     _l12 = ((loam_str){(const char *)"", 0});
     return _l12;
 }
@@ -173067,20 +173190,21 @@ static int64_t loam_async_now_ms_os(void) {
     loam_vec _l10;
     int32_t _l11;
     int32_t _l12;
-    int32_t _l13;
-    bool _l14;
-    int64_t _l15;
-    int32_t _l16;
+    loam_vec * _l13;
+    int32_t _l14;
+    bool _l15;
+    int64_t _l16;
     int32_t _l17;
-    int64_t _l18;
+    int32_t _l18;
     int64_t _l19;
     int64_t _l20;
-    int32_t _l21;
+    int64_t _l21;
     int32_t _l22;
-    int64_t _l23;
+    int32_t _l23;
     int64_t _l24;
     int64_t _l25;
     int64_t _l26;
+    int64_t _l27;
 bb0:;
 #line 73
     _l7 = 0;
@@ -173091,37 +173215,35 @@ bb0:;
     _l10 = loam_vec_move(&_l9);
 #line 74
     _l12 = loam_async_c_clock_monotonic();
-        {
-        loam_vec_retain(&_l10);
-    _l11 = loam_async_c_clock_gettime(_l12, _l10);
-    }
-    _l13 = 0;
-    _l14 = (_l11 != _l13);
-    if (_l14) goto bb1; else goto bb2;
+    _l13 = &_l10;
+    _l11 = loam_async_c_clock_gettime(_l12, _l13);
+    _l14 = 0;
+    _l15 = (_l11 != _l14);
+    if (_l15) goto bb1; else goto bb2;
 bb1:;
 #line 75
-    _l15 = 0;
+    _l16 = 0;
     loam_vec_drop(&_l10);
     loam_vec_drop(&_l9);
-    return _l15;
+    return _l16;
 bb2:;
 #line 77
-    _l16 = 0;
-    _l17 = _l10.len;
-    (void)loam_idx(_l16, _l17, "async.loam", 77);
-    _l18 = ((int64_t *)(_l10.ptr))[_l16];
-    _l19 = 1000;
-    _l20 = loam_mul_i64(_l18, _l19, "async.loam", 77);
-    _l21 = 1;
-    _l22 = _l10.len;
-    (void)loam_idx(_l21, _l22, "async.loam", 77);
-    _l23 = ((int64_t *)(_l10.ptr))[_l21];
-    _l24 = 1000000;
-    _l25 = loam_div_i64(_l23, _l24, "async.loam", 77);
-    _l26 = loam_add_i64(_l20, _l25, "async.loam", 77);
+    _l17 = 0;
+    _l18 = _l10.len;
+    (void)loam_idx(_l17, _l18, "async.loam", 77);
+    _l19 = ((int64_t *)(_l10.ptr))[_l17];
+    _l20 = 1000;
+    _l21 = loam_mul_i64(_l19, _l20, "async.loam", 77);
+    _l22 = 1;
+    _l23 = _l10.len;
+    (void)loam_idx(_l22, _l23, "async.loam", 77);
+    _l24 = ((int64_t *)(_l10.ptr))[_l22];
+    _l25 = 1000000;
+    _l26 = loam_div_i64(_l24, _l25, "async.loam", 77);
+    _l27 = loam_add_i64(_l21, _l26, "async.loam", 77);
     loam_vec_drop(&_l10);
     loam_vec_drop(&_l9);
-    return _l26;
+    return _l27;
 }
 
 #endif

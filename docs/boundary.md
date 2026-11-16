@@ -66,7 +66,8 @@ of its `#[c]` fns is in use, so an unused binding links nothing.
 | `i64` | Any pointer | Never `int`, which truncates a pointer |
 | `string` argument | `const char *` | A NUL-terminated copy of every byte, freed after the call |
 | `string` result | `const char *` | Copied up to its first NUL. NULL becomes `""`. C keeps ownership |
-| `[]` of numbers | `T *` | C may write through it. An empty one passes NULL |
+| `[]` of numbers or bools | `T *` | Owned. Retained for the call and dropped after. C may write through it. An empty one passes NULL |
+| `&[]T` / `&mut []T` of numbers or bools | `T *` | Borrowed. No retain and no drop; the caller keeps the buffer. C writes only through `&mut`. An empty one passes NULL |
 | none | `void` | Only as a result |
 
 Bytes with NULs inside:
@@ -77,9 +78,15 @@ Bytes with NULs inside:
   `string_from_bytes`.
 - A `[]u8` holds one byte per element. A `[]int` holds four.
 
-Structs, closures, `[]string`, and C variadics do not cross. Neither does a call
-back from C into Loam. A C function that takes a struct by value needs a small
-trampoline in the package, with no logic, as `packages/crypto` has for Argon2. A thread worker cannot call a `#[c]` fn.
+C must not keep a pointer it was handed. A plain-data struct (every field a
+number, a bool, or such a struct) passes by value. A variadic binding
+(`#[c("sym", "variadic after N")]`) may pass an `i32`, `u32`, `i64`, `u64`,
+`f64`, string, or a number/bool buffer, owned or borrowed, through `...`. A
+parameter that is a fn of numbers and bools takes a named module-level fn,
+and C calls that symbol. Closures, `[]string`, and any other struct do not
+cross; a struct that is not plain data still needs a trampoline in the
+package, as `packages/crypto` has for Argon2. A thread worker cannot call a
+`#[c]` fn.
 
 C runs on native builds only. A wasm, iOS, or Android build refuses a `#[c]` fn it
 can reach, and one only a `#[server]` body calls leaves nothing in that build.

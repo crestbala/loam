@@ -446,7 +446,7 @@ fn tcp_nb_connect_os(host: string, port: int) -> int {
 
 /** *`poll` over `fds`, retried on `EINTR`; `ms` clamped to 0..60 s. */
 #[os("posix")]
-fn poll_retry(fds: []i32, n: int, ms: int) -> int {
+fn poll_retry(fds: &mut []i32, n: int, ms: int) -> int {
     let wait = if ms < 0 { 0 } else if ms > POLL_MAX_MS { POLL_MAX_MS } else { ms }
     while true {
         let rc = c_poll(fds, n, i32(wait))
@@ -943,11 +943,11 @@ fn c_socket(domain: i32, kind: i32, protocol: i32) -> i32 {}
 
 #[os("posix")]
 #[c("connect")]
-fn c_connect(fd: i32, addr: []u8, len: u32) -> i32 {}
+fn c_connect(fd: i32, addr: &[]u8, len: u32) -> i32 {}
 
 #[os("posix")]
 #[c("bind")]
-fn c_bind(fd: i32, addr: []u8, len: u32) -> i32 {}
+fn c_bind(fd: i32, addr: &[]u8, len: u32) -> i32 {}
 
 #[os("posix")]
 #[c("listen")]
@@ -960,20 +960,20 @@ fn c_accept(fd: i32, addr: i64, len: i64) -> i32 {}
 
 #[os("posix")]
 #[c("getsockname")]
-fn c_getsockname(fd: i32, addr: []u8, len: []u32) -> i32 {}
+fn c_getsockname(fd: i32, addr: &mut []u8, len: &mut []u32) -> i32 {}
 
 #[os("posix")]
 #[c("setsockopt")]
-fn c_setsockopt(fd: i32, level: i32, name: i32, value: []i32, len: u32) -> i32 {}
+fn c_setsockopt(fd: i32, level: i32, name: i32, value: &[]i32, len: u32) -> i32 {}
 
 /** *`setsockopt` with a `struct timeval` (two `i64` words). */
 #[os("posix")]
 #[c("setsockopt")]
-fn c_setsockopt_time(fd: i32, level: i32, name: i32, value: []i64, len: u32) -> i32 {}
+fn c_setsockopt_time(fd: i32, level: i32, name: i32, value: &[]i64, len: u32) -> i32 {}
 
 #[os("posix")]
 #[c("getsockopt")]
-fn c_getsockopt(fd: i32, level: i32, name: i32, value: []i32, len: []u32) -> i32 {}
+fn c_getsockopt(fd: i32, level: i32, name: i32, value: &mut []i32, len: &mut []u32) -> i32 {}
 
 /** *`fcntl(fd, cmd)`: a get. `fcntl` is variadic in C. */
 #[os("posix")]
@@ -987,32 +987,32 @@ fn c_fcntl_set(fd: i32, cmd: i32, arg: i32) -> i32 {}
 
 #[os("posix")]
 #[c("recv")]
-fn c_recv(fd: i32, into: []u8, len: i64, flags: i32) -> i64 {}
+fn c_recv(fd: i32, into: &mut []u8, len: i64, flags: i32) -> i64 {}
 
 /** *`poll(fds, n, ms)`: `nfds_t` is an `unsigned int` on Apple. */
 #[os("apple")]
-fn c_poll(fds: []i32, n: int, ms: i32) -> i32 {
+fn c_poll(fds: &mut []i32, n: int, ms: i32) -> i32 {
     return c_poll_apple(fds, u32(n), ms)
 }
 
 /** *`nfds_t` is an `unsigned long` on Linux. */
 #[os("linux", "android", "other")]
-fn c_poll(fds: []i32, n: int, ms: i32) -> i32 {
+fn c_poll(fds: &mut []i32, n: int, ms: i32) -> i32 {
     return c_poll_linux(fds, u64(n), ms)
 }
 
 #[os("windows", "wasm")]
-fn c_poll(fds: []i32, n: int, ms: i32) -> i32 {
+fn c_poll(fds: &mut []i32, n: int, ms: i32) -> i32 {
     return -1
 }
 
 #[os("apple")]
 #[c("poll")]
-fn c_poll_apple(fds: []i32, n: u32, ms: i32) -> i32 {}
+fn c_poll_apple(fds: &mut []i32, n: u32, ms: i32) -> i32 {}
 
 #[os("linux", "android", "other")]
 #[c("poll")]
-fn c_poll_linux(fds: []i32, n: u64, ms: i32) -> i32 {}
+fn c_poll_linux(fds: &mut []i32, n: u64, ms: i32) -> i32 {}
 
 #[os("posix")]
 #[c("close")]
@@ -1134,7 +1134,7 @@ fn new_tls_context(host: string, fd: i32) -> i64 {
 #[os("apple")]
 fn connect_by_name(host: string, port: int, family: i32, blocking: bool) -> i32 {
     let hints = []i32 { 0, family, SOCK_STREAM, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
-    let list = []i64 { i64(0) }
+    let mut list = []i64 { i64(0) }
     if c_getaddrinfo(host, "{{port}}", hints, list) != 0 {
         return -1
     }
@@ -1541,11 +1541,11 @@ fn c_ssl_handshake(ctx: i64) -> i32 {}
 
 #[os("apple")]
 #[c("SSLRead")]
-fn c_ssl_read(ctx: i64, into: []u8, len: i64, processed: []u64) -> i32 {}
+fn c_ssl_read(ctx: i64, into: &mut []u8, len: i64, processed: &mut []u64) -> i32 {}
 
 #[os("apple")]
 #[c("SSLWrite")]
-fn c_ssl_write(ctx: i64, bytes: i64, len: i64, processed: []u64) -> i32 {}
+fn c_ssl_write(ctx: i64, bytes: i64, len: i64, processed: &mut []u64) -> i32 {}
 
 #[os("apple")]
 #[c("SSLClose")]
@@ -1557,7 +1557,7 @@ fn c_cf_release(object: i64) {}
 
 #[os("apple")]
 #[c("getaddrinfo")]
-fn c_getaddrinfo(host: string, service: string, hints: []i32, list: []i64) -> i32 {}
+fn c_getaddrinfo(host: string, service: string, hints: &[]i32, list: &mut []i64) -> i32 {}
 
 #[os("apple")]
 #[c("freeaddrinfo")]
@@ -1578,12 +1578,12 @@ fn c_recv_at(fd: i32, into: i64, len: i64, flags: i32) -> i64 {}
 /** *with an address C just handed over and its exact size. */
 #[os("apple")]
 #[c("memcpy")]
-fn c_load_words(dst: []i64, src: i64, n: i64) -> i64 {}
+fn c_load_words(dst: &mut []i64, src: i64, n: i64) -> i64 {}
 
 #[os("apple")]
 #[c("memcpy")]
-fn c_load_words_u64(dst: []u64, src: i64, n: i64) -> i64 {}
+fn c_load_words_u64(dst: &mut []u64, src: i64, n: i64) -> i64 {}
 
 #[os("apple")]
 #[c("memcpy")]
-fn c_store_words_u64(dst: i64, src: []u64, n: i64) -> i64 {}
+fn c_store_words_u64(dst: i64, src: &[]u64, n: i64) -> i64 {}

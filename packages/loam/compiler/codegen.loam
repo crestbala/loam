@@ -3508,11 +3508,20 @@ fn own_helpers() {
 
 // --- `#[c]` bindings and fn-value trampolines --------------------------------------------
 
+/** *`&[]T` / `&mut []T`: the Loam parameter is a pointer to the `loam_vec`, */
+/** *and C receives that vec's element pointer. */
+fn c_borrowed_buf(t: int) -> bool {
+    if tkind(t) != TK.Ptr {
+        return false
+    }
+    return tkind(types.TYPES[t].elem) == TK.Vec
+}
+
 fn c_abi_type(t: int) {
     let k = tkind(t)
     if k == TK.String {
         w("const char *")
-    } else if k == TK.Vec || k == TK.Proc {
+    } else if k == TK.Vec || k == TK.Proc || c_borrowed_buf(t) {
         w("void *")
     } else {
         w_ctype(t)
@@ -3620,11 +3629,15 @@ fn c_bindings() {
                 if k > 0 {
                     w(", ")
                 }
-                let pk = tkind(param_type(ft, k))
+                let pt = param_type(ft, k)
+                let pk = tkind(pt)
                 if pk == TK.String {
                     w("_cs{{k}}")
                 } else if pk == TK.Vec {
                     w("{{cid(param_name(d, k))}}.ptr")
+                } else if c_borrowed_buf(pt) {
+                    // No retain on the way in: the caller still owns the buffer.
+                    w("{{cid(param_name(d, k))}}->ptr")
                 } else if pk == TK.Proc {
                     w("{{cid(param_name(d, k))}}.fn")
                 } else {
@@ -3640,6 +3653,8 @@ fn c_bindings() {
                 if pk == TK.String {
                     w("    if (_cs{{k}} != _cb{{k}}) free(_cs{{k}});\n")
                 } else if pk == TK.Vec {
+                    // An owned buffer was retained by the caller. A borrowed
+                    // one (`&[]T` / `&mut []T`) is not: C only saw `->ptr`.
                     w("    loam_vec_drop(&{{cid(param_name(d, k))}});\n")
                 }
             }

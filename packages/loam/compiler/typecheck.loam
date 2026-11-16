@@ -5576,6 +5576,21 @@ fn c_plain_struct(t: int) -> bool {
     return true
 }
 
+/** *A `[]T` of numbers or bools: C sees the element pointer. */
+fn c_number_buf(t: int) -> bool {
+    if t == NO_TYPE || tk(t) != TK.Vec {
+        return false
+    }
+    let e = types.TYPES[t].elem
+    return c_scalar_type(e) || tk(e) == TK.Bool
+}
+
+/** *`&[]T` / `&mut []T` of numbers or bools. The wrapper passes the element */
+/** *pointer and does not retain or drop: the caller keeps the buffer. */
+fn c_borrowed_buf(t: int) -> bool {
+    return t != NO_TYPE && tk(t) == TK.Ptr && c_number_buf(types.TYPES[t].elem)
+}
+
 /** *A type C's `...` reads as itself: no default promotion changes it, so */
 /** *the callee's `va_arg` type is the binding's. Narrower ints, `f32` and */
 /** *`bool` promote, and a struct by value is not portable through `...`. */
@@ -5583,7 +5598,8 @@ fn c_variadic_type(t: int) -> bool {
     if t == NO_TYPE {
         return false
     }
-    if tk(t) == TK.String || tk(t) == TK.Vec {
+    // A borrowed buffer is a pointer. `...` reads a pointer unchanged.
+    if tk(t) == TK.String || tk(t) == TK.Vec || c_borrowed_buf(t) {
         return true
     }
     if !c_scalar_type(t) {
@@ -5619,8 +5635,9 @@ fn c_param_type(t: int) -> bool {
     if tk(t) == TK.Bool || tk(t) == TK.String || c_scalar_type(t) || c_plain_struct(t) {
         return true
     }
-    // A buffer C reads or writes in place: its element pointer.
-    return tk(t) == TK.Vec && (c_scalar_type(types.TYPES[t].elem) || tk(types.TYPES[t].elem) == TK.Bool)
+    // An owned buffer, or a borrow of one. Both hand C the element pointer.
+    // The borrow does not retain or drop: the caller keeps the buffer.
+    return c_number_buf(t) || c_borrowed_buf(t)
 }
 
 /** *A `#[c("sym")]` fn: a C name and a signature C can use. */
@@ -5653,7 +5670,7 @@ fn check_c_fn(d: int) {
         let ps = types.TYPES[ft].params
         for k in 0..ps.len {
             if !c_param_type(ps[k]) {
-                err(x.loc, "#[c] fn '{{name}}': parameter {{k + 1}} has a type C cannot take (use a number, bool, string, [] of numbers or bools, a struct of numbers and bools, or a fn of numbers and bools)")
+                err(x.loc, "#[c] fn '{{name}}': parameter {{k + 1}} has a type C cannot take (use a number, bool, string, [] or &[] or &mut [] of numbers or bools, a struct of numbers and bools, or a fn of numbers and bools)")
             }
         }
         let fixed = ast.c_variadic_fixed(d)
@@ -5662,7 +5679,7 @@ fn check_c_fn(d: int) {
         }
         for k in 0..ps.len {
             if fixed >= 0 && k >= fixed && !c_variadic_type(ps[k]) {
-                err(x.loc, "#[c] fn '{{name}}': variadic parameter {{k + 1}} must be an i32, u32, i64, u64, f64, string or [] buffer (what C's `...` reads unchanged)")
+                err(x.loc, "#[c] fn '{{name}}': variadic parameter {{k + 1}} must be an i32, u32, i64, u64, f64, string, or a [] / &[] / &mut [] buffer (what C's `...` reads unchanged)")
             }
         }
         let ret = types.TYPES[ft].ret
