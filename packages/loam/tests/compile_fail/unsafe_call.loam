@@ -1,0 +1,7 @@
+// Calling an unsafe fn from safe code is an error.
+#[c("malloc")]
+unsafe fn c_malloc(n: i64) -> i64 {}
+
+fn main() {
+    let _ = c_malloc(i64(8))
+}

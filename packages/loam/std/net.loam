@@ -7,10 +7,10 @@
 // SChannel (Windows) or Java's SSLEngine (Android). SecureTransport's and
 // OpenSSL's I/O callbacks are Loam fns C calls through plain function
 // pointers. The Android engine never sees the socket: the backend feeds it
-// records through the host's JNI shims. One piece stays C:
-// `string_bytes_at`, the address of a string's byte for a binding to read in
-// the same call (core byte movement, like `fmt.write`). The fetch, WebSocket
-// and stream bridges are the browser's (wasm). No HTTP parsing lives here:
+// records through the host's JNI shims. Where Loam hands C an address (a
+// string's bytes, an `addrinfo`, SChannel's connection block) it does so in
+// `unsafe` code, the only kind that may (docs/unsafe.md). The fetch,
+// WebSocket and stream bridges are the browser's (wasm). No HTTP parsing lives here:
 // that is `packages/http/src/http.loam`.
 
 import "std:buf"
@@ -811,18 +811,20 @@ fn tcp_nonblock_os(fd: int) -> int {
 /** *Native `tcp_accept`: close-on-exec, a 5 s read timeout, `SIGPIPE` off. */
 #[os("posix", "windows")]
 fn tcp_accept_os(fd: int) -> int {
-    if fd < 0 {
-        return -1
+    unsafe {
+        if fd < 0 {
+            return -1
+        }
+        let c = c_accept(i32(fd), i64(0), i64(0))
+        if c < 0 {
+            return -1
+        }
+        set_cloexec(c)
+        let timeout = []i64 { i64(5), i64(0) }
+        c_setsockopt_time(c, sol_socket(), so_rcvtimeo(), timeout, u32(16))
+        no_sigpipe(c)
+        return int(c)
     }
-    let c = c_accept(i32(fd), i64(0), i64(0))
-    if c < 0 {
-        return -1
-    }
-    set_cloexec(c)
-    let timeout = []i64 { i64(5), i64(0) }
-    c_setsockopt_time(c, sol_socket(), so_rcvtimeo(), timeout, u32(16))
-    no_sigpipe(c)
-    return int(c)
 }
 
 #[os("wasm")]
@@ -1003,21 +1005,18 @@ fn e_already() -> i32 {
 
 // --- the C below Loam ---------------------------------------------------------------------
 
-/** *The address of `s`'s byte at `off` (`0` when `off` is outside it), for */
-/** *a binding to read in the same call: Loam has no pointer into a string, */
-/** *and a `#[c]` string argument would copy the rest on every resume. */
-/** *Internal to this module's wrappers; the address is never kept. */
-fn string_bytes_at(s: string, off: int) -> i64 {}
 
 /** *One `send` of `data[off..]` (`off < data.len`): bytes sent or `-1`. */
 #[os("posix", "windows")]
 fn send_bytes(fd: int, data: string, off: int) -> int {
-    return int(c_send_at(i32(fd), string_bytes_at(data, off), i64(data.len - off), msg_nosignal()))
+    unsafe {
+        return int(c_send_at(i32(fd), raw_addr(data) + i64(off), i64(data.len - off), msg_nosignal()))
+    }
 }
 
 #[os("posix")]
 #[c("send")]
-fn c_send_at(fd: i32, bytes: i64, len: i64, flags: i32) -> i64 {}
+unsafe fn c_send_at(fd: i32, bytes: i64, len: i64, flags: i32) -> i64 {}
 
 #[os("posix")]
 #[c("socket")]
@@ -1042,7 +1041,7 @@ fn c_shutdown(fd: i32, how: i32) -> i32 {}
 /** *`accept(fd, NULL, NULL)`: the two `0`s are null pointers. */
 #[os("posix")]
 #[c("accept")]
-fn c_accept(fd: i32, addr: i64, len: i64) -> i32 {}
+unsafe fn c_accept(fd: i32, addr: i64, len: i64) -> i32 {}
 
 #[os("posix")]
 #[c("getsockname")]
@@ -1227,7 +1226,7 @@ fn c_listen(fd: i32, backlog: i32) -> i32 {
 }
 
 #[os("windows")]
-fn c_accept(fd: i32, addr: i64, len: i64) -> i32 {
+unsafe fn c_accept(fd: i32, addr: i64, len: i64) -> i32 {
     return socket_handle(c_wsa_accept(i64(fd), addr, len))
 }
 
@@ -1266,7 +1265,7 @@ fn c_recv(fd: i32, into: &mut []u8, len: i64, flags: i32) -> i64 {
 /** *each socket could pin megabytes. Capped, it takes about what fits, as */
 /** *POSIX does. */
 #[os("windows")]
-fn c_send_at(fd: i32, bytes: i64, len: i64, flags: i32) -> i64 {
+unsafe fn c_send_at(fd: i32, bytes: i64, len: i64, flags: i32) -> i64 {
     let part = if len > i64(WINSOCK_SEND_MAX) { i64(WINSOCK_SEND_MAX) } else { len }
     return i64(c_wsa_send(i64(fd), bytes, i32(part), flags))
 }
@@ -1364,7 +1363,7 @@ fn c_wsa_listen(sock: i64, backlog: i32) -> i32 {}
 /** *`accept(sock, NULL, NULL)`: the two `0`s are null pointers. */
 #[os("windows")]
 #[c("accept", "link -lws2_32")]
-fn c_wsa_accept(sock: i64, addr: i64, len: i64) -> i64 {}
+unsafe fn c_wsa_accept(sock: i64, addr: i64, len: i64) -> i64 {}
 
 #[os("windows")]
 #[c("getsockname", "link -lws2_32")]
@@ -1384,7 +1383,7 @@ fn c_wsa_recv(sock: i64, into: &mut []u8, len: i32, flags: i32) -> i32 {}
 
 #[os("windows")]
 #[c("send", "link -lws2_32")]
-fn c_wsa_send(sock: i64, bytes: i64, len: i32, flags: i32) -> i32 {}
+unsafe fn c_wsa_send(sock: i64, bytes: i64, len: i32, flags: i32) -> i32 {}
 
 #[os("windows")]
 #[c("shutdown", "link -lws2_32")]
@@ -1513,7 +1512,9 @@ fn connect_by_name(host: string, port: int, family: i32, blocking: bool) -> i32 
     let mut fd: i32 = -1
     let mut at = list[0]
     while fd < 0 && at != i64(0) {
-        c_load_words(addrinfo_cell, at, 48)
+        unsafe {
+            c_load_words(addrinfo_cell, at, 48)
+        }
         // Words: flags | family << 32, socktype | protocol << 32, addrlen,
         // then `ai_addr` and `ai_canonname` (Apple and Android have them the
         // other way round from Linux), then `ai_next`.
@@ -1582,43 +1583,47 @@ fn so_sndtimeo() -> i32 {
 /** *silent peer (one that never speaks TLS) cannot block forever; or `-1`. */
 #[os("apple", "linux", "windows", "android")]
 fn blocking_socket_to(family: i32, kind: i32, protocol: i32, addr: i64, addrlen: u32) -> i32 {
-    let f = c_socket(family, kind, protocol)
-    if f < 0 {
-        return -1
+    unsafe {
+        let f = c_socket(family, kind, protocol)
+        if f < 0 {
+            return -1
+        }
+        set_cloexec(f)
+        no_sigpipe(f)
+        let timeout = []i64 { i64(10), i64(0) }
+        c_setsockopt_time(f, sol_socket(), so_rcvtimeo(), timeout, u32(16))
+        c_setsockopt_time(f, sol_socket(), so_sndtimeo(), timeout, u32(16))
+        if c_connect_at(f, addr, addrlen) != 0 {
+            c_close(f)
+            return -1
+        }
+        return f
     }
-    set_cloexec(f)
-    no_sigpipe(f)
-    let timeout = []i64 { i64(10), i64(0) }
-    c_setsockopt_time(f, sol_socket(), so_rcvtimeo(), timeout, u32(16))
-    c_setsockopt_time(f, sol_socket(), so_sndtimeo(), timeout, u32(16))
-    if c_connect_at(f, addr, addrlen) != 0 {
-        c_close(f)
-        return -1
-    }
-    return f
 }
 
 /** *A non-blocking socket whose connect finished or is in progress; `-1`. */
 #[os("apple", "linux", "windows", "android")]
 fn pending_socket_to(family: i32, kind: i32, protocol: i32, addr: i64, addrlen: u32) -> i32 {
-    let f = c_socket(family, kind, protocol)
-    if f < 0 {
-        return -1
-    }
-    set_cloexec(f)
-    if set_nonblock(f) != 0 {
-        c_close(f)
-        return -1
-    }
-    no_sigpipe(f)
-    if c_connect_at(f, addr, addrlen) != 0 {
-        let e = c_errno()
-        if e != e_inprogress() && e != EINTR && e != e_already() {
+    unsafe {
+        let f = c_socket(family, kind, protocol)
+        if f < 0 {
+            return -1
+        }
+        set_cloexec(f)
+        if set_nonblock(f) != 0 {
             c_close(f)
             return -1
         }
+        no_sigpipe(f)
+        if c_connect_at(f, addr, addrlen) != 0 {
+            let e = c_errno()
+            if e != e_inprogress() && e != EINTR && e != e_already() {
+                c_close(f)
+                return -1
+            }
+        }
+        return f
     }
-    return f
 }
 
 /** *Remember `port` for the backend that wants it. */
@@ -1884,12 +1889,14 @@ fn tls_shake(ctx: i64) -> int {
 /** *`-1`. */
 #[os("apple")]
 fn tls_put(ctx: i64, data: string, off: int) -> int {
-    processed_cell[0] = u64(0)
-    let st = c_ssl_write(ctx, string_bytes_at(data, off), i64(data.len - off), processed_cell)
-    if st == ERR_SSL_WOULD_BLOCK {
-        return TLS_WOULD_BLOCK
+    unsafe {
+        processed_cell[0] = u64(0)
+        let st = c_ssl_write(ctx, raw_addr(data) + i64(off), i64(data.len - off), processed_cell)
+        if st == ERR_SSL_WOULD_BLOCK {
+            return TLS_WOULD_BLOCK
+        }
+        return if st == NO_ERR { int(processed_cell[0]) } else { -1 }
     }
-    return if st == NO_ERR { int(processed_cell[0]) } else { -1 }
 }
 
 /** *One `SSLRead` of up to `max` bytes into `read_cell`: bytes read (`0` */
@@ -1927,61 +1934,67 @@ fn tls_free(ctx: i64) {
 /** *rides in the connection ref. A clean EOF is a graceful close. */
 #[os("apple")]
 fn tls_io_read(conn: i64, data: i64, len_at: i64) -> i32 {
-    if data == i64(0) || len_at == i64(0) {
-        return ERR_SSL_ILLEGAL_PARAM
-    }
-    c_load_words_u64(io_word, len_at, 8)
-    let want = io_word[0]
-    if want == u64(0) {
-        return ERR_SSL_ILLEGAL_PARAM
-    }
-    while true {
-        let n = c_recv_at(i32(conn), data, i64(want), 0)
-        if n > i64(0) {
-            return io_done(len_at, u64(n), NO_ERR)
+    unsafe {
+        if data == i64(0) || len_at == i64(0) {
+            return ERR_SSL_ILLEGAL_PARAM
         }
-        if n == i64(0) {
-            return io_done(len_at, u64(0), ERR_SSL_CLOSED_GRACEFUL)
+        c_load_words_u64(io_word, len_at, 8)
+        let want = io_word[0]
+        if want == u64(0) {
+            return ERR_SSL_ILLEGAL_PARAM
         }
-        let e = c_errno()
-        if e != EINTR {
-            return io_done(len_at, u64(0), io_status(e))
+        while true {
+            let n = c_recv_at(i32(conn), data, i64(want), 0)
+            if n > i64(0) {
+                return io_done(len_at, u64(n), NO_ERR)
+            }
+            if n == i64(0) {
+                return io_done(len_at, u64(0), ERR_SSL_CLOSED_GRACEFUL)
+            }
+            let e = c_errno()
+            if e != EINTR {
+                return io_done(len_at, u64(0), io_status(e))
+            }
         }
+        return ERR_SSL_INTERNAL
     }
-    return ERR_SSL_INTERNAL
 }
 
 /** *SecureTransport's write callback: one `send` of `data`, the count */
 /** *written back through `len_at`. */
 #[os("apple")]
 fn tls_io_write(conn: i64, data: i64, len_at: i64) -> i32 {
-    if data == i64(0) || len_at == i64(0) {
-        return ERR_SSL_ILLEGAL_PARAM
-    }
-    c_load_words_u64(io_word, len_at, 8)
-    let want = io_word[0]
-    if want == u64(0) {
-        return ERR_SSL_ILLEGAL_PARAM
-    }
-    while true {
-        let n = c_send_at(i32(conn), data, i64(want), msg_nosignal())
-        if n >= i64(0) {
-            return io_done(len_at, u64(n), NO_ERR)
+    unsafe {
+        if data == i64(0) || len_at == i64(0) {
+            return ERR_SSL_ILLEGAL_PARAM
         }
-        let e = c_errno()
-        if e != EINTR {
-            return io_done(len_at, u64(0), io_status(e))
+        c_load_words_u64(io_word, len_at, 8)
+        let want = io_word[0]
+        if want == u64(0) {
+            return ERR_SSL_ILLEGAL_PARAM
         }
+        while true {
+            let n = c_send_at(i32(conn), data, i64(want), msg_nosignal())
+            if n >= i64(0) {
+                return io_done(len_at, u64(n), NO_ERR)
+            }
+            let e = c_errno()
+            if e != EINTR {
+                return io_done(len_at, u64(0), io_status(e))
+            }
+        }
+        return ERR_SSL_INTERNAL
     }
-    return ERR_SSL_INTERNAL
 }
 
 /** *Write `n` back through `len_at` and answer `status`. */
 #[os("apple")]
 fn io_done(len_at: i64, n: u64, status: i32) -> i32 {
-    io_word[0] = n
-    c_store_words_u64(len_at, io_word, 8)
-    return status
+    unsafe {
+        io_word[0] = n
+        c_store_words_u64(len_at, io_word, 8)
+        return status
+    }
 }
 
 /** *An I/O `errno` as SecureTransport's status: would-block; a reset or a */
@@ -2035,7 +2048,7 @@ fn c_ssl_read(ctx: i64, into: &mut []u8, len: i64, processed: &mut []u64) -> i32
 
 #[os("apple")]
 #[c("SSLWrite", "link -framework Security")]
-fn c_ssl_write(ctx: i64, bytes: i64, len: i64, processed: &mut []u64) -> i32 {}
+unsafe fn c_ssl_write(ctx: i64, bytes: i64, len: i64, processed: &mut []u64) -> i32 {}
 
 #[os("apple")]
 #[c("SSLGetBufferedReadSize", "link -framework Security")]
@@ -2173,14 +2186,16 @@ fn tls_shake(ssl: i64) -> int {
 /** *`-1`. */
 #[os("linux")]
 fn tls_put(ssl: i64, data: string, off: int) -> int {
-    let rest = data.len - off
-    let len = if rest > SSL_WRITE_MAX { SSL_WRITE_MAX } else { rest }
-    c_err_clear_error()
-    let rc = c_openssl_write(ssl, string_bytes_at(data, off), i32(len))
-    if rc > 0 {
-        return int(rc)
+    unsafe {
+        let rest = data.len - off
+        let len = if rest > SSL_WRITE_MAX { SSL_WRITE_MAX } else { rest }
+        c_err_clear_error()
+        let rc = c_openssl_write(ssl, raw_addr(data) + i64(off), i32(len))
+        if rc > 0 {
+            return int(rc)
+        }
+        return if openssl_would_block(ssl, rc) { TLS_WOULD_BLOCK } else { -1 }
     }
-    return if openssl_would_block(ssl, rc) { TLS_WOULD_BLOCK } else { -1 }
 }
 
 /** *One `SSL_read` of up to `max` bytes into `read_cell`: bytes read (`0` */
@@ -2217,52 +2232,56 @@ fn tls_free(ssl: i64) {
 /** *retried on `EINTR`. A full socket asks OpenSSL to retry. */
 #[os("linux")]
 fn bio_write(bio: i64, data: i64, len: i32) -> i32 {
-    c_bio_clear_flags(bio, BIO_FLAGS_RWS | BIO_FLAGS_SHOULD_RETRY)
-    if data == i64(0) || len <= 0 {
-        return 0
-    }
-    let sock = i32(c_bio_get_data(bio))
-    while true {
-        let n = c_send_at(sock, data, i64(len), msg_nosignal())
-        if n >= i64(0) {
-            return i32(n)
+    unsafe {
+        c_bio_clear_flags(bio, BIO_FLAGS_RWS | BIO_FLAGS_SHOULD_RETRY)
+        if data == i64(0) || len <= 0 {
+            return 0
         }
-        let e = c_errno()
-        if e == EINTR {
-            continue
-        }
-        if e == e_again() {
-            c_bio_set_flags(bio, BIO_FLAGS_WRITE | BIO_FLAGS_SHOULD_RETRY)
+        let sock = i32(c_bio_get_data(bio))
+        while true {
+            let n = c_send_at(sock, data, i64(len), msg_nosignal())
+            if n >= i64(0) {
+                return i32(n)
+            }
+            let e = c_errno()
+            if e == EINTR {
+                continue
+            }
+            if e == e_again() {
+                c_bio_set_flags(bio, BIO_FLAGS_WRITE | BIO_FLAGS_SHOULD_RETRY)
+            }
+            return -1
         }
         return -1
     }
-    return -1
 }
 
 /** *The BIO's read: one `recv` of up to `len` bytes into OpenSSL's buffer; */
 /** *`0` at EOF. An empty socket asks OpenSSL to retry. */
 #[os("linux")]
 fn bio_read(bio: i64, data: i64, len: i32) -> i32 {
-    c_bio_clear_flags(bio, BIO_FLAGS_RWS | BIO_FLAGS_SHOULD_RETRY)
-    if data == i64(0) || len <= 0 {
-        return 0
-    }
-    let sock = i32(c_bio_get_data(bio))
-    while true {
-        let n = c_recv_at(sock, data, i64(len), 0)
-        if n >= i64(0) {
-            return i32(n)
+    unsafe {
+        c_bio_clear_flags(bio, BIO_FLAGS_RWS | BIO_FLAGS_SHOULD_RETRY)
+        if data == i64(0) || len <= 0 {
+            return 0
         }
-        let e = c_errno()
-        if e == EINTR {
-            continue
-        }
-        if e == e_again() {
-            c_bio_set_flags(bio, BIO_FLAGS_READ | BIO_FLAGS_SHOULD_RETRY)
+        let sock = i32(c_bio_get_data(bio))
+        while true {
+            let n = c_recv_at(sock, data, i64(len), 0)
+            if n >= i64(0) {
+                return i32(n)
+            }
+            let e = c_errno()
+            if e == EINTR {
+                continue
+            }
+            if e == e_again() {
+                c_bio_set_flags(bio, BIO_FLAGS_READ | BIO_FLAGS_SHOULD_RETRY)
+            }
+            return -1
         }
         return -1
     }
-    return -1
 }
 
 /** *The BIO's control: a flush succeeds (every write went straight to the */
@@ -2339,7 +2358,7 @@ fn c_openssl_read(ssl: i64, into: &mut []u8, len: i32) -> i32 {}
 
 #[os("linux")]
 #[c("SSL_write", "link -lssl -lcrypto")]
-fn c_openssl_write(ssl: i64, bytes: i64, len: i32) -> i32 {}
+unsafe fn c_openssl_write(ssl: i64, bytes: i64, len: i32) -> i32 {}
 
 #[os("linux")]
 #[c("SSL_pending", "link -lssl -lcrypto")]
@@ -2488,37 +2507,37 @@ let mut schannel_cred: i64 = i64(0)
 let mut sc_word: []i64 = []i64 {}
 
 #[os("windows")]
-fn sc_get(at: i64) -> i64 {
+unsafe fn sc_get(at: i64) -> i64 {
     c_load_words(sc_word, at, 8)
     return sc_word[0]
 }
 
 #[os("windows")]
-fn sc_set(at: i64, value: i64) {
+unsafe fn sc_set(at: i64, value: i64) {
     sc_word[0] = value
     c_store_words(at, sc_word, 8)
 }
 
 /** *A `SecBuffer` at `at`: its size and type in one word, then the address. */
 #[os("windows")]
-fn sc_buffer(at: i64, size: i64, kind: i64, address: i64) {
+unsafe fn sc_buffer(at: i64, size: i64, kind: i64, address: i64) {
     sc_set(at, (size & i64(4294967295)) | (kind << 32))
     sc_set(at + i64(8), address)
 }
 
 #[os("windows")]
-fn sc_buffer_size(at: i64) -> i64 {
+unsafe fn sc_buffer_size(at: i64) -> i64 {
     return sc_get(at) & i64(4294967295)
 }
 
 #[os("windows")]
-fn sc_buffer_kind(at: i64) -> i64 {
+unsafe fn sc_buffer_kind(at: i64) -> i64 {
     return (sc_get(at) >> 32) & i64(4294967295)
 }
 
 /** *A `SecBufferDesc` at `at` over `n` buffers at `buffers`. */
 #[os("windows")]
-fn sc_desc(at: i64, n: i64, buffers: i64) {
+unsafe fn sc_desc(at: i64, n: i64, buffers: i64) {
     sc_set(at, n << 32)
     sc_set(at + i64(8), buffers)
 }
@@ -2526,138 +2545,150 @@ fn sc_desc(at: i64, n: i64, buffers: i64) {
 /** *The process credential, made once; `false` when SChannel refused. */
 #[os("windows")]
 fn schannel_ready() -> bool {
-    if sc_word.len == 0 {
-        sc_word.push(i64(0))
-    }
-    if schannel_cred != i64(0) {
+    unsafe {
+        if sc_word.len == 0 {
+            sc_word.push(i64(0))
+        }
+        if schannel_cred != i64(0) {
+            return true
+        }
+        let cred = c_calloc(u64(1), u64(16))
+        if cred == i64(0) {
+            return false
+        }
+        // `SCHANNEL_CRED`: 80 bytes, its pointers null.
+        let mut auth = []u32 {}
+        for i in 0..20 {
+            auth.push(u32(0))
+        }
+        auth[0] = SCHANNEL_CRED_VERSION
+        auth[14] = SP_PROT_TLS1_2_CLIENT
+        auth[18] = SC_CRED_FLAGS
+        let mut expiry = []i64 { i64(0) }
+        let st = c_acquire_credentials_handle(
+            i64(0),
+            "Microsoft Unified Security Protocol Provider",
+            SECPKG_CRED_OUTBOUND,
+            i64(0),
+            auth,
+            i64(0),
+            i64(0),
+            cred,
+            expiry,
+        )
+        if st != SEC_E_OK {
+            c_free(cred)
+            return false
+        }
+        schannel_cred = cred
         return true
     }
-    let cred = c_calloc(u64(1), u64(16))
-    if cred == i64(0) {
-        return false
-    }
-    // `SCHANNEL_CRED`: 80 bytes, its pointers null.
-    let mut auth = []u32 {}
-    for i in 0..20 {
-        auth.push(u32(0))
-    }
-    auth[0] = SCHANNEL_CRED_VERSION
-    auth[14] = SP_PROT_TLS1_2_CLIENT
-    auth[18] = SC_CRED_FLAGS
-    let mut expiry = []i64 { i64(0) }
-    let st = c_acquire_credentials_handle(
-        i64(0),
-        "Microsoft Unified Security Protocol Provider",
-        SECPKG_CRED_OUTBOUND,
-        i64(0),
-        auth,
-        i64(0),
-        i64(0),
-        cred,
-        expiry,
-    )
-    if st != SEC_E_OK {
-        c_free(cred)
-        return false
-    }
-    schannel_cred = cred
-    return true
 }
 
 /** *A connection block for `host` over socket `fd`, or `0`. */
 #[os("windows")]
 fn tls_new(host: string, fd: i32) -> i64 {
-    if !schannel_ready() {
-        return i64(0)
+    unsafe {
+        if !schannel_ready() {
+            return i64(0)
+        }
+        let b = c_calloc(u64(1), u64(SC_BLOCK))
+        if b == i64(0) {
+            return i64(0)
+        }
+        sc_set(b + SC_SOCKET, i64(fd))
+        // `host.len < 256` (checked by the caller); the block is zeroed, so the
+        // name ends with a NUL.
+        c_copy_at(b + SC_HOST, raw_addr(host), i64(host.len))
+        return b
     }
-    let b = c_calloc(u64(1), u64(SC_BLOCK))
-    if b == i64(0) {
-        return i64(0)
-    }
-    sc_set(b + SC_SOCKET, i64(fd))
-    // `host.len < 256` (checked by the caller); the block is zeroed, so the
-    // name ends with a NUL.
-    c_copy_at(b + SC_HOST, string_bytes_at(host, 0), i64(host.len))
-    return b
 }
 
 /** *Send what OUT holds: 1 when it is all out, 0 when the socket is full, */
 /** *`-1` on an error. */
 #[os("windows")]
 fn sc_flush(b: i64) -> int {
-    while sc_get(b + SC_OUT_LEN) > i64(0) {
-        let off = sc_get(b + SC_OUT_OFF)
-        let left = sc_get(b + SC_OUT_LEN)
-        let n = c_send_at(i32(sc_get(b + SC_SOCKET)), b + SC_OUT + off, left, 0)
-        if n < i64(0) {
-            let e = c_errno()
-            if e == EINTR {
-                continue
+    unsafe {
+        while sc_get(b + SC_OUT_LEN) > i64(0) {
+            let off = sc_get(b + SC_OUT_OFF)
+            let left = sc_get(b + SC_OUT_LEN)
+            let n = c_send_at(i32(sc_get(b + SC_SOCKET)), b + SC_OUT + off, left, 0)
+            if n < i64(0) {
+                let e = c_errno()
+                if e == EINTR {
+                    continue
+                }
+                return if e == e_again() { 0 } else { -1 }
             }
-            return if e == e_again() { 0 } else { -1 }
+            sc_set(b + SC_OUT_OFF, off + n)
+            sc_set(b + SC_OUT_LEN, left - n)
         }
-        sc_set(b + SC_OUT_OFF, off + n)
-        sc_set(b + SC_OUT_LEN, left - n)
+        sc_set(b + SC_OUT_OFF, i64(0))
+        return 1
     }
-    sc_set(b + SC_OUT_OFF, i64(0))
-    return 1
 }
 
 /** *Receive into IN after what it holds: bytes read, `0` at EOF or on an */
 /** *error (or IN full), `TLS_WOULD_BLOCK`. */
 #[os("windows")]
 fn sc_receive(b: i64) -> int {
-    let have = sc_get(b + SC_IN_LEN)
-    if have >= SC_IN_CAP {
-        return 0
-    }
-    while true {
-        let n = c_recv_at(i32(sc_get(b + SC_SOCKET)), b + SC_IN + have, SC_IN_CAP - have, 0)
-        if n > i64(0) {
-            sc_set(b + SC_IN_LEN, have + n)
-            sc_set(b + SC_NEED_MORE, i64(0))
-            return int(n)
-        }
-        if n == i64(0) {
+    unsafe {
+        let have = sc_get(b + SC_IN_LEN)
+        if have >= SC_IN_CAP {
             return 0
         }
-        let e = c_errno()
-        if e != EINTR {
-            return if e == e_again() { TLS_WOULD_BLOCK } else { 0 }
+        while true {
+            let n = c_recv_at(i32(sc_get(b + SC_SOCKET)), b + SC_IN + have, SC_IN_CAP - have, 0)
+            if n > i64(0) {
+                sc_set(b + SC_IN_LEN, have + n)
+                sc_set(b + SC_NEED_MORE, i64(0))
+                return int(n)
+            }
+            if n == i64(0) {
+                return 0
+            }
+            let e = c_errno()
+            if e != EINTR {
+                return if e == e_again() { TLS_WOULD_BLOCK } else { 0 }
+            }
         }
+        return 0
     }
-    return 0
 }
 
 /** *Queue an SSPI-allocated token in OUT and free it; `false` if too big. */
 #[os("windows")]
 fn sc_queue_token(b: i64) -> bool {
-    let size = sc_buffer_size(b + SC_OUT_BUFS)
-    let token = sc_get(b + SC_OUT_BUFS + i64(8))
-    if token == i64(0) || size == i64(0) {
-        return true
+    unsafe {
+        let size = sc_buffer_size(b + SC_OUT_BUFS)
+        let token = sc_get(b + SC_OUT_BUFS + i64(8))
+        if token == i64(0) || size == i64(0) {
+            return true
+        }
+        let fits = size <= SC_OUT_CAP
+        if fits {
+            c_copy_at(b + SC_OUT, token, size)
+            sc_set(b + SC_OUT_OFF, i64(0))
+            sc_set(b + SC_OUT_LEN, size)
+        }
+        c_free_context_buffer(token)
+        return fits
     }
-    let fits = size <= SC_OUT_CAP
-    if fits {
-        c_copy_at(b + SC_OUT, token, size)
-        sc_set(b + SC_OUT_OFF, i64(0))
-        sc_set(b + SC_OUT_LEN, size)
-    }
-    c_free_context_buffer(token)
-    return fits
 }
 
 /** *After a call that read IN: keep only the bytes SChannel left over */
 /** *(`SECBUFFER_EXTRA` in input buffer 1), at the front of IN. */
 #[os("windows")]
 fn sc_keep_extra(b: i64) {
-    let have = sc_get(b + SC_IN_LEN)
-    if sc_buffer_kind(b + SC_IN_BUFS + i64(16)) == SECBUFFER_EXTRA {
-        let extra = sc_buffer_size(b + SC_IN_BUFS + i64(16))
-        c_move_at(b + SC_IN, b + SC_IN + have - extra, extra)
-        sc_set(b + SC_IN_LEN, extra)
-    } else {
-        sc_set(b + SC_IN_LEN, i64(0))
+    unsafe {
+        let have = sc_get(b + SC_IN_LEN)
+        if sc_buffer_kind(b + SC_IN_BUFS + i64(16)) == SECBUFFER_EXTRA {
+            let extra = sc_buffer_size(b + SC_IN_BUFS + i64(16))
+            c_move_at(b + SC_IN, b + SC_IN + have - extra, extra)
+            sc_set(b + SC_IN_LEN, extra)
+        } else {
+            sc_set(b + SC_IN_LEN, i64(0))
+        }
     }
 }
 
@@ -2672,99 +2703,105 @@ const SC_CALL_CLOSE: int = 2
 /** *buffer 0. */
 #[os("windows")]
 fn sc_initialize(b: i64, mode: int) -> i32 {
-    sc_buffer(b + SC_OUT_BUFS, i64(0), SECBUFFER_TOKEN, i64(0))
-    sc_desc(b + SC_OUT_DESC, i64(1), b + SC_OUT_BUFS)
-    let mut attrs = []u32 { u32(0) }
-    let mut expiry = []i64 { i64(0) }
-    if mode == SC_CALL_CLOSE {
+    unsafe {
+        sc_buffer(b + SC_OUT_BUFS, i64(0), SECBUFFER_TOKEN, i64(0))
+        sc_desc(b + SC_OUT_DESC, i64(1), b + SC_OUT_BUFS)
+        let mut attrs = []u32 { u32(0) }
+        let mut expiry = []i64 { i64(0) }
+        if mode == SC_CALL_CLOSE {
+            return c_initialize_security_context(
+                schannel_cred, b, b + SC_HOST, SC_ISC_FLAGS, u32(0), u32(0),
+                i64(0), u32(0), b, b + SC_OUT_DESC, attrs, expiry,
+            )
+        }
+        if mode == SC_CALL_FIRST {
+            return c_initialize_security_context(
+                schannel_cred, i64(0), b + SC_HOST, SC_ISC_FLAGS, u32(0), u32(0),
+                i64(0), u32(0), b, b + SC_OUT_DESC, attrs, expiry,
+            )
+        }
+        sc_buffer(b + SC_IN_BUFS, sc_get(b + SC_IN_LEN), SECBUFFER_TOKEN, b + SC_IN)
+        sc_buffer(b + SC_IN_BUFS + i64(16), i64(0), SECBUFFER_EMPTY, i64(0))
+        sc_desc(b + SC_IN_DESC, i64(2), b + SC_IN_BUFS)
         return c_initialize_security_context(
             schannel_cred, b, b + SC_HOST, SC_ISC_FLAGS, u32(0), u32(0),
-            i64(0), u32(0), b, b + SC_OUT_DESC, attrs, expiry,
+            b + SC_IN_DESC, u32(0), b, b + SC_OUT_DESC, attrs, expiry,
         )
     }
-    if mode == SC_CALL_FIRST {
-        return c_initialize_security_context(
-            schannel_cred, i64(0), b + SC_HOST, SC_ISC_FLAGS, u32(0), u32(0),
-            i64(0), u32(0), b, b + SC_OUT_DESC, attrs, expiry,
-        )
-    }
-    sc_buffer(b + SC_IN_BUFS, sc_get(b + SC_IN_LEN), SECBUFFER_TOKEN, b + SC_IN)
-    sc_buffer(b + SC_IN_BUFS + i64(16), i64(0), SECBUFFER_EMPTY, i64(0))
-    sc_desc(b + SC_IN_DESC, i64(2), b + SC_IN_BUFS)
-    return c_initialize_security_context(
-        schannel_cred, b, b + SC_HOST, SC_ISC_FLAGS, u32(0), u32(0),
-        b + SC_IN_DESC, u32(0), b, b + SC_OUT_DESC, attrs, expiry,
-    )
 }
 
 /** *One handshake step: 1 done, 0 would block, `-1` failed (a refused */
 /** *certificate or host name included). */
 #[os("windows")]
 fn tls_shake(b: i64) -> int {
-    while true {
-        let flushed = sc_flush(b)
-        if flushed != 1 {
-            if flushed < 0 {
-                sc_set(b + SC_STATE, SC_FAILED)
-            }
-            return flushed
-        }
-        let state = sc_get(b + SC_STATE)
-        if state == SC_READY {
-            return 1
-        }
-        if state != SC_FIRST && state != SC_SHAKING {
-            return -1
-        }
-        let mut st = SEC_E_OK
-        if state == SC_FIRST {
-            st = sc_initialize(b, SC_CALL_FIRST)
-        } else {
-            if sc_get(b + SC_IN_LEN) == i64(0) || sc_get(b + SC_NEED_MORE) != i64(0) {
-                let got = sc_receive(b)
-                if got == TLS_WOULD_BLOCK {
-                    return 0
-                }
-                if got <= 0 {
+    unsafe {
+        while true {
+            let flushed = sc_flush(b)
+            if flushed != 1 {
+                if flushed < 0 {
                     sc_set(b + SC_STATE, SC_FAILED)
-                    return -1
                 }
+                return flushed
             }
-            st = sc_initialize(b, SC_CALL_SHAKE)
+            let state = sc_get(b + SC_STATE)
+            if state == SC_READY {
+                return 1
+            }
+            if state != SC_FIRST && state != SC_SHAKING {
+                return -1
+            }
+            let mut st = SEC_E_OK
+            if state == SC_FIRST {
+                st = sc_initialize(b, SC_CALL_FIRST)
+            } else {
+                if sc_get(b + SC_IN_LEN) == i64(0) || sc_get(b + SC_NEED_MORE) != i64(0) {
+                    let got = sc_receive(b)
+                    if got == TLS_WOULD_BLOCK {
+                        return 0
+                    }
+                    if got <= 0 {
+                        sc_set(b + SC_STATE, SC_FAILED)
+                        return -1
+                    }
+                }
+                st = sc_initialize(b, SC_CALL_SHAKE)
+            }
+            if st == SEC_E_INCOMPLETE_MESSAGE {
+                sc_set(b + SC_NEED_MORE, i64(1))
+                continue
+            }
+            if st != SEC_E_OK && st != SEC_I_CONTINUE_NEEDED {
+                sc_set(b + SC_STATE, SC_FAILED)
+                return -1
+            }
+            if !sc_queue_token(b) {
+                sc_set(b + SC_STATE, SC_FAILED)
+                return -1
+            }
+            if state != SC_FIRST {
+                sc_keep_extra(b)
+            }
+            if st == SEC_I_CONTINUE_NEEDED {
+                sc_set(b + SC_STATE, SC_SHAKING)
+                continue
+            }
+            if c_query_context_attributes(b, SECPKG_ATTR_STREAM_SIZES, b + SC_SIZES) != SEC_E_OK {
+                sc_set(b + SC_STATE, SC_FAILED)
+                return -1
+            }
+            sc_set(b + SC_STATE, SC_READY)
         }
-        if st == SEC_E_INCOMPLETE_MESSAGE {
-            sc_set(b + SC_NEED_MORE, i64(1))
-            continue
-        }
-        if st != SEC_E_OK && st != SEC_I_CONTINUE_NEEDED {
-            sc_set(b + SC_STATE, SC_FAILED)
-            return -1
-        }
-        if !sc_queue_token(b) {
-            sc_set(b + SC_STATE, SC_FAILED)
-            return -1
-        }
-        if state != SC_FIRST {
-            sc_keep_extra(b)
-        }
-        if st == SEC_I_CONTINUE_NEEDED {
-            sc_set(b + SC_STATE, SC_SHAKING)
-            continue
-        }
-        if c_query_context_attributes(b, SECPKG_ATTR_STREAM_SIZES, b + SC_SIZES) != SEC_E_OK {
-            sc_set(b + SC_STATE, SC_FAILED)
-            return -1
-        }
-        sc_set(b + SC_STATE, SC_READY)
+        return -1
     }
-    return -1
 }
 
 /** *`StreamSizes` field `k`: header, trailer, maximum message. */
 #[os("windows")]
 fn sc_size(b: i64, k: int) -> i64 {
-    let pair = sc_get(b + SC_SIZES + i64((k / 2) * 8))
-    return if k % 2 == 0 { pair & i64(4294967295) } else { (pair >> 32) & i64(4294967295) }
+    unsafe {
+        let pair = sc_get(b + SC_SIZES + i64((k / 2) * 8))
+        return if k % 2 == 0 { pair & i64(4294967295) } else { (pair >> 32) & i64(4294967295) }
+    }
 }
 
 /** *Encrypt up to one record of `data[off..]` into OUT and send it: bytes */
@@ -2773,185 +2810,199 @@ fn sc_size(b: i64, k: int) -> i64 {
 /** *OpenSSL) finishes it and counts its bytes then. */
 #[os("windows")]
 fn tls_put(b: i64, data: string, off: int) -> int {
-    if sc_get(b + SC_STATE) != SC_READY {
-        return -1
-    }
-    if sc_get(b + SC_OUT_LEN) > i64(0) {
-        let flushed = sc_flush(b)
-        if flushed == 0 {
-            return TLS_WOULD_BLOCK
+    unsafe {
+        if sc_get(b + SC_STATE) != SC_READY {
+            return -1
         }
+        if sc_get(b + SC_OUT_LEN) > i64(0) {
+            let flushed = sc_flush(b)
+            if flushed == 0 {
+                return TLS_WOULD_BLOCK
+            }
+            if flushed < 0 {
+                return -1
+            }
+            let parked = sc_get(b + SC_PARKED)
+            sc_set(b + SC_PARKED, i64(0))
+            return int(parked)
+        }
+        let header = sc_size(b, 0)
+        let trailer = sc_size(b, 1)
+        let most = sc_size(b, 2)
+        let mut take = i64(data.len - off)
+        if take > most {
+            take = most
+        }
+        if header + take + trailer > SC_OUT_CAP {
+            take = SC_OUT_CAP - header - trailer
+        }
+        c_copy_at(b + SC_OUT + header, raw_addr(data) + i64(off), take)
+        let bufs = b + SC_OUT_BUFS
+        sc_buffer(bufs, header, SECBUFFER_STREAM_HEADER, b + SC_OUT)
+        sc_buffer(bufs + i64(16), take, SECBUFFER_DATA, b + SC_OUT + header)
+        sc_buffer(bufs + i64(32), trailer, SECBUFFER_STREAM_TRAILER, b + SC_OUT + header + take)
+        sc_buffer(bufs + i64(48), i64(0), SECBUFFER_EMPTY, i64(0))
+        sc_desc(b + SC_OUT_DESC, i64(4), bufs)
+        if c_encrypt_message(b, u32(0), b + SC_OUT_DESC, u32(0)) != SEC_E_OK {
+            return -1
+        }
+        let total = sc_buffer_size(bufs) + sc_buffer_size(bufs + i64(16)) + sc_buffer_size(bufs + i64(32))
+        sc_set(b + SC_OUT_OFF, i64(0))
+        sc_set(b + SC_OUT_LEN, total)
+        let flushed = sc_flush(b)
         if flushed < 0 {
             return -1
         }
-        let parked = sc_get(b + SC_PARKED)
-        sc_set(b + SC_PARKED, i64(0))
-        return int(parked)
+        if flushed == 0 {
+            sc_set(b + SC_PARKED, take)
+            return TLS_WOULD_BLOCK
+        }
+        return int(take)
     }
-    let header = sc_size(b, 0)
-    let trailer = sc_size(b, 1)
-    let most = sc_size(b, 2)
-    let mut take = i64(data.len - off)
-    if take > most {
-        take = most
-    }
-    if header + take + trailer > SC_OUT_CAP {
-        take = SC_OUT_CAP - header - trailer
-    }
-    c_copy_at(b + SC_OUT + header, string_bytes_at(data, off), take)
-    let bufs = b + SC_OUT_BUFS
-    sc_buffer(bufs, header, SECBUFFER_STREAM_HEADER, b + SC_OUT)
-    sc_buffer(bufs + i64(16), take, SECBUFFER_DATA, b + SC_OUT + header)
-    sc_buffer(bufs + i64(32), trailer, SECBUFFER_STREAM_TRAILER, b + SC_OUT + header + take)
-    sc_buffer(bufs + i64(48), i64(0), SECBUFFER_EMPTY, i64(0))
-    sc_desc(b + SC_OUT_DESC, i64(4), bufs)
-    if c_encrypt_message(b, u32(0), b + SC_OUT_DESC, u32(0)) != SEC_E_OK {
-        return -1
-    }
-    let total = sc_buffer_size(bufs) + sc_buffer_size(bufs + i64(16)) + sc_buffer_size(bufs + i64(32))
-    sc_set(b + SC_OUT_OFF, i64(0))
-    sc_set(b + SC_OUT_LEN, total)
-    let flushed = sc_flush(b)
-    if flushed < 0 {
-        return -1
-    }
-    if flushed == 0 {
-        sc_set(b + SC_PARKED, take)
-        return TLS_WOULD_BLOCK
-    }
-    return int(take)
 }
 
 /** *Hand out up to `max` decrypted bytes into `read_cell`; when the last */
 /** *are taken, the leftover ciphertext moves to the front of IN. */
 #[os("windows")]
 fn sc_take_plain(b: i64, max: int) -> int {
-    let at = sc_get(b + SC_PLAIN_AT)
-    let left = sc_get(b + SC_PLAIN_LEN)
-    let n = if left > i64(max) { i64(max) } else { left }
-    c_load_bytes(read_cell, at, n)
-    sc_set(b + SC_PLAIN_AT, at + n)
-    sc_set(b + SC_PLAIN_LEN, left - n)
-    if left == n {
-        sc_drop_record(b)
+    unsafe {
+        let at = sc_get(b + SC_PLAIN_AT)
+        let left = sc_get(b + SC_PLAIN_LEN)
+        let n = if left > i64(max) { i64(max) } else { left }
+        c_load_bytes(read_cell, at, n)
+        sc_set(b + SC_PLAIN_AT, at + n)
+        sc_set(b + SC_PLAIN_LEN, left - n)
+        if left == n {
+            sc_drop_record(b)
+        }
+        return int(n)
     }
-    return int(n)
 }
 
 /** *The decrypted record is used up: its leftover ciphertext moves to the */
 /** *front of IN. */
 #[os("windows")]
 fn sc_drop_record(b: i64) {
-    let extra = sc_get(b + SC_EXTRA_LEN)
-    if extra > i64(0) {
-        c_move_at(b + SC_IN, sc_get(b + SC_EXTRA_AT), extra)
+    unsafe {
+        let extra = sc_get(b + SC_EXTRA_LEN)
+        if extra > i64(0) {
+            c_move_at(b + SC_IN, sc_get(b + SC_EXTRA_AT), extra)
+        }
+        sc_set(b + SC_IN_LEN, extra)
+        sc_set(b + SC_EXTRA_LEN, i64(0))
+        sc_set(b + SC_PLAIN_LEN, i64(0))
     }
-    sc_set(b + SC_IN_LEN, extra)
-    sc_set(b + SC_EXTRA_LEN, i64(0))
-    sc_set(b + SC_PLAIN_LEN, i64(0))
 }
 
 /** *One read of up to `max` bytes into `read_cell`: bytes read (`0` at the */
 /** *end or on an error), or `TLS_WOULD_BLOCK`. */
 #[os("windows")]
 fn tls_get(b: i64, max: int) -> int {
-    while true {
-        if sc_get(b + SC_PLAIN_LEN) > i64(0) {
-            return sc_take_plain(b, max)
-        }
-        if sc_get(b + SC_STATE) != SC_READY {
-            return 0
-        }
-        if sc_get(b + SC_IN_LEN) == i64(0) || sc_get(b + SC_NEED_MORE) != i64(0) {
-            let got = sc_receive(b)
-            if got == TLS_WOULD_BLOCK {
-                return TLS_WOULD_BLOCK
+    unsafe {
+        while true {
+            if sc_get(b + SC_PLAIN_LEN) > i64(0) {
+                return sc_take_plain(b, max)
             }
-            if got <= 0 {
+            if sc_get(b + SC_STATE) != SC_READY {
                 return 0
             }
-        }
-        let bufs = b + SC_IN_BUFS
-        sc_buffer(bufs, sc_get(b + SC_IN_LEN), SECBUFFER_DATA, b + SC_IN)
-        sc_buffer(bufs + i64(16), i64(0), SECBUFFER_EMPTY, i64(0))
-        sc_buffer(bufs + i64(32), i64(0), SECBUFFER_EMPTY, i64(0))
-        sc_buffer(bufs + i64(48), i64(0), SECBUFFER_EMPTY, i64(0))
-        sc_desc(b + SC_IN_DESC, i64(4), bufs)
-        let st = c_decrypt_message(b, b + SC_IN_DESC, u32(0), i64(0))
-        if st == SEC_E_INCOMPLETE_MESSAGE {
-            sc_set(b + SC_NEED_MORE, i64(1))
-            continue
-        }
-        if st == SEC_I_CONTEXT_EXPIRED {
-            // The peer's close_notify: the end.
-            sc_set(b + SC_STATE, SC_CLOSED)
-            return 0
-        }
-        if st != SEC_E_OK {
-            sc_set(b + SC_STATE, SC_FAILED)
-            return 0
-        }
-        sc_set(b + SC_PLAIN_LEN, i64(0))
-        sc_set(b + SC_EXTRA_LEN, i64(0))
-        for k in 0..4 {
-            let at = bufs + i64(k * 16)
-            let kind = sc_buffer_kind(at)
-            if kind == SECBUFFER_DATA {
-                sc_set(b + SC_PLAIN_AT, sc_get(at + i64(8)))
-                sc_set(b + SC_PLAIN_LEN, sc_buffer_size(at))
-            } else if kind == SECBUFFER_EXTRA {
-                sc_set(b + SC_EXTRA_AT, sc_get(at + i64(8)))
-                sc_set(b + SC_EXTRA_LEN, sc_buffer_size(at))
+            if sc_get(b + SC_IN_LEN) == i64(0) || sc_get(b + SC_NEED_MORE) != i64(0) {
+                let got = sc_receive(b)
+                if got == TLS_WOULD_BLOCK {
+                    return TLS_WOULD_BLOCK
+                }
+                if got <= 0 {
+                    return 0
+                }
+            }
+            let bufs = b + SC_IN_BUFS
+            sc_buffer(bufs, sc_get(b + SC_IN_LEN), SECBUFFER_DATA, b + SC_IN)
+            sc_buffer(bufs + i64(16), i64(0), SECBUFFER_EMPTY, i64(0))
+            sc_buffer(bufs + i64(32), i64(0), SECBUFFER_EMPTY, i64(0))
+            sc_buffer(bufs + i64(48), i64(0), SECBUFFER_EMPTY, i64(0))
+            sc_desc(b + SC_IN_DESC, i64(4), bufs)
+            let st = c_decrypt_message(b, b + SC_IN_DESC, u32(0), i64(0))
+            if st == SEC_E_INCOMPLETE_MESSAGE {
+                sc_set(b + SC_NEED_MORE, i64(1))
+                continue
+            }
+            if st == SEC_I_CONTEXT_EXPIRED {
+                // The peer's close_notify: the end.
+                sc_set(b + SC_STATE, SC_CLOSED)
+                return 0
+            }
+            if st != SEC_E_OK {
+                sc_set(b + SC_STATE, SC_FAILED)
+                return 0
+            }
+            sc_set(b + SC_PLAIN_LEN, i64(0))
+            sc_set(b + SC_EXTRA_LEN, i64(0))
+            for k in 0..4 {
+                let at = bufs + i64(k * 16)
+                let kind = sc_buffer_kind(at)
+                if kind == SECBUFFER_DATA {
+                    sc_set(b + SC_PLAIN_AT, sc_get(at + i64(8)))
+                    sc_set(b + SC_PLAIN_LEN, sc_buffer_size(at))
+                } else if kind == SECBUFFER_EXTRA {
+                    sc_set(b + SC_EXTRA_AT, sc_get(at + i64(8)))
+                    sc_set(b + SC_EXTRA_LEN, sc_buffer_size(at))
+                }
+            }
+            if sc_get(b + SC_PLAIN_LEN) == i64(0) {
+                sc_drop_record(b)
             }
         }
-        if sc_get(b + SC_PLAIN_LEN) == i64(0) {
-            sc_drop_record(b)
-        }
+        return 0
     }
-    return 0
 }
 
 /** *Decrypted bytes wait, or IN holds ciphertext not yet tried. */
 #[os("windows")]
 fn tls_buffered(b: i64) -> bool {
-    return sc_get(b + SC_PLAIN_LEN) > i64(0) ||
-        (sc_get(b + SC_IN_LEN) > i64(0) && sc_get(b + SC_NEED_MORE) == i64(0))
+    unsafe {
+        return sc_get(b + SC_PLAIN_LEN) > i64(0) ||
+            (sc_get(b + SC_IN_LEN) > i64(0) && sc_get(b + SC_NEED_MORE) == i64(0))
+    }
 }
 
 /** *A best-effort close_notify: one send attempt, not waited for. */
 #[os("windows")]
 fn tls_end(b: i64) {
-    if sc_get(b + SC_STATE) != SC_READY {
-        return
-    }
-    sc_set(b + SC_STATE, SC_CLOSED)
-    // The `SCHANNEL_SHUTDOWN` DWORD lives in the parked-record word, which
-    // a closing connection no longer needs.
-    sc_set(b + SC_PARKED, i64(SCHANNEL_SHUTDOWN))
-    let bufs = b + SC_OUT_BUFS
-    sc_buffer(bufs, i64(4), SECBUFFER_TOKEN, b + SC_PARKED)
-    sc_desc(b + SC_OUT_DESC, i64(1), bufs)
-    if c_apply_control_token(b, b + SC_OUT_DESC) != SEC_E_OK {
-        return
-    }
-    if sc_initialize(b, SC_CALL_CLOSE) == SEC_E_OK && sc_queue_token(b) {
-        sc_flush(b)
+    unsafe {
+        if sc_get(b + SC_STATE) != SC_READY {
+            return
+        }
+        sc_set(b + SC_STATE, SC_CLOSED)
+        // The `SCHANNEL_SHUTDOWN` DWORD lives in the parked-record word, which
+        // a closing connection no longer needs.
+        sc_set(b + SC_PARKED, i64(SCHANNEL_SHUTDOWN))
+        let bufs = b + SC_OUT_BUFS
+        sc_buffer(bufs, i64(4), SECBUFFER_TOKEN, b + SC_PARKED)
+        sc_desc(b + SC_OUT_DESC, i64(1), bufs)
+        if c_apply_control_token(b, b + SC_OUT_DESC) != SEC_E_OK {
+            return
+        }
+        if sc_initialize(b, SC_CALL_CLOSE) == SEC_E_OK && sc_queue_token(b) {
+            sc_flush(b)
+        }
     }
 }
 
 #[os("windows")]
 fn tls_free(b: i64) {
-    if sc_get(b) != i64(0) || sc_get(b + i64(8)) != i64(0) {
-        c_delete_security_context(b)
+    unsafe {
+        if sc_get(b) != i64(0) || sc_get(b + i64(8)) != i64(0) {
+            c_delete_security_context(b)
+        }
+        c_free(b)
     }
-    c_free(b)
 }
 
 /** *`AcquireCredentialsHandleA(principal, package, use, logon id, auth data, */
 /** *key fn, key arg, credential, expiry)`. */
 #[os("windows")]
 #[c("AcquireCredentialsHandleA", "link -lsecur32")]
-fn c_acquire_credentials_handle(
+unsafe fn c_acquire_credentials_handle(
     principal: i64,
     package: string,
     use: u32,
@@ -2967,7 +3018,7 @@ fn c_acquire_credentials_handle(
 /** *data rep, input, 0, new context, output, attributes, expiry)`. */
 #[os("windows")]
 #[c("InitializeSecurityContextA", "link -lsecur32")]
-fn c_initialize_security_context(
+unsafe fn c_initialize_security_context(
     credential: i64,
     context: i64,
     target: i64,
@@ -2984,23 +3035,23 @@ fn c_initialize_security_context(
 
 #[os("windows")]
 #[c("QueryContextAttributesA", "link -lsecur32")]
-fn c_query_context_attributes(context: i64, attribute: u32, into: i64) -> i32 {}
+unsafe fn c_query_context_attributes(context: i64, attribute: u32, into: i64) -> i32 {}
 
 #[os("windows")]
 #[c("EncryptMessage", "link -lsecur32")]
-fn c_encrypt_message(context: i64, qop: u32, message: i64, sequence: u32) -> i32 {}
+unsafe fn c_encrypt_message(context: i64, qop: u32, message: i64, sequence: u32) -> i32 {}
 
 #[os("windows")]
 #[c("DecryptMessage", "link -lsecur32")]
-fn c_decrypt_message(context: i64, message: i64, sequence: u32, qop: i64) -> i32 {}
+unsafe fn c_decrypt_message(context: i64, message: i64, sequence: u32, qop: i64) -> i32 {}
 
 #[os("windows")]
 #[c("ApplyControlToken", "link -lsecur32")]
-fn c_apply_control_token(context: i64, input: i64) -> i32 {}
+unsafe fn c_apply_control_token(context: i64, input: i64) -> i32 {}
 
 #[os("windows")]
 #[c("FreeContextBuffer", "link -lsecur32")]
-fn c_free_context_buffer(buffer: i64) -> i32 {}
+unsafe fn c_free_context_buffer(buffer: i64) -> i32 {}
 
 #[os("windows")]
 #[c("DeleteSecurityContext", "link -lsecur32")]
@@ -3008,29 +3059,29 @@ fn c_delete_security_context(context: i64) -> i32 {}
 
 #[os("windows")]
 #[c("calloc")]
-fn c_calloc(count: u64, size: u64) -> i64 {}
+unsafe fn c_calloc(count: u64, size: u64) -> i64 {}
 
 #[os("windows")]
 #[c("free")]
-fn c_free(block: i64) {}
+unsafe fn c_free(block: i64) {}
 
 /** *`memcpy` and `memmove` between addresses in C memory this module made */
 /** *(a connection block) or SSPI handed over, each with its exact size. */
 #[os("windows")]
 #[c("memcpy")]
-fn c_copy_at(dst: i64, src: i64, n: i64) -> i64 {}
+unsafe fn c_copy_at(dst: i64, src: i64, n: i64) -> i64 {}
 
 #[os("windows")]
 #[c("memmove")]
-fn c_move_at(dst: i64, src: i64, n: i64) -> i64 {}
+unsafe fn c_move_at(dst: i64, src: i64, n: i64) -> i64 {}
 
 #[os("windows")]
 #[c("memcpy")]
-fn c_load_bytes(dst: &mut []u8, src: i64, n: i64) -> i64 {}
+unsafe fn c_load_bytes(dst: &mut []u8, src: i64, n: i64) -> i64 {}
 
 #[os("windows")]
 #[c("memcpy")]
-fn c_store_words(dst: i64, src: &[]i64, n: i64) -> i64 {}
+unsafe fn c_store_words(dst: i64, src: &[]i64, n: i64) -> i64 {}
 
 
 // --- TLS backend: Java's SSLEngine (Android) ------------------------------------------
@@ -3676,12 +3727,12 @@ fn c_freeaddrinfo(list: i64) {
 }
 
 #[os("windows")]
-fn c_connect_at(fd: i32, addr: i64, len: u32) -> i32 {
+unsafe fn c_connect_at(fd: i32, addr: i64, len: u32) -> i32 {
     return c_wsa_connect_at(i64(fd), addr, i32(len))
 }
 
 #[os("windows")]
-fn c_recv_at(fd: i32, into: i64, len: i64, flags: i32) -> i64 {
+unsafe fn c_recv_at(fd: i32, into: i64, len: i64, flags: i32) -> i64 {
     let part = if len > i64(2147483647) { i64(2147483647) } else { len }
     return i64(c_wsa_recv_at(i64(fd), into, i32(part), flags))
 }
@@ -3696,33 +3747,33 @@ fn c_wsa_freeaddrinfo(list: i64) {}
 
 #[os("windows")]
 #[c("connect", "link -lws2_32")]
-fn c_wsa_connect_at(sock: i64, addr: i64, len: i32) -> i32 {}
+unsafe fn c_wsa_connect_at(sock: i64, addr: i64, len: i32) -> i32 {}
 
 #[os("windows")]
 #[c("recv", "link -lws2_32")]
-fn c_wsa_recv_at(sock: i64, into: i64, len: i32, flags: i32) -> i32 {}
+unsafe fn c_wsa_recv_at(sock: i64, into: i64, len: i32, flags: i32) -> i32 {}
 
 /** *`connect` to an address C handed over (an `addrinfo`'s `ai_addr`). */
 #[os("apple", "linux", "android")]
 #[c("connect")]
-fn c_connect_at(fd: i32, addr: i64, len: u32) -> i32 {}
+unsafe fn c_connect_at(fd: i32, addr: i64, len: u32) -> i32 {}
 
 /** *`recv` into a buffer C handed over (the backend's own). */
 #[os("apple", "linux")]
 #[c("recv")]
-fn c_recv_at(fd: i32, into: i64, len: i64, flags: i32) -> i64 {}
+unsafe fn c_recv_at(fd: i32, into: i64, len: i64, flags: i32) -> i64 {}
 
 /** *`memcpy` between C's memory and a Loam cell: the `addrinfo` walk and */
 /** *the callbacks' length word. Only this module's wrappers call them, each */
 /** *with an address C just handed over and its exact size. */
 #[os("apple", "linux", "windows", "android")]
 #[c("memcpy")]
-fn c_load_words(dst: &mut []i64, src: i64, n: i64) -> i64 {}
+unsafe fn c_load_words(dst: &mut []i64, src: i64, n: i64) -> i64 {}
 
 #[os("apple")]
 #[c("memcpy")]
-fn c_load_words_u64(dst: &mut []u64, src: i64, n: i64) -> i64 {}
+unsafe fn c_load_words_u64(dst: &mut []u64, src: i64, n: i64) -> i64 {}
 
 #[os("apple")]
 #[c("memcpy")]
-fn c_store_words_u64(dst: i64, src: &[]u64, n: i64) -> i64 {}
+unsafe fn c_store_words_u64(dst: i64, src: &[]u64, n: i64) -> i64 {}

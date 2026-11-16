@@ -1,0 +1,9 @@
+// A raw op outside `unsafe` is an error.
+#[c("strlen")]
+fn c_strlen(s: string) -> i64 {}
+
+fn main() {
+    let _ = c_strlen("x")
+    let mut x: i64 = i64(0)
+    raw_read(i64(1), &mut x)
+}

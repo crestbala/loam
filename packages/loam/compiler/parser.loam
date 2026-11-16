@@ -173,6 +173,12 @@ fn cur_is_word(p: &Parser, w: string) -> bool {
     return p.cur.kind == Tok.Ident && lexer.word_is(&p.lx, p.cur.start, p.cur.len, w)
 }
 
+/** *At `fn`, or at `unsafe fn` (`unsafe` is a word, not a keyword, as */
+/** *`async` is). */
+fn at_fn(p: &Parser) -> bool {
+    return check(p, Tok.Fn) || (p.peek.kind == Tok.Fn && cur_is_word(p, "unsafe"))
+}
+
 // --- nodes -------------------------------------------------------------------
 
 fn add(p: &mut Parser, n: NodeBuild) -> int {
@@ -1716,6 +1722,16 @@ fn parse_stmt(p: &mut Parser) -> int {
         }
         return v
     }
+    // `unsafe { ... }`: a block whose statements may do raw memory
+    // operations and call unsafe fns.
+    if p.peek.kind == Tok.Lbrace && cur_is_word(p, "unsafe") {
+        bump(p)
+        let blk = parse_block(p)
+        if !bad(p, blk) {
+            ast.NODES[blk].flags = ast.NODES[blk].flags | ast.F_UNSAFE
+        }
+        return blk
+    }
     // `fn name(a: T) -> R { ... }` in a body is `let name = fn(a: T) ...`.
     if check(p, Tok.Fn) && p.peek.kind == Tok.Ident {
         bump(p)
@@ -2432,12 +2448,12 @@ fn parse_program(p: &mut Parser) -> int {
                 attr_failed = true
                 break
             }
-            if is_test && !check(p, Tok.Fn) {
+            if is_test && !at_fn(p) {
                 error(p, "#[test] can only be applied to a fn")
                 attr_failed = true
                 break
             }
-            if is_server && !check(p, Tok.Fn) {
+            if is_server && !at_fn(p) {
                 error(p, "#[server] can only be applied to a fn")
                 attr_failed = true
                 break
@@ -2457,12 +2473,12 @@ fn parse_program(p: &mut Parser) -> int {
                 attr_failed = true
                 break
             }
-            if os_mask != 0 && !check(p, Tok.Fn) {
+            if os_mask != 0 && !at_fn(p) {
                 error(p, "#[os] / #[arch] can only be applied to a fn")
                 attr_failed = true
                 break
             }
-            if has_c_sym && !check(p, Tok.Fn) {
+            if has_c_sym && !at_fn(p) {
                 error(p, "#[c] can only be applied to a fn")
                 attr_failed = true
                 break
@@ -2474,11 +2490,20 @@ fn parse_program(p: &mut Parser) -> int {
         if dir_seen {
             continue
         }
+        // `unsafe fn`: may do raw memory operations and call unsafe fns; its
+        // callers must be unsafe too (docs/unsafe.md).
+        let is_unsafe = p.peek.kind == Tok.Fn && cur_is_word(p, "unsafe")
+        if is_unsafe {
+            bump(p)
+        }
         if eat(p, Tok.Fn) {
             let f = parse_fn(p)
             if !bad(p, f) {
                 set_doc(p, f, doc)
                 let mut bits = 0
+                if is_unsafe {
+                    bits = bits | ast.FN_UNSAFE
+                }
                 if is_test {
                     bits = bits | FN_TEST
                 }

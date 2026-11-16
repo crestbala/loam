@@ -76,16 +76,17 @@ Counted on 2026-11-11 (`wc -l`, comments included):
 
 ## 2. What stays C, and why
 
-- **The trusted core.** About 1,000 lines: allocation, refcount retain and
-  release (atomic for strings), vec buffers and copy-on-write, element and
-  env drop hooks, the panic and trap path, and checked integer ops where C
-  builtins do the work. These are the primitives safe Loam is built *from*.
-  Writing them in Loam needs raw memory access, which safe Loam does not
-  have. Until an `unsafe` that passes the rules in §4 exists, they stay C:
-  small, in one file, fuzzed ([security.md](security.md) S2) and
-  sanitizer-tested. Under the 2026-11-13 target they move too, as the last
-  step (R6): through that `unsafe`, or emitted by codegen. Staying C is no
-  longer the end state.
+- **The trusted core.** Allocation, refcount retain and release (atomic for
+  strings), vec buffers and copy-on-write, and the element and env drop
+  hooks. These are the primitives safe Loam is built *from*. Checked integer
+  ops and the panic path have left this header (R6.1, R6.2). R6.3 measured
+  both ways the rest could leave and chose codegen emission, per type, not
+  a `std:core` module. `unsafe` ([unsafe.md](unsafe.md)) is the C ABI. It
+  is not how these helpers move. Vec push and vec pop have left this header
+  (R6.4): codegen emits each variant a program calls. Allocation, the
+  refcount word, reserve, copy-on-write and drop stay here. The file stays
+  small, fuzzed
+  ([security.md](security.md) S2) and sanitizer-tested.
 - **OS and GUI calls.** `read`, `write`, `open`, `posix_spawn`, `poll`,
   sockets, `pthread`, the Win32 equivalents, Cocoa / UIKit (Objective-C), JNI,
   X11, and wasm imports. Each becomes a thin binding: one `#[c]` fn per call
@@ -135,25 +136,37 @@ safely today:
   one command.
 - No inline C. A piece that cannot be written in safe Loam belongs in the
   core, and the core gets a line-count budget.
-- **`unsafe`, allowed only if it fits essentialism and minimalism.** Loam
-  may gain an `unsafe` keyword when it removes more trusted C than the
-  language surface it adds. The rules:
-  - **Minimal.** One keyword marking a fn or a block, and the fewest raw
-    operations the core needs: read and write a value at an address, offset
-    an address, and convert between an address and a handle. No pointer
-    types in safe code, no unchecked indexing, no inline C.
-  - **Essential.** It lands with the first core piece that needs it, which
-    must delete C and lower the trusted-code count (C plus `unsafe` lines)
-    in the same step. No speculative operations.
-  - **Contained.** Safe callers cannot tell it is there: an `unsafe` fn is
-    private to its module, as a `#[c]` fn is, and its module exposes only
-    safe wrappers. The compiler and its tools stay entirely safe Loam
-    (self-hosting §2.7).
-  - **Visible.** `loamc check --ffi` ([security.md](security.md) S3) lists
-    every `unsafe` fn and block with the `#[c]` bindings, and the R0
-    counter counts its lines as trusted code.
-  - **Checked as C is.** Every `unsafe` module is fuzzed (S2) and
-    ASan/UBSan-clean, and matches the C it replaces in speed (gate 2 below).
+- **`unsafe`, for the C ABI.** Landed 2026-11-16. One word, like `async`,
+  on a top-level fn or a block. The operations are `raw_addr`, `raw_read`,
+  and `raw_write` ([unsafe.md](unsafe.md)): the address of a string or a
+  number buffer, and a `memcpy` of one number, bool, or plain struct.
+  Offset is ordinary `i64` arithmetic. No pointer type in safe code, no
+  unchecked index, no inline C. An address-to-handle conversion was not
+  added: the piece below does not need one.
+  It landed by deleting `loam_net_string_bytes_at` (the address of a
+  string's byte, which `std:net` now gets with `raw_addr`). **Runtime:
+  5,006 → 4,992** (−14). `nob trusted` also counts the `unsafe` Loam that
+  was already the FFI surface: `std:net` 612, `crypto` 45, `sqlite` 17,
+  674 in total. Those lines were trusted before and uncounted. The runtime
+  budget is the C, and it only shrinks.
+  The rules the compiler checks:
+  - **Minimal.** The three operations above, and only in a module that
+    declares a `#[c]` binding. A region that does no raw op and calls no
+    unsafe fn is an error. Regions do not nest.
+  - **Contained.** An `unsafe fn` is private to its module, as a `#[c]` fn
+    is, and it is not a value. The module exposes a safe wrapper. The
+    compiler, `nob.loam`, and the tools stay safe Loam (self-hosting §2.7);
+    `nob trusted` fails if they use `unsafe`.
+  - **Visible.** `loamc check --ffi` lists every `#[c]` binding (and whether
+    callers must be unsafe), every unsafe fn, and every unsafe block, with
+    paths relative to the working directory. `nob trusted` counts the lines.
+  - **Checked.** `compile_pass/unsafe_raw.loam` round-trips a byte, an
+    `i64`, and a plain struct through C memory, and calls another module's
+    safe wrapper. `compile_pass/unsafe_raw_name.loam` keeps a user fn named
+    `raw_read`. `compile_fail/unsafe_*.loam` rejects an empty unsafe fn, a
+    module with no binding, a region that does nothing unsafe, nesting, a
+    raw op outside `unsafe`, a safe call of an unsafe fn, an unsafe fn used
+    as a value, a cross-module call, and `raw_addr` of an int.
 - **`#[c]` that handles C completely, so no package writes a C file or a
   header of its own** (set 2026-11-15). Rust has no C shims: `extern "C"`,
   `#[repr(C)]` and checked layouts reach any C library. Loam's bindings grow
@@ -221,7 +234,7 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       `wasm_inc`), hosts 4,871, vendored 346,122 (sqlite, monocypher, raygui
       and the generated tree-sitter parser).
 - [x] R0.2 The budget: `RUNTIME_LINE_BUDGET` in `nob.loam`, set at 9,939
-      and lowered by each step since (now **5,006**, after R6.2).
+      and lowered by each step since (now **4,914**, after vec pop in R6.4).
       `nob trusted` and the unfiltered `nob test` fail if `runtime/` grows
       past it. Each step below lowers it to its new count in the same
       change.
@@ -1758,12 +1771,64 @@ with R6.2).
       `loader_cases`, `api_freeze`, `one_surface`, the lint stanzas,
       `c_layouts` and `watch` green; `cross-check.sh` Linux and Windows
       125/125 on both CPUs. **Runtime: 5,080 → 5,006** (−74).
-- [ ] R6.3 Decide, with a measured prototype, how allocation, refcounts and
+- [x] R6.3 Decide, with a measured prototype, how allocation, refcounts and
       vec buffers leave C: the minimal `unsafe` of §4 in a `std:core`
       module, or emitted by codegen per type, with no extra memory per value
-      over today's layout.
+      over today's layout. Done 2026-11-16. **Codegen emits them, per type,
+      as `static inline` C. Not a called `std:core`.**
+      The layout stays what the header has. A string is `ptr`, `len`, `own`.
+      A vec is `ptr`, `len`, `cap`. The `i64` refcount is the word before
+      the bytes, not a field of the value. A probe built that header with
+      `malloc` and `raw_read` / `raw_write`: the word at `raw_addr(s) - 8`
+      was the refcount, the sums of both vecs were `N * (N - 1) / 2`, and
+      no value grew a field.
+      **Speed**, Darwin arm64, `-O0` (what a dev build uses), median of 5.
+      Pushing 20,000,000 `i32`s: the C helper 32 ms, the same pushes written
+      out with `raw_write` 28 ms, a called `unsafe fn` around those ops 88 ms
+      (2.75×). A `std:core` fn is a call at `-O0`. It matches the C only when
+      codegen emits it `static inline`, which is the integer-helper shape
+      from R6.1, so the helper is not a fn in the runtime at all.
+      String retain is the other half. 2,000,000 retains and releases: the
+      C atomic 16 ms, a non-atomic `raw_read` / `raw_write` of the same word
+      4 ms inline and 2 ms as a call. The raw ops are a `memcpy`. They are
+      not an atomic add, and a correct string counter has to be one, because
+      a string can move to a worker. Emitting `__atomic_add_fetch` is
+      codegen. A new raw op for it would exist only so the emitter could
+      call it.
+      Trusted count: templates in `codegen.loam` delete the helpers from
+      `loam_rt.h` and add no `unsafe` lines. A `std:core` port would add
+      those lines in the language library for the same behaviour. R6.4 moves
+      one helper at a time this way. The runtime count is unchanged by the
+      decision: **4,992**.
 - [ ] R6.4 Move them, one primitive per change, each fuzzed and
       ASan/UBSan-clean (S2) and no slower than its C twin.
+      Vec push landed 2026-11-16. `loam_vec_push`, `loam_vec_push_owned`
+      and `loam_vec_push_take`, and their out-of-line slow paths, left
+      `loam_rt.h`. Codegen writes the same `static inline` C, and only the
+      variant the unit calls, beside the integer helpers. Reserve,
+      copy-on-write and the refcount word stay in the header: the slow
+      path still calls them. Nothing else in the runtime called push.
+      **Speed**, Darwin arm64, `-O0`, 20,000,000 `i32` pushes: the header
+      helper 70 ms, the emitted helper 60 ms (median user time of 5; every
+      run after the first sat in 60–70 ms). **ASan+UBSan** clean on plain
+      push, a shared buffer, string push, and a moved struct (`_take`).
+      A program that never pushes loses the three functions from its C
+      (84,430 → 81,834 bytes). One that only pushes `i32` keeps plain push
+      and drops the other two (93,357 → 91,883). **Runtime: 4,992 → 4,934**
+      (−58). **Suite:** 678 passed, 0 failed. **Seed:** 5,333,714 bytes,
+      seed = stage 1 = stage 2.
+      Vec pop landed the same day. `loam_vec_pop` and `loam_vec_pop_owned`
+      left the header. Codegen writes the same `static inline` C, and only
+      the variant the unit calls. The body still calls `loam_vec_unique` /
+      `loam_vec_unique_owned`, which stay with the refcount word.
+      **Speed**, same machine and flags, push then pop of 20,000,000 `i32`s:
+      50 ms with the header pop and 50 ms with the emitted one (median user
+      time of 5). **ASan+UBSan** clean on plain pop, a shared buffer, string
+      pop, and a popped struct. A program that only pops `i32` keeps plain
+      pop and drops the owned one (92,372 → 91,682 bytes). **Runtime:
+      4,934 → 4,914** (−20). **Suite:** 678 passed, 0 failed. **Seed:**
+      5,338,753 bytes, seed = stage 1 = stage 2.
+
 - [ ] R6.5 `zeus_wasm_libc.c` reduced to nothing: what wasm still needs
       (memory growth, `memcpy`) is Loam or a wasm import.
 - [ ] R6.6 `packages/loam/runtime/` deleted; `loader.loam` and `loamc.loam`

@@ -1,0 +1,9 @@
+// A region that calls no unsafe fn and does no raw op is not unsafe.
+#[c("strlen")]
+fn c_strlen(s: string) -> i64 {}
+
+fn main() {
+    unsafe {
+        let _ = c_strlen("x")
+    }
+}

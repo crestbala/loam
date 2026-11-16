@@ -33,8 +33,10 @@ docs). Each of these traps with a message instead of corrupting memory:
 
 Also in place:
 
-- Ownership, moves and borrows are checked. References are second-class, and
-  the language has no `unsafe` and no null.
+- Ownership, moves and borrows are checked. References are second-class.
+  Safe code has no pointer type and no null. `unsafe` is the C ABI only
+  ([unsafe.md](unsafe.md)): a module that declares a `#[c]` binding, a
+  private fn or a block, and `raw_addr` / `raw_read` / `raw_write`.
 - `sys.spawn` / `sys.run` take an argument list, with no shell.
 - Vendored packages are pinned by checksum in `loam.lock`.
 
@@ -168,10 +170,10 @@ changes (pending)" in [self-hosting-loam.md](self-hosting-loam.md)).
       `std:json`, the HTTP/1 and HTTP/2 parsers, and `read_line` /
       `read_stdin`. All under ASan + UBSan. The fuzzers are dev tools, not a
       suite cost; the corpus found becomes regression fixtures.
-- [ ] **S3. Mark the FFI boundary.** No new keyword: a `#[c]` fn or a
-      `#![c_source]` module is listed by `loamc check --ffi` (module, symbol,
-      source file), and `loam.lock` records which packages use FFI, so a
-      review can find all trusted code in one command.
+- [ ] **S3. Mark the FFI boundary.** `loamc check --ffi` lists every `#[c]`
+      binding (and whether callers must be unsafe), every `unsafe` fn, and
+      every `unsafe` block, with the file and line. `loam.lock` does not yet
+      record which packages use FFI.
 - [ ] **S4. Shell-free by default.** Deprecate `sys.exec` for new code in
       favour of `sys.run` / `sys.spawn` with a stdout capture
       (`sys.run_output(&argv) -> Result<string>`). Port the compiler's one

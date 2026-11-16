@@ -71,6 +71,8 @@ const F_WRAPPED_LIT: int = 128
 /** *Import: injected by the loader for a lowering (`std:decimal`, `std:key`); */
 /** *codegen calls it by C name, so its alias is no name in the program. */
 const F_IMPLICIT: int = 1024
+/** *Block: `unsafe { ... }`. */
+const F_UNSAFE: int = 2048
 
 /** *A source span: the module it is in (an index into the session's module */
 /** *list; C's `SourceLoc.file`), and 1-based line and byte column, start and */
@@ -265,6 +267,8 @@ const M_RECV_TYPED: int = 8192
 /** *On a Fn's `op`, above the `FN_*` bits: a variadic `#[c]` binding's */
 /** *count of fixed parameters, plus one (`#[c("sym", "variadic after N")]`). */
 const FN_C_FIXED_SHIFT: int = 8
+/** *On a Fn's `op`: `unsafe fn` (parser.loam sets it). */
+const FN_UNSAFE: int = 16
 
 /** *How many leading parameters of a variadic `#[c]` binding C declares; */
 /** *`-1` when the binding is not variadic. */

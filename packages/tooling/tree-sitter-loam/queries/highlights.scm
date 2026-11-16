@@ -14,6 +14,7 @@
 [
   "fn"
   "async"
+  "unsafe"
   "await"
   "let"
   "const"

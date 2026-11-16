@@ -1,0 +1,13 @@
+// Unsafe regions do not nest.
+#[c("strlen")]
+fn c_strlen(s: string) -> i64 {}
+
+fn main() {
+    let _ = c_strlen("x")
+    unsafe {
+        unsafe {
+            let mut x: i64 = i64(0)
+            raw_read(i64(1), &mut x)
+        }
+    }
+}

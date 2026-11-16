@@ -1,0 +1,7 @@
+// `unsafe` is only for a module that declares a `#[c]` binding.
+fn main() {
+    unsafe {
+        let mut x: i64 = i64(0)
+        raw_read(i64(1), &mut x)
+    }
+}

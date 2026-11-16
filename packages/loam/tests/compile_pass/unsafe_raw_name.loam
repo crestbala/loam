@@ -1,0 +1,13 @@
+// A user fn named `raw_read` is an ordinary fn. The raw op exists only when
+// no fn of that name is in scope.
+import "std:sys"
+
+fn raw_read(a: i64, b: i64) -> i64 {
+    return a + b
+}
+
+fn main() {
+    if raw_read(i64(2), i64(3)) != i64(5) {
+        sys.exit(1)
+    }
+}

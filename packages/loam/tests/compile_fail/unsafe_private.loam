@@ -1,0 +1,14 @@
+// Another module cannot call an unsafe fn, even from its own unsafe block.
+import "../mod/unsafe_wrap.loam" as uw
+import { secret } "../mod/unsafe_wrap.loam"
+
+#[c("strlen")]
+fn c_strlen(s: string) -> i64 {}
+
+fn main() {
+    unsafe {
+        let _ = c_strlen("x")
+        let _ = uw.secret()
+        let _ = secret()
+    }
+}
