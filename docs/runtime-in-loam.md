@@ -1547,7 +1547,9 @@ done, so every R3 step is checked by `thread_tsan`).
       125/125 on both CPUs. The Winsock code first runs on the Windows CI
       job (`win-run.sh`, PR #71). No C deleted: **Runtime stays 5,359.**
 - [x] R5.5 TLS on Windows: SChannel as `#[c]` bindings (secur32). Done
-      2026-11-16 (pending its first Windows CI run).
+      2026-11-16. Its first Windows CI run printed `tls ok`: badssl.com's
+      four bad certificates refused, blocking and non-blocking GETs
+      complete. Linux printed it on both CPUs too.
 
       **A third backend** of the shared TLS layer, which now builds for
       Windows too. SChannel does no socket I/O: the backend sends and
