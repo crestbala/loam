@@ -1897,7 +1897,11 @@ fn st_ident_kind(h: &Highlight, i: int, paren: int) -> int {
     if w == "async" && next == Tok.Fn {
         return ST_KEYWORD
     }
-    if w == "unsafe" && !st_prev_ends_value(prev) && (next == Tok.Fn || next == Tok.Lbrace) {
+    // `unsafe fn` is always a declaration (it may follow an attribute's `]`).
+    // `unsafe {` is a block when it opens a line or follows a non-value.
+    let starts_line = i == 0 || h.toks[i - 1].end_line < h.toks[i].line
+    if w == "unsafe" && !after_dot &&
+        (next == Tok.Fn || (next == Tok.Lbrace && (starts_line || !st_prev_ends_value(prev)))) {
         return ST_KEYWORD
     }
     if w == "await" && !st_prev_ends_value(prev) {
