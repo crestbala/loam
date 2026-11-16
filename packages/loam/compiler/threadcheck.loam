@@ -35,8 +35,6 @@ let WORKER_SEAM_OK: []string = []string {
     // above, so the raw symbols stay callable from workers (module-private to
     // `std:async`, so only the wrappers can name them).
     "loam_async_c_clock_gettime", "loam_async_c_nanosleep", "loam_async_c_sleep_errno",
-    "loam_wrapping_add", "loam_wrapping_shr", "loam_wrapping_shl",
-    "loam_wrapping_or", "loam_wrapping_and", "loam_saturating_add",
 }
 
 const NOT_STATICALLY_VISIBLE: string = "spawned fn calls a fn value whose code is not statically visible (pass a fn name or call the closure directly)"

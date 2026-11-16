@@ -221,8 +221,7 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       `wasm_inc`), hosts 4,871, vendored 346,122 (sqlite, monocypher, raygui
       and the generated tree-sitter parser).
 - [x] R0.2 The budget: `RUNTIME_LINE_BUDGET` in `nob.loam`, set at 9,939
-      and lowered by each step since (now **5,359**; borrowed buffers
-      deleted no C, so the budget stayed).
+      and lowered by each step since (now **5,080**, after R6.1).
       `nob trusted` and the unfiltered `nob test` fail if `runtime/` grows
       past it. Each step below lowers it to its new count in the same
       change.
@@ -1654,10 +1653,54 @@ done, so every R3 step is checked by `thread_tsan`).
 
 **R6. The core: zero runtime.** What remains of `loam_rt.h`: allocation,
 refcounts, owned strings, vec growth and copy-on-write, element and env drop
-hooks, panics and traps, checked integer ops.
+hooks, panics and traps (checked integer ops left with R6.1).
 
-- [ ] R6.1 Checked integer ops emitted inline by codegen
-      (`__builtin_*_overflow` in the generated C), only where used.
+- [x] R6.1 Checked integer ops emitted by codegen, only where used. Done
+      2026-11-16. Every integer helper left `loam_rt.h`: checked `+ - * / %`,
+      unary `-`, `<<` / `>>`, the `wrapping_*` and `saturating_*` builtins,
+      narrowing conversions (`conv`, `convf`, `convu`, `sat`, `satu`) and the
+      bounds check (`loam_idx`). Codegen notes each helper as it writes a call
+      to it (a family and a width, one `[]bool` slot each). Once the unit is
+      built, it writes a definition for every noted helper, in a fixed order,
+      between the runtime header and the rest. The definitions are
+      templates in `codegen.loam` (`int_helper_def`), the same C the header
+      had, so a call still inlines into a compare and a branch. Numeric
+      builtin calls carry a new IR bit (`I_NUMERIC_BUILTIN`), so codegen
+      notes them too. The header waits in `PRELUDE` until the unit is
+      built. The 64 KB streaming to stdout (`flush_big`) is gone: every
+      caller sets a file `SINK`, so it never ran. `fatal` now writes no
+      partial C.
+      Gone with the helpers: six unsuffixed `int64_t` `wrapping_*` /
+      `saturating_add` fns that nothing called (and their names in
+      threadcheck's worker list), and the non-GNU fallbacks of the three
+      `i64` ops: every supported compiler has the builtins, and the
+      sized helpers had used them unguarded all along.
+      **Bootstrap:** the old seed pastes whatever `loam_rt.h` is on disk but
+      cannot write the helpers, so stage 1 was built by the old compiler
+      with HEAD's std and runtime as its home. It then built itself, and
+      `nob seed` wrote the seed.
+      **Speed:** generated programs are unchanged, since the helpers are the
+      same C. The compiler emitting HEAD's sources takes 160.5 vs 160.1 ms
+      (median of 12, both whole-unit builds). Emitting its own sources takes
+      163.3 vs 160.0 ms, because it compiles its own 230 new lines.
+      **Binaries** (new vs HEAD): tiny `fmt.println(42)` 33,688 both, `nob`
+      618,248 both, gallery 2,608,104 both with the same `__text`. The HEAD
+      compiler's sources built by either compiler have the same `__text`.
+      The new compiler's `__text` grows 5,668 bytes (+0.3%): its own
+      template code.
+      **Generated C:** a tiny program's falls from 103,869 to 90,901 bytes
+      (−12.5%; it defines 6 helpers, where the header had over 200), and the
+      HEAD compiler's from 5,208,498 to 5,200,497. Seed 5,208,498 →
+      5,241,692 bytes (the new code), seed = stage 1 = stage 2. `-Wall`
+      warnings fall (tiny 787 → 588, the compiler 2,013 → 1,851): no unused
+      helpers.
+      **Suite:** `compile_pass` (710), `golden` (135), `compile_fail` (175),
+      `zeus` (455), `http` (39), `thread`, `async`, `net_`, `c_ffi`,
+      `c_attr`, `sys_`, `os_`, `maya`, `raygui`; `selfhost_seed`,
+      `wasm_smoke`, `wasm_trap`, `wasm_float`, `ownership_asan`,
+      `thread_tsan`, `lsp`, `cost`, `fresh_cache`, `android_project`,
+      `serve_native` green; `cross-check.sh` Linux and Windows 125/125 on
+      both CPUs. **Runtime: 5,359 → 5,080** (−279).
 - [ ] R6.2 Panic and trap path: a Loam fn over `write` + `abort` bindings.
 - [ ] R6.3 Decide, with a measured prototype, how allocation, refcounts and
       vec buffers leave C: the minimal `unsafe` of §4 in a `std:core`

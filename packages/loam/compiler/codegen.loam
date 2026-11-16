@@ -3,7 +3,7 @@
 //
 // Layout of the generated file:
 //   1. loam_rt.h pasted in, then zeus_rt.h / net_rt.h when those modules
-//      are loaded
+//      are loaded, then the integer helpers the unit calls
 //   2. struct typedefs, then definitions in by-value dependency order
 //   3. element hook and ownership helper prototypes, globals, prototypes,
 //      closure envs, `#[c]` bindings, fn-value trampolines
@@ -12,14 +12,16 @@
 //
 // Every fn body comes from the IR: ir.loam lowers everything typecheck
 // accepts, so a fn it did not lower is an internal error. The output is built
-// in `OUT` and written to stdout in 64 KB pieces, or, when `SINK` names a file,
-// kept whole and written there once at the end.
+// in `OUT` and written once at the end, to stdout or to the file `SINK`
+// names: the integer helpers come before the code that calls them, and which
+// ones is known only when the unit is built.
 
 import "std:buf"
 import "std:conv"
 import "std:fmt"
 import "std:map"
 import "std:result"
+import "std:str"
 import "std:sys"
 import "ast.loam"
 import "types.loam"
@@ -106,12 +108,10 @@ fn wl(n: i64) {
     buf.push_i64(&mut OUT, n)
 }
 
-/** *Write out what is built once it passes 64 KB. */
-fn flush_big() {
-    if OUT.len >= 65536 {
-        flush()
-    }
-}
+/** *The runtime header, set aside while the rest of the unit is built: the */
+/** *integer helpers go between the two, and which ones is known only at */
+/** *the end (`int_helper_defs`). */
+let mut PRELUDE: []u8 = []u8 {}
 
 fn flush() {
     if SINK.len == 0 && OUT.len > 0 {
@@ -126,8 +126,8 @@ fn indent(n: int) {
     }
 }
 
+/** *Stop with `msg`. The unit is not written: part of one is no C. */
 fn fatal(msg: string) {
-    flush()
     OUT = []u8 {}
     fmt.eprintln("loam: {{msg}}")
     sys.exit(1)
@@ -1037,6 +1037,303 @@ fn sig_changed(t: int, id: string, val: string) {
     w("_chg{{k}}; })")
 }
 
+// --- integer helpers ---------------------------------------------------------------------
+//
+// Checked, wrapping and saturating integer ops, narrowing conversions and the
+// bounds check are small `static inline` C fns. They used to sit in the
+// runtime header, all of them in every program; now codegen notes each one
+// as it writes a call to it and defines only those, after the runtime
+// header and before anything that calls them (`int_helper_defs`), so a
+// program carries only the integer ops it uses.
+
+// Helper families, in the order their definitions are written.
+enum IntHelper {
+    Add = 0,
+    Sub = 1,
+    Mul = 2,
+    Div = 3,
+    Mod = 4,
+    Neg = 5,
+    Shl = 6,
+    Shr = 7,
+    WrapAdd = 8,
+    WrapSub = 9,
+    WrapMul = 10,
+    WrapNeg = 11,
+    WrapShl = 12,
+    WrapShr = 13,
+    WrapAnd = 14,
+    WrapOr = 15,
+    WrapXor = 16,
+    SatAdd = 17,
+    SatSub = 18,
+    SatMul = 19,
+    Conv = 20,
+    Convf = 21,
+    Sat = 22,
+    Convu = 23,
+    Satu = 24,
+}
+const IH_FAMILIES: int = 25
+/** *Widths: i8 i16 i32 i64, then u8 u16 u32 u64. */
+const IH_WIDTHS: int = 8
+
+/** *`family * IH_WIDTHS + width`: a call to that helper was written. */
+let mut INT_HELPER_USED: []bool = []bool {}
+/** *A bounds check (`loam_idx`) was written. */
+let mut BOUNDS_HELPER_USED: bool = false
+
+fn int_helpers_reset() {
+    INT_HELPER_USED = []bool {}
+    for i in 0..IH_FAMILIES * IH_WIDTHS {
+        push(INT_HELPER_USED, false)
+    }
+    BOUNDS_HELPER_USED = false
+}
+
+fn int_family_name(family: int) -> string {
+    switch family {
+        case IntHelper.Add:
+            return "add"
+        case IntHelper.Sub:
+            return "sub"
+        case IntHelper.Mul:
+            return "mul"
+        case IntHelper.Div:
+            return "div"
+        case IntHelper.Mod:
+            return "mod"
+        case IntHelper.Neg:
+            return "neg"
+        case IntHelper.Shl:
+            return "shl"
+        case IntHelper.Shr:
+            return "shr"
+        case IntHelper.WrapAdd:
+            return "wrapping_add"
+        case IntHelper.WrapSub:
+            return "wrapping_sub"
+        case IntHelper.WrapMul:
+            return "wrapping_mul"
+        case IntHelper.WrapNeg:
+            return "wrapping_neg"
+        case IntHelper.WrapShl:
+            return "wrapping_shl"
+        case IntHelper.WrapShr:
+            return "wrapping_shr"
+        case IntHelper.WrapAnd:
+            return "wrapping_and"
+        case IntHelper.WrapOr:
+            return "wrapping_or"
+        case IntHelper.WrapXor:
+            return "wrapping_xor"
+        case IntHelper.SatAdd:
+            return "saturating_add"
+        case IntHelper.SatSub:
+            return "saturating_sub"
+        case IntHelper.SatMul:
+            return "saturating_mul"
+        case IntHelper.Conv:
+            return "conv"
+        case IntHelper.Convf:
+            return "convf"
+        case IntHelper.Sat:
+            return "sat"
+        case IntHelper.Convu:
+            return "convu"
+        default:
+            return "satu"
+    }
+}
+
+/** *Bits of width `k`. */
+fn int_width_bits(k: int) -> string {
+    return if k % 4 == 0 { "8" } else if k % 4 == 1 { "16" } else if k % 4 == 2 { "32" } else { "64" }
+}
+
+/** *Width `k` as `types.int_suffix` names it (`i32`, `u8`). */
+fn int_width_name(k: int) -> string {
+    return if k >= 4 { "u{{int_width_bits(k)}}" } else { "i{{int_width_bits(k)}}" }
+}
+
+/** *The C name of helper `family` at width `sfx` (`loam_add_i32`), noted as */
+/** *used so its definition is written. */
+fn int_helper(family: int, sfx: string) -> string {
+    let mut width = -1
+    for k in 0..IH_WIDTHS {
+        if int_width_name(k) == sfx {
+            width = k
+            break
+        }
+    }
+    if family < 0 || family >= IH_FAMILIES || width < 0 {
+        fatal("internal: no integer helper {{family}} for {{sfx}}")
+    }
+    if INT_HELPER_USED.len == 0 {
+        int_helpers_reset()
+    }
+    INT_HELPER_USED[family * IH_WIDTHS + width] = true
+    return "loam_{{int_family_name(family)}}_{{sfx}}"
+}
+
+/** *A numeric builtin's call, `loam_<family>_<width>` as ir.loam named it. */
+fn note_numeric_builtin(cname: string) {
+    let cut = str.last_index_of(cname, "_")
+    let family = str.slice(cname, 5, cut)
+    for f in IntHelper.WrapAdd..IntHelper.Conv {
+        if int_family_name(f) == family {
+            int_helper(f, str.slice(cname, cut + 1, cname.len))
+            return
+        }
+    }
+    fatal("internal: no integer helper {{cname}}")
+}
+
+/** *Write `template` with its placeholders filled in: `@N` the helper's */
+/** *name, `@T` its C type, `@U` the unsigned type of that width, `@L` / `@H` */
+/** *the least and greatest value, `@O` `op` and `@V` `cond`. */
+fn w_int_template(template: string, name: string, k: int, op: string, cond: string) {
+    let bits = int_width_bits(k)
+    let mut i = 0
+    while i < template.len {
+        if template[i] != '@' || i + 1 >= template.len {
+            wc(template[i])
+            i = i + 1
+            continue
+        }
+        let tag = template[i + 1]
+        if tag == 'N' {
+            w(name)
+        } else if tag == 'T' || tag == 'U' {
+            w(if k >= 4 || tag == 'U' { "uint" } else { "int" })
+            w(bits)
+            w("_t")
+        } else if tag == 'L' {
+            if k >= 4 {
+                w("0")
+            } else {
+                w("INT")
+                w(bits)
+                w("_MIN")
+            }
+        } else if tag == 'H' {
+            w(if k >= 4 { "UINT" } else { "INT" })
+            w(bits)
+            w("_MAX")
+        } else if tag == 'O' {
+            w(op)
+        } else {
+            w(cond)
+        }
+        i = i + 2
+    }
+}
+
+/** *The definition of helper `family` at width `k`. Overflow is found by */
+/** *`__builtin_*_overflow`, which computes in infinite precision and reports */
+/** *whether the result fits the type exactly, so C's promotions never decide */
+/** *a result. Shifts go through the unsigned type, so a signed left shift is */
+/** *never UB, and a count at or past the width traps. */
+fn int_helper_def(family: int, k: int) {
+    let name = "loam_{{int_family_name(family)}}_{{int_width_name(k)}}"
+    let is_signed = k < 4
+    let is_i64 = k == 3
+    let is_u64 = k == 7
+    switch family {
+        case IntHelper.Add, IntHelper.Sub, IntHelper.Mul:
+            w_int_template("static inline @T @N(@T a, @T b, const char *f, int l) {\n    @T r; if (__builtin_@O_overflow(a, b, &r)) loam_panic(f, l, \"integer overflow\");\n    return r;\n}\n", name, k, int_family_name(family), "")
+            break
+        case IntHelper.Div:
+            if is_signed {
+                w_int_template("static inline @T @N(@T a, @T b, const char *f, int l) {\n    if (b == 0) loam_panic(f, l, \"division by zero\");\n    if (a == (@T)(@L) && b == (@T)-1) loam_panic(f, l, \"integer overflow\");\n    return (@T)(a / b);\n}\n", name, k, "", "")
+            } else {
+                w_int_template("static inline @T @N(@T a, @T b, const char *f, int l) {\n    if (b == 0) loam_panic(f, l, \"division by zero\");\n    return (@T)(a / b);\n}\n", name, k, "", "")
+            }
+            break
+        case IntHelper.Mod:
+            if is_signed {
+                w_int_template("static inline @T @N(@T a, @T b, const char *f, int l) {\n    if (b == 0) loam_panic(f, l, \"division by zero\");\n    if (a == (@T)(@L) && b == (@T)-1) return (@T)0;\n    return (@T)(a % b);\n}\n", name, k, "", "")
+            } else {
+                w_int_template("static inline @T @N(@T a, @T b, const char *f, int l) {\n    if (b == 0) loam_panic(f, l, \"division by zero\");\n    return (@T)(a % b);\n}\n", name, k, "", "")
+            }
+            break
+        case IntHelper.Neg:
+            w_int_template("static inline @T @N(@T a, const char *f, int l) {\n    @T r; if (__builtin_sub_overflow((@T)0, a, &r)) loam_panic(f, l, \"integer overflow\");\n    return r;\n}\n", name, k, "", "")
+            break
+        case IntHelper.Shl, IntHelper.Shr:
+            w_int_template("static inline @T @N(@T a, uint64_t n, const char *f, int l) {\n    if (n >= (uint64_t)(sizeof(@T) * 8)) loam_panic(f, l, \"shift amount out of range\");\n    return (@T)(@O);\n}\n", name, k, if family == IntHelper.Shl { "(uint{{int_width_bits(k)}}_t)a << n" } else { "a >> n" }, "")
+            break
+        case IntHelper.WrapAdd, IntHelper.WrapSub, IntHelper.WrapMul:
+            let op = if family == IntHelper.WrapAdd { "+" } else if family == IntHelper.WrapSub { "-" } else { "*" }
+            w_int_template("static inline @T @N(@T a, @T b) { return (@T)((@U)a @O (@U)b); }\n", name, k, op, "")
+            break
+        case IntHelper.WrapNeg:
+            w_int_template("static inline @T @N(@T a) { return (@T)((@U)0 - (@U)a); }\n", name, k, "", "")
+            break
+        case IntHelper.WrapShl, IntHelper.WrapShr:
+            w_int_template("static inline @T @N(@T a, @U n) {\n    return n >= (@U)(sizeof(@T) * 8) ? (@T)0 : (@T)((@U)a @O n);\n}\n", name, k, if family == IntHelper.WrapShl { "<<" } else { ">>" }, "")
+            break
+        case IntHelper.WrapAnd, IntHelper.WrapOr, IntHelper.WrapXor:
+            let op = if family == IntHelper.WrapAnd { "&" } else if family == IntHelper.WrapOr { "|" } else { "^" }
+            w_int_template("static inline @T @N(@T a, @T b) { return (@T)(a @O b); }\n", name, k, op, "")
+            break
+        case IntHelper.SatAdd, IntHelper.SatSub, IntHelper.SatMul:
+            let op = if family == IntHelper.SatAdd { "add" } else if family == IntHelper.SatSub { "sub" } else { "mul" }
+            let high = if family == IntHelper.SatAdd { "b > 0" } else if family == IntHelper.SatSub { "b < 0" } else { "(a > 0) == (b > 0)" }
+            w_int_template("static inline @T @N(@T a, @T b) {\n    @T r; if (!__builtin_@O_overflow(a, b, &r)) return r;\n    return (@V) ? (@T)(@H) : (@T)(@L);\n}\n", name, k, op, high)
+            break
+        case IntHelper.Conv:
+            if is_i64 {
+                w_int_template("static inline int64_t @N(int64_t v, const char *f, int l) {\n    (void)f; (void)l; return v;\n}\n", name, k, "", "")
+            } else if is_u64 {
+                w_int_template("static inline uint64_t @N(int64_t v, const char *f, int l) {\n    if (v < 0) loam_panic(f, l, \"integer conversion out of range\");\n    return (uint64_t)v;\n}\n", name, k, "", "")
+            } else {
+                w_int_template("static inline @T @N(int64_t v, const char *f, int l) {\n    if (v < (int64_t)(@L) || v > (int64_t)(@H)) loam_panic(f, l, \"integer conversion out of range\");\n    return (@T)v;\n}\n", name, k, "", "")
+            }
+            break
+        case IntHelper.Convf:
+            let range = if is_i64 { "v >= -9223372036854775808.0 && v < 9223372036854775808.0" } else if is_u64 { "v >= 0.0 && v < 18446744073709551616.0" } else { "v >= (double)(@L) && v <= (double)(@H)" }
+            w_int_template("static inline @T @N(double v, const char *f, int l) {\n    if (!(", name, k, "", "")
+            w_int_template(range, name, k, "", "")
+            w_int_template(")) loam_panic(f, l, \"float conversion out of range\");\n    return (@T)v;\n}\n", name, k, "", "")
+            break
+        case IntHelper.Sat:
+            if is_i64 {
+                w_int_template("static inline int64_t @N(int64_t v) { return v; }\n", name, k, "", "")
+            } else if is_u64 {
+                w_int_template("static inline uint64_t @N(int64_t v) { return v < 0 ? (uint64_t)0 : (uint64_t)v; }\n", name, k, "", "")
+            } else {
+                w_int_template("static inline @T @N(int64_t v) {\n    if (v < (int64_t)(@L)) return (@T)(@L);\n    if (v > (int64_t)(@H)) return (@T)(@H);\n    return (@T)v;\n}\n", name, k, "", "")
+            }
+            break
+        case IntHelper.Convu:
+            w_int_template("static inline @T @N(uint64_t v, const char *f, int l) {\n    if (v > (uint64_t)(@H)) loam_panic(f, l, \"integer conversion out of range\");\n    return (@T)v;\n}\n", name, k, "", "")
+            break
+        default:
+            w_int_template("static inline @T @N(uint64_t v) { return v > (uint64_t)(@H) ? (@T)(@H) : (@T)v; }\n", name, k, "", "")
+            break
+    }
+}
+
+/** *Define every integer helper a call was written to, in a fixed order, so */
+/** *the output does not depend on where each was first used. */
+fn int_helper_defs() {
+    if INT_HELPER_USED.len == 0 {
+        int_helpers_reset()
+    }
+    for f in 0..IH_FAMILIES {
+        for k in 0..IH_WIDTHS {
+            if INT_HELPER_USED[f * IH_WIDTHS + k] {
+                int_helper_def(f, k)
+            }
+        }
+    }
+    if BOUNDS_HELPER_USED {
+        w("static inline int64_t loam_idx(int64_t i, int64_t n, const char *f, int l) {\n")
+        w("    if (i < 0 || i >= n) loam_panic(f, l, \"index out of bounds\");\n    return i;\n}\n")
+    }
+}
+
 // --- operators and casts ---------------------------------------------------------------
 
 /** *Trapping arithmetic helper for integer type `t` (`loam_add_i32`), "" */
@@ -1046,21 +1343,21 @@ fn arith_fn(t: int, op: int) -> string {
     if sfx.len == 0 {
         return ""
     }
-    let mut base = ""
+    let mut family = IntHelper.Add
     if op == Tok.Plus || op == Tok.PlusEq {
-        base = "add"
+        family = IntHelper.Add
     } else if op == Tok.Minus || op == Tok.MinusEq {
-        base = "sub"
+        family = IntHelper.Sub
     } else if op == Tok.Star || op == Tok.StarEq {
-        base = "mul"
+        family = IntHelper.Mul
     } else if op == Tok.Slash || op == Tok.SlashEq {
-        base = "div"
+        family = IntHelper.Div
     } else if op == Tok.Percent || op == Tok.PercentEq {
-        base = "mod"
+        family = IntHelper.Mod
     } else {
         return ""
     }
-    return "loam_{{base}}_{{sfx}}"
+    return int_helper(family, sfx)
 }
 
 fn shift_fn(t: int, op: int) -> string {
@@ -1068,8 +1365,7 @@ fn shift_fn(t: int, op: int) -> string {
     if sfx.len == 0 {
         return ""
     }
-    let base = if op == Tok.Shr { "shr" } else { "shl" }
-    return "loam_{{base}}_{{sfx}}"
+    return int_helper(if op == Tok.Shr { IntHelper.Shr } else { IntHelper.Shl }, sfx)
 }
 
 fn neg_fn(t: int) -> string {
@@ -1077,7 +1373,7 @@ fn neg_fn(t: int) -> string {
     if sfx.len == 0 {
         return "(null)"
     }
-    return "loam_neg_{{sfx}}"
+    return int_helper(IntHelper.Neg, sfx)
 }
 
 fn c_binop(op: int) -> string {
@@ -1173,7 +1469,7 @@ fn cast_plan(from: int, to: int, mode: int) -> CastPlan {
         if mode != 0 {
             return plain
         }
-        return CastPlan { shape: CAST_CONVF, helper: "loam_convf_{{sfx}}" }
+        return CastPlan { shape: CAST_CONVF, helper: int_helper(IntHelper.Convf, sfx) }
     }
     if fk != TK.Int || mode == 1 {
         return plain
@@ -1187,14 +1483,14 @@ fn cast_plan(from: int, to: int, mode: int) -> CastPlan {
     let to_u64 = tt.bits == 64 && tt.is_unsigned != 0
     if from_u64 && !to_u64 {
         if mode == 2 {
-            return CastPlan { shape: CAST_SATU, helper: "loam_satu_{{sfx}}" }
+            return CastPlan { shape: CAST_SATU, helper: int_helper(IntHelper.Satu, sfx) }
         }
-        return CastPlan { shape: CAST_CONVU, helper: "loam_convu_{{sfx}}" }
+        return CastPlan { shape: CAST_CONVU, helper: int_helper(IntHelper.Convu, sfx) }
     }
     if mode == 2 {
-        return CastPlan { shape: CAST_SAT, helper: "loam_sat_{{sfx}}" }
+        return CastPlan { shape: CAST_SAT, helper: int_helper(IntHelper.Sat, sfx) }
     }
-    return CastPlan { shape: CAST_CONV, helper: "loam_conv_{{sfx}}" }
+    return CastPlan { shape: CAST_CONV, helper: int_helper(IntHelper.Conv, sfx) }
 }
 
 // --- structs ----------------------------------------------------------------------------
@@ -2607,6 +2903,9 @@ fn inst(i: int) {
             w(", {{lv(x.a)}});\n")
             break
         case Op.Call, Op.CallVal:
+            if (x.bits & ir.I_NUMERIC_BUILTIN) != 0 {
+                note_numeric_builtin(ir.TEXTS[x.text])
+            }
             call_inst(x)
             break
         case Op.Alloc:
@@ -2638,6 +2937,7 @@ fn inst(i: int) {
             }
             break
         case Op.Bound:
+            BOUNDS_HELPER_USED = true
             if x.b >= 0 {
                 w("(void)loam_idx({{lv(x.a)}}, {{lv(x.b)}}, ")
             } else {
@@ -3014,7 +3314,6 @@ fn fn_body(f: int, is_main: bool) {
     w("}\n\n")
     CF = NONE
     LV = []string {}
-    flush_big()
 }
 
 /** *The IR fn lowered from declaration `d`: by its C name, unless `d` is */
@@ -3778,8 +4077,10 @@ fn emit_c() {
     if mods_use("net") {
         w("#include \"net_rt.h\"\n")
     }
+    int_helpers_reset()
+    PRELUDE = OUT
+    OUT = []u8 {}
     wc('\n')
-    flush()
 
     // Closures only from kept fn bodies, plus module-level inits.
     for m in 0..nmods {
@@ -3848,7 +4149,6 @@ fn emit_c() {
     }
     for i in 0..SE_NAMES.len {
         se_emit(i)
-        flush_big()
     }
 
     // A prototype per possible hook id: monomorphized bodies can register an
@@ -3861,7 +4161,6 @@ fn emit_c() {
     }
     wc('\n')
     own_helpers()
-    flush_big()
 
     for i in 0..typecheck.GVARS.len {
         let gv = typecheck.GVARS[i].var
@@ -3931,7 +4230,6 @@ fn emit_c() {
             w(";\n")
             os_end(d)
         }
-        flush_big()
     }
     for i in 0..CLOS_NODES.len {
         clos_env(CLOS_NODES[i])
@@ -3959,7 +4257,6 @@ fn emit_c() {
     }
     wc('\n')
     c_bindings()
-    flush_big()
 
     // The trampolines are the first definitions, so a shard build finishes
     // the header before them: the literal templates, and the trampolines' own
@@ -4004,7 +4301,6 @@ fn emit_c() {
     if !SHARD {
         lit_template_decls()
     }
-    flush_big()
 
     for i in 0..CLOS_NODES.len {
         closure_fn(CLOS_NODES[i])
@@ -4088,7 +4384,6 @@ fn emit_c() {
         w("    {{hcn}} *_e = ({{hcn}} *)p;\n")
         drop_place("(*_e)", ht, 1)
         w("}\n")
-        flush_big()
         h = h + 1
     }
     sig_payload_drop_def()
@@ -4102,6 +4397,12 @@ fn emit_c() {
     if TEST_MODE {
         test_runner()
     }
+    // The header, the integer helpers the unit calls, then the unit.
+    let body = OUT
+    OUT = PRELUDE
+    PRELUDE = []u8 {}
+    int_helper_defs()
+    buf.push_bytes(&mut OUT, &body)
     flush()
     if SINK.len > 0 {
         if sys.write_bytes(SINK, OUT) != 0 {
