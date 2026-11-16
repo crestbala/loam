@@ -1082,7 +1082,7 @@ fn c_errno() -> i32 {}
 //
 // The TCP logic above is shared with POSIX. Here the `c_*` calls it makes
 // get Windows variants with the same Loam signatures, each over a Winsock
-// binding: a `SOCKET` is 64 bits (it must fit an `int` handle below
+// binding: a send is offered at most 64 KiB, a `SOCKET` is 64 bits (it must fit an `int` handle below
 // `TLS_BASE`, which Windows handles do), lengths are `int`, `close` is
 // `closesocket`, the error is `WSAGetLastError` (`WSAEINTR` read as
 // `EINTR`), a read timeout is a `DWORD` of ms, and a `WSAPOLLFD` is 16
@@ -1096,6 +1096,8 @@ const WINSOCK_2_2: u16 = 514
 /** *`WSADATA` is 408 bytes on 64-bit Windows; this cell has room. */
 const WSADATA_BYTES: int = 512
 const WSAEINTR: i32 = 10004
+/** *The most one Winsock `send` is offered (see `c_send_at`). */
+const WINSOCK_SEND_MAX: int = 65536
 /** *`FIONBIO` as the `long` `ioctlsocket` takes. */
 const FIONBIO: i32 = -2147195266
 const HANDLE_FLAG_INHERIT: u32 = 1
@@ -1217,10 +1219,15 @@ fn c_recv(fd: i32, into: &mut []u8, len: i64, flags: i32) -> i64 {
     return i64(c_wsa_recv(i64(fd), into, i32(len), flags))
 }
 
-/** *One `send`, at most 1 GiB (an `int` length); the caller sends the rest. */
+/** *One `send` of at most 64 KiB; the caller sends the rest. A non-blocking */
+/** *Winsock `send` takes a buffer of any size whenever the send buffer has */
+/** *room (it overcommits), so an uncapped send would park a whole reply in */
+/** *the kernel: a reader that stalls could never be noticed or dropped, and */
+/** *each socket could pin megabytes. Capped, it takes about what fits, as */
+/** *POSIX does. */
 #[os("windows")]
 fn c_send_at(fd: i32, bytes: i64, len: i64, flags: i32) -> i64 {
-    let part = if len > i64(1073741824) { i64(1073741824) } else { len }
+    let part = if len > i64(WINSOCK_SEND_MAX) { i64(WINSOCK_SEND_MAX) } else { len }
     return i64(c_wsa_send(i64(fd), bytes, i32(part), flags))
 }
 

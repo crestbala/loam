@@ -6,6 +6,8 @@
 #
 # A fixture passes when it builds, exits 0, and — if it has a `.expected` —
 # prints exactly that; one with a `.trap` must instead panic with that message (byte for byte: the runtime puts stdout in binary mode).
+# Fixtures run headless (`ZEUS_HEADLESS=1 MAYA_HEADLESS=1`), as `nob test`
+# runs them: a server then self-tests instead of serving forever.
 # Each run is capped at FIXTURE_TIMEOUT seconds (default 60), so a fixture
 # that blocks fails by name instead of holding the job; a failure shows the
 # end of what the fixture printed.
@@ -34,13 +36,13 @@ for c in "$IN"/*.c; do
     [ $ok = 1 ] && { $CC -std=gnu99 -O1 -w -I packages/loam/runtime "$c" $objs -o "$work/$b.exe" $links >>"$log" 2>&1 || ok=0; }
     if [ $ok = 1 ] && [ -f "$IN/$b.trap" ]; then
         # Must panic, with the `.trap` message on stderr.
-        if timeout "$limit" "$work/$b.exe" < /dev/null > "$work/$b.out" 2>"$work/$b.err"; then
+        if ZEUS_HEADLESS=1 MAYA_HEADLESS=1 timeout "$limit" "$work/$b.exe" < /dev/null > "$work/$b.out" 2>"$work/$b.err"; then
             echo "exited 0; should have panicked" >>"$log"; ok=0
         elif ! grep -qF -f "$IN/$b.trap" "$work/$b.err"; then
             { echo "--- panic message differs from $b.trap:"; cat "$work/$b.err"; } >>"$log"; ok=0
         fi
     elif [ $ok = 1 ]; then
-        timeout "$limit" "$work/$b.exe" < /dev/null > "$work/$b.out" 2>>"$log"
+        ZEUS_HEADLESS=1 MAYA_HEADLESS=1 timeout "$limit" "$work/$b.exe" < /dev/null > "$work/$b.out" 2>>"$log"
         st=$?
         if [ $st -eq 124 ]; then
             echo "timed out after ${limit}s" >>"$log"; ok=0

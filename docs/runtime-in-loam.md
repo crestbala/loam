@@ -1512,6 +1512,24 @@ done, so every R3 step is checked by `thread_tsan`).
       The POSIX-only includes are guarded, and raylib's check is skipped
       there (its `Rectangle` and `CloseWindow` clash with `windows.h`).
 
+      **What the first Windows runs found** (121 of 125 passed at first):
+      - Winsock's `send` overcommits. A non-blocking send takes any size
+        whenever the buffer has room, so a 3.2 MB reply left at once and a
+        stalled reader was never dropped. Each send is now offered at most
+        64 KiB (`http_listen`).
+      - `server_stop` closed requests and the listener but not open streams,
+        so a stopped server's stream clients waited forever. Fixed for every
+        OS. `http_stream` now runs its server in-process (it spawned a child
+        through `sh` and `kill`ed it) and fails against the old
+        `server_stop`.
+      - The analytics server's `wall_ms` read `gettimeofday` as two 64-bit
+        words, but Windows' `timeval` is two 32-bit `long`s. It now reads
+        `clock_gettime(CLOCK_REALTIME)` (`c_layouts` checks
+        `CLOCK_REALTIME` and the `timespec` layout).
+      - `win-run.sh` now runs fixtures headless, as `nob test` does
+        (`http_min` served forever), caps each at 60 s, and shows a failing
+        fixture's stdout.
+
       **Checks.** Native suites are unchanged: `http` (39), `net_`,
       `async_`, `zeus_async`, `zeus_stream`, `os_variants`, `c_layouts`,
       `wasm_smoke`, `wasm_trap`, `server_split`, `serve_native`,
