@@ -73,13 +73,36 @@ static void *paint_ctx;
 static ZeusDraw paint_draw;
 static int have_draw;
 
+/* Decimal text of `v` at `out` (at most 20 bytes, no NUL); its length. No
+   printf: wasm has none, and these are the only numbers this file writes. */
+static size_t plat_put_int(char *out, int64_t v) {
+    char tmp[20];
+    size_t n = 0, k = 0;
+    uint64_t u = v < 0 ? 0 - (uint64_t)v : (uint64_t)v;
+    do {
+        tmp[n++] = (char)('0' + u % 10);
+        u /= 10;
+    } while (u);
+    if (v < 0) out[k++] = '-';
+    while (n) out[k++] = tmp[--n];
+    return k;
+}
+
+static size_t plat_put_str(char *out, const char *s) {
+    size_t n = strlen(s);
+    memcpy(out, s, n);
+    return n;
+}
+
+static void plat_out_of_memory(void) {
+    loam_ewrite_bytes("zeus: out of memory\n", 20);
+    abort();
+}
+
 static char *dup_ys(loam_str s) {
     size_t n = s.len < 0 ? 0 : (size_t)s.len;
     char *p = (char *)malloc(n + 1);
-    if (!p) {
-        fprintf(stderr, "zeus: out of memory\n");
-        abort();
-    }
+    if (!p) plat_out_of_memory();
     if (s.ptr && n) memcpy(p, s.ptr, n);
     p[n] = '\0';
     return p;
@@ -182,8 +205,12 @@ void loam_host_run(loam_str path) {
 }
 
 int64_t loam_zeus_plat_headless(void) {
+#ifdef __wasm32__
+    return plat_run ? 0 : 1; /* no environment on wasm */
+#else
     if (getenv("ZEUS_HEADLESS") || !plat_run) return 1;
     return 0;
+#endif
 }
 
 /* The one blit of a finished frame (Phase 4). The pixels were produced by the
@@ -253,7 +280,7 @@ void loam_zeus_plat_measure(loam_str s, int32_t px, int32_t *w, int32_t *h) {
 void loam_zeus_plat_measure_int(int32_t v, int32_t px, int32_t *w, int32_t *h) {
     char buf[32];
     int64_t tw = 0, th = 0;
-    snprintf(buf, sizeof buf, "%lld", (long long)v);
+    buf[plat_put_int(buf, v)] = '\0';
     if (plat_measure) plat_measure(buf, px, &tw, &th);
     else measure_default(buf, px, &tw, &th);
     if (w) *w = (int32_t)tw;
@@ -526,10 +553,9 @@ int64_t loam_platform_plat_mem_kb(void) {
 /* Phase 0 arena-stats gate (`runtime.mem_stats`). A build flag turns it on
    for good; the env var turns it on for one run; neither changes allocation. */
 int64_t loam_runtime_mem_stats(void) {
-#ifdef LOAM_WEB_RELEASE
-    return 0;
-#endif
-#if defined(ZEUS_MEM_STATS)
+#if defined(LOAM_WEB_RELEASE) || (defined(__wasm32__) && !defined(ZEUS_MEM_STATS))
+    return 0; /* no environment on wasm */
+#elif defined(ZEUS_MEM_STATS)
     return 1;
 #else
     const char *v = getenv("ZEUS_MEM_STATS");
@@ -1226,10 +1252,7 @@ static void free_fn_push(int id) {
     if (nfree_fns == cfree_fns) {
         int cap = cfree_fns ? cfree_fns * 2 : 256;
         int *next = (int *)realloc(free_fns, (size_t)cap * sizeof(int));
-        if (!next) {
-            fprintf(stderr, "zeus: out of memory\n");
-            abort();
-        }
+        if (!next) plat_out_of_memory();
         free_fns = next;
         cfree_fns = cap;
     }
@@ -1272,10 +1295,16 @@ static void note_kind_mismatch(int id, int want, int got) {
     intern_kind_mismatches++;
     if (intern_kind_reported < 8) {
         intern_kind_reported++;
-        fprintf(stderr,
-                "zeus: interned handler %d invoked as kind %d but interned as kind %d"
-                " — refusing the call\n",
-                id, want, got);
+        char msg[160];
+        size_t n = 0;
+        n += plat_put_str(msg + n, "zeus: interned handler ");
+        n += plat_put_int(msg + n, id);
+        n += plat_put_str(msg + n, " invoked as kind ");
+        n += plat_put_int(msg + n, want);
+        n += plat_put_str(msg + n, " but interned as kind ");
+        n += plat_put_int(msg + n, got);
+        n += plat_put_str(msg + n, " — refusing the call\n");
+        loam_ewrite_bytes(msg, n);
     }
 }
 
@@ -1614,8 +1643,8 @@ void zeus_js_open_external(const char *url, int32_t len);
 #endif
 
 int64_t loam_platform_plat_layout_verify(void) {
-#ifdef LOAM_WEB_RELEASE
-    return 0;
+#if defined(LOAM_WEB_RELEASE) || defined(__wasm32__)
+    return 0; /* no environment on wasm */
 #else
     static int on = -1;
     if (on < 0) {

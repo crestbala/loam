@@ -1,12 +1,10 @@
 /* Freestanding libc for Zeus WASM (Canvas2D host, no WASI). */
 #include <stddef.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
-#include <stdarg.h>
 
 __attribute__((import_module("zeus"), import_name("write")))
 void zeus_js_write(const char *p, int32_t n);
@@ -15,10 +13,6 @@ __attribute__((import_module("zeus"), import_name("panic")))
 void zeus_js_panic(const char *p, int32_t n);
 
 int errno;
-static FILE file_out = {1};
-static FILE file_err = {2};
-FILE *stdout = &file_out;
-FILE *stderr = &file_err;
 
 #define HEAP_SIZE (64 * 1024 * 1024)
 #define HDR 8u
@@ -124,13 +118,6 @@ void *realloc(void *p, size_t n) {
     return q;
 }
 
-void *calloc(size_t n, size_t sz) {
-    size_t t = n * sz;
-    void *q = malloc(t);
-    if (q) memset(q, 0, t);
-    return q;
-}
-
 void free(void *p) {
     size_t *h, *f;
     size_t off, bits, pay, prev_hdr;
@@ -178,57 +165,6 @@ __attribute__((noreturn)) void abort(void) {
     __builtin_trap();
 }
 
-void exit(int c) {
-    (void)c;
-    abort();
-}
-
-char *getenv(const char *name) {
-    (void)name;
-    return NULL;
-}
-
-int atoi(const char *s) {
-    int v = 0, sign = 1;
-    if (!s) return 0;
-    if (*s == '-') {
-        sign = -1;
-        s++;
-    }
-    while (*s >= '0' && *s <= '9') {
-        v = v * 10 + (*s - '0');
-        s++;
-    }
-    return v * sign;
-}
-
-void *memcpy(void *d, const void *s, size_t n) {
-    unsigned char *dd = (unsigned char *)d;
-    const unsigned char *ss = (const unsigned char *)s;
-    size_t i;
-    for (i = 0; i < n; i++) dd[i] = ss[i];
-    return d;
-}
-
-void *memmove(void *d, const void *s, size_t n) {
-    unsigned char *dd = (unsigned char *)d;
-    const unsigned char *ss = (const unsigned char *)s;
-    size_t i;
-    if (dd < ss) {
-        for (i = 0; i < n; i++) dd[i] = ss[i];
-    } else {
-        for (i = n; i > 0; i--) dd[i - 1] = ss[i - 1];
-    }
-    return d;
-}
-
-void *memset(void *d, int c, size_t n) {
-    unsigned char *dd = (unsigned char *)d;
-    size_t i;
-    for (i = 0; i < n; i++) dd[i] = (unsigned char)c;
-    return d;
-}
-
 int memcmp(const void *a, const void *b, size_t n) {
     const unsigned char *aa = (const unsigned char *)a;
     const unsigned char *bb = (const unsigned char *)b;
@@ -246,170 +182,10 @@ size_t strlen(const char *s) {
     return n;
 }
 
-int strcmp(const char *a, const char *b) {
-    if (!a) a = "";
-    if (!b) b = "";
-    while (*a && *a == *b) {
-        a++;
-        b++;
-    }
-    return (unsigned char)*a - (unsigned char)*b;
-}
-
-int strncmp(const char *a, const char *b, size_t n) {
-    size_t i;
-    if (!a) a = "";
-    if (!b) b = "";
-    for (i = 0; i < n; i++) {
-        if (a[i] != b[i] || !a[i]) return (unsigned char)a[i] - (unsigned char)b[i];
-    }
-    return 0;
-}
-
-char *strcpy(char *d, const char *s) {
-    char *o = d;
-    while ((*d++ = *s++)) {
-    }
-    return o;
-}
-
-char *strncpy(char *d, const char *s, size_t n) {
-    size_t i;
-    for (i = 0; i < n && s[i]; i++) d[i] = s[i];
-    for (; i < n; i++) d[i] = 0;
-    return d;
-}
-
-char *strchr(const char *s, int c) {
-    unsigned char ch = (unsigned char)c;
-    if (!s) return NULL;
-    for (; *s; s++)
-        if ((unsigned char)*s == ch) return (char *)s;
-    if (ch == 0) return (char *)s;
-    return NULL;
-}
-
-char *strrchr(const char *s, int c) {
-    unsigned char ch = (unsigned char)c;
-    const char *last = NULL;
-    if (!s) return NULL;
-    for (; *s; s++)
-        if ((unsigned char)*s == ch) last = s;
-    if (ch == 0) return (char *)s;
-    return (char *)last;
-}
-
 ssize_t write(int fd, const void *p, size_t n) {
     (void)fd;
     if (p && n) zeus_js_write((const char *)p, (int32_t)n);
     return (ssize_t)n;
-}
-
-static void js_print(const char *s) {
-    if (s) zeus_js_write(s, (int32_t)strlen(s));
-}
-
-int fflush(FILE *f) {
-    (void)f;
-    return 0;
-}
-
-int fprintf(FILE *f, const char *fmt, ...) {
-    va_list ap;
-    (void)f;
-    va_start(ap, fmt);
-    (void)ap;
-    va_end(ap);
-    js_print(fmt);
-    return 0;
-}
-
-int printf(const char *fmt, ...) {
-    js_print(fmt);
-    return 0;
-}
-
-
-
-int snprintf(char *buf, size_t n, const char *fmt, ...) {
-    va_list ap;
-    size_t o = 0;
-    const char *p;
-    if (!buf || !n) return 0;
-    va_start(ap, fmt);
-    for (p = fmt; p && *p && o + 1 < n; p++) {
-        if (*p != '%') {
-            buf[o++] = *p;
-            continue;
-        }
-        p++;
-        if (*p == '%') {
-            buf[o++] = '%';
-            continue;
-        }
-        if (*p == 's') {
-            const char *s = va_arg(ap, const char *);
-            if (!s) s = "";
-            while (*s && o + 1 < n) buf[o++] = *s++;
-        } else if (*p == 'd' || *p == 'i') {
-            int v = va_arg(ap, int);
-            char tmp[16];
-            int ti = 0, neg = 0;
-            unsigned u;
-            if (v < 0) {
-                neg = 1;
-                u = (unsigned)(-(v + 1)) + 1;
-            } else
-                u = (unsigned)v;
-            if (!u) tmp[ti++] = '0';
-            while (u && ti < 15) {
-                tmp[ti++] = (char)('0' + (u % 10));
-                u /= 10;
-            }
-            if (neg && o + 1 < n) buf[o++] = '-';
-            while (ti && o + 1 < n) buf[o++] = tmp[--ti];
-        } else if (*p == 'l') {
-            p++;
-            if (*p == 'l') p++;
-            if (*p == 'd' || *p == 'i' || *p == 'u') {
-                long long v = va_arg(ap, long long);
-                char tmp[24];
-                int ti = 0, neg = 0;
-                unsigned long long u;
-                if (v < 0) {
-                    neg = 1;
-                    u = (unsigned long long)(-(v + 1)) + 1;
-                } else
-                    u = (unsigned long long)v;
-                if (!u) tmp[ti++] = '0';
-                while (u && ti < 23) {
-                    tmp[ti++] = (char)('0' + (u % 10));
-                    u /= 10;
-                }
-                if (neg && o + 1 < n) buf[o++] = '-';
-                while (ti && o + 1 < n) buf[o++] = tmp[--ti];
-            }
-        } else if (*p == '.' && (p[1] == '*' || (p[1] >= '0' && p[1] <= '9'))) {
-            /* `%.*s` and `%.Ns`. Floats are `std:floattext`, not printf. */
-            int prec = 0;
-            p++;
-            if (*p == '*') {
-                prec = va_arg(ap, int);
-                p++;
-            } else {
-                while (*p >= '0' && *p <= '9') prec = prec * 10 + (*p++ - '0');
-            }
-            if (*p == 's') {
-                const char *s = va_arg(ap, const char *);
-                int i;
-                if (!s) s = "";
-                for (i = 0; i < prec && s[i] && o + 1 < n; i++) buf[o++] = s[i];
-            }
-        }
-    }
-    va_end(ap);
-    buf[o] = 0;
-    return (int)o;
 }
 
 /* compiler-rt i128 helpers. wasm32 clang emits these as `env.*` imports

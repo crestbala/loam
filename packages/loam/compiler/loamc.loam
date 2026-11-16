@@ -1344,7 +1344,7 @@ fn wasm_build(in_path: string, cpath: string, binpath: string, shard_dir: string
     let rel_flags = if release { []string { "-DLOAM_NO_TRAP_LOC", "-DLOAM_WEB_RELEASE" } } else { []string { "-DLOAM_ALLOC_TRACE" } }
     let mut args = []string { wcc }
     push_all(&mut args, &maps)
-    push_list(&mut args, []string { "--target=wasm32", "-nostdlib", "-ffreestanding", "-fno-stack-protector" })
+    push_list(&mut args, []string { "--target=wasm32", "-nostdlib", "-ffreestanding", "-fno-stack-protector", "-mbulk-memory" })
     if uses_zeus() {
         // The runtime and the web host never change between edits, so a
         // shard build keeps them as objects too.
@@ -1355,7 +1355,7 @@ fn wasm_build(in_path: string, cpath: string, binpath: string, shard_dir: string
         if shard_dir.len > 0 {
             let mut unit_cc = []string { wcc }
             push_all(&mut unit_cc, &maps)
-            push_list(&mut unit_cc, []string { "--target=wasm32", "-nostdlib", "-ffreestanding", "-fno-stack-protector", "-Oz", "-ffp-contract=off" })
+            push_list(&mut unit_cc, []string { "--target=wasm32", "-nostdlib", "-ffreestanding", "-fno-stack-protector", "-mbulk-memory", "-Oz", "-ffp-contract=off" })
             push_all(&mut unit_cc, &rel_flags)
             push_list(&mut unit_cc, []string { owns, "-I{{rt}}/wasm_inc", "-I{{rt}}" })
             let mut unit_cc_set = []string {}
