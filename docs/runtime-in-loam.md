@@ -1471,9 +1471,51 @@ done, so every R3 step is checked by `thread_tsan`).
       `fresh_cache`, `modules`, `loader_cases`, `thread_tsan` and `watch`
       green; `cross-check.sh` Linux and Windows 125/125 on both CPUs.
       No C deleted: **Runtime stays 5,359.**
-- [ ] R5.4 Winsock: `std:net`'s TCP on Windows (`WSAStartup`, `SOCKET`
-      handles, `WSAPoll`, `ioctlsocket` for non-blocking, `WSAGetLastError`),
-      so the 12 socket fixtures run there; TCP answers `-1` today.
+- [x] R5.4 Winsock: `std:net`'s TCP on Windows. Done 2026-11-16.
+
+      **Approach.** The POSIX TCP logic is shared, widened from
+      `#[os("posix")]` to `#[os("posix", "windows")]`. The `c_*` calls it
+      makes get Windows variants with the same Loam signatures, each over a
+      `ws2_32` binding:
+      - `SOCKET` is 64 bits and is checked to fit an `int` handle below
+        `TLS_BASE`.
+      - Lengths are `int`; a send is capped at 1 GiB, and the callers
+        already send the rest.
+      - `closesocket`; `ioctlsocket(FIONBIO)` for non-blocking;
+        `SetHandleInformation` so a spawned child does not inherit a socket
+        (POSIX's close-on-exec).
+      - A read timeout's `timeval` becomes Winsock's `DWORD` of ms.
+      - `WSAGetLastError`, with `WSAEINTR` read as `EINTR`. `EWOULDBLOCK`
+        stands for `EINPROGRESS`, since a non-blocking `connect` on Windows
+        answers that.
+      - `WSAStartup` on the first socket.
+      - `c_poll` copies the `pollfd` set into 16-byte `WSAPOLLFD`s
+        (`POLLRDNORM` / `POLLWRNORM`) and maps the results back. An empty
+        set sleeps, as `poll` does, where `WSAPoll` would reject it.
+      - No `SO_REUSEADDR` on Windows, where it would let another process
+        bind the same port.
+
+      Every binding names `"link -lws2_32"` (§4 e3), so only a program
+      that opens a socket links it. The per-OS stubs that answered `-1`
+      are now wasm-only. No TLS on Windows yet (R5.5).
+
+      **Scripts.** `fixture-deps.sh` reads each binding's `#[os]` and
+      `"link"` into one table. `win-bundle.sh` adds a fixture's Windows
+      libraries to its `.deps` and no longer leaves the socket fixtures out
+      (125 go to Windows, was 104). `cross-check.sh` links MinGW's
+      `ws2_32` on Windows and, on Linux, stubs only of the libraries Linux
+      bindings name. `c_layouts` gains `x86_64-windows-gnu`: `SOCKET`,
+      `WSAPOLLFD`, `sockaddr_in`, `WSADATA` within its 512-byte cell,
+      `u_long`, `DWORD`, and every option, poll, error and `FIONBIO` code.
+      The POSIX-only includes are guarded, and raylib's check is skipped
+      there (its `Rectangle` and `CloseWindow` clash with `windows.h`).
+
+      **Checks.** Native suites are unchanged: `http` (39), `net_`,
+      `async_`, `zeus_async`, `zeus_stream`, `os_variants`, `c_layouts`,
+      `wasm_smoke`, `wasm_trap`, `server_split`, `serve_native`,
+      `serve_boot` and `lsp` green. `cross-check.sh` Linux and Windows
+      125/125 on both CPUs. The Winsock code first runs on the Windows CI
+      job (`win-run.sh`, PR #71). No C deleted: **Runtime stays 5,359.**
 - [ ] R5.5 TLS on Windows (SChannel through SSPI bindings), after R5.4, as
       a third backend of the shared TLS layer; and Android, whose system
       BoringSSL is not a public NDK library, so it needs a vendored TLS

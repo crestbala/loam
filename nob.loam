@@ -2811,8 +2811,9 @@ fn ig_thread_tsan() {
 /** *The C layouts and constants Loam bindings transcribe by hand, checked */
 /** *against the real headers: a probe of `_Static_assert`s on `sizeof`, */
 /** *`offsetof` and the constants, compiled (not linked) for this machine and, */
-/** *with zig, for x86_64 glibc and aarch64 musl Linux. A field transcribed */
-/** *wrong fails here instead of corrupting memory (docs/runtime-in-loam.md §4). */
+/** *with zig, for x86_64 glibc and aarch64 musl Linux and x86_64 Windows. */
+/** *A field transcribed wrong fails here instead of corrupting memory */
+/** *(docs/runtime-in-loam.md §4). */
 /** *The probe is generated, so no C file lives in the tree for it. */
 fn ig_c_layouts() {
     mark("c layouts")
@@ -2826,11 +2827,11 @@ fn ig_c_layouts() {
     p = cat(p, "SIZE(struct timespec, 16); AT(struct timespec, tv_nsec, 8);\n")
     // std:net: `sockaddr_in` in 16 bytes, `pollfd` as two `i32`s, and the
     // socket, fcntl and errno constants its bindings pass.
-    p = cat(p, "#include <sys/socket.h>\n#include <sys/time.h>\n#include <netinet/in.h>\n#include <poll.h>\n#include <fcntl.h>\n#include <errno.h>\n")
+    p = cat(p, "#if !defined(_WIN32)\n#include <sys/socket.h>\n#include <sys/time.h>\n#include <netinet/in.h>\n#include <poll.h>\n#include <fcntl.h>\n#include <errno.h>\n")
     p = cat(p, "SIZE(struct sockaddr_in, 16); AT(struct sockaddr_in, sin_port, 2); AT(struct sockaddr_in, sin_addr, 4); SIZE(socklen_t, 4);\n")
     p = cat(p, "SIZE(struct pollfd, 8); AT(struct pollfd, events, 4); AT(struct pollfd, revents, 6); SIZE(struct timeval, 16);\n")
     p = cat(p, "IS(AF_INET, 2); IS(SOCK_STREAM, 1); IS(MSG_PEEK, 2); IS(POLLIN, 1); IS(POLLOUT, 4); IS(EINTR, 4);\n")
-    p = cat(p, "IS(F_GETFD, 1); IS(F_SETFD, 2); IS(F_GETFL, 3); IS(F_SETFL, 4); IS(FD_CLOEXEC, 1);\n")
+    p = cat(p, "IS(F_GETFD, 1); IS(F_SETFD, 2); IS(F_GETFL, 3); IS(F_SETFL, 4); IS(FD_CLOEXEC, 1);\n#endif\n")
     p = cat(p, "#if defined(__APPLE__)\nIS(CLOCK_MONOTONIC, 6); IS(_SC_NPROCESSORS_ONLN, 58);\n")
     p = cat(p, "AT(struct sockaddr_in, sin_family, 1); IS(SOL_SOCKET, 65535); IS(SO_REUSEADDR, 4); IS(SO_RCVTIMEO, 4102);\n")
     p = cat(p, "IS(SO_ERROR, 4103); IS(SO_NOSIGPIPE, 4130); IS(MSG_NOSIGNAL, 524288); IS(O_NONBLOCK, 4);\n")
@@ -2868,11 +2869,20 @@ fn ig_c_layouts() {
     p = cat(p, "IS(IN_CLOEXEC, 524288); IS(IN_IGNORED, 32768);\n")
     p = cat(p, "IS(IN_MODIFY | IN_DELETE_SELF | IN_MOVE_SELF | IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO, 2 | 1024 | 2048 | 256 | 512 | 64 | 128);\n")
     // raygui's RAM probe: `struct rusage` in 34 `i64` words.
-    p = cat(p, "FITS(struct rusage, 34); AT(struct rusage, ru_maxrss, 32); IS(RUSAGE_SELF, 0);\n#endif\n")
+    p = cat(p, "FITS(struct rusage, 34); AT(struct rusage, ru_maxrss, 32); IS(RUSAGE_SELF, 0);\n")
+    // std:net's Winsock TCP: `sockaddr_in` as on Linux, a `WSAPOLLFD` as two
+    // words (the `SOCKET`, then `events` and `revents`), `WSADATA` within
+    // its cell, and the codes its wrappers pass or map.
+    p = cat(p, "#elif defined(_WIN32)\n#include <winsock2.h>\n#include <windows.h>\n")
+    p = cat(p, "SIZE(struct sockaddr_in, 16); AT(struct sockaddr_in, sin_family, 0); AT(struct sockaddr_in, sin_port, 2); AT(struct sockaddr_in, sin_addr, 4);\n")
+    p = cat(p, "SIZE(SOCKET, 8); SIZE(WSAPOLLFD, 16); AT(WSAPOLLFD, events, 8); AT(WSAPOLLFD, revents, 10); FITS(WSADATA, 64); SIZE(u_long, 4); SIZE(DWORD, 4);\n")
+    p = cat(p, "IS(AF_INET, 2); IS(SOCK_STREAM, 1); IS(MSG_PEEK, 2); IS(SOL_SOCKET, 65535); IS(SO_RCVTIMEO, 4102); IS(SO_ERROR, 4103);\n")
+    p = cat(p, "IS(WSAEWOULDBLOCK, 10035); IS(WSAEALREADY, 10037); IS(WSAEINTR, 10004); IS((long)FIONBIO, -2147195266L); IS(HANDLE_FLAG_INHERIT, 1);\n")
+    p = cat(p, "IS(POLLRDNORM, 256); IS(POLLRDBAND, 512); IS(POLLWRNORM, 16); IS(POLLERR, 1); IS(POLLHUP, 2); IS(POLLNVAL, 4); IS(MAKEWORD(2, 2), 514);\n#endif\n")
     // std:net's OpenSSL backend (Linux), when OpenSSL's headers are here:
     // the `SSL_ctrl` codes its macros expand to, the error and BIO codes,
     // and the BIO callback types its Loam fns stand in for.
-    p = cat(p, "#if __has_include(<openssl/ssl.h>)\n#include <openssl/ssl.h>\n#include <openssl/bio.h>\n#include <openssl/err.h>\n")
+    p = cat(p, "#if !defined(_WIN32) && __has_include(<openssl/ssl.h>)\n#include <openssl/ssl.h>\n#include <openssl/bio.h>\n#include <openssl/err.h>\n")
     p = cat(p, "IS(SSL_VERIFY_PEER, 1); IS(SSL_CTRL_MODE, 33); IS(SSL_CTRL_SET_TLSEXT_HOSTNAME, 55); IS(SSL_CTRL_SET_MIN_PROTO_VERSION, 123);\n")
     p = cat(p, "IS(SSL_MODE_ENABLE_PARTIAL_WRITE, 1); IS(SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER, 2); IS(TLSEXT_NAMETYPE_host_name, 0); IS(TLS1_2_VERSION, 771);\n")
     p = cat(p, "IS(SSL_ERROR_WANT_READ, 2); IS(SSL_ERROR_WANT_WRITE, 3); IS(BIO_TYPE_SOURCE_SINK, 1024); IS(BIO_CTRL_FLUSH, 11);\n")
@@ -2885,7 +2895,8 @@ fn ig_c_layouts() {
     p = cat(p, "static void *const loam_openssl_syms[] = { ")
     p = cat(p, cat(openssl_binding_syms(), "0 };\n#endif\n"))
     // raygui's `Bounds` and `Rgba8`, when raylib's header is here.
-    p = cat(p, "#if __has_include(<raylib.h>)\n#include <raylib.h>\n")
+    // (Not with windows.h, whose `Rectangle` and `CloseWindow` clash.)
+    p = cat(p, "#if !defined(_WIN32) && __has_include(<raylib.h>)\n#include <raylib.h>\n")
     p = cat(p, "SIZE(Rectangle, 16); AT(Rectangle, y, 4); AT(Rectangle, width, 8); AT(Rectangle, height, 12);\n")
     p = cat(p, "SIZE(Color, 4); AT(Color, g, 1); AT(Color, b, 2); AT(Color, a, 3);\n#endif\n")
     write_text(probe_c, p)
@@ -2899,6 +2910,7 @@ fn ig_c_layouts() {
     if sys.exec_status() == 0 {
         push(targets, "x86_64-linux-gnu")
         push(targets, "aarch64-linux-musl")
+        push(targets, "x86_64-windows-gnu")
     }
     let mut names = "native"
     for i in 0..targets.len {
@@ -2920,7 +2932,7 @@ fn ig_c_layouts() {
     }
     let with_raylib = if raylib.len > 0 { ", raylib" } else { "" }
     let with_openssl = if openssl.len > 0 || sys.exists("/usr/include/openssl/ssl.h") == 1 { ", OpenSSL" } else { "" }
-    ok("c layouts (timespec, sockaddr_in, pollfd, addrinfo, SecureTransport{{with_openssl}}, kevent, task_vm_info, inotify_event, rusage{{with_raylib}}: {{names}})")
+    ok("c layouts (timespec, sockaddr_in, pollfd, addrinfo, SecureTransport{{with_openssl}}, kevent, task_vm_info, inotify_event, rusage, Winsock{{with_raylib}}: {{names}})")
 }
 
 /** *`(void *)&sym, ` for each `#[c("sym", "link -lssl ...")]` or */
