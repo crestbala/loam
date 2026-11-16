@@ -342,6 +342,22 @@
           ]
         },
         {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "unsafe",
+              "content": {
+                "type": "SYMBOL",
+                "name": "unsafe_fn_kw"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
           "type": "STRING",
           "value": "fn"
         },
@@ -1401,12 +1417,29 @@
         }
       ]
     },
+    "unsafe_block": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "unsafe_block_kw"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "block"
+        }
+      ]
+    },
     "_statement": {
       "type": "CHOICE",
       "members": [
         {
           "type": "SYMBOL",
           "name": "local_function"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "unsafe_block"
         },
         {
           "type": "SYMBOL",
@@ -4084,6 +4117,14 @@
     {
       "type": "SYMBOL",
       "name": "_error_sentinel"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "unsafe_fn_kw"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "unsafe_block_kw"
     }
   ],
   "inline": [],

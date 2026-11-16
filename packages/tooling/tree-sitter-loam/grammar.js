@@ -9,7 +9,9 @@ module.exports = grammar({
 
   // See src/scanner.c. `_error_sentinel` is never produced: it is only valid
   // during error recovery, which is how the scanner knows to stand aside.
-  externals: $ => [$._line_break, $._error_sentinel],
+  // `unsafe_fn_kw` / `unsafe_block_kw` are the word `unsafe` only when `fn`
+  // or `{` follows. Anywhere else `unsafe` is an ordinary name.
+  externals: $ => [$._line_break, $._error_sentinel, $.unsafe_fn_kw, $.unsafe_block_kw],
 
   word: $ => $.identifier,
 
@@ -64,7 +66,7 @@ module.exports = grammar({
     function_item: $ => seq(
       repeat($.attribute),
       optional(field('async', 'async')),
-      optional(field('unsafe', 'unsafe')),
+      optional(field('unsafe', $.unsafe_fn_kw)),
       'fn',
       field('name', $.identifier),
       optional($.type_params),
@@ -196,10 +198,11 @@ module.exports = grammar({
 
     block: $ => seq('{', repeat(seq($._statement, optional(','))), '}'),
 
-    /* `unsafe { ... }` at statement start. `unsafe` stays a word, so a
-       local fn is not `unsafe fn` (the compiler accepts that only on a
-       top-level fn) and `unsafe.tick()` is still a call. */
-    unsafe_block: $ => seq('unsafe', $.block),
+    /* `unsafe { ... }` at statement start. The scanner emits the word only
+       when `{` follows, so a local fn is not `unsafe fn` (the compiler
+       accepts that only on a top-level fn) and `unsafe.tick()` is still a
+       call. */
+    unsafe_block: $ => seq($.unsafe_block_kw, $.block),
 
     _statement: $ => choice(
       $.local_function,
