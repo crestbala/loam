@@ -233,13 +233,6 @@ static inline void *loam_new(size_t sz, const char *f, int l) {
     return p;
 }
 
-static inline void loam_drop(void **p) {
-    if (p && *p) {
-        free(*p);
-        *p = NULL;
-    }
-}
-
 /* --- owned strings ------------------------------------------------------
    A heap `loam_str` carries an int64 refcount in the word before `ptr` and is
    freed when the last reference goes away. `own` marks a value that holds that
@@ -297,18 +290,12 @@ static inline loam_str loam_str_slice(loam_str s, int32_t a, int32_t b) {
 /* gcc follows the literal path (`own == 0`) into the refcount update and the
    free after inlining, and warns that it writes before a literal or frees
    one. The `own` test makes that path dead; clang does not warn. Silenced
-   here only, for these two functions. */
+   here only, for release (codegen's `loam_str_retain` does the same). */
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wstringop-overflow"
 #pragma GCC diagnostic ignored "-Wfree-nonheap-object"
 #endif
-
-/** Take another reference to `s` (no-op for a literal). */
-static inline void loam_str_retain(loam_str s) {
-    if (s.own && s.ptr)
-        __atomic_add_fetch(loam_str_rc(s.ptr), 1, __ATOMIC_RELAXED);
-}
 
 /** Drop one reference; the last one frees the buffer. */
 static inline void loam_str_release(loam_str *s) {
@@ -325,12 +312,6 @@ static inline void loam_str_release(loam_str *s) {
 #pragma GCC diagnostic pop
 #endif
 
-static inline void *loam_move_ptr(void **src) {
-    void *p = src ? *src : NULL;
-    if (src) *src = NULL;
-    return p;
-}
-
 static inline loam_vec loam_vec_new(void) {
     loam_vec v;
     v.ptr = NULL;
@@ -341,31 +322,6 @@ static inline loam_vec loam_vec_new(void) {
 
 static inline int64_t *loam_vec_rc(void *ptr) {
     return ptr ? ((int64_t *)ptr - 1) : NULL;
-}
-
-static inline loam_vec loam_vec_retain(const loam_vec *src) {
-    loam_vec v = loam_vec_new();
-    if (!src) return v;
-    v = *src;
-    if (v.ptr) {
-        int64_t *rc = loam_vec_rc(v.ptr);
-        (*rc)++;
-    }
-    return v;
-}
-
-static inline loam_vec loam_vec_move(loam_vec *src) {
-    loam_vec v;
-    v.ptr = NULL;
-    v.len = 0;
-    v.cap = 0;
-    if (src) {
-        v = *src;
-        src->ptr = NULL;
-        src->len = 0;
-        src->cap = 0;
-    }
-    return v;
 }
 
 static inline void loam_vec_unique(loam_vec *v, size_t esz, const char *f, int l) {
@@ -432,18 +388,14 @@ static inline void loam_vec_reserve(loam_vec *v, int64_t n, size_t esz, const ch
     v->cap = cap;
 }
 
-/* Vec push (`loam_vec_push`, `_owned`, `_take`) and vec pop (`loam_vec_pop`,
-   `_owned`) are not here: codegen defines each variant a program calls,
-   right after this header (`vec_push_defs`, `vec_pop_defs`). */
-
-/* A fresh list holding a copy of `n` plain elements, for a constant table. */
-static inline loam_vec loam_vec_of(const void *src, int64_t n, size_t esz, const char *f, int l) {
-    loam_vec v = loam_vec_new();
-    loam_vec_reserve(&v, n, esz, f, l);
-    memcpy(v.ptr, src, (size_t)n * esz);
-    v.len = n;
-    return v;
-}
+/* Vec push (`loam_vec_push`, `_owned`, `_take`), vec pop (`loam_vec_pop`,
+   `_owned`), and the moves, retains and drops of owning values
+   (`loam_vec_move`, `loam_vec_retain`, `loam_vec_drop_owned`, `loam_vec_of`,
+   `loam_vec_unique_owned`, `loam_vec_reserve_owned`, `loam_move_ptr`,
+   `loam_drop`, `loam_str_retain`) are not here: codegen defines each one a
+   program calls, right after this header (`vec_push_defs`, `vec_pop_defs`,
+   `core_op_defs`). A fn value is copy and never dropped, so it has no move
+   or drop. */
 
 /* --- container element lifetime -----------------------------------------
    A `[]T` buffer owns one reference to each element that itself owns a string.
@@ -455,81 +407,6 @@ static inline loam_vec loam_vec_of(const void *src, int64_t n, size_t esz, const
    `loam_vec_drop_owned` is what a shared vec parameter must use, so dropping
    it does not zero slots the caller still reads. */
 typedef void (*loam_elem_fn)(void *elem);
-
-static inline void loam_vec_unique_owned(loam_vec *v, size_t esz, loam_elem_fn retain,
-                                         const char *f, int l) {
-    int64_t *rc;
-    void *raw;
-    size_t bytes;
-    int64_t i;
-    if (!v || !v->ptr) return;
-    rc = loam_vec_rc(v->ptr);
-    if (*rc <= 1) return;
-    bytes = sizeof(int64_t) + (esz ? (size_t)v->cap * esz : 1);
-    raw = malloc(bytes);
-    if (!raw) loam_panic(f, l, "out of memory");
-    loam_alloc_note(bytes);
-    *(int64_t *)raw = 1;
-    if (v->len > 0 && esz) {
-        memcpy((char *)raw + sizeof(int64_t), v->ptr, (size_t)v->len * esz);
-        if (retain)
-            for (i = 0; i < v->len; i++)
-                retain((char *)raw + sizeof(int64_t) + (size_t)i * esz);
-    }
-    (*rc)--;
-    v->ptr = (char *)raw + sizeof(int64_t);
-}
-
-static inline void loam_vec_reserve_owned(loam_vec *v, int64_t n, size_t esz,
-                                          loam_elem_fn retain, const char *f, int l) {
-    int64_t cap;
-    void *raw;
-    if (!v) return;
-    /* As loam_vec_reserve: a writer past `len` must own the buffer. */
-    loam_vec_unique_owned(v, esz, retain, f, l);
-    if (n <= v->cap) return;
-    cap = loam_vec_grown_cap(v->cap, n, esz, f, l);
-    if (!v->ptr) {
-        raw = malloc(sizeof(int64_t) + (esz ? (size_t)cap * esz : 1));
-        if (!raw) loam_panic(f, l, "out of memory");
-        loam_alloc_note((size_t)cap * esz);
-        *(int64_t *)raw = 1;
-        v->ptr = (char *)raw + sizeof(int64_t);
-        v->cap = cap;
-        return;
-    }
-    raw = realloc((char *)v->ptr - sizeof(int64_t),
-                  sizeof(int64_t) + (esz ? (size_t)cap * esz : 1));
-    if (!raw) loam_panic(f, l, "out of memory");
-    loam_alloc_note((size_t)cap * esz);
-    v->ptr = (char *)raw + sizeof(int64_t);
-    v->cap = cap;
-}
-
-static inline void loam_vec_drop_owned(loam_vec *v, size_t esz, loam_elem_fn release) {
-    int64_t *rc;
-    int64_t i, n;
-    if (!v) return;
-    if (!v->ptr) {
-        v->len = 0;
-        v->cap = 0;
-        return;
-    }
-    rc = loam_vec_rc(v->ptr);
-    if (--(*rc) > 0) {
-        v->ptr = NULL;
-        v->len = 0;
-        v->cap = 0;
-        return;
-    }
-    n = v->len;
-    if (release)
-        for (i = 0; i < n; i++) release((char *)v->ptr + (size_t)i * esz);
-    free(rc);
-    v->ptr = NULL;
-    v->len = 0;
-    v->cap = 0;
-}
 
 static inline void loam_vec_drop(loam_vec *v) {
     int64_t *rc;
@@ -550,52 +427,6 @@ static inline void loam_vec_drop(loam_vec *v) {
     v->ptr = NULL;
     v->len = 0;
     v->cap = 0;
-}
-
-static inline loam_fn loam_fn_move(loam_fn *src) {
-    loam_fn v;
-    v.fn = NULL;
-    v.env = NULL;
-    v.env_size = 0;
-    if (src) {
-        v = *src;
-        src->fn = NULL;
-        src->env = NULL;
-        src->env_size = 0;
-    }
-    return v;
-}
-
-static inline void loam_fn_drop(loam_fn *f) {
-    if (!f) return;
-    if (f->env) free(f->env);
-    f->env = NULL;
-    f->fn = NULL;
-}
-
-/* --- env lifetime: copy a closure env, and drop one -----------------------
-
-   A `fn` value's `env` is a stack record owned by the frame that created the
-   closure, so storing the `loam_fn` alone gives a dangling env the moment that
-   frame returns. `loam_fn_move` only *steals* — it is the move path, and it
-   leaves the source empty. Anything that must keep a `fn` beyond its frame
-   (interning a handler or a reactive thunk, a deferred callback) needs a copy
-   the runtime allocates and the same code later frees.
-
-   These two are that pair, and they are deliberately generic: they say nothing
-   about widgets, handlers, or props, and any library that stores a `fn` value
-   wants exactly this. Each takes and returns the raw env pointer so the caller
-   never has to know whether `loam_fn.env` is a heap record or NULL. */
-static inline void *loam_env_copy(const void *env, int64_t n) {
-    void *p;
-    if (!env || n <= 0) return NULL;
-    p = loam_new((size_t)n, "env.copy", 0);
-    memcpy(p, env, (size_t)n);
-    return p;
-}
-
-static inline void loam_env_drop(void *env) {
-    if (env) free(env);
 }
 
 /* --- recoverable traps ---------------------------------------------------

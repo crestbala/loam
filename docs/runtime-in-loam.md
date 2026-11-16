@@ -82,9 +82,14 @@ Counted on 2026-11-11 (`wc -l`, comments included):
   ops and the panic path have left this header (R6.1, R6.2). R6.3 measured
   both ways the rest could leave and chose codegen emission, per type, not
   a `std:core` module. `unsafe` is the C ABI. It
-  is not how these helpers move. Vec push and vec pop have left this header
-  (R6.4): codegen emits each variant a program calls. Allocation, the
-  refcount word, reserve, copy-on-write and drop stay here. The file stays
+  is not how these helpers move. R6.4 moved every primitive only generated
+  code calls: vec push and pop, the Box and vec moves and drops, the vec
+  and string retains, copy-on-write and reserve of owning elements, and the
+  constant table. Codegen emits each one a program calls. What stays is what
+  other runtime C still calls (`zeus_plat.c`, `zeus_rt.h`, the hosts):
+  allocation (`loam_new`), the refcount word, `loam_vec_reserve` /
+  `loam_vec_unique`, `loam_vec_new`, `loam_vec_drop` and `loam_str_release`.
+  They leave when their last C caller does (R6.5, R6.6, R7). The file stays
   small, fuzzed
   ([security.md](security.md) S2) and sanitizer-tested.
 - **OS and GUI calls.** `read`, `write`, `open`, `posix_spawn`, `poll`,
@@ -234,7 +239,7 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       `wasm_inc`), hosts 4,871, vendored 346,122 (sqlite, monocypher, raygui
       and the generated tree-sitter parser).
 - [x] R0.2 The budget: `RUNTIME_LINE_BUDGET` in `nob.loam`, set at 9,939
-      and lowered by each step since (now **4,914**, after vec pop in R6.4).
+      and lowered by each step since (now **4,745**, after R6.4).
       `nob trusted` and the unfiltered `nob test` fail if `runtime/` grows
       past it. Each step below lowers it to its new count in the same
       change.
@@ -1799,8 +1804,9 @@ with R6.2).
       those lines in the language library for the same behaviour. R6.4 moves
       one helper at a time this way. The runtime count is unchanged by the
       decision: **4,992**.
-- [ ] R6.4 Move them, one primitive per change, each fuzzed and
-      ASan/UBSan-clean (S2) and no slower than its C twin.
+- [x] R6.4 Move them, one primitive per change, each fuzzed and
+      ASan/UBSan-clean (S2) and no slower than its C twin. Done
+      2026-11-16.
       Vec push landed 2026-11-16. `loam_vec_push`, `loam_vec_push_owned`
       and `loam_vec_push_take`, and their out-of-line slow paths, left
       `loam_rt.h`. Codegen writes the same `static inline` C, and only the
@@ -1827,6 +1833,48 @@ with R6.2).
       pop and drops the owned one (92,372 → 91,682 bytes). **Runtime:
       4,934 → 4,914** (−20). **Suite:** 678 passed, 0 failed. **Seed:**
       5,338,753 bytes, seed = stage 1 = stage 2.
+      The core ops closed it the same day. `loam_vec_move`,
+      `loam_vec_retain`, `loam_vec_drop_owned`, `loam_vec_of`,
+      `loam_vec_unique_owned`, `loam_vec_reserve_owned`, `loam_move_ptr`,
+      `loam_drop` and `loam_str_retain` left the header. Codegen notes each
+      as it writes a call (`core_op`, one `[]bool` slot per op, like the
+      integer helpers) and writes the same `static inline` C for those only
+      (`core_op_defs`, before the pushes and pops, which call the two owned
+      ops). `loam_str_retain` keeps gcc's `-Wstringop-overflow` pragma.
+      **Deleted, not moved:** `loam_fn_move` and `loam_fn_drop` were
+      unreachable. A fn type is always copy (`types.is_copy`) and never
+      needs a drop (`types.needs_drop`), so `move_inst` and `drop_place`
+      never wrote either. Their branches are gone. A closure env is a
+      borrowed record, so the `free(f->env)` would have been a bug had it
+      ever run. `loam_env_copy` / `loam_env_drop` had no caller anywhere.
+      **Stays C, for now:** everything another runtime file still calls.
+      `loam_vec_reserve` (and the `loam_vec_unique` it calls), `loam_new`,
+      `loam_vec_new` are called from `zeus_plat.c`. `loam_vec_drop` is
+      called from the wasm host. `loam_str_release` is called from
+      `zeus_rt.h`, `zeus_plat.c` and the hosts. Moving them now would mean
+      a second copy for separately built C. They leave with that C (R6.5,
+      R6.6, R7).
+      **Bootstrap:** as R6.1. Stage 1 was built against the old header,
+      it wrote the seed, and `nob seed` then reported it unchanged.
+      **Checks:** a probe (fn values, Box build/move/drop, a vec of
+      strings copied and then pushed and popped through a shared buffer,
+      a constant table, string copies into a vec) prints the hand-checked
+      results under ASan+UBSan, and `leaks` reports 0 bytes. gcc-15 `-O2
+      -Wall` reports no stringop or free-nonheap warning.
+      **Speed**, Darwin arm64, default build, 2,000,000 rounds of a vec
+      copy, a copy-on-write push of strings, a constant table and a Box:
+      0.88 s with the header ops and 0.88 s emitted (median user time of
+      7, the second of two rounds; the first round was 0.89 vs 1.00).
+      Emitting HEAD's compiler sources takes 0.17 s with either compiler
+      (both whole builds), and the two outputs have the same `__text`
+      (1,568,440 bytes).
+      **Binaries:** tiny `fmt.println(42)` 33,688 bytes with the same
+      `__text` either way. Its C falls from 93,049 to 88,731 bytes. The
+      probe's C falls from 110,577 to 109,859, and the bench binary is
+      34,376 bytes either way. The new compiler's own `__text` grows by
+      11,680 bytes, which is its template code. **Runtime: 4,914 → 4,745**
+      (−169). **Suite:** 678 passed, 0 failed (25 s). **Seed:** 5,373,610
+      bytes, seed = stage 1 = stage 2.
 
 - [ ] R6.5 `zeus_wasm_libc.c` reduced to nothing: what wasm still needs
       (memory growth, `memcpy`) is Loam or a wasm import.
