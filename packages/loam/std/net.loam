@@ -137,6 +137,12 @@ fn tcp_bound_port(fd: int) -> int {
     return tcp_bound_port_os(fd)
 }
 
+/** *No more writes on `fd`: the peer reads what was sent, then EOF, while */
+/** *`fd` can still read (a server's lingering close). No-op for a TLS handle. */
+fn tcp_shutdown(fd: int) {
+    tcp_shutdown_os(fd)
+}
+
 /** *Peek up to `max` bytes (at most 64 KiB) without consuming them. Empty */
 /** *means EOF or error. */
 fn tcp_peek(fd: int, max: int) -> string {
@@ -730,6 +736,21 @@ fn tcp_peek_os(fd: int, max: int) -> string {
     return ""
 }
 
+/** *`SHUT_WR` (POSIX) and `SD_SEND` (Winsock) are both 1. */
+const SHUT_WR: i32 = 1
+
+#[os("posix", "windows")]
+fn tcp_shutdown_os(fd: int) {
+    if fd >= 0 && fd < TLS_BASE {
+        c_shutdown(i32(fd), SHUT_WR)
+    }
+}
+
+#[os("wasm")]
+fn tcp_shutdown_os(fd: int) {
+    return
+}
+
 #[os("posix", "windows")]
 fn tcp_close_os(fd: int) {
     if fd < 0 {
@@ -1009,6 +1030,10 @@ fn c_bind(fd: i32, addr: &[]u8, len: u32) -> i32 {}
 #[c("listen")]
 fn c_listen(fd: i32, backlog: i32) -> i32 {}
 
+#[os("posix")]
+#[c("shutdown")]
+fn c_shutdown(fd: i32, how: i32) -> i32 {}
+
 /** *`accept(fd, NULL, NULL)`: the two `0`s are null pointers. */
 #[os("posix")]
 #[c("accept")]
@@ -1232,6 +1257,11 @@ fn c_send_at(fd: i32, bytes: i64, len: i64, flags: i32) -> i64 {
 }
 
 #[os("windows")]
+fn c_shutdown(fd: i32, how: i32) -> i32 {
+    return c_wsa_shutdown(i64(fd), how)
+}
+
+#[os("windows")]
 fn c_close(fd: i32) -> i32 {
     return c_closesocket(i64(fd))
 }
@@ -1340,6 +1370,10 @@ fn c_wsa_recv(sock: i64, into: &mut []u8, len: i32, flags: i32) -> i32 {}
 #[os("windows")]
 #[c("send", "link -lws2_32")]
 fn c_wsa_send(sock: i64, bytes: i64, len: i32, flags: i32) -> i32 {}
+
+#[os("windows")]
+#[c("shutdown", "link -lws2_32")]
+fn c_wsa_shutdown(sock: i64, how: i32) -> i32 {}
 
 #[os("windows")]
 #[c("closesocket", "link -lws2_32")]

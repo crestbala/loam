@@ -1526,6 +1526,16 @@ done, so every R3 step is checked by `thread_tsan`).
         words, but Windows' `timeval` is two 32-bit `long`s. It now reads
         `clock_gettime(CLOCK_REALTIME)` (`c_layouts` checks
         `CLOCK_REALTIME` and the `timespec` layout).
+      - The HTTP server closed a connection right after its reply. With
+        request bytes unread, or more on the way (the rest of a refused
+        70 KB body, an h2c client's SETTINGS ACK), the kernel answers with a
+        reset. Windows then drops the reply the client had not read yet
+        (`www_analytics`'s 413, `http_listen`'s h2c). The server now does a
+        lingering close on every OS: `net.tcp_shutdown` (new; `SHUT_WR` /
+        `SD_SEND`), then reads and drops input until the client closes, for
+        at most 2 s or the server timeout, on a list of its own
+        (`Server.lingering`, capped at `max_conns`). A connection dropped
+        for a timeout or an error still closes at once.
       - `win-run.sh` now runs fixtures headless, as `nob test` does
         (`http_min` served forever), caps each at 60 s, and shows a failing
         fixture's stdout.

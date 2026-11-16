@@ -2831,7 +2831,7 @@ fn ig_c_layouts() {
     p = cat(p, "SIZE(struct sockaddr_in, 16); AT(struct sockaddr_in, sin_port, 2); AT(struct sockaddr_in, sin_addr, 4); SIZE(socklen_t, 4);\n")
     p = cat(p, "SIZE(struct pollfd, 8); AT(struct pollfd, events, 4); AT(struct pollfd, revents, 6); SIZE(struct timeval, 16);\n")
     p = cat(p, "IS(AF_INET, 2); IS(SOCK_STREAM, 1); IS(MSG_PEEK, 2); IS(POLLIN, 1); IS(POLLOUT, 4); IS(EINTR, 4);\n")
-    p = cat(p, "IS(F_GETFD, 1); IS(F_SETFD, 2); IS(F_GETFL, 3); IS(F_SETFL, 4); IS(FD_CLOEXEC, 1);\n#endif\n")
+    p = cat(p, "IS(F_GETFD, 1); IS(F_SETFD, 2); IS(F_GETFL, 3); IS(F_SETFL, 4); IS(FD_CLOEXEC, 1); IS(SHUT_WR, 1);\n#endif\n")
     p = cat(p, "#if defined(__APPLE__)\nIS(CLOCK_MONOTONIC, 6); IS(_SC_NPROCESSORS_ONLN, 58);\n")
     p = cat(p, "AT(struct sockaddr_in, sin_family, 1); IS(SOL_SOCKET, 65535); IS(SO_REUSEADDR, 4); IS(SO_RCVTIMEO, 4102);\n")
     p = cat(p, "IS(SO_ERROR, 4103); IS(SO_NOSIGPIPE, 4130); IS(MSG_NOSIGNAL, 524288); IS(O_NONBLOCK, 4);\n")
@@ -2878,7 +2878,7 @@ fn ig_c_layouts() {
     p = cat(p, "SIZE(SOCKET, 8); SIZE(WSAPOLLFD, 16); AT(WSAPOLLFD, events, 8); AT(WSAPOLLFD, revents, 10); FITS(WSADATA, 64); SIZE(u_long, 4); SIZE(DWORD, 4);\n")
     p = cat(p, "IS(AF_INET, 2); IS(SOCK_STREAM, 1); IS(MSG_PEEK, 2); IS(SOL_SOCKET, 65535); IS(SO_RCVTIMEO, 4102); IS(SO_ERROR, 4103);\n")
     p = cat(p, "IS(WSAEWOULDBLOCK, 10035); IS(WSAEALREADY, 10037); IS(WSAEINTR, 10004); IS((long)FIONBIO, -2147195266L); IS(HANDLE_FLAG_INHERIT, 1);\n")
-    p = cat(p, "IS(POLLRDNORM, 256); IS(POLLRDBAND, 512); IS(POLLWRNORM, 16); IS(POLLERR, 1); IS(POLLHUP, 2); IS(POLLNVAL, 4); IS(MAKEWORD(2, 2), 514);\n#endif\n")
+    p = cat(p, "IS(SD_SEND, 1); IS(POLLRDNORM, 256); IS(POLLRDBAND, 512); IS(POLLWRNORM, 16); IS(POLLERR, 1); IS(POLLHUP, 2); IS(POLLNVAL, 4); IS(MAKEWORD(2, 2), 514);\n#endif\n")
     // std:net's OpenSSL backend (Linux), when OpenSSL's headers are here:
     // the `SSL_ctrl` codes its macros expand to, the error and BIO codes,
     // and the BIO callback types its Loam fns stand in for.
