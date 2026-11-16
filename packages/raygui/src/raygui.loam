@@ -97,15 +97,15 @@ fn c_gui_line(bounds: Bounds, text: string) -> i32 {}
 #[c("GuiButton")]
 fn c_gui_button(bounds: Bounds, text: string) -> i32 {}
 #[c("GuiToggle")]
-fn c_gui_toggle(bounds: Bounds, text: string, active: []bool) -> i32 {}
+fn c_gui_toggle(bounds: Bounds, text: string, active: &mut []bool) -> i32 {}
 #[c("GuiCheckBox")]
-fn c_gui_check_box(bounds: Bounds, text: string, checked: []bool) -> i32 {}
+fn c_gui_check_box(bounds: Bounds, text: string, checked: &mut []bool) -> i32 {}
 #[c("GuiSlider")]
 fn c_gui_slider(
     bounds: Bounds,
     left: string,
     right: string,
-    value: []f32,
+    value: &mut []f32,
     lo: f32,
     hi: f32
 ) -> i32 {}
@@ -114,25 +114,25 @@ fn c_gui_progress_bar(
     bounds: Bounds,
     left: string,
     right: string,
-    value: []f32,
+    value: &mut []f32,
     lo: f32,
     hi: f32
 ) -> i32 {}
 #[c("GuiSpinner")]
-fn c_gui_spinner(bounds: Bounds, text: string, value: []i32, lo: i32, hi: i32, edit: bool) -> i32 {}
+fn c_gui_spinner(bounds: Bounds, text: string, value: &mut []i32, lo: i32, hi: i32, edit: bool) -> i32 {}
 #[c("GuiValueBox")]
 fn c_gui_value_box(
     bounds: Bounds,
     text: string,
-    value: []i32,
+    value: &mut []i32,
     lo: i32,
     hi: i32,
     edit: bool
 ) -> i32 {}
 #[c("GuiComboBox")]
-fn c_gui_combo_box(bounds: Bounds, text: string, active: []i32) -> i32 {}
+fn c_gui_combo_box(bounds: Bounds, text: string, active: &mut []i32) -> i32 {}
 #[c("GuiListView")]
-fn c_gui_list_view(bounds: Bounds, text: string, scroll: []i32, active: []i32) -> i32 {}
+fn c_gui_list_view(bounds: Bounds, text: string, scroll: &mut []i32, active: &mut []i32) -> i32 {}
 
 /** *A control's bounds from integer pixels. */
 fn bounds(x: int, y: int, w: int, h: int) -> Bounds {
@@ -276,11 +276,11 @@ fn c_task_self_trap() -> u32 {}
 
 #[os("macos")]
 #[c("task_info")]
-fn c_task_info(task: u32, flavor: i32, info: []i64, count: []u32) -> i32 {}
+fn c_task_info(task: u32, flavor: i32, info: &mut []i64, count: &mut []u32) -> i32 {}
 
 #[os("linux")]
 #[c("getrusage")]
-fn c_getrusage(who: i32, usage: []i64) -> i32 {}
+fn c_getrusage(who: i32, usage: &mut []i64) -> i32 {}
 
 /** *`TASK_VM_INFO`, and its count in `natural_t` units (372 bytes). */
 const TASK_VM_INFO: i32 = 22

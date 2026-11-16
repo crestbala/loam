@@ -107,7 +107,7 @@ fn c_clock_monotonic() -> i32 {
 /** *success, as before. */
 #[os("posix", "windows")]
 #[c("clock_gettime")]
-fn c_clock_gettime(clk: i32, ts: []i64) -> i32 {}
+fn c_clock_gettime(clk: i32, ts: &mut []i64) -> i32 {}
 
 /** *Block the calling thread for `ms`. Console/headless only — never in UI */
 /** *code; use `after` there. Native: `nanosleep` with EINTR retry, through one */
@@ -135,7 +135,7 @@ fn sleep_os(ms: int) {
 /** *sleeps through `nanosleep` the same way (its shim returns EINTR likewise). */
 #[os("posix", "windows")]
 #[c("nanosleep")]
-fn c_nanosleep(req: []i64, rem: []i64) -> i32 {}
+fn c_nanosleep(req: &[]i64, rem: &mut []i64) -> i32 {}
 
 /** *The calling thread's `errno`, so the retry above only repeats on EINTR. */
 /** *`sys` keeps its own `c_errno`; a `#[c]` fn is private to its module, so */

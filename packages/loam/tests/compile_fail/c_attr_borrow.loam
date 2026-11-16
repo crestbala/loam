@@ -1,0 +1,7 @@
+// A #[c] borrow is `&[]T` / `&mut []T` of numbers and bools. A string, a
+// number, a fixed array and a buffer of strings are Loam layouts C does
+// not take.
+#[c("c_nope")]
+fn nope(s: &string, n: &i32, xs: &[]string, a: &[4]u8) {}
+
+fn main() {}

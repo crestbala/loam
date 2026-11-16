@@ -29,6 +29,20 @@ fn even(n: i64) -> bool {}
 #[c("c_ffi_sum")]
 fn sum_bytes(bytes: []u8, n: i64) -> i64 {}
 
+/** *The same C fn through a borrowed buffer: no retain, no drop. */
+#[c("c_ffi_sum")]
+fn sum_borrowed(bytes: &[]u8, n: i64) -> i64 {}
+
+#[c("c_ffi_addr")]
+fn addr_borrowed(bytes: &[]u8) -> i64 {}
+
+#[c("c_ffi_flip")]
+fn flip_borrowed(flags: &mut []bool, n: i32) -> i32 {}
+
+/** *A borrowed buffer through `...` (the Apple arm64 vararg path). */
+#[c("c_ffi_vptr", "variadic after 1")]
+fn vptr(n: i32, bytes: &[]u8) -> i64 {}
+
 #[c("c_ffi_sum")]
 fn sum_string(text: string, n: i64) -> i64 {}
 
@@ -194,6 +208,9 @@ fn main() {
 
     let bytes = []u8 { 1, 0, 255 }
     expect(sum_bytes(bytes, i64(bytes.len)) == 256, "bytes into C")
+    expect(sum_borrowed(bytes, i64(bytes.len)) == 256, "borrowed bytes into C")
+    expect(addr(bytes) == addr_borrowed(bytes), "borrowed buffer is the element pointer")
+    expect(vptr(i32(bytes.len), bytes) == 256, "borrowed buffer through variadic")
 
     let out = []u8 { 0, 0, 0, 0, 0 }
     copy_out(out, blob(), 5)
@@ -229,6 +246,22 @@ fn main() {
     let flags = []bool { true, false, false }
     expect(flip(flags, 3) == 2, "[]bool into C")
     expect(!flags[0] && flags[1] && flags[2], "[]bool written by C")
+
+    let mut borrowed_flags = []bool { true, false, false }
+    expect(flip_borrowed(borrowed_flags, 3) == 2, "borrowed []bool into C")
+    expect(!borrowed_flags[0] && borrowed_flags[1] && borrowed_flags[2], "borrowed []bool written by C")
+
+    // A retain the wrapper forgot to skip would make this pop copy.
+    let mut held = []u8 {}
+    held.push(u8(7))
+    held.push(u8(8))
+    held.push(u8(9))
+    let held_at = addr_borrowed(held)
+    for i in 0..1000 {
+        expect(sum_borrowed(held, i64(held.len)) == 24, "borrowed sum")
+    }
+    let _ = held.pop()
+    expect(addr_borrowed(held) == held_at, "borrowed []T is not retained")
 
     expect(
         vsum3(3, i64(1), i64(20), i64(300), 0.5, "four") == 330,
