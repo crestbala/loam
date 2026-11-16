@@ -9,8 +9,8 @@
 // pointers. The Android engine never sees the socket: the backend feeds it
 // records through the host's JNI shims. Where Loam hands C an address (a
 // string's bytes, an `addrinfo`, SChannel's connection block) it does so in
-// `unsafe` code, the only kind that may. The fetch,
-// WebSocket and stream bridges are the browser's (wasm). No HTTP parsing lives here:
+// `unsafe` code, the only kind that may. The fetch, WebSocket and stream
+// bridges are Loam slots over the web host's imports (wasm). No HTTP parsing lives here:
 // that is `packages/http/src/http.loam`.
 
 import "std:buf"
@@ -154,8 +154,63 @@ fn tcp_peek(fd: int, max: int) -> string {
     return tcp_peek_os(fd, max)
 }
 
-/** *Same-origin gRPC-Web POST (wasm). Native returns empty. */
-fn fetch_rpc(path: string, body: string) -> string {}
+// --- browser bridges (wasm) ----------------------------------------------------------
+//
+// The browser owns the XHRs and the sockets. Loam keeps the slots over the web
+// host's `zeus` imports (`#[os("wasm")]` `#[c]` bindings, below). A fetch
+// reply waits in the host until Loam copies it out, at its exact size, so
+// the host never writes into wasm memory after the call that asked it to.
+// Native builds answer every bridge as a stub.
+
+const FETCH_SLOTS: int = 4
+const WS_SLOTS: int = 4
+const STREAM_SLOTS: int = 4
+/** *Most bytes one `ws_copy` or `stream_take` moves. */
+const BRIDGE_CAP: int = 65535
+/** *`host_fetch_state` while the reply is still on its way. */
+const FETCH_PENDING: int = -2
+/** *Fetch handles count up to this, then start again at 1. */
+const FETCH_HANDLE_MAX: int = 1073741824
+
+/** *By fetch slot: the host's handle for its request, 0 when free. */
+let mut fetch_handles: [4]int = [4]int { 0, 0, 0, 0 }
+let mut last_fetch_handle: int = 0
+let mut ws_live: [4]bool = [4]bool { false, false, false, false }
+let mut stream_live: [4]bool = [4]bool { false, false, false, false }
+/** *Where the host copies a WebSocket message or stream bytes: synchronous, */
+/** *so one buffer serves every slot. */
+let mut bridge_scratch: []u8 = []u8 {}
+
+fn next_fetch_handle() -> int {
+    last_fetch_handle = if last_fetch_handle >= FETCH_HANDLE_MAX { 1 } else { last_fetch_handle + 1 }
+    return last_fetch_handle
+}
+
+fn fetch_live(slot: int) -> bool {
+    return slot >= 0 && slot < FETCH_SLOTS && fetch_handles[slot] != 0
+}
+
+/** *A done reply's body (empty for a failure or an empty body); the host */
+/** *forgets the request. */
+fn fetch_finish(handle: int) -> string {
+    let size = host_fetch_state(handle)
+    let body = if size > 0 { host_fetch_take(handle, size) } else { "" }
+    host_fetch_forget(handle)
+    return body
+}
+
+/** *Same-origin gRPC-Web POST, blocking until the reply is in (wasm). Native */
+/** *returns empty. */
+fn fetch_rpc(path: string, body: string) -> string {
+    if path.len <= 0 {
+        return ""
+    }
+    let handle = next_fetch_handle()
+    if host_fetch_start(path, body, handle, 1) < 0 {
+        return ""
+    }
+    return fetch_finish(handle)
+}
 
 /** *Start a gRPC-Web POST in a fetch slot (wasm; native returns `-1`) and */
 /** *return the slot. `sync` 0 is a real async XHR: the page keeps running and */
@@ -163,61 +218,415 @@ fn fetch_rpc(path: string, body: string) -> string {}
 /** *for `await` (its pump loop never yields to the JS event loop). At most four */
 /** *in flight; `-1` when busy or native. Poll `fetch_slot_done(slot)`, then */
 /** *`fetch_slot_take(slot)`. */
-fn fetch_start(path: string, body: string, sync: int) -> int {}
+fn fetch_start(path: string, body: string, sync: int) -> int {
+    if path.len <= 0 {
+        return -1
+    }
+    for slot in 0..FETCH_SLOTS {
+        if fetch_handles[slot] == 0 {
+            let handle = next_fetch_handle()
+            if host_fetch_start(path, body, handle, sync) < 0 {
+                return -1
+            }
+            fetch_handles[slot] = handle
+            return slot
+        }
+    }
+    return -1
+}
 
 /** *1 once slot `slot` has its reply (or its failure), else 0. */
-fn fetch_slot_done(slot: int) -> int {}
+fn fetch_slot_done(slot: int) -> int {
+    if fetch_live(slot) && host_fetch_state(fetch_handles[slot]) != FETCH_PENDING {
+        return 1
+    }
+    return 0
+}
 
 /** *HTTP status of a done slot: 200, the error status, or 0 when no response */
 /** *came back at all (network error, server down behind no proxy). */
-fn fetch_slot_status(slot: int) -> int {}
+fn fetch_slot_status(slot: int) -> int {
+    if !fetch_live(slot) {
+        return 0
+    }
+    let state = host_fetch_state(fetch_handles[slot])
+    if state == FETCH_PENDING {
+        return 0
+    }
+    if state >= 0 {
+        return 200
+    }
+    if state <= -1000 {
+        return -state - 1000
+    }
+    return 0
+}
 
 /** *Take slot `slot`'s reply (empty on failure) and free the slot. */
-fn fetch_slot_take(slot: int) -> string {}
+fn fetch_slot_take(slot: int) -> string {
+    if fetch_slot_done(slot) == 0 {
+        return ""
+    }
+    let handle = fetch_handles[slot]
+    fetch_handles[slot] = 0
+    return fetch_finish(handle)
+}
 
-/** *Give up on slot `slot` (a timeout); it frees itself once the XHR ends. */
-fn fetch_slot_drop(slot: int) {}
+/** *Give up on slot `slot` (a timeout). The slot is free at once; the host */
+/** *drops the reply whenever it arrives. */
+fn fetch_slot_drop(slot: int) {
+    if !fetch_live(slot) {
+        return
+    }
+    host_fetch_forget(fetch_handles[slot])
+    fetch_handles[slot] = 0
+}
 
 /** *`fetch_start(path, body, 1)`, kept for single-fetch callers. */
-fn fetch_issue(path: string, body: string) -> int {}
+fn fetch_issue(path: string, body: string) -> int {
+    return fetch_start(path, body, 1)
+}
 
 /** *Number of completed fetches waiting (wasm; native 0). */
-fn fetch_ready() -> int {}
+fn fetch_ready() -> int {
+    let mut count = 0
+    for slot in 0..FETCH_SLOTS {
+        count = count + fetch_slot_done(slot)
+    }
+    return count
+}
 
 /** *Take any one completed response. Only safe with a single fetch in flight; */
 /** *per-call code uses `fetch_slot_take`. */
-fn fetch_take() -> string {}
+fn fetch_take() -> string {
+    for slot in 0..FETCH_SLOTS {
+        if fetch_slot_done(slot) != 0 {
+            return fetch_slot_take(slot)
+        }
+    }
+    return ""
+}
+
+/** *`max` clamped to what one copy out of the host may move, with the */
+/** *scratch buffer at least that long. */
+fn bridge_room(max: int) -> int {
+    let cap = if max < 1 { 1 } else if max > BRIDGE_CAP { BRIDGE_CAP } else { max }
+    if bridge_scratch.len < cap {
+        bridge_scratch = buf.with_len(cap)
+    }
+    return cap
+}
 
 /** *Open a same-origin WebSocket over the browser bridge (wasm; native */
 /** *returns -1). Returns a slot handle to poll with the ws_* calls. */
-fn ws_issue(url: string) -> int {}
+fn ws_issue(url: string) -> int {
+    if url.len <= 0 {
+        return -1
+    }
+    for slot in 0..WS_SLOTS {
+        if !ws_live[slot] {
+            if host_ws_open(url, slot) < 0 {
+                return -1
+            }
+            ws_live[slot] = true
+            return slot
+        }
+    }
+    return -1
+}
+
+fn ws_open_slot(slot: int) -> bool {
+    return slot >= 0 && slot < WS_SLOTS && ws_live[slot]
+}
 
 /** *WebSocket state of `slot`: 0 = open, 1 = closed/error (wasm; native 1). */
-fn ws_state(slot: int) -> int {}
+fn ws_state(slot: int) -> int {
+    if !ws_open_slot(slot) {
+        return 1
+    }
+    return host_ws_state(slot)
+}
 
 /** *Pending inbound messages on `slot` (wasm; native 0). */
-fn ws_count(slot: int) -> int {}
+fn ws_count(slot: int) -> int {
+    if !ws_open_slot(slot) {
+        return 0
+    }
+    return host_ws_count(slot)
+}
 
 /** *Take the next inbound message of `slot` (ownership moves). Empty when */
 /** *none is pending. */
-fn ws_copy(slot: int, max: int) -> string {}
+fn ws_copy(slot: int, max: int) -> string {
+    if !ws_open_slot(slot) {
+        return ""
+    }
+    return host_ws_take(slot, bridge_room(max))
+}
 
 /** *Close the socket and free `slot`. */
-fn ws_close(slot: int) {}
+fn ws_close(slot: int) {
+    if !ws_open_slot(slot) {
+        return
+    }
+    host_ws_close(slot)
+    ws_live[slot] = false
+}
 
 /** *Open a same-origin streaming gRPC-Web POST over the browser bridge (wasm; */
 /** *native returns -1). The reply stays open; drain it with `stream_take`. */
-fn stream_open(path: string, body: string) -> int {}
+fn stream_open(path: string, body: string) -> int {
+    if path.len <= 0 {
+        return -1
+    }
+    for slot in 0..STREAM_SLOTS {
+        if !stream_live[slot] {
+            if host_stream_open(path, body, slot) < 0 {
+                return -1
+            }
+            stream_live[slot] = true
+            return slot
+        }
+    }
+    return -1
+}
+
+fn stream_open_slot(slot: int) -> bool {
+    return slot >= 0 && slot < STREAM_SLOTS && stream_live[slot]
+}
 
 /** *State of stream `slot`: 0 = open, 1 = ended, 2 = failed (wasm; native 2). */
-fn stream_state(slot: int) -> int {}
+fn stream_state(slot: int) -> int {
+    if !stream_open_slot(slot) {
+        return 2
+    }
+    return host_stream_state(slot)
+}
 
 /** *The reply bytes that arrived since the last take, up to `max`. Empty when */
 /** *nothing new has come in. */
-fn stream_take(slot: int, max: int) -> string {}
+fn stream_take(slot: int, max: int) -> string {
+    if !stream_open_slot(slot) {
+        return ""
+    }
+    return host_stream_take(slot, bridge_room(max))
+}
 
 /** *Abort the request and free `slot`. */
-fn stream_close(slot: int) {}
+fn stream_close(slot: int) {
+    if !stream_open_slot(slot) {
+        return
+    }
+    host_stream_close(slot)
+    stream_live[slot] = false
+}
+
+// The host side of the bridges. On wasm each is a web-host import; natively
+// there is no browser, so each answers what "nothing there" means.
+
+/** *Ask the host to POST `body` to `path` as request `handle`; `sync` 1 */
+/** *blocks until the reply is in. 0, or -1 when it could not start. */
+#[os("wasm")]
+fn host_fetch_start(path: string, body: string, handle: int, sync: int) -> int {
+    return js_fetch_start(path, path.len, body, body.len, handle, sync)
+}
+
+#[os("posix", "windows")]
+fn host_fetch_start(path: string, body: string, handle: int, sync: int) -> int {
+    return -1
+}
+
+/** *Request `handle`: `FETCH_PENDING`, the byte count of a 200 reply, -1 for */
+/** *no response, or -(1000 + status). */
+#[os("wasm")]
+fn host_fetch_state(handle: int) -> int {
+    return js_fetch_state(handle)
+}
+
+#[os("posix", "windows")]
+fn host_fetch_state(handle: int) -> int {
+    return -1
+}
+
+/** *The `size` bytes of request `handle`'s reply. */
+#[os("wasm")]
+fn host_fetch_take(handle: int, size: int) -> string {
+    let mut reply = buf.with_len(size)
+    let copied = js_fetch_copy(handle, &mut reply, reply.len)
+    return buf.prefix_to_string(&reply, copied)
+}
+
+#[os("posix", "windows")]
+fn host_fetch_take(handle: int, size: int) -> string {
+    return ""
+}
+
+#[os("wasm")]
+fn host_fetch_forget(handle: int) {
+    js_fetch_forget(handle)
+}
+
+#[os("posix", "windows")]
+fn host_fetch_forget(handle: int) {
+    return
+}
+
+#[os("wasm")]
+fn host_ws_open(url: string, slot: int) -> int {
+    return js_ws_open(url, url.len, slot)
+}
+
+#[os("posix", "windows")]
+fn host_ws_open(url: string, slot: int) -> int {
+    return -1
+}
+
+#[os("wasm")]
+fn host_ws_state(slot: int) -> int {
+    return js_ws_state(slot)
+}
+
+#[os("posix", "windows")]
+fn host_ws_state(slot: int) -> int {
+    return 1
+}
+
+#[os("wasm")]
+fn host_ws_count(slot: int) -> int {
+    return js_ws_count(slot)
+}
+
+#[os("posix", "windows")]
+fn host_ws_count(slot: int) -> int {
+    return 0
+}
+
+/** *The next message of `slot`, at most `cap` bytes (`bridge_room` sized the */
+/** *scratch buffer for it). */
+#[os("wasm")]
+fn host_ws_take(slot: int, cap: int) -> string {
+    let copied = js_ws_copy(slot, &mut bridge_scratch, cap)
+    if copied <= 0 {
+        return ""
+    }
+    return buf.prefix_to_string(&bridge_scratch, copied)
+}
+
+#[os("posix", "windows")]
+fn host_ws_take(slot: int, cap: int) -> string {
+    return ""
+}
+
+#[os("wasm")]
+fn host_ws_close(slot: int) {
+    js_ws_close(slot)
+}
+
+#[os("posix", "windows")]
+fn host_ws_close(slot: int) {
+    return
+}
+
+#[os("wasm")]
+fn host_stream_open(path: string, body: string, slot: int) -> int {
+    return js_rs_open(path, path.len, body, body.len, slot)
+}
+
+#[os("posix", "windows")]
+fn host_stream_open(path: string, body: string, slot: int) -> int {
+    return -1
+}
+
+#[os("wasm")]
+fn host_stream_state(slot: int) -> int {
+    return js_rs_state(slot)
+}
+
+#[os("posix", "windows")]
+fn host_stream_state(slot: int) -> int {
+    return 2
+}
+
+#[os("wasm")]
+fn host_stream_take(slot: int, cap: int) -> string {
+    let copied = js_rs_copy(slot, &mut bridge_scratch, cap)
+    if copied <= 0 {
+        return ""
+    }
+    return buf.prefix_to_string(&bridge_scratch, copied)
+}
+
+#[os("posix", "windows")]
+fn host_stream_take(slot: int, cap: int) -> string {
+    return ""
+}
+
+#[os("wasm")]
+fn host_stream_close(slot: int) {
+    js_rs_close(slot)
+}
+
+#[os("posix", "windows")]
+fn host_stream_close(slot: int) {
+    return
+}
+
+// The web host's imports (`packages/zeus/hosts/web/loader.js`, `zeus`). A
+// string goes as its bytes and their count: a body may hold NUL bytes. An
+// out buffer is written now, never later, and never past `cap`, which the
+// callers keep within the buffer.
+
+#[os("wasm")]
+#[c("fetch_start")]
+fn js_fetch_start(path: string, path_len: int, body: string, body_len: int, handle: int, sync: int) -> int {}
+
+#[os("wasm")]
+#[c("fetch_state")]
+fn js_fetch_state(handle: int) -> int {}
+
+#[os("wasm")]
+#[c("fetch_copy")]
+fn js_fetch_copy(handle: int, out: &mut []u8, cap: int) -> int {}
+
+#[os("wasm")]
+#[c("fetch_forget")]
+fn js_fetch_forget(handle: int) {}
+
+#[os("wasm")]
+#[c("ws_open")]
+fn js_ws_open(url: string, url_len: int, slot: int) -> int {}
+
+#[os("wasm")]
+#[c("ws_state")]
+fn js_ws_state(slot: int) -> int {}
+
+#[os("wasm")]
+#[c("ws_count")]
+fn js_ws_count(slot: int) -> int {}
+
+#[os("wasm")]
+#[c("ws_copy")]
+fn js_ws_copy(slot: int, out: &mut []u8, cap: int) -> int {}
+
+#[os("wasm")]
+#[c("ws_close")]
+fn js_ws_close(slot: int) {}
+
+#[os("wasm")]
+#[c("rs_open")]
+fn js_rs_open(path: string, path_len: int, body: string, body_len: int, slot: int) -> int {}
+
+#[os("wasm")]
+#[c("rs_state")]
+fn js_rs_state(slot: int) -> int {}
+
+#[os("wasm")]
+#[c("rs_copy")]
+fn js_rs_copy(slot: int, out: &mut []u8, cap: int) -> int {}
+
+#[os("wasm")]
+#[c("rs_close")]
+fn js_rs_close(slot: int) {}
 
 // --- TCP over libc --------------------------------------------------------------------
 //
@@ -232,7 +641,7 @@ fn stream_close(slot: int) {}
 const LOOPBACK: i64 = 2130706433
 /** *Reads and peeks are capped here, as the C was. */
 const READ_MAX: int = 65536
-/** *TLS handles start here, far above any fd (`runtime/net.c`). */
+/** *TLS handles start here, far above any fd. */
 const TLS_BASE: int = 1073741824
 /** *A wait is capped at 60 s. */
 const POLL_MAX_MS: int = 60000

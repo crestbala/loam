@@ -2,8 +2,8 @@
 // of the C compiler's codegen_c.c, which it matched byte for byte.
 //
 // Layout of the generated file:
-//   1. loam_rt.h pasted in, then zeus_rt.h / net_rt.h when those modules
-//      are loaded, then the integer helpers, core ops (moves, retains, drops)
+//   1. loam_rt.h pasted in, then zeus_rt.h when Zeus is
+//      loaded, then the integer helpers, core ops (moves, retains, drops)
 //      and vec pushes and pops the unit calls, the runtime verbs it calls,
 //      then (wasm32) the C library
 //   2. struct typedefs, then definitions in by-value dependency order
@@ -5306,6 +5306,12 @@ fn c_sym_of(d: int) -> string {
     return ""
 }
 
+/** *True for a `#[c]` binding built only for wasm (`#[os("wasm")]`): the */
+/** *symbol is a web-host import, not a C library function. */
+fn is_host_import(d: int) -> bool {
+    return (typecheck.os_mask(d) & ast.OS_ALL) == ast.OS_WASM
+}
+
 fn c_bindings() {
     let mut any = false
     for m in 0..typecheck.MODS.len {
@@ -5365,7 +5371,13 @@ fn c_bindings() {
             // never reads).
             let fixed = ast.c_variadic_fixed(d)
             let declared = if fixed >= 0 { fixed } else { np }
+            // A wasm-only binding has no libc under it: it is an import the
+            // web host provides, in its `zeus` module.
+            let host_import = is_host_import(d)
             os_begin(d)
+            if host_import {
+                w("__attribute__((import_module(\"zeus\"), import_name(\"{{c_sym_of(d)}}\")))\n")
+            }
             w("extern ")
             c_abi_type(ret)
             w(" {{cn}}__csym(")
@@ -5381,7 +5393,11 @@ fn c_bindings() {
             if fixed >= 0 {
                 w(", ...")
             }
-            w(") LOAM_CSYM(\"{{c_sym_of(d)}}\");\n")
+            if host_import {
+                w(");\n")
+            } else {
+                w(") LOAM_CSYM(\"{{c_sym_of(d)}}\");\n")
+            }
             w("static ")
             fn_sig(d, false)
             w(" {\n")
@@ -5545,9 +5561,6 @@ fn emit_c() {
     copy_runtime()
     if uses_zeus_handles() {
         w("#include \"zeus_rt.h\"\n")
-    }
-    if mods_use("net") {
-        w("#include \"net_rt.h\"\n")
     }
     int_helpers_reset()
     vec_push_reset()

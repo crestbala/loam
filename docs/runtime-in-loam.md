@@ -240,7 +240,7 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       `wasm_inc`), hosts 4,871, vendored 346,122 (sqlite, monocypher, raygui
       and the generated tree-sitter parser).
 - [x] R0.2 The budget: `RUNTIME_LINE_BUDGET` in `nob.loam`, set at 9,939
-      and lowered by each step since (now **2,763**, during R6.6).
+      and lowered by each step since (now **2,327**, during R6.6).
       `nob trusted` and the unfiltered `nob test` fail if `runtime/` grows
       past it. Each step below lowers it to its new count in the same
       change.
@@ -2053,6 +2053,43 @@ with R6.2).
       `font` green. `wasm_smoke`, `wasm_trap` and `wasm_float` pass. www and
       the 9 Zeus example apps link as wasm. **Runtime: 3,600 → 2,763**
       (−837).
+      **R6.6c landed 2026-11-16: `net.c` and `net_rt.h` deleted.** The
+      browser fetch, WebSocket and stream bridges are Loam slots in `std:net`
+      over the web host's imports. One rule makes that possible: a `#[c]`
+      binding whose `#[os]` is exactly `wasm` is a host import
+      (`import_module("zeus")`, codegen `is_host_import`). It is no libc
+      call, and `loamc` lets a wasm build reach it. Nothing new is added to
+      the language: the binding is as explicit as any other `#[c]`.
+      - **Fetch is polled, not called back.** The host keeps a reply by
+        request handle until Loam asks: `fetch_state` (pending, size, or
+        failure), `fetch_copy` (now, into a buffer sized from that state),
+        `fetch_forget`. The `zeus_fetch_done` export and the C "abandoned
+        slot" buffer it needed are gone, and the host never writes into
+        wasm memory after the call that asked it to. That is one less
+        memory hazard. A dropped slot is free at once. `fetch_rpc` runs on
+        the same imports, so `fetch_rpc` / `fetch_rpc_async` left the
+        loader.
+      - **Bug fixed:** a reply over 65,535 bytes was cut at that length
+        (sync and async), which corrupts a gRPC frame. Replies now arrive
+        whole.
+      - **Less memory:** C malloc'd a 64 KB buffer per open slot (up to 12).
+        WebSocket and stream copies now share one scratch buffer, and a
+        fetch reply gets a buffer of exactly its size.
+      - Native builds link no network C at all. `loamc`, the iOS and
+        Android project writers, `cross-check.sh` and `win-bundle.sh` no
+        longer name `net.c`.
+      **Checks:** a wasm program drives every bridge under a fake host that
+      follows the loader's protocol. It covers a NUL byte in a body, a
+      100 KB reply, the fifth concurrent fetch refused, drop and reuse, a
+      503 status, WebSocket and stream copies with clamped sizes, and every
+      handle forgotten at the end. In headless Chrome with the real
+      `loader.js` and a gRPC-Web echo server, `http.call` (sync), a 100 KB
+      reply, a 404 and `http.call_async` (an async XHR finished by the
+      frame pump) all return what they should. `http` 39, `net`,
+      `wasm_smoke`, `wasm_trap`, `server_split` (with its reachable-`#[c]`
+      refusal), `serve_build`, `serve_boot` and `fresh_cache` pass.
+      `cross-check.sh`: Linux and Windows on both CPUs, `nob` + 128
+      fixtures, 0 failed. **Runtime: 2,763 → 2,327** (−436).
 
 **R7. Hosts** (`packages/zeus/hosts`, outside the runtime directory).
 
