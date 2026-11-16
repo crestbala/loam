@@ -43,7 +43,8 @@ recorded below.
 
 One library's C no longer defines a language-runtime symbol. New generic verbs:
 `loam_env_copy` / `loam_env_drop` (for an interned handler's env) and
-`loam_trap_guard`.
+`loam_trap_guard`. The env pair was deleted on 2026-11-16 (runtime-in-loam
+R6.4): nothing ever called it.
 
 ### Equality on a comparable type parameter (Option B)
 
@@ -175,7 +176,7 @@ sit on the C path.
 | 1 | **Land the dual-emit cell ABI** (attempt 1) | the design is settled; needs its own verified pass |
 | 2 | **Find the `memo_state` break** (attempt 2's blocker) | narrow: instrument the four early returns in `memo_recompute` and see which fires |
 | 3 | ~~Remove `ZeusCell` from `zeus_plat.c`~~ | done 2026-11-15 (R4.1b), by the `sigcells` arena instead of the dual-emit ABI |
-| 4 | Interning table in Loam over `loam_env_copy` | needs 1 |
+| 4 | Interning table in Loam over an env copy (codegen emits it when this lands; `loam_env_copy` was deleted unused in R6.4) | needs 1 |
 | 5 | Edit machine in Loam over `[]u8` + `std:unicode` | the host text ABI must use `int32_t` for an out-array |
 | 6 | Key chords in Loam | — |
 | 7 | Rename `platform.loam` → `bindings.loam` with `bnd_*` | — |

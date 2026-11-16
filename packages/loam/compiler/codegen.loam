@@ -3,7 +3,8 @@
 //
 // Layout of the generated file:
 //   1. loam_rt.h pasted in, then zeus_rt.h / net_rt.h when those modules
-//      are loaded, then the integer helpers and vec pushes and pops the unit calls
+//      are loaded, then the integer helpers, core ops (moves, retains, drops)
+//      and vec pushes and pops the unit calls
 //   2. struct typedefs, then definitions in by-value dependency order
 //   3. element hook and ownership helper prototypes, globals, prototypes,
 //      closure envs, `#[c]` bindings, fn-value trampolines
@@ -109,9 +110,9 @@ fn wl(n: i64) {
 }
 
 /** *The runtime header, set aside while the rest of the unit is built: the */
-/** *integer helpers, vec pushes and vec pops go between the two, and which */
-/** *ones is known only at the end (`int_helper_defs`, `vec_push_defs`, */
-/** *`vec_pop_defs`). */
+/** *integer helpers, core ops, vec pushes and vec pops go between the two, */
+/** *and which ones is known only at the end (`int_helper_defs`, */
+/** *`core_op_defs`, `vec_push_defs`, `vec_pop_defs`). */
 let mut PRELUDE: []u8 = []u8 {}
 
 fn flush() {
@@ -714,7 +715,7 @@ fn sig_payload_drop_def() {
     w("    default: break;\n")
     w("    }\n")
     w("    if (kind == {{SIG_KIND_STR}}) loam_str_release((loam_str *)p);\n")
-    w("    else if (kind == {{SIG_KIND_LIST}}) loam_vec_drop_owned((loam_vec *)p, (size_t)esz, rel);\n")
+    w("    else if (kind == {{SIG_KIND_LIST}}) {{core_op(CoreOp.VecDropOwned)}}((loam_vec *)p, (size_t)esz, rel);\n")
     w("    else if (kind == {{SIG_KIND_OWNED}} && rel) rel(p);\n")
     w("}\n")
 }
@@ -1362,9 +1363,11 @@ fn w_vec_push_name(h: int, moved: bool) {
     if h > 0 && moved {
         w("_take")
         VEC_PUSH_TAKE = true
+        note_core_op(CoreOp.VecReserveOwned)
     } else if h > 0 {
         w("_owned")
         VEC_PUSH_OWNED = true
+        note_core_op(CoreOp.VecReserveOwned)
     } else {
         VEC_PUSH_PLAIN = true
     }
@@ -1443,8 +1446,8 @@ fn vec_push_defs() {
 // --- vec pop -----------------------------------------------------------------------------
 //
 // `loam_vec_pop` and `_owned` left the runtime header the same way push did.
-// The body still calls `loam_vec_unique` / `loam_vec_unique_owned`, which stay
-// in the header with the refcount word and copy-on-write.
+// The body calls `loam_vec_unique` (in the header, beside `loam_vec_reserve`)
+// or `loam_vec_unique_owned` (a core op, noted with the pop).
 
 let mut VEC_POP_PLAIN: bool = false
 let mut VEC_POP_OWNED: bool = false
@@ -1460,6 +1463,7 @@ fn w_vec_pop_name(h: int) {
     if h > 0 {
         w("_owned")
         VEC_POP_OWNED = true
+        note_core_op(CoreOp.VecUniqueOwned)
     } else {
         VEC_POP_PLAIN = true
     }
@@ -1487,6 +1491,249 @@ fn vec_pop_defs() {
         w("    v->len--;\n")
         w("    if (esz && out) memcpy(out, (char *)v->ptr + (size_t)v->len * esz, esz);\n")
         w("}\n")
+    }
+}
+
+// --- moves, copies and drops of owning values ---------------------------------------------
+//
+// Box and vec moves, the Box free, the string and vec retains, the owned-vec
+// drop, copy-on-write and reserve of owning elements, and the constant table
+// used to sit in the runtime header, in every program. Codegen notes each one
+// as it writes a call (`core_op`) and defines only those, after the header.
+// The bodies are the header's C. They call only what stays there
+// (`loam_vec_new`, `loam_vec_rc`, `loam_vec_reserve`, `loam_vec_grown_cap`,
+// `loam_str_rc`, `loam_alloc_note`, `loam_panic`) and each other
+// (`loam_vec_reserve_owned` calls `loam_vec_unique_owned`, defined first).
+// A fn value is copy and never dropped (its env is borrowed), so it has no
+// move or drop op at all.
+
+enum CoreOp {
+    MovePtr = 0,
+    VecMove = 1,
+    VecRetain = 2,
+    VecDropOwned = 3,
+    VecOf = 4,
+    Drop = 5,
+    StrRetain = 6,
+    VecUniqueOwned = 7,
+    VecReserveOwned = 8,
+}
+const CORE_OPS: int = 9
+
+/** *`CORE_OP_USED[op]`: a call to that op was written. */
+let mut CORE_OP_USED: []bool = []bool {}
+
+fn core_ops_reset() {
+    CORE_OP_USED = []bool {}
+    for i in 0..CORE_OPS {
+        push(CORE_OP_USED, false)
+    }
+}
+
+fn core_op_name(op: int) -> string {
+    switch op {
+        case CoreOp.MovePtr:
+            return "loam_move_ptr"
+        case CoreOp.VecMove:
+            return "loam_vec_move"
+        case CoreOp.VecRetain:
+            return "loam_vec_retain"
+        case CoreOp.VecDropOwned:
+            return "loam_vec_drop_owned"
+        case CoreOp.VecOf:
+            return "loam_vec_of"
+        case CoreOp.Drop:
+            return "loam_drop"
+        case CoreOp.StrRetain:
+            return "loam_str_retain"
+        case CoreOp.VecUniqueOwned:
+            return "loam_vec_unique_owned"
+        case CoreOp.VecReserveOwned:
+            return "loam_vec_reserve_owned"
+    }
+    fatal("internal: no core op {{op}}")
+    return ""
+}
+
+/** *Note `op` (and the op its body calls) so its definition is emitted. */
+fn note_core_op(op: int) {
+    if CORE_OP_USED.len == 0 {
+        core_ops_reset()
+    }
+    CORE_OP_USED[op] = true
+    if op == CoreOp.VecReserveOwned {
+        CORE_OP_USED[CoreOp.VecUniqueOwned] = true
+    }
+}
+
+/** *The C name of `op`, noted so its definition is emitted. */
+fn core_op(op: int) -> string {
+    note_core_op(op)
+    return core_op_name(op)
+}
+
+fn core_op_def(op: int) {
+    switch op {
+        case CoreOp.MovePtr:
+            w("static inline void *loam_move_ptr(void **src) {\n")
+            w("    void *p = src ? *src : NULL;\n")
+            w("    if (src) *src = NULL;\n")
+            w("    return p;\n")
+            w("}\n")
+            break
+        case CoreOp.VecMove:
+            w("static inline loam_vec loam_vec_move(loam_vec *src) {\n")
+            w("    loam_vec v;\n")
+            w("    v.ptr = NULL;\n")
+            w("    v.len = 0;\n")
+            w("    v.cap = 0;\n")
+            w("    if (src) {\n")
+            w("        v = *src;\n")
+            w("        src->ptr = NULL;\n")
+            w("        src->len = 0;\n")
+            w("        src->cap = 0;\n")
+            w("    }\n")
+            w("    return v;\n")
+            w("}\n")
+            break
+        case CoreOp.VecRetain:
+            w("static inline loam_vec loam_vec_retain(const loam_vec *src) {\n")
+            w("    loam_vec v = loam_vec_new();\n")
+            w("    if (!src) return v;\n")
+            w("    v = *src;\n")
+            w("    if (v.ptr) (*loam_vec_rc(v.ptr))++;\n")
+            w("    return v;\n")
+            w("}\n")
+            break
+        case CoreOp.VecDropOwned:
+            w("/* Drop one reference to a buffer whose elements own strings: only the\n")
+            w("   last reference releases them, so a shared parameter's drop leaves the\n")
+            w("   slots its caller still reads. */\n")
+            w("static inline void loam_vec_drop_owned(loam_vec *v, size_t esz, loam_elem_fn release) {\n")
+            w("    int64_t *rc;\n")
+            w("    int64_t i, n;\n")
+            w("    if (!v) return;\n")
+            w("    if (!v->ptr) {\n")
+            w("        v->len = 0;\n")
+            w("        v->cap = 0;\n")
+            w("        return;\n")
+            w("    }\n")
+            w("    rc = loam_vec_rc(v->ptr);\n")
+            w("    if (--(*rc) > 0) {\n")
+            w("        v->ptr = NULL;\n")
+            w("        v->len = 0;\n")
+            w("        v->cap = 0;\n")
+            w("        return;\n")
+            w("    }\n")
+            w("    n = v->len;\n")
+            w("    if (release)\n")
+            w("        for (i = 0; i < n; i++) release((char *)v->ptr + (size_t)i * esz);\n")
+            w("    free(rc);\n")
+            w("    v->ptr = NULL;\n")
+            w("    v->len = 0;\n")
+            w("    v->cap = 0;\n")
+            w("}\n")
+            break
+        case CoreOp.VecOf:
+            w("/* A fresh list holding a copy of `n` plain elements, for a constant table. */\n")
+            w("static inline loam_vec loam_vec_of(const void *src, int64_t n, size_t esz, const char *f, int l) {\n")
+            w("    loam_vec v = loam_vec_new();\n")
+            w("    loam_vec_reserve(&v, n, esz, f, l);\n")
+            w("    memcpy(v.ptr, src, (size_t)n * esz);\n")
+            w("    v.len = n;\n")
+            w("    return v;\n")
+            w("}\n")
+            break
+        case CoreOp.Drop:
+            w("static inline void loam_drop(void **p) {\n")
+            w("    if (p && *p) {\n")
+            w("        free(*p);\n")
+            w("        *p = NULL;\n")
+            w("    }\n")
+            w("}\n")
+            break
+        case CoreOp.StrRetain:
+            // gcc follows the literal path (`own == 0`) after inlining and
+            // warns; the `own` test makes it dead (see `loam_str_release`).
+            w("#if defined(__GNUC__) && !defined(__clang__)\n")
+            w("#pragma GCC diagnostic push\n")
+            w("#pragma GCC diagnostic ignored \"-Wstringop-overflow\"\n")
+            w("#endif\n")
+            w("/** Take another reference to `s` (no-op for a literal). */\n")
+            w("static inline void loam_str_retain(loam_str s) {\n")
+            w("    if (s.own && s.ptr)\n")
+            w("        __atomic_add_fetch(loam_str_rc(s.ptr), 1, __ATOMIC_RELAXED);\n")
+            w("}\n")
+            w("#if defined(__GNUC__) && !defined(__clang__)\n")
+            w("#pragma GCC diagnostic pop\n")
+            w("#endif\n")
+            break
+        case CoreOp.VecUniqueOwned:
+            w("/* Un-share a buffer whose elements own strings: the copy retains every\n")
+            w("   element it duplicates. */\n")
+            w("static inline void loam_vec_unique_owned(loam_vec *v, size_t esz, loam_elem_fn retain,\n")
+            w("                                         const char *f, int l) {\n")
+            w("    int64_t *rc;\n")
+            w("    void *raw;\n")
+            w("    size_t bytes;\n")
+            w("    int64_t i;\n")
+            w("    if (!v || !v->ptr) return;\n")
+            w("    rc = loam_vec_rc(v->ptr);\n")
+            w("    if (*rc <= 1) return;\n")
+            w("    bytes = sizeof(int64_t) + (esz ? (size_t)v->cap * esz : 1);\n")
+            w("    raw = malloc(bytes);\n")
+            w("    if (!raw) loam_panic(f, l, \"out of memory\");\n")
+            w("    loam_alloc_note(bytes);\n")
+            w("    *(int64_t *)raw = 1;\n")
+            w("    if (v->len > 0 && esz) {\n")
+            w("        memcpy((char *)raw + sizeof(int64_t), v->ptr, (size_t)v->len * esz);\n")
+            w("        if (retain)\n")
+            w("            for (i = 0; i < v->len; i++)\n")
+            w("                retain((char *)raw + sizeof(int64_t) + (size_t)i * esz);\n")
+            w("    }\n")
+            w("    (*rc)--;\n")
+            w("    v->ptr = (char *)raw + sizeof(int64_t);\n")
+            w("}\n")
+            break
+        case CoreOp.VecReserveOwned:
+            w("static inline void loam_vec_reserve_owned(loam_vec *v, int64_t n, size_t esz,\n")
+            w("                                          loam_elem_fn retain, const char *f, int l) {\n")
+            w("    int64_t cap;\n")
+            w("    void *raw;\n")
+            w("    if (!v) return;\n")
+            w("    /* As loam_vec_reserve: a writer past `len` must own the buffer. */\n")
+            w("    loam_vec_unique_owned(v, esz, retain, f, l);\n")
+            w("    if (n <= v->cap) return;\n")
+            w("    cap = loam_vec_grown_cap(v->cap, n, esz, f, l);\n")
+            w("    if (!v->ptr) {\n")
+            w("        raw = malloc(sizeof(int64_t) + (esz ? (size_t)cap * esz : 1));\n")
+            w("        if (!raw) loam_panic(f, l, \"out of memory\");\n")
+            w("        loam_alloc_note((size_t)cap * esz);\n")
+            w("        *(int64_t *)raw = 1;\n")
+            w("        v->ptr = (char *)raw + sizeof(int64_t);\n")
+            w("        v->cap = cap;\n")
+            w("        return;\n")
+            w("    }\n")
+            w("    raw = realloc((char *)v->ptr - sizeof(int64_t),\n")
+            w("                  sizeof(int64_t) + (esz ? (size_t)cap * esz : 1));\n")
+            w("    if (!raw) loam_panic(f, l, \"out of memory\");\n")
+            w("    loam_alloc_note((size_t)cap * esz);\n")
+            w("    v->ptr = (char *)raw + sizeof(int64_t);\n")
+            w("    v->cap = cap;\n")
+            w("}\n")
+            break
+    }
+}
+
+/** *A definition for every op the unit called, in `CoreOp` order. */
+fn core_op_defs() {
+    if CORE_OP_USED.len == 0 {
+        return
+    }
+    for op in 0..CORE_OPS {
+        if CORE_OP_USED[op] {
+            core_op_def(op)
+        }
     }
 }
 
@@ -2088,17 +2335,12 @@ fn drop_place(pl: string, t: int, ind: int) {
             w("if ({{pl}}) loam_elem_release_{{h}}({{pl}});\n")
         }
         indent(ind)
-        w("loam_drop((void **)&{{pl}});\n")
+        w("{{core_op(CoreOp.Drop)}}((void **)&{{pl}});\n")
         return
     }
     if k == TK.String {
         indent(ind)
         w("loam_str_release(&{{pl}});\n")
-        return
-    }
-    if k == TK.Proc {
-        indent(ind)
-        w("loam_fn_drop(&{{pl}});\n")
         return
     }
     if k == TK.Vec {
@@ -2108,7 +2350,7 @@ fn drop_place(pl: string, t: int, ind: int) {
             // The buffer owns its elements: they go only when this handle
             // frees it.
             indent(ind)
-            w("loam_vec_drop_owned(&{{pl}}, sizeof({{ctype(e)}}), loam_elem_release_{{h}});\n")
+            w("{{core_op(CoreOp.VecDropOwned)}}(&{{pl}}, sizeof({{ctype(e)}}), loam_elem_release_{{h}});\n")
             return
         }
         if e != NO_TYPE && needs_drop(e) {
@@ -2160,12 +2402,12 @@ fn nested_keeps(pl: string, t: int, ind: int) {
     let k = types.TYPES[t].kind
     if k == TK.String {
         indent(ind)
-        w("loam_str_retain({{pl}});\n")
+        w("{{core_op(CoreOp.StrRetain)}}({{pl}});\n")
         return
     }
     if k == TK.Vec {
         indent(ind)
-        w("loam_vec_retain(&{{pl}});\n")
+        w("{{core_op(CoreOp.VecRetain)}}(&{{pl}});\n")
         let e = types.TYPES[t].elem
         // Elements belong to the buffer, so a copy shares them.
         if elem_hook(e) > 0 {
@@ -2337,7 +2579,7 @@ fn store(x: &Inst) {
         place(x.place)
         w(";\n        ")
         place(x.place)
-        w(" = loam_vec_retain(&{{lv(x.a)}});\n")
+        w(" = {{core_op(CoreOp.VecRetain)}}(&{{lv(x.a)}});\n")
         drop_place("_repl", x.ty, 1)
         w("    }\n")
     } else if k == TK.String && types.string_owns {
@@ -2347,7 +2589,7 @@ fn store(x: &Inst) {
         place(x.place)
         w(" = {{lv(x.a)}};\n        ")
         indent(1)
-        w("loam_str_retain(")
+        w("{{core_op(CoreOp.StrRetain)}}(")
         place(x.place)
         w(");\n")
         drop_place("_repl", x.ty, 1)
@@ -2375,24 +2617,21 @@ fn move_inst(x: &Inst) {
     if k == TK.Box {
         w("{{d}} = (")
         w_ctype(ty)
-        w(")loam_move_ptr((void **)&{{a}});\n")
+        w("){{core_op(CoreOp.MovePtr)}}((void **)&{{a}});\n")
     } else if k == TK.Proc {
-        if types.is_copy(ty) {
-            w("{{d}} = {{a}};\n")
-        } else {
-            w("{{d}} = loam_fn_move(&{{a}});\n")
-        }
+        // A fn value is copy: its env is a borrowed record, never owned.
+        w("{{d}} = {{a}};\n")
     } else if k == TK.Vec {
         if types.is_copy(ty) && (x.bits & ir.I_MOVED) == 0 {
-            w("{{d}} = loam_vec_retain(&{{a}});\n")
+            w("{{d}} = {{core_op(CoreOp.VecRetain)}}(&{{a}});\n")
         } else {
-            w("{{d}} = loam_vec_move(&{{a}});\n")
+            w("{{d}} = {{core_op(CoreOp.VecMove)}}(&{{a}});\n")
         }
     } else if k == TK.String {
         w("{{d}} = {{a}};\n")
         if types.string_owns {
             indent(1)
-            w("loam_str_retain({{d}});\n")
+            w("{{core_op(CoreOp.StrRetain)}}({{d}});\n")
         }
     } else if k == TK.Array {
         w("\n")
@@ -2446,7 +2685,7 @@ fn builtin_call(x: &Inst) -> bool {
         // still length-prefixes it so the pieces cannot run together).
         let vt = vk_resolve(x.ty)
         if vt != NO_TYPE && types.TYPES[vt].kind == TK.String {
-            w("{{lv(x.dst)}} = {{lv(arg_of(x, 0))}}; loam_str_retain({{lv(x.dst)}});\n")
+            w("{{lv(x.dst)}} = {{lv(arg_of(x, 0))}}; {{core_op(CoreOp.StrRetain)}}({{lv(x.dst)}});\n")
             return true
         }
         w("{ loam_vec _vk = {0}; ")
@@ -2469,11 +2708,11 @@ fn builtin_call(x: &Inst) -> bool {
         w("{{d}} = loam_arena_sig_new_zero(loam_arena_sig_reserve());\n")
         indent(1)
         if is_copy_vec(vt) {
-            w("{ loam_vec _sigv = loam_vec_retain(&{{a0}}); ")
+            w("{ loam_vec _sigv = {{core_op(CoreOp.VecRetain)}}(&{{a0}}); ")
             sig_bind_vec(vt, d, "_sigv")
             w(" }\n")
         } else if is_refcounted(vt) {
-            w("{ loam_str _sigv = {{a0}}; loam_str_retain(_sigv); ")
+            w("{ loam_str _sigv = {{a0}}; {{core_op(CoreOp.StrRetain)}}(_sigv); ")
             sig_put(vt, d, "_sigv", SIG_KIND_STR, "0", 0)
             w(" }\n")
         } else if tkind(vt) == TK.Struct && needs_drop(vt) {
@@ -2496,10 +2735,10 @@ fn builtin_call(x: &Inst) -> bool {
         wc('\n')
         if is_copy_vec(x.ty) {
             indent(1)
-            w("{{d}} = loam_vec_retain(&{{d}});\n")
+            w("{{d}} = {{core_op(CoreOp.VecRetain)}}(&{{d}});\n")
         } else if is_refcounted(x.ty) {
             indent(1)
-            w("loam_str_retain({{d}});\n")
+            w("{{core_op(CoreOp.StrRetain)}}({{d}});\n")
         } else if tkind(x.ty) == TK.Struct && needs_drop(x.ty) {
             nested_keeps(d, x.ty, 1)
         }
@@ -2524,7 +2763,7 @@ fn builtin_call(x: &Inst) -> bool {
             sig_get(vt, s, "_old")
             wc('\n')
             indent(2)
-            w("loam_vec _new = loam_vec_retain(&{{v}}); ")
+            w("loam_vec _new = {{core_op(CoreOp.VecRetain)}}(&{{v}}); ")
             sig_bind_vec(vt, s, "_new")
             w("\n")
             drop_place("_old", vt, 2)
@@ -2541,7 +2780,7 @@ fn builtin_call(x: &Inst) -> bool {
             sig_get(vt, s, "_old")
             wc('\n')
             indent(2)
-            w("loam_str _new = {{v}}; loam_str_retain(_new); ")
+            w("loam_str _new = {{v}}; {{core_op(CoreOp.StrRetain)}}(_new); ")
             sig_put(vt, s, "_new", SIG_KIND_STR, "0", 0)
             wc('\n')
             indent(2)
@@ -2583,7 +2822,7 @@ fn builtin_call(x: &Inst) -> bool {
         // The table lives in `std:async` (R3.1): alloc the slot in Loam,
         // then move the bytes. `memcpy` is libc, always linked.
         if is_copy_vec(x.ty) {
-            w("{ loam_vec _fv = loam_vec_retain(&{{a0}}); {{lv(x.dst)}} = loam_async_fut_alloc(sizeof(_fv), {{handle_key(x.ty)}}); ")
+            w("{ loam_vec _fv = {{core_op(CoreOp.VecRetain)}}(&{{a0}}); {{lv(x.dst)}} = loam_async_fut_alloc(sizeof(_fv), {{handle_key(x.ty)}}); ")
             w("{ loam_vec _ar = loam_async_fut_arena(); memcpy((char *)_ar.ptr + loam_async_fut_off({{lv(x.dst)}}), &_fv, sizeof(_fv)); loam_vec_drop(&_ar); } }\n")
         } else {
             w("{{lv(x.dst)}} = loam_async_fut_alloc(sizeof(")
@@ -2607,7 +2846,7 @@ fn builtin_call(x: &Inst) -> bool {
         w(")); } }\n")
         if is_copy_vec(x.ty) {
             indent(1)
-            w("{{d}} = loam_vec_retain(&{{d}});\n")
+            w("{{d}} = {{core_op(CoreOp.VecRetain)}}(&{{d}});\n")
         }
         return true
     }
@@ -2625,7 +2864,7 @@ fn builtin_call(x: &Inst) -> bool {
             let key = handle_key(vt)
             w("{ if (loam_async_fut_live({{s}})) { loam_async_fut_check({{s}}, {{key}}); ")
             w("loam_vec _old; { loam_vec _ar = loam_async_fut_arena(); memcpy(&_old, (char *)_ar.ptr + loam_async_fut_off({{s}}), sizeof(_old)); loam_vec_drop(&_ar); } ")
-            w("loam_vec _new = loam_vec_retain(&{{v}}); { loam_vec _ar = loam_async_fut_arena(); memcpy((char *)_ar.ptr + loam_async_fut_off({{s}}), &_new, sizeof(_new)); loam_vec_drop(&_ar); } ")
+            w("loam_vec _new = {{core_op(CoreOp.VecRetain)}}(&{{v}}); { loam_vec _ar = loam_async_fut_arena(); memcpy((char *)_ar.ptr + loam_async_fut_off({{s}}), &_new, sizeof(_new)); loam_vec_drop(&_ar); } ")
             w("loam_vec_drop(&_old); loam_async_fut_mark_ready({{s}}); } }\n")
         } else {
             w("{ if (loam_async_fut_live({{s}})) { loam_async_fut_check({{s}}, {{handle_key(vt)}}); ")
@@ -2864,7 +3103,7 @@ fn array_lit(x: &Inst) {
         }
         w("};\n")
         indent(2)
-        w("{{d}} = loam_vec_of(_t, {{x.nints}}, sizeof _t[0], ")
+        w("{{d}} = {{core_op(CoreOp.VecOf)}}(_t, {{x.nints}}, sizeof _t[0], ")
         ir_loc(x.file, x.line)
         w(");\n")
         indent(1)
@@ -2931,7 +3170,7 @@ fn clos_inst(x: &Inst) {
         let a = lv(arg_of(x, k))
         indent(2)
         if is_copy_vec(ct) {
-            w("_ce->{{fnm}} = loam_vec_retain(&{{a}});\n")
+            w("_ce->{{fnm}} = {{core_op(CoreOp.VecRetain)}}(&{{a}});\n")
         } else if ct != NO_TYPE && !types.is_copy(ct) && needs_drop(ct) {
             // A non-Copy owned capture is moved into the env.
             w("_ce->{{fnm}} = {{a}};\n")
@@ -3100,7 +3339,7 @@ fn inst(i: int) {
             if ty != NO_TYPE && needs_drop(ty) {
                 drop_place(lv(x.a), ty, 0)
             } else {
-                w("loam_drop((void **)&{{lv(x.a)}});\n")
+                w("{{core_op(CoreOp.Drop)}}((void **)&{{lv(x.a)}});\n")
             }
             break
         case Op.Bound:
@@ -3182,7 +3421,7 @@ fn term(b: int, is_main: bool) {
             // reference.
             if v >= 0 && v < LV.len && (ir.LOCALS[CF_LOCALS + v].flags & ir.L_PARAM) != 0 && types.string_owns &&
                 tkind(local_ty(v)) == TK.String {
-                w("loam_str_retain({{lv(v)}});\n")
+                w("{{core_op(CoreOp.StrRetain)}}({{lv(v)}});\n")
                 indent(1)
             }
             if is_main && v < 0 {
@@ -4247,6 +4486,7 @@ fn emit_c() {
     int_helpers_reset()
     vec_push_reset()
     vec_pop_reset()
+    core_ops_reset()
     PRELUDE = OUT
     OUT = []u8 {}
     wc('\n')
@@ -4566,12 +4806,13 @@ fn emit_c() {
     if TEST_MODE {
         test_runner()
     }
-    // The header, the integer helpers and vec pushes and pops the unit calls,
-    // then the unit.
+    // The header, the integer helpers, core ops and vec pushes and pops the
+    // unit calls, then the unit.
     let body = OUT
     OUT = PRELUDE
     PRELUDE = []u8 {}
     int_helper_defs()
+    core_op_defs()
     vec_push_defs()
     vec_pop_defs()
     buf.push_bytes(&mut OUT, &body)
