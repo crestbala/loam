@@ -37,12 +37,12 @@ rest, and `nob integration c_layouts` checks the bound names against
 OpenSSL's headers.
 
 **TLS.** `net.tls_connect` is SecureTransport on macOS and iOS, SChannel on
-Windows, and OpenSSL
-(1.1.1 or 3.x, `libssl-dev`) on Linux, with the system's CA store, the host
-name checked and TLS 1.2 at least. Its bindings name their libraries, so a
-program that never connects over TLS links neither Security.framework nor
-libssl. On Windows it is SChannel (TLS 1.2). Android has no TLS client yet
-(`-1`).
+Windows, OpenSSL (1.1.1 or 3.x, `libssl-dev`) on Linux, and Java's
+`SSLEngine` on Android, with the system's CA store, the host name checked
+and TLS 1.2 at least. Its bindings name their libraries, so a program that
+never connects over TLS links neither Security.framework nor libssl. On
+Windows it is SChannel (TLS 1.2). On Android the engine is the platform
+one (`LoamTls`), driven from `android.c`. Loam keeps the socket.
 A library is linked for the OSes of the bindings that name it: on Windows,
 `win-bundle.sh` writes `link||-lws2_32` into a fixture's `.deps` and
 `cross-check.sh` links MinGW's own.

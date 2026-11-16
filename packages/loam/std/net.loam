@@ -1,11 +1,13 @@
 // Sockets and TLS (`docs/boundary.md`).
 //
 // TCP (R5.1, Windows R5.4) and the TLS client (macOS R5.2, Linux R5.3,
-// Windows R5.5) are Loam over raw bindings: addresses, socket options, the
-// non-blocking connect, the poll set, retries, `errno`, and the TLS slots,
-// handshake and I/O over SecureTransport (Apple), OpenSSL (Linux) or
-// SChannel (Windows); SecureTransport's and OpenSSL's I/O callbacks are Loam
-// fns C calls through plain function pointers. One piece stays C:
+// Windows R5.5, Android R5.6) are Loam over raw bindings: addresses, socket
+// options, the non-blocking connect, the poll set, retries, `errno`, and the
+// TLS slots, handshake and I/O over SecureTransport (Apple), OpenSSL (Linux),
+// SChannel (Windows) or Java's SSLEngine (Android). SecureTransport's and
+// OpenSSL's I/O callbacks are Loam fns C calls through plain function
+// pointers. The Android engine never sees the socket: the backend feeds it
+// records through the host's JNI shims. One piece stays C:
 // `string_bytes_at`, the address of a string's byte for a binding to read in
 // the same call (core byte movement, like `fmt.write`). The fetch, WebSocket
 // and stream bridges are the browser's (wasm). No HTTP parsing lives here:
@@ -21,15 +23,15 @@ fn tcp_connect(host: string, port: int) -> int {
 
 /** *Connect to `host`:`port` over TLS and verify the server certificate */
 /** *against `host` (SecureTransport on Apple, OpenSSL on Linux, SChannel on */
-/** *Windows). Returns a TLS fd that `tcp_write` / `tcp_read` / `tcp_close` */
-/** *handle like any socket, or `-1` when TLS is unavailable (wasm keeps */
-/** *browser TLS; Android has none yet) or the handshake / certificate check */
-/** *fails. */
+/** *Windows, Java's SSLEngine on Android). Returns a TLS fd that `tcp_write` */
+/** *`tcp_read` / `tcp_close` handle like any socket, or `-1` when TLS is */
+/** *unavailable (wasm keeps browser TLS) or the handshake / certificate */
+/** *check fails. */
 fn tls_connect(host: string, port: int) -> int {
     return tls_connect_os(host, port)
 }
 
-/** *Non-blocking TLS connect (Apple, Linux, Windows). Returns a TLS handle */
+/** *Non-blocking TLS connect (Apple, Linux, Windows, Android). Returns a TLS handle */
 /** *immediately; poll `tls_nb_ready` until 1. `-1` when TLS is unavailable. */
 fn tls_nb_connect(host: string, port: int) -> int {
     return tls_nb_connect_os(host, port)
@@ -1080,9 +1082,15 @@ fn c_poll(fds: &mut []i32, n: int, ms: i32) -> i32 {
 }
 
 /** *`nfds_t` is an `unsigned long` on Linux. */
-#[os("linux", "android", "other")]
+#[os("linux", "other")]
 fn c_poll(fds: &mut []i32, n: int, ms: i32) -> i32 {
     return c_poll_linux(fds, u64(n), ms)
+}
+
+/** *`nfds_t` is an `unsigned int` on Android, as on Apple. */
+#[os("android")]
+fn c_poll(fds: &mut []i32, n: int, ms: i32) -> i32 {
+    return c_poll_android(fds, u32(n), ms)
 }
 
 #[os("wasm")]
@@ -1094,9 +1102,13 @@ fn c_poll(fds: &mut []i32, n: int, ms: i32) -> i32 {
 #[c("poll")]
 fn c_poll_apple(fds: &mut []i32, n: u32, ms: i32) -> i32 {}
 
-#[os("linux", "android", "other")]
+#[os("linux", "other")]
 #[c("poll")]
 fn c_poll_linux(fds: &mut []i32, n: u64, ms: i32) -> i32 {}
+
+#[os("android")]
+#[c("poll")]
+fn c_poll_android(fds: &mut []i32, n: u32, ms: i32) -> i32 {}
 
 #[os("posix")]
 #[c("close")]
@@ -1401,7 +1413,7 @@ fn c_set_handle_information(handle: i64, mask: u32, flags: u32) -> i32 {}
 #[c("Sleep")]
 fn c_sleep(ms: u32) {}
 
-// --- TLS: the slot table (macOS, iOS, Linux, Windows) ----------------------------------------------
+// --- TLS: the slot table (macOS, iOS, Linux, Windows, Android) ------------------------------
 //
 // A connection is a slot; its handle is `TLS_BASE + slot`, far above any
 // socket, so the TCP calls above hand it here and the HTTP client treats a
@@ -1410,8 +1422,8 @@ fn c_sleep(ms: u32) {}
 // TCP calls reach them through the hooks above; each
 // backend gives seven ops over its opaque context: `tls_new`, `tls_shake`,
 // `tls_put`, `tls_get`, `tls_buffered`, `tls_end` and `tls_free`. On Apple
-// that is SecureTransport, on Linux OpenSSL, on Windows SChannel. Layouts and constants are
-// checked by `nob integration c_layouts`.
+// that is SecureTransport, on Linux OpenSSL, on Windows SChannel, on Android
+// Java's SSLEngine. Layouts and constants are checked by `nob integration c_layouts`.
 
 const TLS_SLOTS: int = 8
 /** *Slot states: free, ready, TCP still connecting, TLS handshake running. */
@@ -1433,8 +1445,12 @@ let mut processed_cell: []u64 = []u64 {}
 let mut io_word: []u64 = []u64 {}
 /** *One `struct addrinfo` (48 bytes) copied out of `getaddrinfo`'s list. */
 let mut addrinfo_cell: []i64 = []i64 {}
+/** *The port of the TLS connect in progress. Android's engine takes it with */
+/** *the host; `tls_new` does not, and a non-blocking socket is not connected */
+/** *yet, so `getpeername` cannot supply it. */
+let mut jt_port: int = 0
 
-#[os("apple", "linux", "windows")]
+#[os("apple", "linux", "windows", "android")]
 fn ensure_tls_slots() {
     if tls_state.len == 0 {
         for i in 0..TLS_SLOTS {
@@ -1451,7 +1467,7 @@ fn ensure_tls_slots() {
 }
 
 /** *The slot of a live TLS handle, or `-1`. */
-#[os("apple", "linux", "windows")]
+#[os("apple", "linux", "windows", "android")]
 fn tls_slot_of(fd: int) -> int {
     let slot = fd - TLS_BASE
     if fd < TLS_BASE || slot >= TLS_SLOTS || tls_state.len == 0 {
@@ -1460,7 +1476,7 @@ fn tls_slot_of(fd: int) -> int {
     return if tls_state[slot] != TLS_FREE { slot } else { -1 }
 }
 
-#[os("apple", "linux", "windows")]
+#[os("apple", "linux", "windows", "android")]
 fn free_tls_slot() -> int {
     ensure_tls_slots()
     install_tls()
@@ -1473,7 +1489,7 @@ fn free_tls_slot() -> int {
 }
 
 /** *Free a slot: its context released and its socket closed. */
-#[os("apple", "linux", "windows")]
+#[os("apple", "linux", "windows", "android")]
 fn drop_tls_slot(slot: int) {
     tls_state[slot] = TLS_FREE
     tls_free(tls_context[slot])
@@ -1486,7 +1502,7 @@ fn drop_tls_slot(slot: int) {
 
 /** *`getaddrinfo` for `host`:`port`, then each address in order until one */
 /** *gives a socket; `-1` when none does. `family` 0 is any. */
-#[os("apple", "linux", "windows")]
+#[os("apple", "linux", "windows", "android")]
 fn connect_by_name(host: string, port: int, family: i32, blocking: bool) -> i32 {
     let hints = []i32 { 0, family, SOCK_STREAM, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
     let mut list = []i64 { i64(0) }
@@ -1499,8 +1515,8 @@ fn connect_by_name(host: string, port: int, family: i32, blocking: bool) -> i32 
     while fd < 0 && at != i64(0) {
         c_load_words(addrinfo_cell, at, 48)
         // Words: flags | family << 32, socktype | protocol << 32, addrlen,
-        // then `ai_addr` and `ai_canonname` (Apple has them the other way
-        // round), then `ai_next`.
+        // then `ai_addr` and `ai_canonname` (Apple and Android have them the
+        // other way round from Linux), then `ai_next`.
         let ai_family = i32((addrinfo_cell[0] >> 32) & i64(4294967295))
         let ai_socktype = i32(addrinfo_cell[1] & i64(4294967295))
         let ai_protocol = i32((addrinfo_cell[1] >> 32) & i64(4294967295))
@@ -1534,6 +1550,12 @@ fn ai_addr_word() -> int {
     return 4
 }
 
+/** *Bionic matches Apple: `ai_canonname`, then `ai_addr` at word 4. */
+#[os("android")]
+fn ai_addr_word() -> int {
+    return 4
+}
+
 /** *`SO_SNDTIMEO`. */
 #[os("apple")]
 fn so_sndtimeo() -> i32 {
@@ -1545,6 +1567,12 @@ fn so_sndtimeo() -> i32 {
     return 21
 }
 
+/** *`SO_SNDTIMEO` on Android is Linux's 21. `SO_RCVTIMEO` is already 20. */
+#[os("android")]
+fn so_sndtimeo() -> i32 {
+    return 21
+}
+
 #[os("windows")]
 fn so_sndtimeo() -> i32 {
     return 4101
@@ -1552,7 +1580,7 @@ fn so_sndtimeo() -> i32 {
 
 /** *A connected blocking socket, its reads and writes bounded at 10 s so a */
 /** *silent peer (one that never speaks TLS) cannot block forever; or `-1`. */
-#[os("apple", "linux", "windows")]
+#[os("apple", "linux", "windows", "android")]
 fn blocking_socket_to(family: i32, kind: i32, protocol: i32, addr: i64, addrlen: u32) -> i32 {
     let f = c_socket(family, kind, protocol)
     if f < 0 {
@@ -1571,7 +1599,7 @@ fn blocking_socket_to(family: i32, kind: i32, protocol: i32, addr: i64, addrlen:
 }
 
 /** *A non-blocking socket whose connect finished or is in progress; `-1`. */
-#[os("apple", "linux", "windows")]
+#[os("apple", "linux", "windows", "android")]
 fn pending_socket_to(family: i32, kind: i32, protocol: i32, addr: i64, addrlen: u32) -> i32 {
     let f = c_socket(family, kind, protocol)
     if f < 0 {
@@ -1593,10 +1621,15 @@ fn pending_socket_to(family: i32, kind: i32, protocol: i32, addr: i64, addrlen: 
     return f
 }
 
+/** *Remember `port` for the backend that wants it. */
+fn note_tls_port(port: int) {
+    jt_port = port
+}
+
 /** *Native `tls_connect`: TCP, then the handshake to the end. A handshake */
 /** *that would block polls the socket 50 ms at a time and gives up after */
 /** *three idle polls in a row. */
-#[os("apple", "linux", "windows")]
+#[os("apple", "linux", "windows", "android")]
 fn tls_connect_os(host: string, port: int) -> int {
     if port <= 0 || port > 65535 || host.len == 0 || host.len >= 256 {
         return -1
@@ -1609,6 +1642,7 @@ fn tls_connect_os(host: string, port: int) -> int {
     if fd < 0 {
         return -1
     }
+    note_tls_port(port)
     let ctx = tls_new(host, fd)
     if ctx == i64(0) {
         c_close(fd)
@@ -1641,14 +1675,14 @@ fn tls_connect_os(host: string, port: int) -> int {
     return TLS_BASE + slot
 }
 
-#[os("android", "other", "wasm")]
+#[os("other", "wasm")]
 fn tls_connect_os(host: string, port: int) -> int {
     return -1
 }
 
 /** *Native `tls_nb_connect`: an IPv4 connect started and the context */
 /** *made; `tls_nb_ready` drives the rest. */
-#[os("apple", "linux", "windows")]
+#[os("apple", "linux", "windows", "android")]
 fn tls_nb_connect_os(host: string, port: int) -> int {
     if port <= 0 || port > 65535 || host.len == 0 || host.len >= 256 {
         return -1
@@ -1661,6 +1695,7 @@ fn tls_nb_connect_os(host: string, port: int) -> int {
     if fd < 0 {
         return -1
     }
+    note_tls_port(port)
     let ctx = tls_new(host, fd)
     if ctx == i64(0) {
         c_close(fd)
@@ -1672,14 +1707,14 @@ fn tls_nb_connect_os(host: string, port: int) -> int {
     return TLS_BASE + slot
 }
 
-#[os("android", "other", "wasm")]
+#[os("other", "wasm")]
 fn tls_nb_connect_os(host: string, port: int) -> int {
     return -1
 }
 
 /** *One step of a non-blocking connect: the TCP connect, then one */
 /** *handshake round. A failure frees the slot. */
-#[os("apple", "linux", "windows")]
+#[os("apple", "linux", "windows", "android")]
 fn tls_nb_ready_os(fd: int) -> int {
     let slot = tls_slot_of(fd)
     if slot < 0 {
@@ -1717,14 +1752,14 @@ fn tls_nb_ready_os(fd: int) -> int {
     return -1
 }
 
-#[os("android", "other", "wasm")]
+#[os("other", "wasm")]
 fn tls_nb_ready_os(fd: int) -> int {
     return -1
 }
 
 /** *One backend write of `data[off..]` (`off < data.len`): bytes taken, */
 /** *`0` when it would block. */
-#[os("apple", "linux", "windows")]
+#[os("apple", "linux", "windows", "android")]
 fn tls_send(fd: int, data: string, off: int) -> int {
     last_would_block = false
     let slot = tls_slot_of(fd)
@@ -1741,7 +1776,7 @@ fn tls_send(fd: int, data: string, off: int) -> int {
 
 /** *One backend read of up to `max` bytes; `""` at the end, on an error, */
 /** *or when it would block (then `tcp_wouldblock` says so). */
-#[os("apple", "linux", "windows")]
+#[os("apple", "linux", "windows", "android")]
 fn tls_read(fd: int, max: int) -> string {
     last_would_block = false
     let slot = tls_slot_of(fd)
@@ -1763,7 +1798,7 @@ fn tls_read(fd: int, max: int) -> string {
 }
 
 /** *Close a TLS handle: a best-effort `close_notify`, then free its slot. */
-#[os("apple", "linux", "windows")]
+#[os("apple", "linux", "windows", "android")]
 fn tls_close(fd: int) {
     let slot = tls_slot_of(fd)
     if slot < 0 {
@@ -1774,7 +1809,7 @@ fn tls_close(fd: int) {
 }
 
 /** *A TLS handle's socket, handshake state or buffered bytes (`TLS_INFO_*`). */
-#[os("apple", "linux", "windows")]
+#[os("apple", "linux", "windows", "android")]
 fn tls_info(fd: int, what: int) -> int {
     let slot = tls_slot_of(fd)
     if slot < 0 {
@@ -1791,7 +1826,7 @@ fn tls_info(fd: int, what: int) -> int {
 }
 
 /** *The TLS client behind the TCP calls, from the first TLS connect on. */
-#[os("apple", "linux", "windows")]
+#[os("apple", "linux", "windows", "android")]
 fn install_tls() {
     tls_send_hook = tls_send
     tls_read_hook = tls_read
@@ -2998,13 +3033,630 @@ fn c_load_bytes(dst: &mut []u8, src: i64, n: i64) -> i64 {}
 fn c_store_words(dst: i64, src: &[]i64, n: i64) -> i64 {}
 
 
+// --- TLS backend: Java's SSLEngine (Android) ------------------------------------------
+//
+// The engine lives in the Android host (`LoamTls`, driven from `android.c`).
+// It never sees the socket. This side feeds it records and sends what it
+// produces. A handle is 1..8, so a live context is never the failure `0`.
+// Loam has no pointer into the middle of a `[]u8`, so a binding always reads
+// the front of a buffer: leftovers slide to the front, and bytes the engine
+// returns are copied into the slot.
+
+const JT_SLOTS: int = 8
+/** *Ciphertext held per connection, and the scratch a binding can see. */
+const JT_IO: int = 65536
+/** *Outbound records waiting for the socket. One flight can be larger than */
+/** *`JT_IO` because the engine fills the caller's buffer and parks the tail. */
+const JT_OUT: int = 262144
+const JT_PLAIN: int = 65536
+/** *The most plaintext one `tls_put` encrypts. */
+const JT_RECORD: int = 16384
+const JT_SHAKING: int = 1
+const JT_READY: int = 2
+const JT_CLOSED: int = 3
+const JT_FAILED: int = 4
+/** *What `wrap` / `unwrap` answer. A drain did not touch the engine. */
+const JT_OVERFLOW: int = 1
+const JT_UNDERFLOW: int = 2
+const JT_CLOSED_IO: int = 3
+const JT_DRAIN: int = 4
+/** *What `status` answers. */
+const JT_HS_DONE: int = 0
+const JT_HS_WRAP: int = 1
+const JT_HS_UNWRAP: int = 2
+const JT_HS_AGAIN: int = 3
+
+let mut jt_made: bool = false
+let mut jt_fd: []i32 = []i32 {}
+let mut jt_state: []int = []int {}
+let mut jt_in_len: []int = []int {}
+let mut jt_out_len: []int = []int {}
+let mut jt_plain_len: []int = []int {}
+let mut jt_plain_off: []int = []int {}
+let mut jt_need: []int = []int {}
+let mut jt_parked: []int = []int {}
+let mut jt_in: []u8 = []u8 {}
+let mut jt_out: []u8 = []u8 {}
+let mut jt_plain: []u8 = []u8 {}
+let mut jt_io_in: []u8 = []u8 {}
+let mut jt_io_out: []u8 = []u8 {}
+/** *consumed, produced, and bytes the engine still has staged. */
+let mut jt_counts: []i32 = []i32 {}
+
+#[os("android")]
+fn jt_ensure() {
+    if jt_made {
+        return
+    }
+    jt_made = true
+    for i in 0..JT_SLOTS {
+        jt_fd.push(-1)
+        jt_state.push(0)
+        jt_in_len.push(0)
+        jt_out_len.push(0)
+        jt_plain_len.push(0)
+        jt_plain_off.push(0)
+        jt_need.push(0)
+        jt_parked.push(0)
+    }
+    jt_in = buf.with_len(JT_SLOTS * JT_IO)
+    jt_out = buf.with_len(JT_SLOTS * JT_OUT)
+    jt_plain = buf.with_len(JT_SLOTS * JT_PLAIN)
+    jt_io_in = buf.with_len(JT_IO)
+    jt_io_out = buf.with_len(JT_IO)
+    jt_counts.push(0)
+    jt_counts.push(0)
+    jt_counts.push(0)
+}
+
+#[os("android")]
+fn jt_ix(ctx: i64) -> int {
+    if ctx <= i64(0) || ctx > i64(JT_SLOTS) || jt_state.len == 0 {
+        return -1
+    }
+    let ix = int(ctx) - 1
+    if jt_state[ix] == 0 {
+        return -1
+    }
+    return ix
+}
+
+#[os("android")]
+fn jt_handle(ix: int) -> i32 {
+    return i32(ix + 1)
+}
+
+#[os("android")]
+fn jt_fail(ix: int) -> int {
+    jt_state[ix] = JT_FAILED
+    return -1
+}
+
+/** *Send what the slot has queued: 1 when it is all out, 0 when the socket */
+/** *is full, `-1` on an error. */
+#[os("android")]
+fn jt_flush(ix: int) -> int {
+    let base = ix * JT_OUT
+    while jt_out_len[ix] > 0 {
+        let mut n = jt_out_len[ix]
+        if n > JT_IO {
+            n = JT_IO
+        }
+        for i in 0..n {
+            jt_io_out[i] = jt_out[base + i]
+        }
+        let sent = c_send_buf(jt_fd[ix], jt_io_out, i64(n), msg_nosignal())
+        if sent < i64(0) {
+            let e = c_errno()
+            if e == EINTR {
+                continue
+            }
+            return if e == e_again() { 0 } else { -1 }
+        }
+        if sent == i64(0) {
+            return -1
+        }
+        let rest = jt_out_len[ix] - int(sent)
+        let sent_n = int(sent)
+        for i in 0..rest {
+            jt_out[base + i] = jt_out[base + sent_n + i]
+        }
+        jt_out_len[ix] = rest
+    }
+    return 1
+}
+
+/** *Receive into the slot after what it holds: bytes read, `0` at the end */
+/** *or on an error, `TLS_WOULD_BLOCK`. */
+#[os("android")]
+fn jt_receive(ix: int) -> int {
+    let base = ix * JT_IO
+    let have = jt_in_len[ix]
+    if have >= JT_IO {
+        return 0
+    }
+    let space = JT_IO - have
+    while true {
+        let n = c_recv(jt_fd[ix], jt_io_in, i64(space), 0)
+        if n > i64(0) {
+            let got = int(n)
+            for i in 0..got {
+                jt_in[base + have + i] = jt_io_in[i]
+            }
+            jt_in_len[ix] = have + got
+            jt_need[ix] = 0
+            return got
+        }
+        if n == i64(0) {
+            return 0
+        }
+        let e = c_errno()
+        if e != EINTR {
+            return if e == e_again() { TLS_WOULD_BLOCK } else { 0 }
+        }
+    }
+    return 0
+}
+
+#[os("android")]
+fn jt_queue_out(ix: int, n: int) -> bool {
+    if n <= 0 {
+        return true
+    }
+    let base = ix * JT_OUT
+    let at = jt_out_len[ix]
+    if at + n > JT_OUT {
+        return false
+    }
+    for i in 0..n {
+        jt_out[base + at + i] = jt_io_out[i]
+    }
+    jt_out_len[ix] = at + n
+    return true
+}
+
+#[os("android")]
+fn jt_save_plain(ix: int, n: int) -> bool {
+    if n <= 0 {
+        return true
+    }
+    let base = ix * JT_PLAIN
+    let at = jt_plain_len[ix]
+    if at + n > JT_PLAIN {
+        return false
+    }
+    for i in 0..n {
+        jt_plain[base + at + i] = jt_io_out[i]
+    }
+    jt_plain_len[ix] = at + n
+    return true
+}
+
+#[os("android")]
+fn jt_drop_in(ix: int, consumed: int) {
+    if consumed <= 0 {
+        return
+    }
+    let base = ix * JT_IO
+    let have = jt_in_len[ix]
+    let dropn = if consumed > have { have } else { consumed }
+    let rest = have - dropn
+    for i in 0..rest {
+        jt_in[base + i] = jt_in[base + dropn + i]
+    }
+    jt_in_len[ix] = rest
+}
+
+#[os("android")]
+fn jt_stage_in(ix: int) -> int {
+    let base = ix * JT_IO
+    let n = jt_in_len[ix]
+    for i in 0..n {
+        jt_io_in[i] = jt_in[base + i]
+    }
+    return n
+}
+
+/** *`wrap` of `jt_io_in[0..n_in]`: bytes of plaintext the engine took, or */
+/** *`-1`. Output is queued. A drain (`4`) retries the same plaintext; a */
+/** *tail that did not fit is pulled with an empty wrap, which does not */
+/** *encrypt again. */
+#[os("android")]
+fn jt_wrap_bytes(ix: int, n_in: int) -> int {
+    let mut guard = 0
+    let mut taken = 0
+    let mut offer = n_in
+    while guard < 8 {
+        guard += 1
+        let rc = int(c_jt_wrap(jt_handle(ix), jt_io_in, i32(offer), jt_io_out, i32(JT_IO), jt_counts))
+        if rc < 0 || rc == JT_OVERFLOW {
+            return -1
+        }
+        let took = int(jt_counts[0])
+        let made = int(jt_counts[1])
+        let staged = int(jt_counts[2])
+        if made > 0 && !jt_queue_out(ix, made) {
+            return -1
+        }
+        if took > 0 {
+            taken = took
+        }
+        if rc == JT_DRAIN {
+            if staged > 0 || (taken == 0 && offer > 0) {
+                continue
+            }
+            return taken
+        }
+        if staged > 0 {
+            offer = 0
+            continue
+        }
+        if rc == JT_CLOSED_IO {
+            return taken
+        }
+        if taken == 0 && offer > 0 {
+            return -1
+        }
+        return taken
+    }
+    return -1
+}
+
+/** *`unwrap` of the slot's ciphertext into the plaintext buffer: `0` ok, */
+/** *`JT_UNDERFLOW` need more, `JT_CLOSED_IO` the peer closed, `-1` failed. */
+#[os("android")]
+fn jt_unwrap_have(ix: int) -> int {
+    let mut n = jt_stage_in(ix)
+    let mut guard = 0
+    let mut closed = false
+    while guard < 8 {
+        guard += 1
+        let rc = int(c_jt_unwrap(jt_handle(ix), jt_io_in, i32(n), jt_io_out, i32(JT_IO), jt_counts))
+        if rc < 0 || rc == JT_OVERFLOW {
+            return -1
+        }
+        let took = int(jt_counts[0])
+        let made = int(jt_counts[1])
+        let staged = int(jt_counts[2])
+        if took > 0 {
+            jt_drop_in(ix, took)
+        }
+        if made > 0 && !jt_save_plain(ix, made) {
+            return -1
+        }
+        if rc == JT_CLOSED_IO {
+            closed = true
+        }
+        if rc == JT_DRAIN {
+            if staged > 0 {
+                n = 0
+                continue
+            }
+            if n > 0 {
+                continue
+            }
+            jt_need[ix] = 0
+            return if closed { JT_CLOSED_IO } else { 0 }
+        }
+        if staged > 0 {
+            n = 0
+            continue
+        }
+        if rc == JT_UNDERFLOW {
+            jt_need[ix] = 1
+            return JT_UNDERFLOW
+        }
+        jt_need[ix] = 0
+        return if closed { JT_CLOSED_IO } else { rc }
+    }
+    return -1
+}
+
+#[os("android")]
+fn jt_take_plain(ix: int, max: int) -> int {
+    let base = ix * JT_PLAIN
+    let have = jt_plain_len[ix] - jt_plain_off[ix]
+    let mut n = if have > max { max } else { have }
+    if n > read_cell.len {
+        n = read_cell.len
+    }
+    let off = jt_plain_off[ix]
+    for i in 0..n {
+        read_cell[i] = jt_plain[base + off + i]
+    }
+    jt_plain_off[ix] = off + n
+    if jt_plain_off[ix] >= jt_plain_len[ix] {
+        jt_plain_off[ix] = 0
+        jt_plain_len[ix] = 0
+    }
+    return n
+}
+
+/** *A client engine for `host` over `fd`. The port was stored by */
+/** *`note_tls_port` (the socket may not be connected yet). `0` on failure. */
+#[os("android")]
+fn tls_new(host: string, fd: i32) -> i64 {
+    jt_ensure()
+    let h = c_jt_open(host, i32(jt_port))
+    if h <= 0 || int(h) > JT_SLOTS {
+        return i64(0)
+    }
+    let ix = int(h) - 1
+    if jt_state[ix] != 0 {
+        c_jt_free(h)
+        return i64(0)
+    }
+    jt_fd[ix] = fd
+    jt_state[ix] = JT_SHAKING
+    jt_in_len[ix] = 0
+    jt_out_len[ix] = 0
+    jt_plain_len[ix] = 0
+    jt_plain_off[ix] = 0
+    jt_need[ix] = 0
+    jt_parked[ix] = 0
+    return i64(h)
+}
+
+/** *One handshake step: 1 done, 0 would block, `-1` failed (a refused */
+/** *certificate or host name included). */
+#[os("android")]
+fn tls_shake(ctx: i64) -> int {
+    let ix = jt_ix(ctx)
+    if ix < 0 {
+        return -1
+    }
+    let mut spins = 0
+    while spins < 64 {
+        spins += 1
+        let flushed = jt_flush(ix)
+        if flushed == 0 {
+            return 0
+        }
+        if flushed < 0 {
+            return jt_fail(ix)
+        }
+        let st = int(c_jt_status(jt_handle(ix)))
+        if st == JT_HS_DONE {
+            jt_state[ix] = JT_READY
+            return 1
+        }
+        if st < 0 {
+            return jt_fail(ix)
+        }
+        if st == JT_HS_WRAP {
+            if jt_wrap_bytes(ix, 0) < 0 {
+                return jt_fail(ix)
+            }
+            continue
+        }
+        if st == JT_HS_UNWRAP || st == JT_HS_AGAIN {
+            // NEED_UNWRAP_AGAIN already holds the record. Unwrap it before
+            // reading the socket, including when the local buffer is empty.
+            let have = jt_in_len[ix] > 0 && jt_need[ix] == 0
+            if !have && st != JT_HS_AGAIN {
+                let got = jt_receive(ix)
+                if got == TLS_WOULD_BLOCK {
+                    return 0
+                }
+                if got <= 0 {
+                    return jt_fail(ix)
+                }
+            }
+            let ur = jt_unwrap_have(ix)
+            if ur == JT_UNDERFLOW {
+                if st == JT_HS_AGAIN {
+                    let got = jt_receive(ix)
+                    if got == TLS_WOULD_BLOCK {
+                        return 0
+                    }
+                    if got <= 0 {
+                        return jt_fail(ix)
+                    }
+                }
+                continue
+            }
+            if ur < 0 || ur == JT_CLOSED_IO {
+                return jt_fail(ix)
+            }
+            continue
+        }
+        return jt_fail(ix)
+    }
+    return jt_fail(ix)
+}
+
+/** *Encrypt up to one record of `data[off..]` and send it: bytes taken, */
+/** *`TLS_WOULD_BLOCK`, or `-1`. A record the socket would not take whole is */
+/** *parked, and the caller's retry with the same bytes counts it. */
+#[os("android")]
+fn tls_put(ctx: i64, data: string, off: int) -> int {
+    let ix = jt_ix(ctx)
+    if ix < 0 || jt_state[ix] != JT_READY {
+        return -1
+    }
+    if jt_out_len[ix] > 0 {
+        let flushed = jt_flush(ix)
+        if flushed == 0 {
+            return TLS_WOULD_BLOCK
+        }
+        if flushed < 0 {
+            return -1
+        }
+        let parked = jt_parked[ix]
+        jt_parked[ix] = 0
+        return parked
+    }
+    let mut take = data.len - off
+    if take > JT_RECORD {
+        take = JT_RECORD
+    }
+    if take <= 0 {
+        return -1
+    }
+    for i in 0..take {
+        jt_io_in[i] = u8(data[off + i])
+    }
+    let taken = jt_wrap_bytes(ix, take)
+    if taken < 0 {
+        return -1
+    }
+    let flushed = jt_flush(ix)
+    if flushed < 0 {
+        return -1
+    }
+    if flushed == 0 {
+        jt_parked[ix] = taken
+        return TLS_WOULD_BLOCK
+    }
+    return taken
+}
+
+/** *One read of up to `max` bytes into `read_cell`: bytes read (`0` at the */
+/** *end or on an error), or `TLS_WOULD_BLOCK`. */
+#[os("android")]
+fn tls_get(ctx: i64, max: int) -> int {
+    let ix = jt_ix(ctx)
+    if ix < 0 || max <= 0 {
+        return 0
+    }
+    let mut spins = 0
+    while spins < 64 {
+        spins += 1
+        if jt_plain_len[ix] > jt_plain_off[ix] {
+            return jt_take_plain(ix, max)
+        }
+        if jt_state[ix] != JT_READY && jt_state[ix] != JT_CLOSED {
+            return 0
+        }
+        let pending = int(c_jt_pending(jt_handle(ix))) > 0
+        let have = jt_in_len[ix] > 0 && jt_need[ix] == 0
+        if !pending && !have {
+            if jt_state[ix] == JT_CLOSED {
+                return 0
+            }
+            let got = jt_receive(ix)
+            if got == TLS_WOULD_BLOCK {
+                return TLS_WOULD_BLOCK
+            }
+            if got <= 0 {
+                return 0
+            }
+        }
+        let ur = jt_unwrap_have(ix)
+        if ur == JT_UNDERFLOW {
+            continue
+        }
+        if ur < 0 {
+            jt_state[ix] = JT_FAILED
+            return 0
+        }
+        if ur == JT_CLOSED_IO {
+            jt_state[ix] = JT_CLOSED
+        }
+    }
+    jt_state[ix] = JT_FAILED
+    return 0
+}
+
+/** *Decrypted bytes wait, Java still holds plaintext, or ciphertext is */
+/** *here that has not been tried. */
+#[os("android")]
+fn tls_buffered(ctx: i64) -> bool {
+    let ix = jt_ix(ctx)
+    if ix < 0 {
+        return false
+    }
+    if jt_plain_len[ix] > jt_plain_off[ix] {
+        return true
+    }
+    if int(c_jt_pending(jt_handle(ix))) > 0 {
+        return true
+    }
+    return jt_in_len[ix] > 0 && jt_need[ix] == 0
+}
+
+/** *A best-effort close_notify: one send attempt, not waited for. */
+#[os("android")]
+fn tls_end(ctx: i64) {
+    let ix = jt_ix(ctx)
+    if ix < 0 || jt_state[ix] != JT_READY {
+        return
+    }
+    jt_state[ix] = JT_CLOSED
+    c_jt_close(jt_handle(ix))
+    jt_wrap_bytes(ix, 0)
+    jt_flush(ix)
+}
+
+#[os("android")]
+fn tls_free(ctx: i64) {
+    if ctx == i64(0) {
+        return
+    }
+    let ix = jt_ix(ctx)
+    if ix < 0 {
+        return
+    }
+    c_jt_free(jt_handle(ix))
+    jt_state[ix] = 0
+    jt_fd[ix] = -1
+    jt_in_len[ix] = 0
+    jt_out_len[ix] = 0
+    jt_plain_len[ix] = 0
+    jt_plain_off[ix] = 0
+    jt_need[ix] = 0
+    jt_parked[ix] = 0
+}
+
+/** *`SSLEngine` for `host`:`port`: a handle in `1..8`, or `-1`. */
+#[os("android")]
+#[c("loam_android_tls_open")]
+fn c_jt_open(host: string, port: i32) -> i32 {}
+
+/** *Handshake status after delegated tasks: 0 done, 1 wrap, 2 unwrap, */
+/** *3 unwrap again, `-1` failed. */
+#[os("android")]
+#[c("loam_android_tls_status")]
+fn c_jt_status(handle: i32) -> i32 {}
+
+/** *One `wrap`. `counts` is consumed, produced, and bytes still staged. */
+/** *0 ok, 1 overflow, 3 closed, 4 staged bytes only, `-1` failed. */
+#[os("android")]
+#[c("loam_android_tls_wrap")]
+fn c_jt_wrap(handle: i32, src: &[]u8, src_len: i32, dst: &mut []u8, dst_cap: i32, counts: &mut []i32) -> i32 {}
+
+/** *One `unwrap`. Same `counts` and codes as `c_jt_wrap`, plus 2 when the */
+/** *ciphertext is short of a record. */
+#[os("android")]
+#[c("loam_android_tls_unwrap")]
+fn c_jt_unwrap(handle: i32, src: &[]u8, src_len: i32, dst: &mut []u8, dst_cap: i32, counts: &mut []i32) -> i32 {}
+
+/** *Plaintext the engine still holds for the caller. */
+#[os("android")]
+#[c("loam_android_tls_pending")]
+fn c_jt_pending(handle: i32) -> i32 {}
+
+#[os("android")]
+#[c("loam_android_tls_close")]
+fn c_jt_close(handle: i32) -> i32 {}
+
+#[os("android")]
+#[c("loam_android_tls_free")]
+fn c_jt_free(handle: i32) {}
+
+/** *`send` of the front of a Loam buffer. `ssize_t` here is 8 bytes. */
+#[os("android")]
+#[c("send")]
+fn c_send_buf(fd: i32, bytes: &[]u8, len: i64, flags: i32) -> i64 {}
+
+
 // --- name lookup and C memory, for every backend --------------------------------------
 
-#[os("apple", "linux")]
+#[os("apple", "linux", "android")]
 #[c("getaddrinfo")]
 fn c_getaddrinfo(host: string, service: string, hints: &[]i32, list: &mut []i64) -> i32 {}
 
-#[os("apple", "linux")]
+#[os("apple", "linux", "android")]
 #[c("freeaddrinfo")]
 fn c_freeaddrinfo(list: i64) {}
 
@@ -3051,7 +3703,7 @@ fn c_wsa_connect_at(sock: i64, addr: i64, len: i32) -> i32 {}
 fn c_wsa_recv_at(sock: i64, into: i64, len: i32, flags: i32) -> i32 {}
 
 /** *`connect` to an address C handed over (an `addrinfo`'s `ai_addr`). */
-#[os("apple", "linux")]
+#[os("apple", "linux", "android")]
 #[c("connect")]
 fn c_connect_at(fd: i32, addr: i64, len: u32) -> i32 {}
 
@@ -3063,7 +3715,7 @@ fn c_recv_at(fd: i32, into: i64, len: i64, flags: i32) -> i64 {}
 /** *`memcpy` between C's memory and a Loam cell: the `addrinfo` walk and */
 /** *the callbacks' length word. Only this module's wrappers call them, each */
 /** *with an address C just handed over and its exact size. */
-#[os("apple", "linux", "windows")]
+#[os("apple", "linux", "windows", "android")]
 #[c("memcpy")]
 fn c_load_words(dst: &mut []i64, src: i64, n: i64) -> i64 {}
 

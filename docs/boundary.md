@@ -97,15 +97,20 @@ TLS connection links neither libssl nor Security.framework, even though
 `std:net` binds both. A module-wide `#![c_link]` applies whenever any
 binding of the module is kept.
 
-C runs on native builds only. A wasm, iOS, or Android build refuses a `#[c]` fn it
-can reach, and one only a `#[server]` body calls leaves nothing in that build.
+C runs on native builds only. A wasm build refuses a `#[c]` fn it can reach,
+and one only a `#[server]` body calls leaves nothing in that build. An iOS or
+Android build allows `#[c]` in `std` and refuses it in a package. Those std
+bindings are libc, which both platforms have. On Android, `std:net` also binds
+`loam_android_tls_*`, the host functions in `packages/zeus/hosts/android/android.c`.
 
 ## Bindings in std
 
 `std` modules bind libc directly, with no `#![c_source]`: the symbol comes
 from the C library every program already links. `std:batch` binds `fork` /
 `wait` / `open` / `creat` this way, and `std:sys` binds `isatty` for
-`stdout_tty`. The same rules as package bindings apply, plus two:
+`stdout_tty`. On Android, `std:net`'s TLS bindings name `loam_android_tls_*`
+in the Zeus host (`android.c`), which that link already includes. The same
+rules as package bindings apply, plus two:
 
 - A `#[c]` fn is private to its module, so the binding sits beside a safe
   wrapper in the same `std` module, and importers call only the wrapper.
@@ -121,7 +126,7 @@ from the C library every program already links. `std:batch` binds `fork` /
 | Layer | C | Loam |
 |---|---|---|
 | Language (`loam_rt`) | Allocator, panic/trap, overflow, wrapping bit ops, `string_from_bytes`, `loam_fn` `{fn, env, env_size}`, `env_set` / `exit` | — |
-| net (`packages/loam/std/net`) | `string_bytes_at` (a string's byte address for a binding to read in the same call), the wasm fetch / WebSocket / stream bridges | TCP over raw libc bindings (R5.1), Winsock on Windows (R5.4); the TLS client over SecureTransport bindings on Apple (R5.2), OpenSSL bindings on Linux (R5.3) and SChannel bindings on Windows (R5.5), its I/O callbacks (SecureTransport's, OpenSSL's BIO) Loam fns C calls through function pointers |
+| net (`packages/loam/std/net`) | `string_bytes_at` (a string's byte address for a binding to read in the same call), the wasm fetch / WebSocket / stream bridges | TCP over raw libc bindings (R5.1), Winsock on Windows (R5.4); the TLS client over SecureTransport bindings on Apple (R5.2), OpenSSL bindings on Linux (R5.3), SChannel bindings on Windows (R5.5) and Java's SSLEngine on Android (R5.6, JNI exports in the Zeus Android host), its I/O callbacks (SecureTransport's, OpenSSL's BIO) Loam fns C calls through function pointers |
 | Zeus | Host event loop + replay of the draw list; `runtime.intern_fn` memcpy's a `loam_fn` env so click/styled handlers outlive the interned value | Tree, layout, signals, design system, `platform.loam` signatures |
 | Maya | The package's Cocoa host (`packages/maya/src/hosts/mac.m`): event loop and draw primitives (blit, discs, rings, labels), int-only both ways | Scene, orbits, camera, CPU tracer, 2D map layout, draw order and the RGBA frame, `sin`/`cos` |
 | raygui | raylib and raygui themselves (vendored `raygui.h` compiled as itself); no shim | API, frame loop, window state, headless rule, RAM probe and every retained value; raylib/raygui reached by `#[c]` bindings (`packages/raygui/src/raygui.loam`) |
