@@ -1123,12 +1123,16 @@ fn implicit_import(alias: string, spec: string, loc: Loc) -> int {
 
 /** *Outside `http`, an implicit import for `#[proto]` (http) and `#[json]` */
 /** *(std:json) structs. The entry module also imports `std:decimal`, which */
-/** *`"{{n}}"` and `println(n)` compile to, so no program has to (and */
-/** *`load` adds `std:key` when one is needed). Both are `F_IMPLICIT`: no */
-/** *name in the program, so a local `key` stays a local. */
+/** *`"{{n}}"` and `println(n)` compile to, and `std:panic`, which every */
+/** *panic ends in, so no program has to (and `load` adds `std:key` when one */
+/** *is needed). All are `F_IMPLICIT`: no name in the program, so a local */
+/** *`key` stays a local. */
 fn implicit_imports(root: int, alias: string) {
     if typecheck.MODS.len == 1 && !imports_spec(root, "std:decimal") {
         push(ast.NODES[root].kids, implicit_import("decimal", "std:decimal", ast.INFO[root].loc))
+    }
+    if typecheck.MODS.len == 1 && !imports_spec(root, "std:panic") {
+        push(ast.NODES[root].kids, implicit_import("panic", "std:panic", ast.INFO[root].loc))
     }
     if alias == "http" {
         return

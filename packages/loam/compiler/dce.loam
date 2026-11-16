@@ -65,6 +65,11 @@ fn c_roots(module_name: string) -> []string {
             "engine_sprite_rgb", "engine_sprite_x", "engine_sprite_y",
         }
     }
+    // `loam_panic` (loam_rt.h) ends in `report`, a web release's `loam_trap` in
+    // `trap`: every program can panic.
+    if module_name == "panic" {
+        return []string { "report", "trap" }
+    }
     // A `LOAM_BATCH` main calls the fork-per-case runner, `loam_batch_serve`.
     if module_name == "batch" {
         return []string { "serve" }

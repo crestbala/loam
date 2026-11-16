@@ -19,24 +19,7 @@
 #include <io.h>
 #include <direct.h>
 #include <process.h>
-struct iovec {
-    void *iov_base;
-    size_t iov_len;
-};
-static inline ssize_t writev(int fd, const struct iovec *iov, int n) {
-    ssize_t total = 0;
-    for (int i = 0; i < n; i++) {
-        if (!iov[i].iov_len) continue;
-        int w = _write(fd, iov[i].iov_base, (unsigned)iov[i].iov_len);
-        if (w < 0) return total ? total : -1;
-        total += w;
-        if ((size_t)w < iov[i].iov_len) break;
-    }
-    return total;
-}
 #define lstat stat
-#else
-#include <sys/uio.h>
 #endif
 #ifndef __wasm32__
 #include <time.h>
@@ -147,34 +130,6 @@ static inline void loam_write_fd(int fd, const char *p, size_t n) {
 static inline void loam_write_bytes(const char *p, size_t n) { loam_write_fd(STDOUT_FILENO, p, n); }
 static inline void loam_ewrite_bytes(const char *p, size_t n) { loam_write_fd(STDERR_FILENO, p, n); }
 
-static inline void loam_writev_fd(int fd, struct iovec *iov, int n) {
-    while (n > 0) {
-        if (iov->iov_len == 0) {
-            iov++;
-            n--;
-            continue;
-        }
-        ssize_t w = writev(fd, iov, n);
-        if (w < 0) {
-            if (errno == EINTR) continue;
-            return;
-        }
-        if (w == 0) return;
-        size_t left = (size_t)w;
-        while (n > 0 && left >= iov->iov_len) {
-            left -= iov->iov_len;
-            iov++;
-            n--;
-        }
-        if (n > 0 && left) {
-            iov->iov_base = (char *)iov->iov_base + left;
-            iov->iov_len -= left;
-        }
-    }
-}
-
-static inline void loam_writev_all(struct iovec *iov, int n) { loam_writev_fd(STDOUT_FILENO, iov, n); }
-
 static inline void loam_fmt_write(loam_str s) {
     if (!s.ptr || s.len <= 0) return;
     loam_write_bytes(s.ptr, (size_t)s.len);
@@ -201,35 +156,41 @@ static inline bool loam_fmt_eq(loam_str a, loam_str b) {
 #define LOAM_COLD
 #endif
 
+/* The panic path is Loam (`std:panic`: flush, print, unwind or abort).
+   These hand it C's strings as views; the hooks below are what it cannot
+   do itself. */
+void loam_panic_report(loam_str file, int32_t line, loam_str msg);
+void loam_panic_trap(loam_str msg);
+static inline loam_str loam_panic_view(const char *s) {
+    loam_str v = {s ? s : "", s ? (int64_t)strlen(s) : 0, 0};
+    return v;
+}
+
 static LOAM_COLD void loam_panic(const char *file, int line, const char *msg) {
-    fflush(stdout);
-    fprintf(stderr, "%s:%d: panic: %s\n", file, line, msg);
-    loam_jmp_set_msg(msg, (int64_t)strlen(msg));
-#ifndef __wasm32__
-    if (loam_jmp_top) longjmp(loam_jmp_top->jb, 1);
-#endif
+    loam_panic_report(loam_panic_view(file), line, loam_panic_view(msg));
     abort();
 }
 
-/* `panic(msg)` — like loam_panic but with a runtime string, so `std:test` and
-   other Loam code can build the message. */
+/* `panic(msg)`: the message is a Loam string. */
 static LOAM_COLD void loam_panic_str(const char *file, int line, loam_str msg) {
-    fflush(stdout);
-    fprintf(stderr, "%s:%d: panic: %.*s\n", file, line,
-            (int)(msg.len > 0 ? msg.len : 0), msg.ptr ? msg.ptr : "");
-    loam_jmp_set_msg(msg.ptr ? msg.ptr : "", msg.len);
-#ifndef __wasm32__
-    if (loam_jmp_top) longjmp(loam_jmp_top->jb, 1);
-#endif
+    loam_panic_report(loam_panic_view(file), line, msg);
     abort();
 }
+
+static inline void loam_panic_record(loam_str msg) { loam_jmp_set_msg(msg.ptr, msg.len); }
+#ifndef __wasm32__
+static inline void loam_panic_unwind(void) { if (loam_jmp_top) longjmp(loam_jmp_top->jb, 1); }
+#else
+static inline void loam_panic_unwind(void) {}
+static inline void loam_panic_wasm_abort(void) { abort(); }
+#endif
 
 /* A web release has thousands of checked operations, and a file and line for
    each one's panic path came to a tenth of the download. They all share this
    instead, and the panic keeps its message. */
 #ifdef LOAM_NO_TRAP_LOC
 __attribute__((noinline, noreturn, cold)) static void loam_trap(const char *msg) {
-    loam_jmp_set_msg(msg, (int64_t)strlen(msg));
+    loam_panic_trap(loam_panic_view(msg));
     abort();
 }
 #define loam_panic(f, l, msg) loam_trap(msg)

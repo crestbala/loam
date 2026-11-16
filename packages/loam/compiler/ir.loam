@@ -2644,7 +2644,8 @@ fn lower_for(n: int) {
     SCRATCH[add].a = iv
     SCRATCH[add].b = one
     SCRATCH[add].binop = Tok.Plus
-    SCRATCH[add].bits = I_CHECKED
+    // Not checked: the head ran `i < hi`, so `i + 1 <= hi` fits its type.
+    SCRATCH[add].bits = 0
     let st = emit(Op.Move, loc)
     SCRATCH[st].dst = iv
     SCRATCH[st].a = nx
