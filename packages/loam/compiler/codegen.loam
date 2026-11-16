@@ -3585,8 +3585,32 @@ fn c_bindings() {
             let ret = ret_type(ft)
             let rk = tkind(ret)
             let np = ast.NODES[d].kids.len
+            // The declared name is this Loam fn's, so two bindings of one C
+            // symbol (fcntl, memcpy, send, poll) each keep their own
+            // prototype and share the asm label.
+            // A variadic binding declares C's `(fixed, ...)` shape, so `cc`
+            // passes the rest as varargs (on the stack on Apple arm64, where
+            // a fixed-arity call would put them in registers the callee
+            // never reads).
+            let fixed = ast.c_variadic_fixed(d)
+            let declared = if fixed >= 0 { fixed } else { np }
             os_begin(d)
-            w("extern void {{cn}}__csym(void) LOAM_CSYM(\"{{c_sym_of(d)}}\");\n")
+            w("extern ")
+            c_abi_type(ret)
+            w(" {{cn}}__csym(")
+            if declared == 0 {
+                w("void")
+            }
+            for k in 0..declared {
+                if k > 0 {
+                    w(", ")
+                }
+                c_abi_type(param_type(ft, k))
+            }
+            if fixed >= 0 {
+                w(", ...")
+            }
+            w(") LOAM_CSYM(\"{{c_sym_of(d)}}\");\n")
             w("static ")
             fn_sig(d, false)
             w(" {\n")
@@ -3603,28 +3627,7 @@ fn c_bindings() {
                 w_ctype(ret)
                 w(" _r = ")
             }
-            w("((")
-            c_abi_type(ret)
-            w(" (*)(")
-            // A variadic binding is called through C's own `(fixed, ...)`
-            // shape, so `cc` passes the rest as varargs (on the stack on
-            // Apple arm64, where a fixed-arity call would put them in
-            // registers the callee never reads).
-            let fixed = ast.c_variadic_fixed(d)
-            let declared = if fixed >= 0 { fixed } else { np }
-            if declared == 0 {
-                w("void")
-            }
-            for k in 0..declared {
-                if k > 0 {
-                    w(", ")
-                }
-                c_abi_type(param_type(ft, k))
-            }
-            if fixed >= 0 {
-                w(", ...")
-            }
-            w("))(void *){{cn}}__csym)(")
+            w("{{cn}}__csym(")
             for k in 0..np {
                 if k > 0 {
                     w(", ")
