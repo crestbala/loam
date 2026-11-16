@@ -55,19 +55,16 @@ jobs:
       - name: Test suite
         run: ./nob.sh test
 
-      # The suite's https fixture passes with "skipped" when offline; here a
-      # real handshake over OpenSSL (certificate and host name verified) must
-      # happen, or the job fails.
-      - name: HTTPS over OpenSSL, for real
+      # The suite's https fixture passes with "skipped" when offline. Here the
+      # TLS client must really work over OpenSSL: refuse bad certificates
+      # (badssl.com) and complete a blocking and a non-blocking GET.
+      - name: TLS over OpenSSL, for real
         run: |
-          bin/loamc packages/loam/tests/compile_pass/http_https_live.loam -o "$RUNNER_TEMP/https_live"
-          ldd "$RUNNER_TEMP/https_live" | grep -E 'libssl|libcrypto'
-          out=$("$RUNNER_TEMP/https_live")
+          bin/loamc packages/loam/tests/live/net_tls_live.loam -o "$RUNNER_TEMP/tls_live"
+          ldd "$RUNNER_TEMP/tls_live" | grep -E 'libssl|libcrypto'
+          out=$("$RUNNER_TEMP/tls_live")
           echo "$out"
-          case "$out" in
-            "https ok"*) ;;
-            *) echo "::error::no TLS handshake: $out"; exit 1 ;;
-          esac
+          [ "$out" = "tls ok" ] || { echo "::error::TLS client: $out"; exit 1; }
 
       - name: Bundle fixtures for Windows
         if: matrix.os == 'ubuntu-24.04'
@@ -126,6 +123,16 @@ jobs:
 
       - name: The compiler builds itself; fixed point
         run: bash tools/win-selfhost.sh win-bundle
+
+      # The TLS client over SChannel must really work: refuse bad
+      # certificates (badssl.com) and complete a blocking and a non-blocking
+      # GET. The driver links secur32 and ws2_32 from the bindings.
+      - name: TLS over SChannel, for real
+        run: |
+          bin/loamc packages/loam/tests/live/net_tls_live.loam -o tls_live
+          out=$(./tls_live.exe)
+          echo "$out"
+          [ "$out" = "tls ok" ] || { echo "::error::TLS client: $out"; exit 1; }
 
       - uses: actions/upload-artifact@v4
         with:

@@ -1546,10 +1546,65 @@ done, so every R3 step is checked by `thread_tsan`).
       `serve_boot` and `lsp` green. `cross-check.sh` Linux and Windows
       125/125 on both CPUs. The Winsock code first runs on the Windows CI
       job (`win-run.sh`, PR #71). No C deleted: **Runtime stays 5,359.**
-- [ ] R5.5 TLS on Windows (SChannel through SSPI bindings), after R5.4, as
-      a third backend of the shared TLS layer; and Android, whose system
-      BoringSSL is not a public NDK library, so it needs a vendored TLS
-      library or the Java one through JNI.
+- [x] R5.5 TLS on Windows: SChannel as `#[c]` bindings (secur32). Done
+      2026-11-16 (pending its first Windows CI run).
+
+      **A third backend** of the shared TLS layer, which now builds for
+      Windows too. SChannel does no socket I/O: the backend sends and
+      receives itself, and SChannel only turns bytes into records and back.
+      Its structs hold pointers, so each connection is one zeroed C block
+      (`calloc`) whose address is the context the slot keeps. The block
+      holds the `CtxtHandle`, the state and counters, the `SecBuffer`
+      arrays and descriptors, the host name, a 64 KiB input area and a
+      20 KiB output area. Loam reads and writes it a word at a time through
+      `memcpy` bindings, as the R5.2 `addrinfo` walk does. In detail:
+      - **Credential:** one per process, `AcquireCredentialsHandleA` with a
+        `SCHANNEL_CRED`. `SCH_CRED_AUTO_CRED_VALIDATION` checks the chain
+        and the host name; strong crypto, no default client credentials.
+        TLS 1.2 only, since the legacy struct cannot enable 1.3
+        (`SCH_CREDENTIALS` would).
+      - **Handshake:** `InitializeSecurityContextA` as a step function, the
+        same on blocking and non-blocking sockets. It flushes pending
+        output, receives on `SEC_E_INCOMPLETE_MESSAGE`, keeps
+        `SECBUFFER_EXTRA` leftovers (application data in the last flight
+        too), and reads the record sizes once done.
+      - **Writes:** `EncryptMessage` per record (header, data, trailer). A
+        record the socket will not take whole is parked, and the caller's
+        retry with the same bytes (OpenSSL's contract) finishes it and
+        counts them then.
+      - **Reads:** `DecryptMessage` in place. Plaintext the caller has not
+        taken stays in the block, so `tcp_poll` sees it as buffered.
+        `SEC_I_CONTEXT_EXPIRED` (close_notify) is the end.
+      - **Close:** `ApplyControlToken(SCHANNEL_SHUTDOWN)` and one more call
+        give the close_notify, sent once; then `DeleteSecurityContext`.
+      - **Shared layer on Windows:** Winsock's `getaddrinfo` (after
+        `WSAStartup`; it may be the first Winsock call), `connect` to an
+        `ai_addr`, `recv` into C memory, `SO_SNDTIMEO`, and Windows'
+        `addrinfo` (`ai_addr` at word 4, as on Apple).
+
+      **Checks.** `c_layouts` gains, for `x86_64-windows-gnu`: `SecBuffer`,
+      `SecBufferDesc`, `CtxtHandle`, `CredHandle`, `SCHANNEL_CRED` (80
+      bytes, protocols at 56, flags at 72), `SecPkgContext_StreamSizes`,
+      Winsock's `addrinfo`, and every status, buffer, request, credential
+      and protocol code. New `tests/live/net_tls_live.loam`, kept out of
+      the suite because it spends seconds on the network:
+      - it must refuse badssl.com's wrong-host, expired, self-signed and
+        untrusted-root certificates;
+      - it must complete a blocking and a non-blocking GET of example.com;
+      - closed handles must stay closed.
+
+      CI requires its `tls ok` on both Linux CPUs (OpenSSL) and on Windows
+      (SChannel). The Linux step replaces the one that required
+      `http_https_live`'s `https ok`. That step's first run showed a real
+      OpenSSL handshake on both CPUs, linking `libssl.so.3` (932 and 928
+      bytes). On macOS it prints `tls ok` too (SecureTransport). Native
+      `http` (39), `net_`, `async_`, `www_analytics`, `zeus_async`,
+      `zeus_stream`, `c_ffi` and `c_layouts` green; `cross-check.sh` Linux
+      and Windows 125/125 on both CPUs. No C deleted: **Runtime stays
+      5,359.**
+- [ ] R5.6 TLS on Android: its system BoringSSL is not a public NDK
+      library, so it needs a vendored TLS library or Java's through JNI (a
+      choice to make first).
 
 **R6. The core: zero runtime.** What remains of `loam_rt.h`: allocation,
 refcounts, owned strings, vec growth and copy-on-write, element and env drop

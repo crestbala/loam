@@ -1,13 +1,15 @@
 // Sockets and TLS (`docs/boundary.md`).
 //
-// TCP (R5.1, Windows R5.4) and the TLS client (macOS R5.2, Linux R5.3)
-// are Loam over raw bindings: addresses, socket options, the non-blocking connect, the poll
-// set, retries, `errno`, and the TLS slots, handshake and I/O over
-// SecureTransport (Apple) or OpenSSL (Linux), whose read and write
-// callbacks are Loam fns C calls through plain function pointers. One piece stays C: `string_bytes_at`, the address of a string's
-// byte for a binding to read in the same call (core byte movement, like
-// `fmt.write`). The fetch, WebSocket and stream bridges are the browser's
-// (wasm). No HTTP parsing lives here: that is `packages/http/src/http.loam`.
+// TCP (R5.1, Windows R5.4) and the TLS client (macOS R5.2, Linux R5.3,
+// Windows R5.5) are Loam over raw bindings: addresses, socket options, the
+// non-blocking connect, the poll set, retries, `errno`, and the TLS slots,
+// handshake and I/O over SecureTransport (Apple), OpenSSL (Linux) or
+// SChannel (Windows); SecureTransport's and OpenSSL's I/O callbacks are Loam
+// fns C calls through plain function pointers. One piece stays C:
+// `string_bytes_at`, the address of a string's byte for a binding to read in
+// the same call (core byte movement, like `fmt.write`). The fetch, WebSocket
+// and stream bridges are the browser's (wasm). No HTTP parsing lives here:
+// that is `packages/http/src/http.loam`.
 
 import "std:buf"
 
@@ -18,15 +20,16 @@ fn tcp_connect(host: string, port: int) -> int {
 }
 
 /** *Connect to `host`:`port` over TLS and verify the server certificate */
-/** *against `host` (SecureTransport on Apple, OpenSSL on Linux). Returns a */
-/** *TLS fd that `tcp_write` / `tcp_read` / `tcp_close` handle like any */
-/** *socket, or `-1` when TLS is unavailable (wasm keeps browser TLS; other */
-/** *hosts have none) or the handshake / certificate check fails. */
+/** *against `host` (SecureTransport on Apple, OpenSSL on Linux, SChannel on */
+/** *Windows). Returns a TLS fd that `tcp_write` / `tcp_read` / `tcp_close` */
+/** *handle like any socket, or `-1` when TLS is unavailable (wasm keeps */
+/** *browser TLS; Android has none yet) or the handshake / certificate check */
+/** *fails. */
 fn tls_connect(host: string, port: int) -> int {
     return tls_connect_os(host, port)
 }
 
-/** *Non-blocking TLS connect (Apple and Linux). Returns a TLS handle */
+/** *Non-blocking TLS connect (Apple, Linux, Windows). Returns a TLS handle */
 /** *immediately; poll `tls_nb_ready` until 1. `-1` when TLS is unavailable. */
 fn tls_nb_connect(host: string, port: int) -> int {
     return tls_nb_connect_os(host, port)
@@ -1398,7 +1401,7 @@ fn c_set_handle_information(handle: i64, mask: u32, flags: u32) -> i32 {}
 #[c("Sleep")]
 fn c_sleep(ms: u32) {}
 
-// --- TLS: the slot table (macOS, iOS, Linux) ----------------------------------------------
+// --- TLS: the slot table (macOS, iOS, Linux, Windows) ----------------------------------------------
 //
 // A connection is a slot; its handle is `TLS_BASE + slot`, far above any
 // socket, so the TCP calls above hand it here and the HTTP client treats a
@@ -1407,7 +1410,7 @@ fn c_sleep(ms: u32) {}
 // TCP calls reach them through the hooks above; each
 // backend gives seven ops over its opaque context: `tls_new`, `tls_shake`,
 // `tls_put`, `tls_get`, `tls_buffered`, `tls_end` and `tls_free`. On Apple
-// that is SecureTransport, on Linux OpenSSL. Layouts and constants are
+// that is SecureTransport, on Linux OpenSSL, on Windows SChannel. Layouts and constants are
 // checked by `nob integration c_layouts`.
 
 const TLS_SLOTS: int = 8
@@ -1431,7 +1434,7 @@ let mut io_word: []u64 = []u64 {}
 /** *One `struct addrinfo` (48 bytes) copied out of `getaddrinfo`'s list. */
 let mut addrinfo_cell: []i64 = []i64 {}
 
-#[os("apple", "linux")]
+#[os("apple", "linux", "windows")]
 fn ensure_tls_slots() {
     if tls_state.len == 0 {
         for i in 0..TLS_SLOTS {
@@ -1448,7 +1451,7 @@ fn ensure_tls_slots() {
 }
 
 /** *The slot of a live TLS handle, or `-1`. */
-#[os("apple", "linux")]
+#[os("apple", "linux", "windows")]
 fn tls_slot_of(fd: int) -> int {
     let slot = fd - TLS_BASE
     if fd < TLS_BASE || slot >= TLS_SLOTS || tls_state.len == 0 {
@@ -1457,7 +1460,7 @@ fn tls_slot_of(fd: int) -> int {
     return if tls_state[slot] != TLS_FREE { slot } else { -1 }
 }
 
-#[os("apple", "linux")]
+#[os("apple", "linux", "windows")]
 fn free_tls_slot() -> int {
     ensure_tls_slots()
     install_tls()
@@ -1470,7 +1473,7 @@ fn free_tls_slot() -> int {
 }
 
 /** *Free a slot: its context released and its socket closed. */
-#[os("apple", "linux")]
+#[os("apple", "linux", "windows")]
 fn drop_tls_slot(slot: int) {
     tls_state[slot] = TLS_FREE
     tls_free(tls_context[slot])
@@ -1483,7 +1486,7 @@ fn drop_tls_slot(slot: int) {
 
 /** *`getaddrinfo` for `host`:`port`, then each address in order until one */
 /** *gives a socket; `-1` when none does. `family` 0 is any. */
-#[os("apple", "linux")]
+#[os("apple", "linux", "windows")]
 fn connect_by_name(host: string, port: int, family: i32, blocking: bool) -> i32 {
     let hints = []i32 { 0, family, SOCK_STREAM, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
     let mut list = []i64 { i64(0) }
@@ -1525,6 +1528,12 @@ fn ai_addr_word() -> int {
     return 3
 }
 
+/** *Windows: `ai_addrlen` is a `size_t`, then `ai_canonname`, `ai_addr`. */
+#[os("windows")]
+fn ai_addr_word() -> int {
+    return 4
+}
+
 /** *`SO_SNDTIMEO`. */
 #[os("apple")]
 fn so_sndtimeo() -> i32 {
@@ -1536,9 +1545,14 @@ fn so_sndtimeo() -> i32 {
     return 21
 }
 
+#[os("windows")]
+fn so_sndtimeo() -> i32 {
+    return 4101
+}
+
 /** *A connected blocking socket, its reads and writes bounded at 10 s so a */
 /** *silent peer (one that never speaks TLS) cannot block forever; or `-1`. */
-#[os("apple", "linux")]
+#[os("apple", "linux", "windows")]
 fn blocking_socket_to(family: i32, kind: i32, protocol: i32, addr: i64, addrlen: u32) -> i32 {
     let f = c_socket(family, kind, protocol)
     if f < 0 {
@@ -1557,7 +1571,7 @@ fn blocking_socket_to(family: i32, kind: i32, protocol: i32, addr: i64, addrlen:
 }
 
 /** *A non-blocking socket whose connect finished or is in progress; `-1`. */
-#[os("apple", "linux")]
+#[os("apple", "linux", "windows")]
 fn pending_socket_to(family: i32, kind: i32, protocol: i32, addr: i64, addrlen: u32) -> i32 {
     let f = c_socket(family, kind, protocol)
     if f < 0 {
@@ -1582,7 +1596,7 @@ fn pending_socket_to(family: i32, kind: i32, protocol: i32, addr: i64, addrlen: 
 /** *Native `tls_connect`: TCP, then the handshake to the end. A handshake */
 /** *that would block polls the socket 50 ms at a time and gives up after */
 /** *three idle polls in a row. */
-#[os("apple", "linux")]
+#[os("apple", "linux", "windows")]
 fn tls_connect_os(host: string, port: int) -> int {
     if port <= 0 || port > 65535 || host.len == 0 || host.len >= 256 {
         return -1
@@ -1627,14 +1641,14 @@ fn tls_connect_os(host: string, port: int) -> int {
     return TLS_BASE + slot
 }
 
-#[os("android", "other", "windows", "wasm")]
+#[os("android", "other", "wasm")]
 fn tls_connect_os(host: string, port: int) -> int {
     return -1
 }
 
 /** *Native `tls_nb_connect`: an IPv4 connect started and the context */
 /** *made; `tls_nb_ready` drives the rest. */
-#[os("apple", "linux")]
+#[os("apple", "linux", "windows")]
 fn tls_nb_connect_os(host: string, port: int) -> int {
     if port <= 0 || port > 65535 || host.len == 0 || host.len >= 256 {
         return -1
@@ -1658,14 +1672,14 @@ fn tls_nb_connect_os(host: string, port: int) -> int {
     return TLS_BASE + slot
 }
 
-#[os("android", "other", "windows", "wasm")]
+#[os("android", "other", "wasm")]
 fn tls_nb_connect_os(host: string, port: int) -> int {
     return -1
 }
 
 /** *One step of a non-blocking connect: the TCP connect, then one */
 /** *handshake round. A failure frees the slot. */
-#[os("apple", "linux")]
+#[os("apple", "linux", "windows")]
 fn tls_nb_ready_os(fd: int) -> int {
     let slot = tls_slot_of(fd)
     if slot < 0 {
@@ -1703,14 +1717,14 @@ fn tls_nb_ready_os(fd: int) -> int {
     return -1
 }
 
-#[os("android", "other", "windows", "wasm")]
+#[os("android", "other", "wasm")]
 fn tls_nb_ready_os(fd: int) -> int {
     return -1
 }
 
 /** *One backend write of `data[off..]` (`off < data.len`): bytes taken, */
 /** *`0` when it would block. */
-#[os("apple", "linux")]
+#[os("apple", "linux", "windows")]
 fn tls_send(fd: int, data: string, off: int) -> int {
     last_would_block = false
     let slot = tls_slot_of(fd)
@@ -1727,7 +1741,7 @@ fn tls_send(fd: int, data: string, off: int) -> int {
 
 /** *One backend read of up to `max` bytes; `""` at the end, on an error, */
 /** *or when it would block (then `tcp_wouldblock` says so). */
-#[os("apple", "linux")]
+#[os("apple", "linux", "windows")]
 fn tls_read(fd: int, max: int) -> string {
     last_would_block = false
     let slot = tls_slot_of(fd)
@@ -1749,7 +1763,7 @@ fn tls_read(fd: int, max: int) -> string {
 }
 
 /** *Close a TLS handle: a best-effort `close_notify`, then free its slot. */
-#[os("apple", "linux")]
+#[os("apple", "linux", "windows")]
 fn tls_close(fd: int) {
     let slot = tls_slot_of(fd)
     if slot < 0 {
@@ -1760,7 +1774,7 @@ fn tls_close(fd: int) {
 }
 
 /** *A TLS handle's socket, handshake state or buffered bytes (`TLS_INFO_*`). */
-#[os("apple", "linux")]
+#[os("apple", "linux", "windows")]
 fn tls_info(fd: int, what: int) -> int {
     let slot = tls_slot_of(fd)
     if slot < 0 {
@@ -1777,7 +1791,7 @@ fn tls_info(fd: int, what: int) -> int {
 }
 
 /** *The TLS client behind the TCP calls, from the first TLS connect on. */
-#[os("apple", "linux")]
+#[os("apple", "linux", "windows")]
 fn install_tls() {
     tls_send_hook = tls_send
     tls_read_hook = tls_read
@@ -2356,7 +2370,635 @@ fn c_bio_set_flags(bio: i64, flags: i32) {}
 #[c("BIO_clear_flags", "link -lcrypto")]
 fn c_bio_clear_flags(bio: i64, flags: i32) {}
 
-// --- name lookup and C memory, for both backends ---------------------------------------
+// --- TLS backend: SChannel (Windows) -------------------------------------------------------
+//
+// SSPI over secur32. SChannel does no socket I/O: these ops send and
+// receive, and SChannel turns bytes into records and back. Its structs hold
+// pointers, so each connection is one zeroed C block (`calloc`), and its
+// address is the context the shared layer keeps:
+//
+//   0    CtxtHandle (two words)            16  state
+//   24   encrypted bytes in IN             32  OUT's first unsent byte
+//   40   OUT bytes left to send            48  plaintext's address in IN
+//   56   plaintext bytes left              64  SecPkgContext_StreamSizes
+//   88   the socket                        96  1 once IN needs more bytes
+//   104  bytes a parked record stands for  112 leftover ciphertext's address
+//   120  leftover ciphertext bytes         128 input SecBufferDesc
+//   144  output SecBufferDesc              160 four input SecBuffers
+//   224  four output SecBuffers            288 the host name, NUL-terminated
+//   544  IN (65,536 bytes)                 66080 OUT (20,480 bytes)
+//
+// One process-wide credential (`SCHANNEL_CRED`) checks the chain and the
+// host name (`SCH_CRED_AUTO_CRED_VALIDATION`), TLS 1.2: the legacy struct
+// cannot enable TLS 1.3. Layouts and codes are checked by `c_layouts`.
+
+const SC_STATE: i64 = 16
+const SC_IN_LEN: i64 = 24
+const SC_OUT_OFF: i64 = 32
+const SC_OUT_LEN: i64 = 40
+const SC_PLAIN_AT: i64 = 48
+const SC_PLAIN_LEN: i64 = 56
+const SC_SIZES: i64 = 64
+const SC_SOCKET: i64 = 88
+const SC_NEED_MORE: i64 = 96
+const SC_PARKED: i64 = 104
+const SC_EXTRA_AT: i64 = 112
+const SC_EXTRA_LEN: i64 = 120
+const SC_IN_DESC: i64 = 128
+const SC_OUT_DESC: i64 = 144
+const SC_IN_BUFS: i64 = 160
+const SC_OUT_BUFS: i64 = 224
+const SC_HOST: i64 = 288
+const SC_IN: i64 = 544
+const SC_IN_CAP: i64 = 65536
+const SC_OUT: i64 = 66080
+const SC_OUT_CAP: i64 = 20480
+const SC_BLOCK: i64 = 86560
+
+/** *Block states. */
+const SC_FIRST: i64 = 0
+const SC_SHAKING: i64 = 1
+const SC_READY: i64 = 2
+const SC_CLOSED: i64 = 3
+const SC_FAILED: i64 = 4
+
+/** *`SECURITY_STATUS` codes. */
+const SEC_E_OK: i32 = 0
+const SEC_I_CONTINUE_NEEDED: i32 = 590610
+const SEC_I_CONTEXT_EXPIRED: i32 = 590615
+const SEC_E_INCOMPLETE_MESSAGE: i32 = -2146893032
+/** *`SecBuffer` types. */
+const SECBUFFER_EMPTY: i64 = 0
+const SECBUFFER_DATA: i64 = 1
+const SECBUFFER_TOKEN: i64 = 2
+const SECBUFFER_EXTRA: i64 = 5
+const SECBUFFER_STREAM_TRAILER: i64 = 6
+const SECBUFFER_STREAM_HEADER: i64 = 7
+/** *Sequence and replay detection, confidentiality, SSPI-allocated tokens, */
+/** *extended errors, stream mode. */
+const SC_ISC_FLAGS: u32 = 49436
+const SECPKG_CRED_OUTBOUND: u32 = 2
+const SECPKG_ATTR_STREAM_SIZES: u32 = 4
+const SCHANNEL_CRED_VERSION: u32 = 4
+const SP_PROT_TLS1_2_CLIENT: u32 = 2048
+/** *`SCH_CRED_NO_DEFAULT_CREDS | SCH_CRED_AUTO_CRED_VALIDATION | */
+/** *SCH_USE_STRONG_CRYPTO`. */
+const SC_CRED_FLAGS: u32 = 4194352
+const SCHANNEL_SHUTDOWN: u32 = 1
+
+/** *The process's `CredHandle` (a 16-byte C block), `0` until the first */
+/** *connect or when SChannel refused. */
+let mut schannel_cred: i64 = i64(0)
+/** *One word between C memory and Loam. */
+let mut sc_word: []i64 = []i64 {}
+
+#[os("windows")]
+fn sc_get(at: i64) -> i64 {
+    c_load_words(sc_word, at, 8)
+    return sc_word[0]
+}
+
+#[os("windows")]
+fn sc_set(at: i64, value: i64) {
+    sc_word[0] = value
+    c_store_words(at, sc_word, 8)
+}
+
+/** *A `SecBuffer` at `at`: its size and type in one word, then the address. */
+#[os("windows")]
+fn sc_buffer(at: i64, size: i64, kind: i64, address: i64) {
+    sc_set(at, (size & i64(4294967295)) | (kind << 32))
+    sc_set(at + i64(8), address)
+}
+
+#[os("windows")]
+fn sc_buffer_size(at: i64) -> i64 {
+    return sc_get(at) & i64(4294967295)
+}
+
+#[os("windows")]
+fn sc_buffer_kind(at: i64) -> i64 {
+    return (sc_get(at) >> 32) & i64(4294967295)
+}
+
+/** *A `SecBufferDesc` at `at` over `n` buffers at `buffers`. */
+#[os("windows")]
+fn sc_desc(at: i64, n: i64, buffers: i64) {
+    sc_set(at, n << 32)
+    sc_set(at + i64(8), buffers)
+}
+
+/** *The process credential, made once; `false` when SChannel refused. */
+#[os("windows")]
+fn schannel_ready() -> bool {
+    if sc_word.len == 0 {
+        sc_word.push(i64(0))
+    }
+    if schannel_cred != i64(0) {
+        return true
+    }
+    let cred = c_calloc(u64(1), u64(16))
+    if cred == i64(0) {
+        return false
+    }
+    // `SCHANNEL_CRED`: 80 bytes, its pointers null.
+    let mut auth = []u32 {}
+    for i in 0..20 {
+        auth.push(u32(0))
+    }
+    auth[0] = SCHANNEL_CRED_VERSION
+    auth[14] = SP_PROT_TLS1_2_CLIENT
+    auth[18] = SC_CRED_FLAGS
+    let mut expiry = []i64 { i64(0) }
+    let st = c_acquire_credentials_handle(
+        i64(0),
+        "Microsoft Unified Security Protocol Provider",
+        SECPKG_CRED_OUTBOUND,
+        i64(0),
+        auth,
+        i64(0),
+        i64(0),
+        cred,
+        expiry,
+    )
+    if st != SEC_E_OK {
+        c_free(cred)
+        return false
+    }
+    schannel_cred = cred
+    return true
+}
+
+/** *A connection block for `host` over socket `fd`, or `0`. */
+#[os("windows")]
+fn tls_new(host: string, fd: i32) -> i64 {
+    if !schannel_ready() {
+        return i64(0)
+    }
+    let b = c_calloc(u64(1), u64(SC_BLOCK))
+    if b == i64(0) {
+        return i64(0)
+    }
+    sc_set(b + SC_SOCKET, i64(fd))
+    // `host.len < 256` (checked by the caller); the block is zeroed, so the
+    // name ends with a NUL.
+    c_copy_at(b + SC_HOST, string_bytes_at(host, 0), i64(host.len))
+    return b
+}
+
+/** *Send what OUT holds: 1 when it is all out, 0 when the socket is full, */
+/** *`-1` on an error. */
+#[os("windows")]
+fn sc_flush(b: i64) -> int {
+    while sc_get(b + SC_OUT_LEN) > i64(0) {
+        let off = sc_get(b + SC_OUT_OFF)
+        let left = sc_get(b + SC_OUT_LEN)
+        let n = c_send_at(i32(sc_get(b + SC_SOCKET)), b + SC_OUT + off, left, 0)
+        if n < i64(0) {
+            let e = c_errno()
+            if e == EINTR {
+                continue
+            }
+            return if e == e_again() { 0 } else { -1 }
+        }
+        sc_set(b + SC_OUT_OFF, off + n)
+        sc_set(b + SC_OUT_LEN, left - n)
+    }
+    sc_set(b + SC_OUT_OFF, i64(0))
+    return 1
+}
+
+/** *Receive into IN after what it holds: bytes read, `0` at EOF or on an */
+/** *error (or IN full), `TLS_WOULD_BLOCK`. */
+#[os("windows")]
+fn sc_receive(b: i64) -> int {
+    let have = sc_get(b + SC_IN_LEN)
+    if have >= SC_IN_CAP {
+        return 0
+    }
+    while true {
+        let n = c_recv_at(i32(sc_get(b + SC_SOCKET)), b + SC_IN + have, SC_IN_CAP - have, 0)
+        if n > i64(0) {
+            sc_set(b + SC_IN_LEN, have + n)
+            sc_set(b + SC_NEED_MORE, i64(0))
+            return int(n)
+        }
+        if n == i64(0) {
+            return 0
+        }
+        let e = c_errno()
+        if e != EINTR {
+            return if e == e_again() { TLS_WOULD_BLOCK } else { 0 }
+        }
+    }
+    return 0
+}
+
+/** *Queue an SSPI-allocated token in OUT and free it; `false` if too big. */
+#[os("windows")]
+fn sc_queue_token(b: i64) -> bool {
+    let size = sc_buffer_size(b + SC_OUT_BUFS)
+    let token = sc_get(b + SC_OUT_BUFS + i64(8))
+    if token == i64(0) || size == i64(0) {
+        return true
+    }
+    let fits = size <= SC_OUT_CAP
+    if fits {
+        c_copy_at(b + SC_OUT, token, size)
+        sc_set(b + SC_OUT_OFF, i64(0))
+        sc_set(b + SC_OUT_LEN, size)
+    }
+    c_free_context_buffer(token)
+    return fits
+}
+
+/** *After a call that read IN: keep only the bytes SChannel left over */
+/** *(`SECBUFFER_EXTRA` in input buffer 1), at the front of IN. */
+#[os("windows")]
+fn sc_keep_extra(b: i64) {
+    let have = sc_get(b + SC_IN_LEN)
+    if sc_buffer_kind(b + SC_IN_BUFS + i64(16)) == SECBUFFER_EXTRA {
+        let extra = sc_buffer_size(b + SC_IN_BUFS + i64(16))
+        c_move_at(b + SC_IN, b + SC_IN + have - extra, extra)
+        sc_set(b + SC_IN_LEN, extra)
+    } else {
+        sc_set(b + SC_IN_LEN, i64(0))
+    }
+}
+
+/** *`sc_initialize` modes: the first call (no context, no input), a */
+/** *handshake step (IN as input), the close_notify after a shutdown token */
+/** *(the context, no input). */
+const SC_CALL_FIRST: int = 0
+const SC_CALL_SHAKE: int = 1
+const SC_CALL_CLOSE: int = 2
+
+/** *One `InitializeSecurityContextA` call, its token (if any) in output */
+/** *buffer 0. */
+#[os("windows")]
+fn sc_initialize(b: i64, mode: int) -> i32 {
+    sc_buffer(b + SC_OUT_BUFS, i64(0), SECBUFFER_TOKEN, i64(0))
+    sc_desc(b + SC_OUT_DESC, i64(1), b + SC_OUT_BUFS)
+    let mut attrs = []u32 { u32(0) }
+    let mut expiry = []i64 { i64(0) }
+    if mode == SC_CALL_CLOSE {
+        return c_initialize_security_context(
+            schannel_cred, b, b + SC_HOST, SC_ISC_FLAGS, u32(0), u32(0),
+            i64(0), u32(0), b, b + SC_OUT_DESC, attrs, expiry,
+        )
+    }
+    if mode == SC_CALL_FIRST {
+        return c_initialize_security_context(
+            schannel_cred, i64(0), b + SC_HOST, SC_ISC_FLAGS, u32(0), u32(0),
+            i64(0), u32(0), b, b + SC_OUT_DESC, attrs, expiry,
+        )
+    }
+    sc_buffer(b + SC_IN_BUFS, sc_get(b + SC_IN_LEN), SECBUFFER_TOKEN, b + SC_IN)
+    sc_buffer(b + SC_IN_BUFS + i64(16), i64(0), SECBUFFER_EMPTY, i64(0))
+    sc_desc(b + SC_IN_DESC, i64(2), b + SC_IN_BUFS)
+    return c_initialize_security_context(
+        schannel_cred, b, b + SC_HOST, SC_ISC_FLAGS, u32(0), u32(0),
+        b + SC_IN_DESC, u32(0), b, b + SC_OUT_DESC, attrs, expiry,
+    )
+}
+
+/** *One handshake step: 1 done, 0 would block, `-1` failed (a refused */
+/** *certificate or host name included). */
+#[os("windows")]
+fn tls_shake(b: i64) -> int {
+    while true {
+        let flushed = sc_flush(b)
+        if flushed != 1 {
+            if flushed < 0 {
+                sc_set(b + SC_STATE, SC_FAILED)
+            }
+            return flushed
+        }
+        let state = sc_get(b + SC_STATE)
+        if state == SC_READY {
+            return 1
+        }
+        if state != SC_FIRST && state != SC_SHAKING {
+            return -1
+        }
+        let mut st = SEC_E_OK
+        if state == SC_FIRST {
+            st = sc_initialize(b, SC_CALL_FIRST)
+        } else {
+            if sc_get(b + SC_IN_LEN) == i64(0) || sc_get(b + SC_NEED_MORE) != i64(0) {
+                let got = sc_receive(b)
+                if got == TLS_WOULD_BLOCK {
+                    return 0
+                }
+                if got <= 0 {
+                    sc_set(b + SC_STATE, SC_FAILED)
+                    return -1
+                }
+            }
+            st = sc_initialize(b, SC_CALL_SHAKE)
+        }
+        if st == SEC_E_INCOMPLETE_MESSAGE {
+            sc_set(b + SC_NEED_MORE, i64(1))
+            continue
+        }
+        if st != SEC_E_OK && st != SEC_I_CONTINUE_NEEDED {
+            sc_set(b + SC_STATE, SC_FAILED)
+            return -1
+        }
+        if !sc_queue_token(b) {
+            sc_set(b + SC_STATE, SC_FAILED)
+            return -1
+        }
+        if state != SC_FIRST {
+            sc_keep_extra(b)
+        }
+        if st == SEC_I_CONTINUE_NEEDED {
+            sc_set(b + SC_STATE, SC_SHAKING)
+            continue
+        }
+        if c_query_context_attributes(b, SECPKG_ATTR_STREAM_SIZES, b + SC_SIZES) != SEC_E_OK {
+            sc_set(b + SC_STATE, SC_FAILED)
+            return -1
+        }
+        sc_set(b + SC_STATE, SC_READY)
+    }
+    return -1
+}
+
+/** *`StreamSizes` field `k`: header, trailer, maximum message. */
+#[os("windows")]
+fn sc_size(b: i64, k: int) -> i64 {
+    let pair = sc_get(b + SC_SIZES + i64((k / 2) * 8))
+    return if k % 2 == 0 { pair & i64(4294967295) } else { (pair >> 32) & i64(4294967295) }
+}
+
+/** *Encrypt up to one record of `data[off..]` into OUT and send it: bytes */
+/** *taken, `TLS_WOULD_BLOCK`, or `-1`. A record the socket would not take */
+/** *whole is parked, and the caller's retry (the same bytes, as with */
+/** *OpenSSL) finishes it and counts its bytes then. */
+#[os("windows")]
+fn tls_put(b: i64, data: string, off: int) -> int {
+    if sc_get(b + SC_STATE) != SC_READY {
+        return -1
+    }
+    if sc_get(b + SC_OUT_LEN) > i64(0) {
+        let flushed = sc_flush(b)
+        if flushed == 0 {
+            return TLS_WOULD_BLOCK
+        }
+        if flushed < 0 {
+            return -1
+        }
+        let parked = sc_get(b + SC_PARKED)
+        sc_set(b + SC_PARKED, i64(0))
+        return int(parked)
+    }
+    let header = sc_size(b, 0)
+    let trailer = sc_size(b, 1)
+    let most = sc_size(b, 2)
+    let mut take = i64(data.len - off)
+    if take > most {
+        take = most
+    }
+    if header + take + trailer > SC_OUT_CAP {
+        take = SC_OUT_CAP - header - trailer
+    }
+    c_copy_at(b + SC_OUT + header, string_bytes_at(data, off), take)
+    let bufs = b + SC_OUT_BUFS
+    sc_buffer(bufs, header, SECBUFFER_STREAM_HEADER, b + SC_OUT)
+    sc_buffer(bufs + i64(16), take, SECBUFFER_DATA, b + SC_OUT + header)
+    sc_buffer(bufs + i64(32), trailer, SECBUFFER_STREAM_TRAILER, b + SC_OUT + header + take)
+    sc_buffer(bufs + i64(48), i64(0), SECBUFFER_EMPTY, i64(0))
+    sc_desc(b + SC_OUT_DESC, i64(4), bufs)
+    if c_encrypt_message(b, u32(0), b + SC_OUT_DESC, u32(0)) != SEC_E_OK {
+        return -1
+    }
+    let total = sc_buffer_size(bufs) + sc_buffer_size(bufs + i64(16)) + sc_buffer_size(bufs + i64(32))
+    sc_set(b + SC_OUT_OFF, i64(0))
+    sc_set(b + SC_OUT_LEN, total)
+    let flushed = sc_flush(b)
+    if flushed < 0 {
+        return -1
+    }
+    if flushed == 0 {
+        sc_set(b + SC_PARKED, take)
+        return TLS_WOULD_BLOCK
+    }
+    return int(take)
+}
+
+/** *Hand out up to `max` decrypted bytes into `read_cell`; when the last */
+/** *are taken, the leftover ciphertext moves to the front of IN. */
+#[os("windows")]
+fn sc_take_plain(b: i64, max: int) -> int {
+    let at = sc_get(b + SC_PLAIN_AT)
+    let left = sc_get(b + SC_PLAIN_LEN)
+    let n = if left > i64(max) { i64(max) } else { left }
+    c_load_bytes(read_cell, at, n)
+    sc_set(b + SC_PLAIN_AT, at + n)
+    sc_set(b + SC_PLAIN_LEN, left - n)
+    if left == n {
+        sc_drop_record(b)
+    }
+    return int(n)
+}
+
+/** *The decrypted record is used up: its leftover ciphertext moves to the */
+/** *front of IN. */
+#[os("windows")]
+fn sc_drop_record(b: i64) {
+    let extra = sc_get(b + SC_EXTRA_LEN)
+    if extra > i64(0) {
+        c_move_at(b + SC_IN, sc_get(b + SC_EXTRA_AT), extra)
+    }
+    sc_set(b + SC_IN_LEN, extra)
+    sc_set(b + SC_EXTRA_LEN, i64(0))
+    sc_set(b + SC_PLAIN_LEN, i64(0))
+}
+
+/** *One read of up to `max` bytes into `read_cell`: bytes read (`0` at the */
+/** *end or on an error), or `TLS_WOULD_BLOCK`. */
+#[os("windows")]
+fn tls_get(b: i64, max: int) -> int {
+    while true {
+        if sc_get(b + SC_PLAIN_LEN) > i64(0) {
+            return sc_take_plain(b, max)
+        }
+        if sc_get(b + SC_STATE) != SC_READY {
+            return 0
+        }
+        if sc_get(b + SC_IN_LEN) == i64(0) || sc_get(b + SC_NEED_MORE) != i64(0) {
+            let got = sc_receive(b)
+            if got == TLS_WOULD_BLOCK {
+                return TLS_WOULD_BLOCK
+            }
+            if got <= 0 {
+                return 0
+            }
+        }
+        let bufs = b + SC_IN_BUFS
+        sc_buffer(bufs, sc_get(b + SC_IN_LEN), SECBUFFER_DATA, b + SC_IN)
+        sc_buffer(bufs + i64(16), i64(0), SECBUFFER_EMPTY, i64(0))
+        sc_buffer(bufs + i64(32), i64(0), SECBUFFER_EMPTY, i64(0))
+        sc_buffer(bufs + i64(48), i64(0), SECBUFFER_EMPTY, i64(0))
+        sc_desc(b + SC_IN_DESC, i64(4), bufs)
+        let st = c_decrypt_message(b, b + SC_IN_DESC, u32(0), i64(0))
+        if st == SEC_E_INCOMPLETE_MESSAGE {
+            sc_set(b + SC_NEED_MORE, i64(1))
+            continue
+        }
+        if st == SEC_I_CONTEXT_EXPIRED {
+            // The peer's close_notify: the end.
+            sc_set(b + SC_STATE, SC_CLOSED)
+            return 0
+        }
+        if st != SEC_E_OK {
+            sc_set(b + SC_STATE, SC_FAILED)
+            return 0
+        }
+        sc_set(b + SC_PLAIN_LEN, i64(0))
+        sc_set(b + SC_EXTRA_LEN, i64(0))
+        for k in 0..4 {
+            let at = bufs + i64(k * 16)
+            let kind = sc_buffer_kind(at)
+            if kind == SECBUFFER_DATA {
+                sc_set(b + SC_PLAIN_AT, sc_get(at + i64(8)))
+                sc_set(b + SC_PLAIN_LEN, sc_buffer_size(at))
+            } else if kind == SECBUFFER_EXTRA {
+                sc_set(b + SC_EXTRA_AT, sc_get(at + i64(8)))
+                sc_set(b + SC_EXTRA_LEN, sc_buffer_size(at))
+            }
+        }
+        if sc_get(b + SC_PLAIN_LEN) == i64(0) {
+            sc_drop_record(b)
+        }
+    }
+    return 0
+}
+
+/** *Decrypted bytes wait, or IN holds ciphertext not yet tried. */
+#[os("windows")]
+fn tls_buffered(b: i64) -> bool {
+    return sc_get(b + SC_PLAIN_LEN) > i64(0) ||
+        (sc_get(b + SC_IN_LEN) > i64(0) && sc_get(b + SC_NEED_MORE) == i64(0))
+}
+
+/** *A best-effort close_notify: one send attempt, not waited for. */
+#[os("windows")]
+fn tls_end(b: i64) {
+    if sc_get(b + SC_STATE) != SC_READY {
+        return
+    }
+    sc_set(b + SC_STATE, SC_CLOSED)
+    // The `SCHANNEL_SHUTDOWN` DWORD lives in the parked-record word, which
+    // a closing connection no longer needs.
+    sc_set(b + SC_PARKED, i64(SCHANNEL_SHUTDOWN))
+    let bufs = b + SC_OUT_BUFS
+    sc_buffer(bufs, i64(4), SECBUFFER_TOKEN, b + SC_PARKED)
+    sc_desc(b + SC_OUT_DESC, i64(1), bufs)
+    if c_apply_control_token(b, b + SC_OUT_DESC) != SEC_E_OK {
+        return
+    }
+    if sc_initialize(b, SC_CALL_CLOSE) == SEC_E_OK && sc_queue_token(b) {
+        sc_flush(b)
+    }
+}
+
+#[os("windows")]
+fn tls_free(b: i64) {
+    if sc_get(b) != i64(0) || sc_get(b + i64(8)) != i64(0) {
+        c_delete_security_context(b)
+    }
+    c_free(b)
+}
+
+/** *`AcquireCredentialsHandleA(principal, package, use, logon id, auth data, */
+/** *key fn, key arg, credential, expiry)`. */
+#[os("windows")]
+#[c("AcquireCredentialsHandleA", "link -lsecur32")]
+fn c_acquire_credentials_handle(
+    principal: i64,
+    package: string,
+    use: u32,
+    logon_id: i64,
+    auth: &[]u32,
+    key_fn: i64,
+    key_arg: i64,
+    credential: i64,
+    expiry: &mut []i64
+) -> i32 {}
+
+/** *`InitializeSecurityContextA(credential, context, target, flags, 0, */
+/** *data rep, input, 0, new context, output, attributes, expiry)`. */
+#[os("windows")]
+#[c("InitializeSecurityContextA", "link -lsecur32")]
+fn c_initialize_security_context(
+    credential: i64,
+    context: i64,
+    target: i64,
+    flags: u32,
+    reserved: u32,
+    data_rep: u32,
+    input: i64,
+    reserved2: u32,
+    new_context: i64,
+    output: i64,
+    attributes: &mut []u32,
+    expiry: &mut []i64
+) -> i32 {}
+
+#[os("windows")]
+#[c("QueryContextAttributesA", "link -lsecur32")]
+fn c_query_context_attributes(context: i64, attribute: u32, into: i64) -> i32 {}
+
+#[os("windows")]
+#[c("EncryptMessage", "link -lsecur32")]
+fn c_encrypt_message(context: i64, qop: u32, message: i64, sequence: u32) -> i32 {}
+
+#[os("windows")]
+#[c("DecryptMessage", "link -lsecur32")]
+fn c_decrypt_message(context: i64, message: i64, sequence: u32, qop: i64) -> i32 {}
+
+#[os("windows")]
+#[c("ApplyControlToken", "link -lsecur32")]
+fn c_apply_control_token(context: i64, input: i64) -> i32 {}
+
+#[os("windows")]
+#[c("FreeContextBuffer", "link -lsecur32")]
+fn c_free_context_buffer(buffer: i64) -> i32 {}
+
+#[os("windows")]
+#[c("DeleteSecurityContext", "link -lsecur32")]
+fn c_delete_security_context(context: i64) -> i32 {}
+
+#[os("windows")]
+#[c("calloc")]
+fn c_calloc(count: u64, size: u64) -> i64 {}
+
+#[os("windows")]
+#[c("free")]
+fn c_free(block: i64) {}
+
+/** *`memcpy` and `memmove` between addresses in C memory this module made */
+/** *(a connection block) or SSPI handed over, each with its exact size. */
+#[os("windows")]
+#[c("memcpy")]
+fn c_copy_at(dst: i64, src: i64, n: i64) -> i64 {}
+
+#[os("windows")]
+#[c("memmove")]
+fn c_move_at(dst: i64, src: i64, n: i64) -> i64 {}
+
+#[os("windows")]
+#[c("memcpy")]
+fn c_load_bytes(dst: &mut []u8, src: i64, n: i64) -> i64 {}
+
+#[os("windows")]
+#[c("memcpy")]
+fn c_store_words(dst: i64, src: &[]i64, n: i64) -> i64 {}
+
+
+// --- name lookup and C memory, for every backend --------------------------------------
 
 #[os("apple", "linux")]
 #[c("getaddrinfo")]
@@ -2365,6 +3007,48 @@ fn c_getaddrinfo(host: string, service: string, hints: &[]i32, list: &mut []i64)
 #[os("apple", "linux")]
 #[c("freeaddrinfo")]
 fn c_freeaddrinfo(list: i64) {}
+
+/** *Winsock's `getaddrinfo`, after `WSAStartup` (it may be the first */
+/** *Winsock call). */
+#[os("windows")]
+fn c_getaddrinfo(host: string, service: string, hints: &[]i32, list: &mut []i64) -> i32 {
+    if !start_winsock() {
+        return -1
+    }
+    return c_wsa_getaddrinfo(host, service, hints, list)
+}
+
+#[os("windows")]
+fn c_freeaddrinfo(list: i64) {
+    c_wsa_freeaddrinfo(list)
+}
+
+#[os("windows")]
+fn c_connect_at(fd: i32, addr: i64, len: u32) -> i32 {
+    return c_wsa_connect_at(i64(fd), addr, i32(len))
+}
+
+#[os("windows")]
+fn c_recv_at(fd: i32, into: i64, len: i64, flags: i32) -> i64 {
+    let part = if len > i64(2147483647) { i64(2147483647) } else { len }
+    return i64(c_wsa_recv_at(i64(fd), into, i32(part), flags))
+}
+
+#[os("windows")]
+#[c("getaddrinfo", "link -lws2_32")]
+fn c_wsa_getaddrinfo(host: string, service: string, hints: &[]i32, list: &mut []i64) -> i32 {}
+
+#[os("windows")]
+#[c("freeaddrinfo", "link -lws2_32")]
+fn c_wsa_freeaddrinfo(list: i64) {}
+
+#[os("windows")]
+#[c("connect", "link -lws2_32")]
+fn c_wsa_connect_at(sock: i64, addr: i64, len: i32) -> i32 {}
+
+#[os("windows")]
+#[c("recv", "link -lws2_32")]
+fn c_wsa_recv_at(sock: i64, into: i64, len: i32, flags: i32) -> i32 {}
 
 /** *`connect` to an address C handed over (an `addrinfo`'s `ai_addr`). */
 #[os("apple", "linux")]
@@ -2379,7 +3063,7 @@ fn c_recv_at(fd: i32, into: i64, len: i64, flags: i32) -> i64 {}
 /** *`memcpy` between C's memory and a Loam cell: the `addrinfo` walk and */
 /** *the callbacks' length word. Only this module's wrappers call them, each */
 /** *with an address C just handed over and its exact size. */
-#[os("apple", "linux")]
+#[os("apple", "linux", "windows")]
 #[c("memcpy")]
 fn c_load_words(dst: &mut []i64, src: i64, n: i64) -> i64 {}
 
