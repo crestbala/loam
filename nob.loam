@@ -2878,7 +2878,19 @@ fn ig_c_layouts() {
     p = cat(p, "SIZE(SOCKET, 8); SIZE(WSAPOLLFD, 16); AT(WSAPOLLFD, events, 8); AT(WSAPOLLFD, revents, 10); FITS(WSADATA, 64); SIZE(u_long, 4); SIZE(DWORD, 4);\n")
     p = cat(p, "IS(AF_INET, 2); IS(SOCK_STREAM, 1); IS(MSG_PEEK, 2); IS(SOL_SOCKET, 65535); IS(SO_RCVTIMEO, 4102); IS(SO_ERROR, 4103);\n")
     p = cat(p, "IS(WSAEWOULDBLOCK, 10035); IS(WSAEALREADY, 10037); IS(WSAEINTR, 10004); IS((long)FIONBIO, -2147195266L); IS(HANDLE_FLAG_INHERIT, 1);\n")
-    p = cat(p, "IS(SD_SEND, 1); IS(POLLRDNORM, 256); IS(POLLRDBAND, 512); IS(POLLWRNORM, 16); IS(POLLERR, 1); IS(POLLHUP, 2); IS(POLLNVAL, 4); IS(MAKEWORD(2, 2), 514);\n#endif\n")
+    p = cat(p, "IS(SD_SEND, 1); IS(POLLRDNORM, 256); IS(POLLRDBAND, 512); IS(POLLWRNORM, 16); IS(POLLERR, 1); IS(POLLHUP, 2); IS(POLLNVAL, 4); IS(MAKEWORD(2, 2), 514);\n")
+    // std:net's SChannel TLS: the SSPI structs it builds in C memory word by
+    // word, `addrinfo`, and every code it passes or compares.
+    p = cat(p, "#include <ws2tcpip.h>\n#define SECURITY_WIN32\n#include <security.h>\n#include <schannel.h>\n")
+    p = cat(p, "SIZE(struct addrinfo, 48); AT(struct addrinfo, ai_addrlen, 16); AT(struct addrinfo, ai_addr, 32); AT(struct addrinfo, ai_next, 40); IS(SO_SNDTIMEO, 4101);\n")
+    p = cat(p, "SIZE(SecBuffer, 16); AT(SecBuffer, BufferType, 4); AT(SecBuffer, pvBuffer, 8); SIZE(SecBufferDesc, 16); AT(SecBufferDesc, cBuffers, 4); AT(SecBufferDesc, pBuffers, 8);\n")
+    p = cat(p, "SIZE(CtxtHandle, 16); SIZE(CredHandle, 16); SIZE(TimeStamp, 8); SIZE(SCHANNEL_CRED, 80); AT(SCHANNEL_CRED, grbitEnabledProtocols, 56); AT(SCHANNEL_CRED, dwFlags, 72);\n")
+    p = cat(p, "SIZE(SecPkgContext_StreamSizes, 20); AT(SecPkgContext_StreamSizes, cbTrailer, 4); AT(SecPkgContext_StreamSizes, cbMaximumMessage, 8);\n")
+    p = cat(p, "IS(SEC_E_OK, 0); IS(SEC_I_CONTINUE_NEEDED, 590610); IS(SEC_I_CONTEXT_EXPIRED, 590615); IS((int)SEC_E_INCOMPLETE_MESSAGE, -2146893032);\n")
+    p = cat(p, "IS(SECBUFFER_EMPTY, 0); IS(SECBUFFER_DATA, 1); IS(SECBUFFER_TOKEN, 2); IS(SECBUFFER_EXTRA, 5); IS(SECBUFFER_STREAM_TRAILER, 6); IS(SECBUFFER_STREAM_HEADER, 7);\n")
+    p = cat(p, "IS(ISC_REQ_SEQUENCE_DETECT | ISC_REQ_REPLAY_DETECT | ISC_REQ_CONFIDENTIALITY | ISC_REQ_ALLOCATE_MEMORY | ISC_REQ_EXTENDED_ERROR | ISC_REQ_STREAM, 49436);\n")
+    p = cat(p, "IS(SECPKG_CRED_OUTBOUND, 2); IS(SECPKG_ATTR_STREAM_SIZES, 4); IS(SCHANNEL_CRED_VERSION, 4); IS(SP_PROT_TLS1_2_CLIENT, 2048); IS(SCHANNEL_SHUTDOWN, 1);\n")
+    p = cat(p, "IS(SCH_CRED_NO_DEFAULT_CREDS | SCH_CRED_AUTO_CRED_VALIDATION | SCH_USE_STRONG_CRYPTO, 4194352);\n#endif\n")
     // std:net's OpenSSL backend (Linux), when OpenSSL's headers are here:
     // the `SSL_ctrl` codes its macros expand to, the error and BIO codes,
     // and the BIO callback types its Loam fns stand in for.
@@ -2932,7 +2944,7 @@ fn ig_c_layouts() {
     }
     let with_raylib = if raylib.len > 0 { ", raylib" } else { "" }
     let with_openssl = if openssl.len > 0 || sys.exists("/usr/include/openssl/ssl.h") == 1 { ", OpenSSL" } else { "" }
-    ok("c layouts (timespec, sockaddr_in, pollfd, addrinfo, SecureTransport{{with_openssl}}, kevent, task_vm_info, inotify_event, rusage, Winsock{{with_raylib}}: {{names}})")
+    ok("c layouts (timespec, sockaddr_in, pollfd, addrinfo, SecureTransport{{with_openssl}}, kevent, task_vm_info, inotify_event, rusage, Winsock, SChannel{{with_raylib}}: {{names}})")
 }
 
 /** *`(void *)&sym, ` for each `#[c("sym", "link -lssl ...")]` or */

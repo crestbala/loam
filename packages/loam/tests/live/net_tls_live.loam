@@ -1,0 +1,131 @@
+// The TLS client against the real internet: certificates that must be
+// refused (badssl.com's wrong host name, expired and self-signed), then a
+// blocking and a non-blocking GET of example.com that must succeed, on
+// SecureTransport (Apple), OpenSSL (Linux) or SChannel (Windows).
+//
+// Not in the suite (it takes seconds of network): CI's selfhost workflow
+// runs it on Linux and Windows and requires "tls ok". Offline (example.com
+// unreachable) it prints "tls offline: skipped" and exits 0.
+
+import "std:fmt"
+import "std:net"
+import "std:str"
+import "std:sys"
+
+fn fail(what: string) {
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+/** *A refused certificate fails the connect; a stale handle stays refused. */
+fn refused(host: string) {
+    let fd = net.tls_connect(host, 443)
+    if fd >= 0 {
+        net.tcp_close(fd)
+        fail("accepted the certificate of {{host}}")
+    }
+}
+
+/** *Everything `fd` sends until it closes (non-blocking aware). */
+fn read_all(fd: int) -> string {
+    let mut acc = ""
+    let mut rounds = 0
+    while rounds < 4000 {
+        let chunk = net.tcp_read(fd, 65536)
+        if chunk.len > 0 {
+            acc = "{{acc}}{{chunk}}"
+        } else if net.tcp_wouldblock() == 1 {
+            net.tcp_poll(fd, 1, 25)
+        } else {
+            return acc
+        }
+        rounds += 1
+    }
+    return acc
+}
+
+fn request() -> string {
+    return "GET / HTTP/1.1\r\nHost: example.com\r\nUser-Agent: loam-tls\r\nConnection: close\r\n\r\n"
+}
+
+/** *A blocking connect, retried twice: some links mangle a first handshake. */
+fn blocking_get() -> string {
+    let mut fd = -1
+    for k in 0..3 {
+        if fd < 0 {
+            fd = net.tls_connect("example.com", 443)
+        }
+    }
+    if fd < 0 {
+        return ""
+    }
+    if net.tcp_so_error(fd) != 0 {
+        fail("a connected handle reports an error")
+    }
+    if net.tcp_write(fd, request()) != request().len {
+        fail("blocking write")
+    }
+    let reply = read_all(fd)
+    net.tcp_close(fd)
+    net.tcp_close(fd)
+    if net.tcp_read(fd, 10).len != 0 || net.tcp_write(fd, "x") != -1 {
+        fail("a closed handle still works")
+    }
+    return reply
+}
+
+fn nonblocking_get() -> string {
+    let fd = net.tls_nb_connect("example.com", 443)
+    if fd < 0 {
+        fail("non-blocking connect")
+    }
+    let mut st = 0
+    let mut rounds = 0
+    while st == 0 && rounds < 600 {
+        st = net.tls_nb_ready(fd)
+        if st == 0 {
+            net.tcp_poll(fd, 1, 25)
+        }
+        rounds += 1
+    }
+    if st != 1 {
+        fail("non-blocking handshake ({{st}})")
+    }
+    let req = request()
+    let mut off = 0
+    rounds = 0
+    while off < req.len && rounds < 2000 {
+        let n = net.tcp_send(fd, req, off)
+        if n < 0 {
+            fail("non-blocking send")
+        }
+        off += n
+        if n == 0 {
+            net.tcp_poll(fd, 2, 25)
+        }
+        rounds += 1
+    }
+    let reply = read_all(fd)
+    net.tcp_close(fd)
+    return reply
+}
+
+fn main() {
+    let blocking = blocking_get()
+    if blocking.len == 0 {
+        fmt.println("tls offline: skipped")
+        return
+    }
+    if !str.starts_with(blocking, "HTTP/1.1 200") {
+        fail("blocking GET: {{str.slice(blocking, 0, 40)}}")
+    }
+    let nb = nonblocking_get()
+    if !str.starts_with(nb, "HTTP/1.1 200") {
+        fail("non-blocking GET: {{str.slice(nb, 0, 40)}}")
+    }
+    refused("wrong.host.badssl.com")
+    refused("expired.badssl.com")
+    refused("self-signed.badssl.com")
+    refused("untrusted-root.badssl.com")
+    fmt.println("tls ok")
+}

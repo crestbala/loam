@@ -36,11 +36,13 @@ links a stub of it on Linux, since zig ships no OpenSSL: the link checks the
 rest, and `nob integration c_layouts` checks the bound names against
 OpenSSL's headers.
 
-**TLS.** `net.tls_connect` is SecureTransport on macOS and iOS and OpenSSL
+**TLS.** `net.tls_connect` is SecureTransport on macOS and iOS, SChannel on
+Windows, and OpenSSL
 (1.1.1 or 3.x, `libssl-dev`) on Linux, with the system's CA store, the host
 name checked and TLS 1.2 at least. Its bindings name their libraries, so a
 program that never connects over TLS links neither Security.framework nor
-libssl. Android and Windows have no TLS client yet (`-1`).
+libssl. On Windows it is SChannel (TLS 1.2). Android has no TLS client yet
+(`-1`).
 A library is linked for the OSes of the bindings that name it: on Windows,
 `win-bundle.sh` writes `link||-lws2_32` into a fixture's `.deps` and
 `cross-check.sh` links MinGW's own.
@@ -48,7 +50,8 @@ A library is linked for the OSes of the bindings that name it: on Windows,
 **`std:net` on Windows** is Winsock (R5.4): the same TCP logic as POSIX
 over `ws2_32` bindings, linked only by programs that open a socket.
 `tools/win-run.sh` runs every fixture there, the socket ones included.
-TLS is not there yet (`tls_connect` answers `-1`).
+TLS is SChannel (R5.5), through secur32, with the system's certificate
+store and the host name checked.
 
 ## C compilers
 
