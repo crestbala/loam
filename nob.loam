@@ -2314,9 +2314,11 @@ fn ig_cost() {
         bad("cost report (loop index not elided: bounds={{bounds}})", o)
         return
     }
-    /* One trap remains: the for-loop's own `i = i + 1` latch, whose operands
-       are not literals. The literal `1000 + 2000` folded, so it added none. */
-    if traps != 1 {
+    /* None remains: the for-loop's own `i = i + 1` latch cannot overflow
+       (the head tested `i < hi`), and the literal `1000 + 2000` folded. The
+       panic path every program carries (std:panic, std:decimal) keeps none
+       either. */
+    if traps != 0 {
         bad("cost report (literal arithmetic not elided: traps={{traps}})", o)
         return
     }
@@ -3411,7 +3413,7 @@ fn grammar() -> int {
 // deletes the C, so the runtime can only shrink. The target is zero.
 
 /** *Lines allowed under `packages/loam/runtime/`. Lower it when a step lands. */
-let RUNTIME_LINE_BUDGET: int = 5080
+let RUNTIME_LINE_BUDGET: int = 5006
 
 /** *The group a tracked C file belongs to, or `""` for C that is not shipped. */
 fn trusted_group(path: string) -> string {

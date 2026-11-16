@@ -221,7 +221,7 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       `wasm_inc`), hosts 4,871, vendored 346,122 (sqlite, monocypher, raygui
       and the generated tree-sitter parser).
 - [x] R0.2 The budget: `RUNTIME_LINE_BUDGET` in `nob.loam`, set at 9,939
-      and lowered by each step since (now **5,080**, after R6.1).
+      and lowered by each step since (now **5,006**, after R6.2).
       `nob trusted` and the unfiltered `nob test` fail if `runtime/` grows
       past it. Each step below lowers it to its new count in the same
       change.
@@ -1653,7 +1653,8 @@ done, so every R3 step is checked by `thread_tsan`).
 
 **R6. The core: zero runtime.** What remains of `loam_rt.h`: allocation,
 refcounts, owned strings, vec growth and copy-on-write, element and env drop
-hooks, panics and traps (checked integer ops left with R6.1).
+hooks, the trap arm (checked integer ops left with R6.1, the panic path
+with R6.2).
 
 - [x] R6.1 Checked integer ops emitted by codegen, only where used. Done
       2026-11-16. Every integer helper left `loam_rt.h`: checked `+ - * / %`,
@@ -1701,7 +1702,62 @@ hooks, panics and traps (checked integer ops left with R6.1).
       `thread_tsan`, `lsp`, `cost`, `fresh_cache`, `android_project`,
       `serve_native` green; `cross-check.sh` Linux and Windows 125/125 on
       both CPUs. **Runtime: 5,359 → 5,080** (−279).
-- [ ] R6.2 Panic and trap path: a Loam fn over `write` + `abort` bindings.
+- [x] R6.2 Panic and trap path: a Loam fn over `write` + `abort` bindings.
+      Done 2026-11-16. `std:panic` (loaded into every program like
+      `std:decimal`; `report` and `trap` are DCE C roots) does what
+      `loam_panic` did: `fflush(NULL)` and `abort` as raw bindings
+      (`#[os("wasm")]` variants: nothing to flush, and the wasm `abort` hook),
+      `file:line: panic: msg` on stderr through `fmt.ewrite`, the message
+      kept for the hosts (`record`), then the jump to the innermost arm
+      (`unwind`) or abort. It allocates nothing (an out-of-memory panic comes
+      through it), reads no module `let` (panics come before module init and
+      on workers), and keeps no check that could panic again: the line is
+      written by its own sign-free digit loop, which `ranges` proves.
+      `loam_panic` / `loam_panic_str` / the web release's `loam_trap` are now
+      two-line C trampolines that turn C strings into views, so no call
+      site changes. What stays C: the `setjmp` arm (`loam_trap_guard`; it
+      must run in the frame it returns to), the 512-byte message buffer the
+      hosts read, and two one-line hooks over them.
+      **Also deleted:** `loam_writev_fd` / `loam_writev_all`, which nothing
+      called, with the Windows `writev` shim, `sys/uio.h` and wasm's
+      `writev` and `wasm_inc/sys/uio.h`; and the wasm `fprintf`'s panic
+      special case, which read `panic(msg)`'s length as the message pointer
+      (a bug, now gone with the path).
+      **Bug fixed on the way:** `--cost` counted every `for` loop's
+      `i + 1` latch as an overflow trap, but codegen always wrote it plain
+      (the Bin had no type, so no helper). It cannot overflow (the head
+      tested `i < hi`), so the IR no longer marks it checked, and the `cost`
+      stanza expects 0 traps, not 1. A first draft wrote the line through
+      `decimal.ewrite_int`, which kept `magnitude_of` and `fill`'s sign
+      checks in every program. Moving the sign into `fill`'s loop removed
+      them but made negative numbers 7% slower, so `fill` is unchanged and
+      the panic path has its own loop.
+      **Checks:** a probe (overflow, index, division by zero, `panic` with
+      an interpolated, a 700-byte and an empty message, narrowing, shift,
+      stdout to a file and through a pipe) and a panic on a worker thread
+      print the same stdout and stderr, with the same exit code, as HEAD's
+      compiler; ASan+UBSan clean. `--int64-compat` caught a first draft
+      whose `line: int` was 64 bits against the header's `int32_t` (`line`
+      is `i32` now).
+      **Speed:** negative integers to text (20M `buf.push_int` + 3M
+      interpolations) 367 vs 366 ms (median of 7). Compile: a program with
+      no imports 5.4 vs 5.2 ms (it now loads `std:fmt`), the compiler on
+      HEAD's sources 165.3 vs 165.4 ms.
+      **Binaries** (new vs HEAD): tiny `fmt.println(42)` 33,688 both with
+      the same `__text` (the linker drops the uncalled path). A program that
+      can panic carries the path as Loam where it called libc's `fprintf`:
+      `__text` +700 to +830 bytes, while its file shrinks 32 to 64 bytes.
+      Seed 5,241,692 → 5,249,370 bytes, seed = stage 1 = stage 2.
+      **Suite:** `compile_pass` (710), `golden` (135), `compile_fail` (175),
+      `zeus` (455; one run of five had one failure whose name I did not
+      capture, and four clean runs followed), `http` (39), `thread`,
+      `async`, `trap`, `boundary`, `decimal`, `c_ffi`, `c_attr`, `sys_`,
+      `os_`, `maya`, `raygui`; `selfhost_seed`, `cost`, `fresh_cache`, the
+      three wasm stanzas, `ownership_asan`, `thread_tsan`, `lsp`,
+      `android_project`, the `serve_*` stanzas, `server_split`, `modules`,
+      `loader_cases`, `api_freeze`, `one_surface`, the lint stanzas,
+      `c_layouts` and `watch` green; `cross-check.sh` Linux and Windows
+      125/125 on both CPUs. **Runtime: 5,080 → 5,006** (−74).
 - [ ] R6.3 Decide, with a measured prototype, how allocation, refcounts and
       vec buffers leave C: the minimal `unsafe` of §4 in a `std:core`
       module, or emitted by codegen per type, with no extra memory per value

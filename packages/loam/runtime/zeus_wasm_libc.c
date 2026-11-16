@@ -7,7 +7,6 @@
 #include <unistd.h>
 #include <errno.h>
 #include <stdarg.h>
-#include <sys/uio.h>
 
 __attribute__((import_module("zeus"), import_name("write")))
 void zeus_js_write(const char *p, int32_t n);
@@ -306,16 +305,6 @@ ssize_t write(int fd, const void *p, size_t n) {
     return (ssize_t)n;
 }
 
-ssize_t writev(int fd, const struct iovec *iov, int n) {
-    int i;
-    ssize_t t = 0;
-    for (i = 0; i < n; i++) {
-        write(fd, iov[i].iov_base, iov[i].iov_len);
-        t += (ssize_t)iov[i].iov_len;
-    }
-    return t;
-}
-
 static void js_print(const char *s) {
     if (s) zeus_js_write(s, (int32_t)strlen(s));
 }
@@ -327,22 +316,7 @@ int fflush(FILE *f) {
 
 int fprintf(FILE *f, const char *fmt, ...) {
     va_list ap;
-    char buf[256];
     (void)f;
-    if (fmt && fmt[0] == '%' && fmt[1] == 's' && fmt[2] == ':' && fmt[3] == '%') {
-        const char *file;
-        int line;
-        const char *msg;
-        va_start(ap, fmt);
-        file = va_arg(ap, const char *);
-        line = va_arg(ap, int);
-        msg = va_arg(ap, const char *);
-        va_end(ap);
-        snprintf(buf, sizeof buf, "%s:%d: panic: %s\n", file ? file : "?", line,
-                 msg ? msg : "");
-        js_print(buf);
-        return 0;
-    }
     va_start(ap, fmt);
     (void)ap;
     va_end(ap);
