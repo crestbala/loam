@@ -922,20 +922,6 @@ static inline loam_vec loam_sys_read_fd(int64_t fd, int64_t n) {
    caller polls. */
 #endif
 
-/* --- typed handle cells -------------------------------------------------
-   `Future<T>`, `Chan<T>` and `Signal<T>` are plain `{ id: int }` structs, so a
-   program can build one at any `T`. Each cell records the key of the type it
-   was made for (a hash of the type's spelling, a constant in the generated
-   C; never 0), and every access passes the key it expects. A mismatch is a
-   forged handle: reading the cell's bytes as another type could take an int
-   for a pointer, so it panics instead. */
-__attribute__((noinline, noreturn, cold, unused)) static void loam_handle_wrong_type(const char *what) {
-    char msg[96];
-    snprintf(msg, sizeof msg, "%s handle used at the wrong type", what);
-    loam_panic(__FILE__, __LINE__, msg);
-    abort();
-}
-
 #ifdef __wasm32__
 /* `std:async` binds `clock_gettime` / `nanosleep` itself on native (`#[c]`);
    wasm binds no libc, so the two wasm bridges live here (like `sys.wasm_exit`

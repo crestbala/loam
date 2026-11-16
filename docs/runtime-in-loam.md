@@ -239,7 +239,7 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       `wasm_inc`), hosts 4,871, vendored 346,122 (sqlite, monocypher, raygui
       and the generated tree-sitter parser).
 - [x] R0.2 The budget: `RUNTIME_LINE_BUDGET` in `nob.loam`, set at 9,939
-      and lowered by each step since (now **4,745**, after R6.4).
+      and lowered by each step since (now **4,511**, during R6.5).
       `nob trusted` and the unfiltered `nob test` fail if `runtime/` grows
       past it. Each step below lowers it to its new count in the same
       change.
@@ -1878,6 +1878,45 @@ with R6.2).
 
 - [ ] R6.5 `zeus_wasm_libc.c` reduced to nothing: what wasm still needs
       (memory growth, `memcpy`) is Loam or a wasm import.
+      Started 2026-11-16, three changes in, **439 → 215 lines**. The
+      inventory linked all 15 wasm programs in the repo (the wasm stanza
+      apps, the Zeus examples, both galleries, `www`, `oob`). It stubbed
+      the libc out to see which symbols any link needs. It also linked a
+      `std:net` and an `http` program.
+      **Deleted, unused:** `exit`, `atoi`, `calloc`, `strncmp`, `strcpy`,
+      `strncpy`, `strchr`, `strrchr`, `printf`, `fflush`, and
+      `wasm_inc/strings.h`.
+      **`memcpy` / `memmove` / `memset` are instructions:**
+      `wasm_inc/string.h` maps them to the clang builtins, and `loamc`
+      passes `-mbulk-memory`, so each is one `memory.copy` / `memory.fill`,
+      not a call into a byte loop. `-ffreestanding` stays (without it clang
+      may rewrite `fprintf` and similar into calls nothing defines). Bulk
+      memory is in every engine since 2021 (Safari 15).
+      **No stdio on wasm:** `getenv`, `strcmp`, `fprintf`, `snprintf` and
+      the `FILE` objects are gone. Their callers were `zeus_plat.c`. Its
+      `getenv` reads are `__wasm32__`-guarded (wasm had no environment,
+      so they always answered NULL). Its out-of-memory and
+      handler-kind messages build their text and go out through
+      `loam_ewrite_bytes`. The measured int is `plat_put_int`, not `%lld`.
+      **Bug fixed:** wasm's `fprintf` printed its format string unformatted,
+      so a handler-kind mismatch showed a literal `%d` where the ids belong.
+      **Also deleted:** `loam_handle_wrong_type` in `loam_rt.h`, which
+      nothing had called since the handle-key check moved to Loam (R3, R4).
+      **Sizes** (dev builds unless marked): most modules shrink by 26 to
+      1,400 bytes (`oob` 2,031 → 2,005, dracula 963,267 → 961,909). mune
+      grows by 2,988 bytes (+0.3%) and `www` by 2,748 (+0.2%), and the
+      `www` release by 2,102 (+0.14%): a small copy of known size is now
+      inline loads and stores, not a call.
+      **Checks:** all 15 programs plus the `std:net` and `http` ones link,
+      dev and release. `wasm_smoke`, `wasm_trap` and `wasm_float` (420,026
+      checks, 0 mismatches) pass. Suite 678 passed, 0 failed. Seed
+      5,373,383 bytes, seed = stage 1 = stage 2. **Runtime: 4,745 → 4,511**
+      (−234).
+      **Left:** the allocator (`malloc` / `realloc` / `free` /
+      `zeus_heap_used` over a fixed 64 MB array), `abort`, `memcmp`,
+      `strlen`, `write`, `errno`, and `__multi3`. Homebrew LLVM ships no
+      wasm32 compiler-rt, and a checked `i64` multiply lowers to a
+      `__multi3` call.
 - [ ] R6.6 `packages/loam/runtime/` deleted; `loader.loam` and `loamc.loam`
       no longer name it; `nob trusted` reports zero runtime lines.
 
