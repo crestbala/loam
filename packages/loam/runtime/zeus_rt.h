@@ -209,7 +209,6 @@ int64_t loam_platform_plat_load_font(loam_str family, loam_str src);
 
 void loam_zeus_plat_measure(loam_str s, int32_t px, int32_t *w, int32_t *h);
 void loam_zeus_plat_measure_int(int32_t v, int32_t px, int32_t *w, int32_t *h);
-void loam_zeus_plat_measure_wrap(loam_str s, int32_t px, int32_t max_w, int32_t *w, int32_t *h);
 void loam_zeus_plat_set_window(loam_str title, int64_t width, int64_t height);
 int64_t loam_zeus_plat_view_width(void);
 int64_t loam_zeus_plat_view_height(void);
@@ -232,8 +231,8 @@ int64_t loam_platform_plat_headless(void);
 void loam_platform_plat_measure(loam_str s, int32_t px, int32_t *w, int32_t *h);
 loam_str loam_platform_plat_font_bytes(loam_str src);
 void loam_platform_plat_measure_int(int32_t v, int32_t px, int32_t *w, int32_t *h);
-void loam_platform_plat_measure_wrap(loam_str s, int32_t px, int32_t max_w, int32_t *w,
-                                     int32_t *h);
+void loam_platform_plat_measure_span(loam_str s, int32_t from, int32_t to, int32_t px,
+                                     int32_t *w, int32_t *h);
 void loam_platform_plat_set_window(loam_str title, int64_t width, int64_t height);
 void loam_platform_plat_set_title(loam_str title);
 void loam_platform_plat_set_head(loam_str key, loam_str value);
@@ -243,14 +242,11 @@ void loam_platform_plat_titlebar_get(loam_vec *out);
 void loam_platform_plat_clipboard_write(loam_str text);
 loam_str loam_platform_plat_clipboard_last(void);
 int64_t loam_platform_plat_apple_keys(void);
-void loam_runtime_edit_set_secure(int64_t slot, int64_t on);
 int64_t loam_platform_plat_view_width(void);
 int64_t loam_platform_plat_view_height(void);
 void loam_platform_plat_image_size(loam_str src, int32_t *w, int32_t *h);
 loam_str loam_platform_plat_pick_image(int32_t *w, int32_t *h);
 int64_t loam_platform_plat_mem_kb(void);
-/* 1 when built `-DZEUS_MEM_STATS` or run with `ZEUS_MEM_STATS=1` (Phase 0). */
-int64_t loam_runtime_mem_stats(void);
 /* `zeuscore/replay.loam`'s forwarders into the bound ZeusDraw (zeus_plat.c). */
 int32_t loam_replay_draw_caps(void);
 void loam_replay_draw_fill(int32_t x, int32_t y, int32_t w, int32_t h, int32_t rgb, int32_t r);
@@ -288,49 +284,9 @@ void loam_platform_plat_clock_skip(int32_t ms);
 void loam_platform_plat_frame(loam_vec head, loam_vec ops, loam_vec strs, loam_vec path);
 int32_t loam_platform_plat_blit(loam_vec buf, int32_t w, int32_t h, int32_t gen,
                                 int32_t scale);
-void loam_runtime_intern_fn_reset(void);
-int64_t loam_runtime_edit_append(int64_t slot, int64_t key);
-int64_t loam_runtime_edit_back(int64_t slot);
-int64_t loam_runtime_edit_del(int64_t slot);
-int64_t loam_runtime_edit_len(int64_t slot);
-loam_str loam_runtime_edit_text(int64_t slot);
-loam_str loam_runtime_edit_shown(int64_t slot);
-int64_t loam_runtime_edit_set(int64_t slot, loam_str text);
-int64_t loam_runtime_edit_insert(int64_t slot, loam_str text);
-int64_t loam_runtime_edit_caret(int64_t slot);
-int64_t loam_runtime_edit_anchor(int64_t slot);
-int64_t loam_runtime_edit_set_caret(int64_t slot, int64_t pos);
-int64_t loam_runtime_edit_set_anchor(int64_t slot, int64_t pos);
-int64_t loam_runtime_edit_mark(int64_t slot, loam_str text);
-void loam_runtime_edit_metrics(int64_t slot, int64_t wrap_w, int64_t font);
-int64_t loam_runtime_edit_click(int64_t slot, int64_t x, int64_t y, int64_t wrap_w,
-                                      int64_t font);
-int64_t loam_runtime_edit_move(int64_t slot, int64_t dir, int64_t extend);
-int64_t loam_runtime_edit_caret_x(int64_t slot);
-int64_t loam_runtime_edit_caret_y(int64_t slot);
-int64_t loam_runtime_edit_line_h(int64_t slot);
-int64_t loam_runtime_intern_fn(loam_fn handler);
-void loam_runtime_invoke_fn(int64_t id);
-/* Reactive prop thunks: interned like handlers, called for their result. */
-int64_t loam_runtime_intern_int_fn(loam_fn thunk);
-int64_t loam_runtime_invoke_int_fn(int64_t id);
-int64_t loam_runtime_intern_bool_fn(loam_fn thunk);
-int64_t loam_runtime_invoke_bool_fn(int64_t id);
-int64_t loam_runtime_intern_str_fn(loam_fn thunk);
-loam_str loam_runtime_invoke_str_fn(int64_t id);
-/* Calls refused because the slot held a handler interned under another
-   signature. Zero is the contract; see the kind guard in zeus_plat.c. */
-int32_t loam_runtime_intern_kind_mismatch_count(void);
-int32_t loam_runtime_intern_live_count(void);
-void loam_runtime_edit_reset(int64_t slot);
-void loam_runtime_intern_free(int64_t id);
-/* Recoverable-trap kernel. The policy (which slot, the preset table) is
+/* Recoverable-trap kernel. The policy (which handler, the preset table) is
    `zeuscore/runtime.loam`. These are the calls it cannot make itself. */
 loam_str loam_runtime_trap_guard(loam_fn build);
-int32_t loam_runtime_intern_limit(void);
-int32_t loam_runtime_slot_bits(int32_t id);
-void loam_runtime_note_kind_mismatch(int32_t id, int32_t want, int32_t got);
-loam_str loam_runtime_guard_slot(int32_t id);
 loam_str loam_runtime_panic_text(void);
 /* Startup preset, filled by the web loader before `main`. */
 void loam_runtime_preset_store(int32_t seq, loam_str msg);

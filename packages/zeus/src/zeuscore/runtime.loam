@@ -1,68 +1,814 @@
-// runtime — the engine's C runtime builtins: text-edit buffers, the key
-// interned handler thunks, recoverable traps and allocation
-// counters. Bodyless `fn`s, like `platform.loam`, but these are
-// implemented once in `packages/loam/runtime/zeus_plat.c` and
-// are identical on every target. A host never implements any of them; the
-// host contract is `platform.loam` alone.
+// runtime — the engine's runtime builtins: text-edit buffers, interned
+// handler thunks, recoverable traps and allocation counters. All Loam
+// (R6.6b) except the trap arm and the allocation counter, the bodyless `fn`s
+// at the end. A host never implements any of these; the host contract is
+// `platform.loam`.
 
-/** *Forget the handler thunks `intern_fn` handed out; each view rebuild */
-/** *interns its own. */
-fn intern_fn_reset() {}
-fn edit_append(slot: int, key: int) -> int {}
-fn edit_back(slot: int) -> int {}
-fn edit_del(slot: int) -> int {}
-fn edit_len(slot: int) -> int {}
-fn edit_text(slot: int) -> string {}
-fn edit_shown(slot: int) -> string {}
+import "platform.loam"
+import "std:fmt"
+import "std:str"
+import "std:sys"
+import "std:unicode"
+
+// --- text-edit buffers ------------------------------------------------------
+// One slot per live text input, 64 of them. A slot holds its text (an owned
+// string under EDIT_MAX bytes), the caret and the selection anchor (byte
+// offsets inside the text), the IME marked text shown at the caret, and how
+// it is measured: wrap width, font size, and whether it is masked
+// (`PasswordInput`: one bullet per code point, measured that way too, so the
+// caret and clicks land on the bullets). What a slot shows is cached until
+// the next change, so a frame that paints an input allocates nothing.
+
+const EDIT_SLOTS: int = 64
+/** *A slot holds fewer bytes than this; an insert past it is refused. */
+const EDIT_MAX: int = 65536
+const EDIT_FONT: int = 14
+/** *The wrap width of a slot that does not wrap. */
+const EDIT_NO_WRAP: int = 1048576
+/** *`•` (U+2022), what a masked slot shows per code point. */
+const EDIT_BULLET: string = "•"
+
+let mut edit_texts: []string = []string {}
+let mut edit_carets: []int = []int {}
+let mut edit_anchors: []int = []int {}
+let mut edit_marks: []string = []string {}
+let mut edit_wraps: []int = []int {}
+/** *Font size, 0 until `edit_metrics` sets it (then `EDIT_FONT` is used). */
+let mut edit_fonts: []int = []int {}
+let mut edit_secure_on: []bool = []bool {}
+let mut edit_shown_cache: []string = []string {}
+let mut edit_shown_fresh: []bool = []bool {}
+
+/** *True when `slot` is a slot; the table exists from the first call on. */
+fn edit_ok(slot: int) -> bool {
+    if slot < 0 || slot >= EDIT_SLOTS {
+        return false
+    }
+    if edit_texts.len < EDIT_SLOTS {
+        for i in 0..EDIT_SLOTS {
+            push(edit_texts, "")
+            push(edit_carets, 0)
+            push(edit_anchors, 0)
+            push(edit_marks, "")
+            push(edit_wraps, 0)
+            push(edit_fonts, 0)
+            push(edit_secure_on, false)
+            push(edit_shown_cache, "")
+            push(edit_shown_fresh, false)
+        }
+    }
+    return true
+}
+
+/** *The slot changed: what it shows is built again on the next read. */
+fn edit_touch(slot: int) {
+    edit_shown_fresh[slot] = false
+    edit_shown_cache[slot] = ""
+}
+
+fn edit_font_of(slot: int) -> int {
+    if edit_fonts[slot] > 0 {
+        return edit_fonts[slot]
+    }
+    return EDIT_FONT
+}
+
+fn edit_wrap_of(slot: int) -> int {
+    if edit_wraps[slot] > 0 {
+        return edit_wraps[slot]
+    }
+    return EDIT_NO_WRAP
+}
+
+/** *`v` clamped into `0..=hi`. */
+fn edit_clamp_to(v: int, hi: int) -> int {
+    if v < 0 {
+        return 0
+    }
+    if v > hi {
+        return hi
+    }
+    return v
+}
+
+fn edit_clamp(slot: int) {
+    let n = edit_texts[slot].len
+    edit_carets[slot] = edit_clamp_to(edit_carets[slot], n)
+    edit_anchors[slot] = edit_clamp_to(edit_anchors[slot], n)
+    edit_touch(slot)
+}
+
+fn edit_lo(slot: int) -> int {
+    if edit_carets[slot] < edit_anchors[slot] {
+        return edit_carets[slot]
+    }
+    return edit_anchors[slot]
+}
+
+fn edit_hi(slot: int) -> int {
+    if edit_carets[slot] > edit_anchors[slot] {
+        return edit_carets[slot]
+    }
+    return edit_anchors[slot]
+}
+
+fn edit_has_sel(slot: int) -> bool {
+    return edit_carets[slot] != edit_anchors[slot]
+}
+
+/** *Code points in `s[from..to)`: the bytes that are not continuations. */
+fn edit_cp_count(s: string, from: int, to: int) -> int {
+    let mut count = 0
+    for i in from..to {
+        if (s[i] & 0xC0) != 0x80 {
+            count = count + 1
+        }
+    }
+    return count
+}
+
+/** *Remove `[lo, hi)`; caret and anchor land at `lo`. 1 when bytes went. */
+fn edit_delete_range(slot: int, lo: int, hi: int) -> int {
+    let text = edit_texts[slot]
+    let from = if lo < 0 { 0 } else { lo }
+    let to = if hi > text.len { text.len } else { hi }
+    if to <= from {
+        return 0
+    }
+    edit_texts[slot] = "{{str.slice(text, 0, from)}}{{str.slice(text, to, text.len)}}"
+    edit_carets[slot] = from
+    edit_anchors[slot] = from
+    edit_touch(slot)
+    return 1
+}
+
+/** *Type `bytes` at the caret, replacing the selection and ending any marked */
+/** *text. 0 when the slot would reach `EDIT_MAX` (the selection is gone). */
+fn edit_insert_bytes(slot: int, bytes: string) -> int {
+    if edit_has_sel(slot) {
+        edit_delete_range(slot, edit_lo(slot), edit_hi(slot))
+    }
+    edit_marks[slot] = ""
+    edit_touch(slot)
+    let text = edit_texts[slot]
+    if text.len + bytes.len + 1 > EDIT_MAX {
+        return 0
+    }
+    if bytes.len > 0 {
+        let at = edit_carets[slot]
+        edit_texts[slot] = "{{str.slice(text, 0, at)}}{{bytes}}{{str.slice(text, at, text.len)}}"
+        edit_carets[slot] = at + bytes.len
+        edit_anchors[slot] = at + bytes.len
+    }
+    return 1
+}
+
+/** *Type key code `key`: printable ASCII, a newline (Return counts as one), */
+/** *or Tab as four spaces. 0 when the key types nothing. */
+fn edit_append(slot: int, key: int) -> int {
+    if !edit_ok(slot) {
+        return 0
+    }
+    let code = if key == 13 { 10 } else { key }
+    if code == 9 {
+        for i in 0..4 {
+            if edit_insert_bytes(slot, " ") == 0 {
+                return 1
+            }
+        }
+        return 1
+    }
+    if code != 10 && (code < 32 || code >= 127) {
+        return 0
+    }
+    return edit_insert_bytes(slot, string_from_bytes([]int { code }))
+}
+
+/** *Backspace: the selection, else the code point before the caret. */
+fn edit_back(slot: int) -> int {
+    if !edit_ok(slot) {
+        return 0
+    }
+    if edit_has_sel(slot) {
+        return edit_delete_range(slot, edit_lo(slot), edit_hi(slot))
+    }
+    let caret = edit_carets[slot]
+    if caret <= 0 {
+        return 0
+    }
+    return edit_delete_range(slot, unicode.prev_cp(edit_texts[slot], caret), caret)
+}
+
+/** *Forward delete: the selection, else the code point after the caret. */
+fn edit_del(slot: int) -> int {
+    if !edit_ok(slot) {
+        return 0
+    }
+    if edit_has_sel(slot) {
+        return edit_delete_range(slot, edit_lo(slot), edit_hi(slot))
+    }
+    let caret = edit_carets[slot]
+    if caret >= edit_texts[slot].len {
+        return 0
+    }
+    return edit_delete_range(slot, caret, unicode.next_cp(edit_texts[slot], caret))
+}
+
+fn edit_len(slot: int) -> int {
+    if !edit_ok(slot) {
+        return 0
+    }
+    return edit_texts[slot].len
+}
+
+fn edit_text(slot: int) -> string {
+    if !edit_ok(slot) {
+        return ""
+    }
+    return edit_texts[slot]
+}
+
+/** *What the slot shows: its text with the marked text at the caret, or one */
+/** *bullet per code point when masked. Built once per change. */
+fn edit_shown(slot: int) -> string {
+    if !edit_ok(slot) {
+        return ""
+    }
+    if edit_shown_fresh[slot] {
+        return edit_shown_cache[slot]
+    }
+    let text = edit_texts[slot]
+    let mark = edit_marks[slot]
+    let mut shown = text
+    if edit_secure_on[slot] {
+        shown = str.repeat(EDIT_BULLET, edit_cp_count(text, 0, text.len))
+    } else if mark.len > 0 {
+        let at = edit_clamp_to(edit_carets[slot], text.len)
+        shown = "{{str.slice(text, 0, at)}}{{mark}}{{str.slice(text, at, text.len)}}"
+    }
+    edit_shown_cache[slot] = shown
+    edit_shown_fresh[slot] = true
+    return shown
+}
+
 /** *Mask a slot (password field): shown, measured, and hit-tested as one */
 /** *bullet per code point. The text itself is unchanged. */
-fn edit_set_secure(slot: int, on: int) {}
-fn edit_set(slot: int, text: string) -> int {}
-fn edit_insert(slot: int, text: string) -> int {}
-fn edit_caret(slot: int) -> int {}
-fn edit_anchor(slot: int) -> int {}
+fn edit_set_secure(slot: int, on: int) {
+    if !edit_ok(slot) {
+        return
+    }
+    edit_secure_on[slot] = on != 0
+    edit_touch(slot)
+}
+
+/** *Replace the text (cut to `EDIT_MAX - 1` bytes); the caret goes to the end. */
+fn edit_set(slot: int, text: string) -> int {
+    if !edit_ok(slot) {
+        return 0
+    }
+    let kept = if text.len > EDIT_MAX - 1 { str.slice(text, 0, EDIT_MAX - 1) } else { text }
+    edit_texts[slot] = kept
+    edit_carets[slot] = kept.len
+    edit_anchors[slot] = kept.len
+    edit_marks[slot] = ""
+    edit_touch(slot)
+    return 1
+}
+
+fn edit_insert(slot: int, text: string) -> int {
+    if !edit_ok(slot) || text.len <= 0 {
+        return 0
+    }
+    return edit_insert_bytes(slot, text)
+}
+
+fn edit_caret(slot: int) -> int {
+    if !edit_ok(slot) {
+        return 0
+    }
+    return edit_carets[slot]
+}
+
+fn edit_anchor(slot: int) -> int {
+    if !edit_ok(slot) {
+        return 0
+    }
+    return edit_anchors[slot]
+}
+
 /** *Move the caret (selection pivot unchanged) to byte offset `pos`. */
-fn edit_set_caret(slot: int, pos: int) -> int {}
+fn edit_set_caret(slot: int, pos: int) -> int {
+    if !edit_ok(slot) {
+        return 0
+    }
+    edit_carets[slot] = pos
+    edit_clamp(slot)
+    return 1
+}
+
 /** *Move the selection anchor to byte offset `pos`. With `edit_set_caret` */
 /** *this forms a selection, which `edit_back` / `edit_del` then */
 /** *delete — how grapheme-aware editing removes one cluster at a time. */
-fn edit_set_anchor(slot: int, pos: int) -> int {}
-fn edit_mark(slot: int, text: string) -> int {}
-fn edit_metrics(slot: int, wrap_w: int, font: int) {}
-fn edit_click(slot: int, x: int, y: int, wrap_w: int, font: int) -> int {}
-fn edit_move(slot: int, dir: int, extend: int) -> int {}
-fn edit_caret_x(slot: int) -> int {}
-fn edit_caret_y(slot: int) -> int {}
-fn edit_line_h(slot: int) -> int {}
-fn intern_fn(handler: fn()) -> int {}
-fn invoke_fn(id: int) {}
+fn edit_set_anchor(slot: int, pos: int) -> int {
+    if !edit_ok(slot) {
+        return 0
+    }
+    edit_anchors[slot] = pos
+    edit_clamp(slot)
+    return 1
+}
+
+/** *Set the IME marked text shown at the caret ("" ends it). */
+fn edit_mark(slot: int, text: string) -> int {
+    if !edit_ok(slot) {
+        return 0
+    }
+    edit_marks[slot] = text
+    edit_touch(slot)
+    return 1
+}
+
+fn edit_metrics(slot: int, wrap_w: int, font: int) {
+    if !edit_ok(slot) {
+        return
+    }
+    edit_wraps[slot] = if wrap_w > 0 { wrap_w } else { 0 }
+    edit_fonts[slot] = if font > 0 { font } else { EDIT_FONT }
+}
+
+/** *Width and height of `s[from..to)` as the slot shows it: the bytes, or a */
+/** *bullet per code point. */
+fn edit_measure(slot: int, s: string, from: int, to: int, font: int, w: &mut int, h: &mut int) {
+    if edit_secure_on[slot] {
+        let mut bullet_w = 0
+        let mut bullet_h = 0
+        platform.plat_measure_span(EDIT_BULLET, 0, EDIT_BULLET.len, font, &mut bullet_w, &mut bullet_h)
+        *w = bullet_w * edit_cp_count(s, from, to)
+        *h = bullet_h
+        return
+    }
+    platform.plat_measure_span(s, from, to, font, w, h)
+}
+
+/** *Height of one line at `font`: the host's height for "Mg", or `font + 4`. */
+fn edit_line_height(font: int) -> int {
+    let mut w = 0
+    let mut h = 0
+    platform.plat_measure_span("Mg", 0, 2, font, &mut w, &mut h)
+    if h < 1 {
+        return font + 4
+    }
+    return h
+}
+
+fn edit_word_end(s: string, from: int, limit: int) -> int {
+    let mut j = from
+    while j < limit && s[j] != 32 && s[j] != 9 && s[j] != 10 {
+        j = j + 1
+    }
+    return j
+}
+
+/** *The byte offset nearest point (`x`, `y`) in the slot's text, wrapped to */
+/** *`wrap_w` the way paint wraps it. */
+fn edit_xy_to_pos(slot: int, x: int, y: int, wrap_w: int, font: int) -> int {
+    let s = edit_texts[slot]
+    let n = s.len
+    if n <= 0 {
+        return 0
+    }
+    let limit = if wrap_w < 1 { EDIT_NO_WRAP } else { wrap_w }
+    let size = if font < 8 { 8 } else { font }
+    let line_h = edit_line_height(size)
+    let target_y = if y < 0 { 0 } else { y }
+    let mut i = 0
+    let mut best = 0
+    let mut line_w = 0
+    let mut line_y = 0
+    while i < n {
+        if s[i] == 10 {
+            if target_y < line_y + line_h {
+                return i
+            }
+            line_y = line_y + line_h
+            line_w = 0
+            i = i + 1
+            best = i
+        } else {
+            let mut j = edit_word_end(s, i, n)
+            let mut word_w = 0
+            let mut word_h = 0
+            if j == i {
+                j = unicode.next_cp(s, i)
+                if j <= i {
+                    j = i + 1
+                }
+                edit_measure(slot, s, i, i + 1, size, &mut word_w, &mut word_h)
+            } else {
+                edit_measure(slot, s, i, j, size, &mut word_w, &mut word_h)
+            }
+            if line_w > 0 && line_w + word_w > limit {
+                if target_y < line_y + line_h {
+                    return i
+                }
+                line_y = line_y + line_h
+                line_w = 0
+            }
+            if target_y < line_y + line_h {
+                let mut k = i
+                let mut left = line_w
+                while k < j {
+                    let next = unicode.next_cp(s, k)
+                    let mut part_w = 0
+                    let mut part_h = 0
+                    edit_measure(slot, s, i, next, size, &mut part_w, &mut part_h)
+                    if x < line_w + part_w {
+                        let middle = (left + line_w + part_w) / 2
+                        if x < middle {
+                            return k
+                        }
+                        return next
+                    }
+                    left = line_w + part_w
+                    k = next
+                }
+                return j
+            }
+            line_w = line_w + word_w
+            i = j
+            best = i
+        }
+    }
+    return best
+}
+
+/** *Where byte offset `pos` sits: `x` on its line and the line's `y`. */
+fn edit_pos_to_xy(slot: int, pos: int, wrap_w: int, font: int, x: &mut int, y: &mut int) {
+    let s = edit_texts[slot]
+    let n = s.len
+    let end = edit_clamp_to(pos, n)
+    let limit = if wrap_w < 1 { EDIT_NO_WRAP } else { wrap_w }
+    let size = if font < 8 { 8 } else { font }
+    let line_h = edit_line_height(size)
+    let mut i = 0
+    let mut line_w = 0
+    let mut line_y = 0
+    while i < end {
+        if s[i] == 10 {
+            line_y = line_y + line_h
+            line_w = 0
+            i = i + 1
+        } else {
+            let mut j = edit_word_end(s, i, end)
+            if j == i {
+                j = unicode.next_cp(s, i)
+            }
+            if j > end {
+                j = end
+            }
+            let mut word_w = 0
+            let mut word_h = 0
+            edit_measure(slot, s, i, j, size, &mut word_w, &mut word_h)
+            if line_w > 0 && line_w + word_w > limit {
+                line_y = line_y + line_h
+                line_w = 0
+            }
+            line_w = line_w + word_w
+            i = j
+        }
+    }
+    *x = line_w
+    *y = line_y
+}
+
+/** *Put the caret (and anchor) at the point clicked. */
+fn edit_click(slot: int, x: int, y: int, wrap_w: int, font: int) -> int {
+    if !edit_ok(slot) {
+        return 0
+    }
+    let pos = edit_xy_to_pos(slot, x, y, wrap_w, font)
+    edit_carets[slot] = pos
+    edit_anchors[slot] = pos
+    edit_clamp(slot)
+    return 1
+}
+
+/** *Move the caret: -1 / 1 a code point, -2 / 2 to the line's start / end, */
+/** *-3 / 3 a line up / down. `extend` keeps the anchor (a selection). */
+fn edit_move(slot: int, dir: int, extend: int) -> int {
+    if !edit_ok(slot) {
+        return 0
+    }
+    let s = edit_texts[slot]
+    let n = s.len
+    let font = edit_font_of(slot)
+    let mut pos = edit_carets[slot]
+    if dir == -1 {
+        pos = unicode.prev_cp(s, pos)
+    } else if dir == 1 {
+        pos = unicode.next_cp(s, pos)
+    } else if dir == -2 {
+        while pos > 0 && s[pos - 1] != 10 {
+            pos = pos - 1
+        }
+    } else if dir == 2 {
+        while pos < n && s[pos] != 10 {
+            pos = pos + 1
+        }
+    } else if dir == -3 || dir == 3 {
+        let line_h = edit_line_height(font)
+        let mut x = 0
+        let mut y = 0
+        edit_pos_to_xy(slot, pos, edit_wrap_of(slot), font, &mut x, &mut y)
+        y = if dir == 3 { y + line_h } else { y - line_h }
+        if y < 0 {
+            y = 0
+        }
+        pos = edit_xy_to_pos(slot, x, y, edit_wrap_of(slot), font)
+    } else {
+        return 0
+    }
+    edit_carets[slot] = pos
+    if extend == 0 {
+        edit_anchors[slot] = pos
+    }
+    edit_clamp(slot)
+    return 1
+}
+
+fn edit_caret_x(slot: int) -> int {
+    if !edit_ok(slot) {
+        return 0
+    }
+    let mut x = 0
+    let mut y = 0
+    edit_pos_to_xy(slot, edit_carets[slot], edit_wrap_of(slot), edit_font_of(slot), &mut x, &mut y)
+    return x
+}
+
+fn edit_caret_y(slot: int) -> int {
+    if !edit_ok(slot) {
+        return 0
+    }
+    let mut x = 0
+    let mut y = 0
+    edit_pos_to_xy(slot, edit_carets[slot], edit_wrap_of(slot), edit_font_of(slot), &mut x, &mut y)
+    return y
+}
+
+fn edit_line_h(slot: int) -> int {
+    if !edit_ok(slot) {
+        return 18
+    }
+    return edit_line_height(edit_font_of(slot))
+}
+
+/** *Drop the text buffer of an edit slot so a rebuilt input never shows a */
+/** *dead input's contents. */
+fn edit_reset(slot: int) {
+    if !edit_ok(slot) {
+        return
+    }
+    edit_texts[slot] = ""
+    edit_carets[slot] = 0
+    edit_anchors[slot] = 0
+    edit_secure_on[slot] = false
+    edit_marks[slot] = ""
+    edit_touch(slot)
+}
+
+// --- interned handlers ------------------------------------------------------
+// A handler or reactive thunk is interned as an int id, which a plain `||`
+// closure can capture. Ids are shared by four signatures (kinds). Each id
+// records its kind and its row in that kind's own table, so an id costs what
+// one `fn` value costs, and an invoke through the wrong signature is refused
+// and counted, never called. Id 0 is never a handler. Freed ids and rows are
+// reused last-in first-out. A `fn` value is a shared, immutable env that is
+// never freed, so the table keeps the value itself, not a copy.
+
+/** *Void handlers. */
+const KIND_VOID: int = 1
+/** *`fn() -> int` thunks. */
+const KIND_INT: int = 2
+/** *`fn() -> bool` thunks. */
+const KIND_BOOL: int = 3
+/** *`fn() -> string` thunks. */
+const KIND_STR: int = 4
+/** *Mismatches said out loud on stderr; later ones are only counted. */
+const MISMATCH_REPORTS: int = 8
+
+/** *By id: its kind (0 when free) and its row in that kind's table. */
+let mut handler_kinds: []int = []int { 0 }
+let mut handler_rows: []int = []int { 0 }
+let mut free_ids: []int = []int {}
+let mut handler_live: int = 0
+let mut kind_mismatches: int = 0
+
+let mut void_fns: []fn() = []fn() {}
+let mut void_free: []int = []int {}
+let mut int_fns: []fn() -> int = []fn() -> int {}
+let mut int_free: []int = []int {}
+let mut bool_fns: []fn() -> bool = []fn() -> bool {}
+let mut bool_free: []int = []int {}
+let mut str_fns: []fn() -> string = []fn() -> string {}
+let mut str_free: []int = []int {}
+
+/** *A free id (or a new one) for a handler of `kind` at `row`. */
+fn intern_id(kind: int, row: int) -> int {
+    handler_live = handler_live + 1
+    if free_ids.len > 0 {
+        let id = pop(free_ids)
+        handler_kinds[id] = kind
+        handler_rows[id] = row
+        return id
+    }
+    push(handler_kinds, kind)
+    push(handler_rows, row)
+    return handler_kinds.len - 1
+}
+
+/** *A row to reuse from `free`, or `fresh` (the table's length: a new row). */
+fn take_row(free: &mut []int, fresh: int) -> int {
+    if free.len > 0 {
+        return pop(*free)
+    }
+    return fresh
+}
+
+fn intern_fn(handler: fn()) -> int {
+    let row = take_row(&mut void_free, void_fns.len)
+    if row == void_fns.len {
+        push(void_fns, handler)
+    } else {
+        void_fns[row] = handler
+    }
+    return intern_id(KIND_VOID, row)
+}
+
 /** *Reactive props are thunks. Interning one yields an int id, which a plain */
 /** *`||` effect closure can capture (a `fn` value is not Copy and cannot be). */
-fn intern_int_fn(thunk: fn() -> int) -> int {}
-fn invoke_int_fn(id: int) -> int {}
-fn intern_bool_fn(thunk: fn() -> bool) -> int {}
-fn invoke_bool_fn(id: int) -> int {}
-fn intern_str_fn(thunk: fn() -> string) -> int {}
-fn invoke_str_fn(id: int) -> string {}
+fn intern_int_fn(thunk: fn() -> int) -> int {
+    let row = take_row(&mut int_free, int_fns.len)
+    if row == int_fns.len {
+        push(int_fns, thunk)
+    } else {
+        int_fns[row] = thunk
+    }
+    return intern_id(KIND_INT, row)
+}
+
+fn intern_bool_fn(thunk: fn() -> bool) -> int {
+    let row = take_row(&mut bool_free, bool_fns.len)
+    if row == bool_fns.len {
+        push(bool_fns, thunk)
+    } else {
+        bool_fns[row] = thunk
+    }
+    return intern_id(KIND_BOOL, row)
+}
+
+fn intern_str_fn(thunk: fn() -> string) -> int {
+    let row = take_row(&mut str_free, str_fns.len)
+    if row == str_fns.len {
+        push(str_fns, thunk)
+    } else {
+        str_fns[row] = thunk
+    }
+    return intern_id(KIND_STR, row)
+}
+
+/** *Count a call through the wrong signature and say so, the first few times: */
+/** *a guard that hid a real aliasing bug would be worse than the bug. */
+fn note_kind_mismatch(id: int, want: int, got: int) {
+    kind_mismatches = kind_mismatches + 1
+    if kind_mismatches <= MISMATCH_REPORTS {
+        fmt.ewrite("zeus: interned handler {{id}} invoked as kind {{want}} but interned as kind {{got}} — refusing the call\n")
+    }
+}
+
+/** *True when `id` holds a handler of `want`. A free or unknown id is false */
+/** *quietly; a handler of another kind is false and counted. */
+fn kind_is(id: int, want: int) -> bool {
+    if id <= 0 || id >= handler_kinds.len {
+        return false
+    }
+    let kind = handler_kinds[id]
+    if kind == 0 {
+        return false
+    }
+    if kind != want {
+        note_kind_mismatch(id, want, kind)
+        return false
+    }
+    return true
+}
+
+fn invoke_fn(id: int) {
+    if kind_is(id, KIND_VOID) {
+        void_fns[handler_rows[id]]()
+    }
+}
+
+fn invoke_int_fn(id: int) -> int {
+    if kind_is(id, KIND_INT) {
+        return int_fns[handler_rows[id]]()
+    }
+    return 0
+}
+
+fn invoke_bool_fn(id: int) -> int {
+    if kind_is(id, KIND_BOOL) && bool_fns[handler_rows[id]]() {
+        return 1
+    }
+    return 0
+}
+
+fn invoke_str_fn(id: int) -> string {
+    if kind_is(id, KIND_STR) {
+        return str_fns[handler_rows[id]]()
+    }
+    return ""
+}
+
 /** *Calls refused because the interned slot held a handler of another signature. */
 /** *Zero is the contract: the intern table is shared by the void / int / bool / */
 /** *string kinds, so an invoke that reaches a slot of the wrong kind is a bug */
 /** *(it was undefined behaviour before, garbage on native and a trap on wasm). */
-fn intern_kind_mismatch_count() -> int {}
+fn intern_kind_mismatch_count() -> int {
+    return kind_mismatches
+}
+
 /** *Live rows in the shared interned-handler table. A streaming list or a */
 /** *re-running scope must recycle handlers, not grow this. Exposed for tests. */
-fn intern_live_count() -> int {}
-/** *Drop the text buffer of an edit slot so a rebuilt input never shows a */
-/** *dead input's contents. */
-fn edit_reset(slot: int) {}
-/** *Free an interned handler/thunk: release its captured env and make the id */
-/** *reusable. No-op for ids that are already free. */
-fn intern_free(id: int) {}
+fn intern_live_count() -> int {
+    return handler_live
+}
+
+/** *Free an interned handler/thunk and make the id reusable. No-op for ids */
+/** *that are already free. */
+fn intern_free(id: int) {
+    if id <= 0 || id >= handler_kinds.len {
+        return
+    }
+    let kind = handler_kinds[id]
+    let row = handler_rows[id]
+    if kind == KIND_VOID {
+        push(void_free, row)
+    } else if kind == KIND_INT {
+        push(int_free, row)
+    } else if kind == KIND_BOOL {
+        push(bool_free, row)
+    } else if kind == KIND_STR {
+        push(str_free, row)
+    } else {
+        return
+    }
+    // A recycled id must not answer to its last occupant's signature.
+    handler_kinds[id] = 0
+    handler_live = handler_live - 1
+    push(free_ids, id)
+}
+
+/** *Forget every handler and thunk; each view rebuild interns its own. The */
+/** *tables keep their capacity. */
+fn intern_fn_reset() {
+    while handler_kinds.len > 1 {
+        pop(handler_kinds)
+        pop(handler_rows)
+    }
+    while free_ids.len > 0 {
+        pop(free_ids)
+    }
+    while void_fns.len > 0 {
+        pop(void_fns)
+    }
+    while void_free.len > 0 {
+        pop(void_free)
+    }
+    while int_fns.len > 0 {
+        pop(int_fns)
+    }
+    while int_free.len > 0 {
+        pop(int_free)
+    }
+    while bool_fns.len > 0 {
+        pop(bool_fns)
+    }
+    while bool_free.len > 0 {
+        pop(bool_free)
+    }
+    while str_fns.len > 0 {
+        pop(str_fns)
+    }
+    while str_free.len > 0 {
+        pop(str_free)
+    }
+    handler_live = 0
+}
 
 // Recoverable traps. The arm itself (`setjmp`, and the panic buffer it
-// returns into) stays in `loam_rt.h` until R6.2. What lives here is the
-// policy: which interned slot may run under that arm, and the wasm restart
-// table. The table is a constant initializer, so a store from the web loader
+// returns into) is C in `loam_rt.h`. What lives here is the policy: which
+// interned handler may run under that arm, and the wasm restart table. The table is a constant initializer, so a store from the web loader
 // before `main` is still there when `__init` runs — `__init` does not write
 // a global whose initializer is plain data.
 
@@ -70,20 +816,9 @@ fn intern_free(id: int) {}
 /** *message (a view of the runtime's panic buffer). On wasm the body runs */
 /** *unprotected. */
 fn trap_guard(build: fn()) -> string {}
-/** *One past the last interned-handler id. Id 0 is never a slot. */
-fn intern_limit() -> int {}
-/** *Slot `id` (already in range): low bit is "has a function", bits 8..15 are */
-/** *the signature it was interned with. */
-fn slot_bits(id: int) -> int {}
-/** *Count a call through the wrong signature and say so, the first few times. */
-fn note_kind_mismatch(id: int, want: int, got: int) {}
-/** *Run interned slot `id` under the arm. The caller has already checked it. */
-fn guard_slot(id: int) -> string {}
 /** *The panic buffer as a string. A view: copy it before the next panic. */
 fn panic_text() -> string {}
 
-/** *Void handlers. Matches `ZEUS_FN_VOID` in `zeus_plat.c`. */
-const KIND_VOID: int = 1
 /** *How many startup presets the web loader may record. Further ones drop. */
 const PRESET_LIMIT: int = 16
 
@@ -115,19 +850,10 @@ fn boundary(build: fn()) -> string {
 /** *panic message. A missing slot or a slot of another signature is "". On wasm */
 /** *a trap is not caught here; it unwinds to the host. */
 fn guard_fn(id: int) -> string {
-    if id <= 0 || id >= intern_limit() {
+    if !kind_is(id, KIND_VOID) {
         return ""
     }
-    let bits = slot_bits(id)
-    if (bits & 1) == 0 {
-        return ""
-    }
-    let kind = bits >> 8
-    if kind != KIND_VOID {
-        note_kind_mismatch(id, KIND_VOID, kind)
-        return ""
-    }
-    return guard_slot(id)
+    return trap_guard(void_fns[handler_rows[id]])
 }
 
 /** *The last panic's message, "" before any. Static storage: copy before keeping. */
@@ -152,7 +878,16 @@ fn boundary_preset(seq: int) -> string {
 /** *runtime counts `loam_new` and array growth; an animated frame must not move */
 /** *it. 0 when the host/runtime does not track it. */
 fn alloc_count() -> int {}
-/** *1 when arena memory stats are on: compiled with `-DZEUS_MEM_STATS` or */
-/** *started with `ZEUS_MEM_STATS=1`. Phase 0 instrumentation only — no */
-/** *allocation decision reads it. */
-fn mem_stats() -> int {}
+/** *-1 until `mem_stats` first reads the environment. */
+let mut mem_stats_state: int = -1
+
+/** *1 when arena memory stats are on: started with `ZEUS_MEM_STATS` set and */
+/** *not "0" (read once; never on wasm, which has no environment). Phase 0 */
+/** *instrumentation only — no allocation decision reads it. */
+fn mem_stats() -> int {
+    if mem_stats_state < 0 {
+        let value = sys.env("ZEUS_MEM_STATS")
+        mem_stats_state = if value.len == 0 || value == "0" { 0 } else { 1 }
+    }
+    return mem_stats_state
+}

@@ -29,7 +29,9 @@ fn plat_set_font_family(name: string) {}
 /** *`plat_set_font_family(name)`. */
 fn plat_load_font(family: string, src: string) -> int {}
 fn plat_measure_int(v: int, px: int, w: &mut int, h: &mut int) {}
-fn plat_measure_wrap(s: string, px: int, max_w: int, w: &mut int, h: &mut int) {}
+/** *Measure the bytes `s[from..to)` as one line, without slicing `s`: how */
+/** *the wrap (`metrics.host_wrap`) and the text-edit caret measure words. */
+fn plat_measure_span(s: string, from: int, to: int, px: int, w: &mut int, h: &mut int) {}
 /** *Bytes of a font file for in-tree metrics (`std:font`) from a host hook (a */
 /** *URL fetch on the web). Empty when no hook answers; `zeus.use_font` then */
 /** *reads `src` as a path, and keeps host measurement if that is empty too */
