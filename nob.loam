@@ -2824,7 +2824,7 @@ fn ig_c_layouts() {
     p = cat(p, "#define FITS(T, words) _Static_assert(sizeof(T) <= (words) * 8, #T \" fits \" #words \" words\")\n")
     p = cat(p, "#define IS(c, v) _Static_assert((c) == (v), #c \" is \" #v)\n")
     // std:async: `struct timespec` as two `i64` words; std:sys `cpu_count`.
-    p = cat(p, "SIZE(struct timespec, 16); AT(struct timespec, tv_nsec, 8);\n")
+    p = cat(p, "SIZE(struct timespec, 16); AT(struct timespec, tv_nsec, 8); IS(CLOCK_REALTIME, 0);\n")
     // std:net: `sockaddr_in` in 16 bytes, `pollfd` as two `i32`s, and the
     // socket, fcntl and errno constants its bindings pass.
     p = cat(p, "#if !defined(_WIN32)\n#include <sys/socket.h>\n#include <sys/time.h>\n#include <netinet/in.h>\n#include <poll.h>\n#include <fcntl.h>\n#include <errno.h>\n")

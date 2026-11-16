@@ -19,14 +19,20 @@ struct Config {
     site_origin: string = "",
 }
 
-#[c("gettimeofday")]
-fn c_gettimeofday(out: []i64, zone: i64) -> i32 {}
+/** *`clock_gettime`: a `struct timespec` is a 64-bit `tv_sec` then `tv_nsec` */
+/** *in the next word on macOS, Linux and Windows (`c_layouts` checks it), */
+/** *where `struct timeval`'s `long`s are 32 bits on Windows. */
+#[c("clock_gettime")]
+fn c_clock_gettime(clock: i32, out: &mut []i64) -> i32 {}
+
+/** *`CLOCK_REALTIME`, 0 everywhere. */
+const CLOCK_REALTIME: i32 = 0
 
 /** *Real time in milliseconds since 1970. `async.now_ms` only counts from boot. */
 fn wall_ms() -> i64 {
-    let out = []i64 { 0, 0 }
-    let _ = c_gettimeofday(out, i64(0))
-    return out[0] * 1000 + (out[1] % 4294967296) / 1000
+    let mut out = []i64 { 0, 0 }
+    let _ = c_clock_gettime(CLOCK_REALTIME, out)
+    return out[0] * 1000 + (out[1] & i64(4294967295)) / 1000000
 }
 
 /** *Whether a beacon came from the site. A request with no `Origin` is not from a */

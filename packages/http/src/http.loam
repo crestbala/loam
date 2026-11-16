@@ -2822,6 +2822,12 @@ fn server_stop(s: &mut Server) {
         net.tcp_close(s.conns[i].fd)
     }
     s.conns = []Conn {}
+    // Open streams too: a stopped server must end them, as a process exit
+    // would, or their clients wait forever.
+    for i in 0..watchers.len {
+        net.tcp_close(watchers[i].fd)
+    }
+    watchers = []Watcher {}
     net.tcp_close(s.fd)
     s.fd = -1
 }
