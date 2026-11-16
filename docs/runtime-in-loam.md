@@ -1415,7 +1415,7 @@ done, so every R3 step is checked by `thread_tsan`).
       **Layouts and links.** `c_layouts` gains Linux `addrinfo` and
       `SO_SNDTIMEO`, and, when OpenSSL's headers are found (the system's or
       Homebrew's), every `SSL_ctrl`, mode, error and BIO code, the three
-      BIO callback types (`-Werror=incompatible-function-pointer-types`),
+      BIO callback types (`-Werror=incompatible-pointer-types`, which gcc knows too),
       and that every symbol a binding links from OpenSSL is a declared
       function, not a macro (a missing header failed it once). This runs
       natively and with zig for x86_64 glibc and aarch64 musl.
