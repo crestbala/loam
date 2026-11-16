@@ -1,7 +1,7 @@
 // Sockets and TLS (`docs/boundary.md`).
 //
-// TCP (R5.1) and the TLS client (macOS R5.2, Linux R5.3) are Loam over raw
-// bindings: addresses, socket options, the non-blocking connect, the poll
+// TCP (R5.1, Windows R5.4) and the TLS client (macOS R5.2, Linux R5.3)
+// are Loam over raw bindings: addresses, socket options, the non-blocking connect, the poll
 // set, retries, `errno`, and the TLS slots, handshake and I/O over
 // SecureTransport (Apple) or OpenSSL (Linux), whose read and write
 // callbacks are Loam fns C calls through plain function pointers. One piece stays C: `string_bytes_at`, the address of a string's
@@ -352,7 +352,7 @@ fn ensure_addr_cell() {
     }
 }
 
-/** *Linux's family is a little-endian `u16`. */
+/** *Linux's and Windows' family is a little-endian `u16`. */
 #[os("linux", "android", "other", "windows", "wasm")]
 fn ensure_addr_cell() {
     if addr_cell.len == 0 {
@@ -392,7 +392,7 @@ fn set_nonblock(fd: i32) -> int {
 }
 
 /** *An `int` socket option set to `value` (failures ignored, as the C did). */
-#[os("posix")]
+#[os("posix", "windows")]
 fn set_int_option(fd: i32, level: i32, name: i32, value: i32) {
     ensure_cells()
     int_cell[0] = value
@@ -400,7 +400,7 @@ fn set_int_option(fd: i32, level: i32, name: i32, value: i32) {
 }
 
 /** *A new close-on-exec TCP socket, or `-1`. */
-#[os("posix")]
+#[os("posix", "windows")]
 fn new_socket() -> i32 {
     let fd = c_socket(AF_INET, SOCK_STREAM, 0)
     if fd >= 0 {
@@ -419,7 +419,7 @@ fn connect_target(host: string, port: int) -> i64 {
 }
 
 /** *Native `tcp_connect`: one blocking connect, `SIGPIPE` off. */
-#[os("posix")]
+#[os("posix", "windows")]
 fn tcp_connect_os(host: string, port: int) -> int {
     let addr = connect_target(host, port)
     if addr < i64(0) {
@@ -438,14 +438,14 @@ fn tcp_connect_os(host: string, port: int) -> int {
     return int(fd)
 }
 
-#[os("windows", "wasm")]
+#[os("wasm")]
 fn tcp_connect_os(host: string, port: int) -> int {
     return -1
 }
 
 /** *Native `tcp_nb_connect`: non-blocking, then `connect` either finishes */
 /** *or is in progress; any other error fails at once. */
-#[os("posix")]
+#[os("posix", "windows")]
 fn tcp_nb_connect_os(host: string, port: int) -> int {
     let addr = connect_target(host, port)
     if addr < i64(0) {
@@ -471,13 +471,13 @@ fn tcp_nb_connect_os(host: string, port: int) -> int {
     return int(fd)
 }
 
-#[os("windows", "wasm")]
+#[os("wasm")]
 fn tcp_nb_connect_os(host: string, port: int) -> int {
     return -1
 }
 
 /** *`poll` over `fds`, retried on `EINTR`; `ms` clamped to 0..60 s. */
-#[os("posix")]
+#[os("posix", "windows")]
 fn poll_retry(fds: &mut []i32, n: int, ms: int) -> int {
     let wait = if ms < 0 { 0 } else if ms > POLL_MAX_MS { POLL_MAX_MS } else { ms }
     while true {
@@ -492,7 +492,7 @@ fn poll_retry(fds: &mut []i32, n: int, ms: int) -> int {
     return -1
 }
 
-#[os("posix")]
+#[os("posix", "windows")]
 fn tcp_poll_os(fd: int, want: int, ms: int) -> int {
     if fd < 0 {
         return -1
@@ -517,12 +517,12 @@ fn tcp_poll_os(fd: int, want: int, ms: int) -> int {
     return if (one_poll[1] >> 16) != 0 { 1 } else { 0 }
 }
 
-#[os("windows", "wasm")]
+#[os("wasm")]
 fn tcp_poll_os(fd: int, want: int, ms: int) -> int {
     return -1
 }
 
-#[os("posix")]
+#[os("posix", "windows")]
 fn tcp_poll_add_os(fd: int, want: int) -> int {
     let at = poll_count * 2
     if at == poll_set.len {
@@ -535,12 +535,12 @@ fn tcp_poll_add_os(fd: int, want: int) -> int {
     return poll_count - 1
 }
 
-#[os("windows", "wasm")]
+#[os("wasm")]
 fn tcp_poll_add_os(fd: int, want: int) -> int {
     return -1
 }
 
-#[os("posix")]
+#[os("posix", "windows")]
 fn tcp_poll_wait_os(ms: int) -> int {
     // `poll` writes only `revents`; clear the old ones first.
     for i in 0..poll_count {
@@ -549,14 +549,14 @@ fn tcp_poll_wait_os(ms: int) -> int {
     return poll_retry(poll_set, poll_count, ms)
 }
 
-#[os("windows", "wasm")]
+#[os("wasm")]
 fn tcp_poll_wait_os(ms: int) -> int {
     return -1
 }
 
 /** *One `send` of `data[off..]`, retried on `EINTR`: bytes sent, `0` when it */
 /** *would block, `-1` on error. */
-#[os("posix")]
+#[os("posix", "windows")]
 fn send_once(fd: int, data: string, off: int) -> int {
     last_would_block = false
     while true {
@@ -577,7 +577,7 @@ fn send_once(fd: int, data: string, off: int) -> int {
     return -1
 }
 
-#[os("posix")]
+#[os("posix", "windows")]
 fn tcp_send_os(fd: int, data: string, off: int) -> int {
     if fd < 0 || off < 0 || off > data.len {
         return -1
@@ -591,7 +591,7 @@ fn tcp_send_os(fd: int, data: string, off: int) -> int {
     return send_once(fd, data, off)
 }
 
-#[os("windows", "wasm")]
+#[os("wasm")]
 fn tcp_send_os(fd: int, data: string, off: int) -> int {
     return -1
 }
@@ -602,7 +602,7 @@ fn socket_of(fd: int) -> int {
 }
 
 /** *`SO_ERROR` of a socket: 0 = connected, else the errno; 1 if unreadable. */
-#[os("posix")]
+#[os("posix", "windows")]
 fn socket_error(fd: int) -> int {
     ensure_cells()
     int_cell[0] = 0
@@ -613,7 +613,7 @@ fn socket_error(fd: int) -> int {
     return int(int_cell[0])
 }
 
-#[os("posix")]
+#[os("posix", "windows")]
 fn tcp_so_error_os(fd: int) -> int {
     if fd < 0 {
         return 1
@@ -629,13 +629,13 @@ fn tcp_so_error_os(fd: int) -> int {
     return socket_error(fd)
 }
 
-#[os("windows", "wasm")]
+#[os("wasm")]
 fn tcp_so_error_os(fd: int) -> int {
     return 1
 }
 
 /** *Every byte of `data` through blocking `send`s, or `-1`. */
-#[os("posix")]
+#[os("posix", "windows")]
 fn write_all(fd: int, data: string) -> int {
     let mut off = 0
     while off < data.len {
@@ -648,7 +648,7 @@ fn write_all(fd: int, data: string) -> int {
     return off
 }
 
-#[os("posix")]
+#[os("posix", "windows")]
 fn tcp_write_os(fd: int, data: string) -> int {
     if fd < 0 {
         return -1
@@ -662,7 +662,7 @@ fn tcp_write_os(fd: int, data: string) -> int {
 /** *Every byte of `data` through TLS sends on a blocking socket, or `-1`. */
 /** *A send that would block (the 10 s timeout ran out) fails the write; */
 /** *`tcp_wouldblock` is left as it was. */
-#[os("posix")]
+#[os("posix", "windows")]
 fn tls_write_all(fd: int, data: string) -> int {
     let blocked = last_would_block
     let mut off = 0
@@ -678,14 +678,14 @@ fn tls_write_all(fd: int, data: string) -> int {
     return off
 }
 
-#[os("windows", "wasm")]
+#[os("wasm")]
 fn tcp_write_os(fd: int, data: string) -> int {
     return -1
 }
 
 /** *One `recv` of up to `max` bytes (clamped to 64 KiB) as a string; `""` */
 /** *on EOF or error. A plain read notes whether it would have blocked. */
-#[os("posix")]
+#[os("posix", "windows")]
 fn recv_text(fd: int, max: int, flags: i32, notes_block: bool) -> string {
     if read_cell.len == 0 {
         read_cell = buf.with_len(READ_MAX)
@@ -701,7 +701,7 @@ fn recv_text(fd: int, max: int, flags: i32, notes_block: bool) -> string {
     return buf.prefix_to_string(&read_cell, int(n))
 }
 
-#[os("posix")]
+#[os("posix", "windows")]
 fn tcp_read_os(fd: int, max: int) -> string {
     if fd < 0 || max <= 0 {
         return ""
@@ -712,12 +712,12 @@ fn tcp_read_os(fd: int, max: int) -> string {
     return recv_text(fd, max, 0, true)
 }
 
-#[os("windows", "wasm")]
+#[os("wasm")]
 fn tcp_read_os(fd: int, max: int) -> string {
     return ""
 }
 
-#[os("posix")]
+#[os("posix", "windows")]
 fn tcp_peek_os(fd: int, max: int) -> string {
     if fd < 0 || max <= 0 {
         return ""
@@ -725,12 +725,12 @@ fn tcp_peek_os(fd: int, max: int) -> string {
     return recv_text(fd, max, MSG_PEEK, false)
 }
 
-#[os("windows", "wasm")]
+#[os("wasm")]
 fn tcp_peek_os(fd: int, max: int) -> string {
     return ""
 }
 
-#[os("posix")]
+#[os("posix", "windows")]
 fn tcp_close_os(fd: int) {
     if fd < 0 {
         return
@@ -743,19 +743,19 @@ fn tcp_close_os(fd: int) {
     c_close(i32(fd))
 }
 
-#[os("windows", "wasm")]
+#[os("wasm")]
 fn tcp_close_os(fd: int) {
     return
 }
 
 /** *A listening socket on `addr`:`port` (port 0 = ephemeral), or `-1`. */
-#[os("posix")]
+#[os("posix", "windows")]
 fn listen_at(addr: i64, port: int) -> int {
     let fd = new_socket()
     if fd < 0 {
         return -1
     }
-    set_int_option(fd, sol_socket(), so_reuseaddr(), 1)
+    reuse_address(fd)
     fill_sockaddr(addr, if port > 0 && port < 65536 { port } else { 0 })
     if c_bind(fd, addr_cell, u32(16)) != 0 || c_listen(fd, 128) != 0 {
         c_close(fd)
@@ -764,12 +764,12 @@ fn listen_at(addr: i64, port: int) -> int {
     return int(fd)
 }
 
-#[os("windows", "wasm")]
+#[os("wasm")]
 fn listen_at(addr: i64, port: int) -> int {
     return -1
 }
 
-#[os("posix")]
+#[os("posix", "windows")]
 fn tcp_nonblock_os(fd: int) -> int {
     if fd < 0 {
         return -1
@@ -777,13 +777,13 @@ fn tcp_nonblock_os(fd: int) -> int {
     return set_nonblock(i32(fd))
 }
 
-#[os("windows", "wasm")]
+#[os("wasm")]
 fn tcp_nonblock_os(fd: int) -> int {
     return -1
 }
 
 /** *Native `tcp_accept`: close-on-exec, a 5 s read timeout, `SIGPIPE` off. */
-#[os("posix")]
+#[os("posix", "windows")]
 fn tcp_accept_os(fd: int) -> int {
     if fd < 0 {
         return -1
@@ -799,12 +799,12 @@ fn tcp_accept_os(fd: int) -> int {
     return int(c)
 }
 
-#[os("windows", "wasm")]
+#[os("wasm")]
 fn tcp_accept_os(fd: int) -> int {
     return -1
 }
 
-#[os("posix")]
+#[os("posix", "windows")]
 fn tcp_bound_port_os(fd: int) -> int {
     if fd < 0 {
         return 0
@@ -818,7 +818,7 @@ fn tcp_bound_port_os(fd: int) -> int {
     return int(addr_cell[2]) * 256 + int(addr_cell[3])
 }
 
-#[os("windows", "wasm")]
+#[os("wasm")]
 fn tcp_bound_port_os(fd: int) -> int {
     return 0
 }
@@ -841,9 +841,28 @@ fn sol_socket() -> i32 {
     return 65535
 }
 
-#[os("linux", "android", "other", "windows", "wasm")]
+#[os("linux", "android", "other", "wasm")]
 fn sol_socket() -> i32 {
     return 1
+}
+
+#[os("windows")]
+fn sol_socket() -> i32 {
+    return 65535
+}
+
+/** *`SO_REUSEADDR`, so a restarted server binds its port while old */
+/** *connections sit in `TIME_WAIT`. Not on Windows, where it would let */
+/** *another process bind the same port: Windows binds over `TIME_WAIT` */
+/** *without it. */
+#[os("posix")]
+fn reuse_address(fd: i32) {
+    set_int_option(fd, sol_socket(), so_reuseaddr(), 1)
+}
+
+#[os("windows")]
+fn reuse_address(fd: i32) {
+    return
 }
 
 #[os("apple")]
@@ -851,7 +870,7 @@ fn so_reuseaddr() -> i32 {
     return 4
 }
 
-#[os("linux", "android", "other", "windows", "wasm")]
+#[os("linux", "android", "other", "wasm")]
 fn so_reuseaddr() -> i32 {
     return 2
 }
@@ -861,9 +880,14 @@ fn so_rcvtimeo() -> i32 {
     return 4102
 }
 
-#[os("linux", "android", "other", "windows", "wasm")]
+#[os("linux", "android", "other", "wasm")]
 fn so_rcvtimeo() -> i32 {
     return 20
+}
+
+#[os("windows")]
+fn so_rcvtimeo() -> i32 {
+    return 4102
 }
 
 #[os("apple")]
@@ -871,9 +895,14 @@ fn so_error() -> i32 {
     return 4103
 }
 
-#[os("linux", "android", "other", "windows", "wasm")]
+#[os("linux", "android", "other", "wasm")]
 fn so_error() -> i32 {
     return 4
+}
+
+#[os("windows")]
+fn so_error() -> i32 {
+    return 4103
 }
 
 #[os("apple")]
@@ -881,9 +910,14 @@ fn msg_nosignal() -> i32 {
     return 524288
 }
 
-#[os("linux", "android", "other", "windows", "wasm")]
+#[os("linux", "android", "other", "wasm")]
 fn msg_nosignal() -> i32 {
     return 16384
+}
+
+#[os("windows")]
+fn msg_nosignal() -> i32 {
+    return 0
 }
 
 #[os("apple")]
@@ -891,7 +925,7 @@ fn o_nonblock() -> i32 {
     return 4
 }
 
-#[os("linux", "android", "other", "windows", "wasm")]
+#[os("linux", "android", "other", "wasm")]
 fn o_nonblock() -> i32 {
     return 2048
 }
@@ -901,9 +935,14 @@ fn e_again() -> i32 {
     return 35
 }
 
-#[os("linux", "android", "other", "windows", "wasm")]
+#[os("linux", "android", "other", "wasm")]
 fn e_again() -> i32 {
     return 11
+}
+
+#[os("windows")]
+fn e_again() -> i32 {
+    return 10035
 }
 
 #[os("apple")]
@@ -911,9 +950,14 @@ fn e_inprogress() -> i32 {
     return 36
 }
 
-#[os("linux", "android", "other", "windows", "wasm")]
+#[os("linux", "android", "other", "wasm")]
 fn e_inprogress() -> i32 {
     return 115
+}
+
+#[os("windows")]
+fn e_inprogress() -> i32 {
+    return 10035
 }
 
 #[os("apple")]
@@ -921,9 +965,14 @@ fn e_already() -> i32 {
     return 37
 }
 
-#[os("linux", "android", "other", "windows", "wasm")]
+#[os("linux", "android", "other", "wasm")]
 fn e_already() -> i32 {
     return 114
+}
+
+#[os("windows")]
+fn e_already() -> i32 {
+    return 10037
 }
 
 // --- the C below Loam ---------------------------------------------------------------------
@@ -935,7 +984,7 @@ fn e_already() -> i32 {
 fn string_bytes_at(s: string, off: int) -> i64 {}
 
 /** *One `send` of `data[off..]` (`off < data.len`): bytes sent or `-1`. */
-#[os("posix")]
+#[os("posix", "windows")]
 fn send_bytes(fd: int, data: string, off: int) -> int {
     return int(c_send_at(i32(fd), string_bytes_at(data, off), i64(data.len - off), msg_nosignal()))
 }
@@ -1008,7 +1057,7 @@ fn c_poll(fds: &mut []i32, n: int, ms: i32) -> i32 {
     return c_poll_linux(fds, u64(n), ms)
 }
 
-#[os("windows", "wasm")]
+#[os("wasm")]
 fn c_poll(fds: &mut []i32, n: int, ms: i32) -> i32 {
     return -1
 }
@@ -1028,6 +1077,285 @@ fn c_close(fd: i32) -> i32 {}
 #[os("posix")]
 #[c("loam_sys_errno")]
 fn c_errno() -> i32 {}
+
+// --- TCP over Winsock (Windows) -----------------------------------------------------------
+//
+// The TCP logic above is shared with POSIX. Here the `c_*` calls it makes
+// get Windows variants with the same Loam signatures, each over a Winsock
+// binding: a `SOCKET` is 64 bits (it must fit an `int` handle below
+// `TLS_BASE`, which Windows handles do), lengths are `int`, `close` is
+// `closesocket`, the error is `WSAGetLastError` (`WSAEINTR` read as
+// `EINTR`), a read timeout is a `DWORD` of ms, and a `WSAPOLLFD` is 16
+// bytes (`SOCKET`, `events`, `revents`) with `POLLRDNORM` / `POLLWRNORM`,
+// so `c_poll` copies the POSIX-shaped set in and the results back.
+// Winsock starts on the first socket. Layouts and constants are checked by
+// `nob integration c_layouts` (zig, `x86_64-windows-gnu`).
+
+/** *Winsock 2.2, as `WSAStartup` asks for it. */
+const WINSOCK_2_2: u16 = 514
+/** *`WSADATA` is 408 bytes on 64-bit Windows; this cell has room. */
+const WSADATA_BYTES: int = 512
+const WSAEINTR: i32 = 10004
+/** *`FIONBIO` as the `long` `ioctlsocket` takes. */
+const FIONBIO: i32 = -2147195266
+const HANDLE_FLAG_INHERIT: u32 = 1
+const POLLRDNORM: i32 = 256
+const POLLRDBAND: i32 = 512
+const POLLWRNORM: i32 = 16
+const WSA_POLLERR: i32 = 1
+const WSA_POLLHUP: i32 = 2
+const WSA_POLLNVAL: i32 = 4
+/** *POSIX `revents` bits the shared code reads (any nonzero is ready). */
+const POLLERR: i32 = 8
+const POLLHUP: i32 = 16
+const POLLNVAL: i32 = 32
+
+/** *Winsock started (once a process). */
+let mut winsock_started: bool = false
+/** *`ioctlsocket`'s `u_long` argument. */
+let mut ulong_cell: []u32 = []u32 {}
+/** *The `WSAPOLLFD` set `c_poll` hands Winsock: two words a socket. */
+let mut wsa_poll_set: []i64 = []i64 {}
+
+/** *`WSAStartup` on the first socket; `false` when Winsock will not start. */
+#[os("windows")]
+fn start_winsock() -> bool {
+    if !winsock_started {
+        let mut data = buf.with_len(WSADATA_BYTES)
+        if c_wsa_startup(WINSOCK_2_2, data) != 0 {
+            return false
+        }
+        winsock_started = true
+    }
+    return true
+}
+
+/** *A Winsock `SOCKET` as a handle: `-1` (and closed) unless it fits below */
+/** *`TLS_BASE`. */
+#[os("windows")]
+fn socket_handle(sock: i64) -> i32 {
+    if sock < i64(0) {
+        return -1
+    }
+    if sock >= i64(TLS_BASE) {
+        c_closesocket(sock)
+        return -1
+    }
+    return i32(sock)
+}
+
+/** *Not inherited: a child the program spawns must not hold the socket, */
+/** *or a port stays bound after the server exits (POSIX close-on-exec). */
+#[os("windows")]
+fn set_cloexec(fd: i32) {
+    c_set_handle_information(i64(fd), HANDLE_FLAG_INHERIT, u32(0))
+}
+
+/** *Non-blocking through `ioctlsocket(FIONBIO)`: `0`, or `-1`. */
+#[os("windows")]
+fn set_nonblock(fd: i32) -> int {
+    if ulong_cell.len == 0 {
+        ulong_cell.push(u32(0))
+    }
+    ulong_cell[0] = u32(1)
+    return if c_ioctlsocket(i64(fd), FIONBIO, ulong_cell) == 0 { 0 } else { -1 }
+}
+
+#[os("windows")]
+fn c_socket(domain: i32, kind: i32, protocol: i32) -> i32 {
+    if !start_winsock() {
+        return -1
+    }
+    return socket_handle(c_wsa_socket(domain, kind, protocol))
+}
+
+#[os("windows")]
+fn c_connect(fd: i32, addr: &[]u8, len: u32) -> i32 {
+    return c_wsa_connect(i64(fd), addr, i32(len))
+}
+
+#[os("windows")]
+fn c_bind(fd: i32, addr: &[]u8, len: u32) -> i32 {
+    return c_wsa_bind(i64(fd), addr, i32(len))
+}
+
+#[os("windows")]
+fn c_listen(fd: i32, backlog: i32) -> i32 {
+    return c_wsa_listen(i64(fd), backlog)
+}
+
+#[os("windows")]
+fn c_accept(fd: i32, addr: i64, len: i64) -> i32 {
+    return socket_handle(c_wsa_accept(i64(fd), addr, len))
+}
+
+#[os("windows")]
+fn c_getsockname(fd: i32, addr: &mut []u8, len: &mut []u32) -> i32 {
+    return c_wsa_getsockname(i64(fd), addr, len)
+}
+
+#[os("windows")]
+fn c_setsockopt(fd: i32, level: i32, name: i32, value: &[]i32, len: u32) -> i32 {
+    return c_wsa_setsockopt(i64(fd), level, name, value, i32(len))
+}
+
+/** *A `struct timeval` option as Winsock's `DWORD` of milliseconds. */
+#[os("windows")]
+fn c_setsockopt_time(fd: i32, level: i32, name: i32, value: &[]i64, len: u32) -> i32 {
+    let ms = []i32 { i32(value[0] * i64(1000) + value[1] / i64(1000)) }
+    return c_wsa_setsockopt(i64(fd), level, name, ms, 4)
+}
+
+#[os("windows")]
+fn c_getsockopt(fd: i32, level: i32, name: i32, value: &mut []i32, len: &mut []u32) -> i32 {
+    return c_wsa_getsockopt(i64(fd), level, name, value, len)
+}
+
+/** *One `recv`; Winsock takes an `int` length. */
+#[os("windows")]
+fn c_recv(fd: i32, into: &mut []u8, len: i64, flags: i32) -> i64 {
+    return i64(c_wsa_recv(i64(fd), into, i32(len), flags))
+}
+
+/** *One `send`, at most 1 GiB (an `int` length); the caller sends the rest. */
+#[os("windows")]
+fn c_send_at(fd: i32, bytes: i64, len: i64, flags: i32) -> i64 {
+    let part = if len > i64(1073741824) { i64(1073741824) } else { len }
+    return i64(c_wsa_send(i64(fd), bytes, i32(part), flags))
+}
+
+#[os("windows")]
+fn c_close(fd: i32) -> i32 {
+    return c_closesocket(i64(fd))
+}
+
+/** *The last Winsock error, `WSAEINTR` as `EINTR` for the shared retries. */
+#[os("windows")]
+fn c_errno() -> i32 {
+    let e = c_wsa_get_last_error()
+    return if e == WSAEINTR { EINTR } else { e }
+}
+
+/** *`poll` over `WSAPoll`: each `pollfd` (fd, then `events` and `revents` */
+/** *as halves of one word) is copied to a `WSAPOLLFD` and its results */
+/** *back. An empty set sleeps, as `poll` does (`WSAPoll` rejects it). */
+#[os("windows")]
+fn c_poll(fds: &mut []i32, n: int, ms: i32) -> i32 {
+    if n == 0 {
+        c_sleep(u32(if ms > 0 { ms } else { 0 }))
+        return 0
+    }
+    while wsa_poll_set.len < n * 2 {
+        wsa_poll_set.push(i64(0))
+    }
+    for i in 0..n {
+        let events = fds[i * 2 + 1] & 65535
+        let mut wsa_events = 0
+        if (events & POLLIN) != 0 {
+            wsa_events = wsa_events | POLLRDNORM
+        }
+        if (events & POLLOUT) != 0 {
+            wsa_events = wsa_events | POLLWRNORM
+        }
+        wsa_poll_set[i * 2] = i64(fds[i * 2])
+        wsa_poll_set[i * 2 + 1] = i64(wsa_events)
+    }
+    let rc = c_wsa_poll(wsa_poll_set, u32(n), ms)
+    for i in 0..n {
+        let got = i32((wsa_poll_set[i * 2 + 1] >> 16) & i64(65535))
+        let mut back = 0
+        if (got & (POLLRDNORM | POLLRDBAND)) != 0 {
+            back = back | POLLIN
+        }
+        if (got & POLLWRNORM) != 0 {
+            back = back | POLLOUT
+        }
+        if (got & WSA_POLLERR) != 0 {
+            back = back | POLLERR
+        }
+        if (got & WSA_POLLHUP) != 0 {
+            back = back | POLLHUP
+        }
+        if (got & WSA_POLLNVAL) != 0 {
+            back = back | POLLNVAL
+        }
+        fds[i * 2 + 1] = (fds[i * 2 + 1] & 65535) | (back << 16)
+    }
+    return rc
+}
+
+#[os("windows")]
+#[c("WSAStartup", "link -lws2_32")]
+fn c_wsa_startup(version: u16, data: &mut []u8) -> i32 {}
+
+#[os("windows")]
+#[c("WSAGetLastError", "link -lws2_32")]
+fn c_wsa_get_last_error() -> i32 {}
+
+/** *`socket`: a `SOCKET`, `INVALID_SOCKET` (`-1` here) on failure. */
+#[os("windows")]
+#[c("socket", "link -lws2_32")]
+fn c_wsa_socket(domain: i32, kind: i32, protocol: i32) -> i64 {}
+
+#[os("windows")]
+#[c("connect", "link -lws2_32")]
+fn c_wsa_connect(sock: i64, addr: &[]u8, len: i32) -> i32 {}
+
+#[os("windows")]
+#[c("bind", "link -lws2_32")]
+fn c_wsa_bind(sock: i64, addr: &[]u8, len: i32) -> i32 {}
+
+#[os("windows")]
+#[c("listen", "link -lws2_32")]
+fn c_wsa_listen(sock: i64, backlog: i32) -> i32 {}
+
+/** *`accept(sock, NULL, NULL)`: the two `0`s are null pointers. */
+#[os("windows")]
+#[c("accept", "link -lws2_32")]
+fn c_wsa_accept(sock: i64, addr: i64, len: i64) -> i64 {}
+
+#[os("windows")]
+#[c("getsockname", "link -lws2_32")]
+fn c_wsa_getsockname(sock: i64, addr: &mut []u8, len: &mut []u32) -> i32 {}
+
+#[os("windows")]
+#[c("setsockopt", "link -lws2_32")]
+fn c_wsa_setsockopt(sock: i64, level: i32, name: i32, value: &[]i32, len: i32) -> i32 {}
+
+#[os("windows")]
+#[c("getsockopt", "link -lws2_32")]
+fn c_wsa_getsockopt(sock: i64, level: i32, name: i32, value: &mut []i32, len: &mut []u32) -> i32 {}
+
+#[os("windows")]
+#[c("recv", "link -lws2_32")]
+fn c_wsa_recv(sock: i64, into: &mut []u8, len: i32, flags: i32) -> i32 {}
+
+#[os("windows")]
+#[c("send", "link -lws2_32")]
+fn c_wsa_send(sock: i64, bytes: i64, len: i32, flags: i32) -> i32 {}
+
+#[os("windows")]
+#[c("closesocket", "link -lws2_32")]
+fn c_closesocket(sock: i64) -> i32 {}
+
+#[os("windows")]
+#[c("ioctlsocket", "link -lws2_32")]
+fn c_ioctlsocket(sock: i64, cmd: i32, arg: &mut []u32) -> i32 {}
+
+/** *`WSAPoll(fds, n, ms)`: a `WSAPOLLFD` is the `SOCKET` word, then */
+/** *`events` and `revents` in the low half of the next. */
+#[os("windows")]
+#[c("WSAPoll", "link -lws2_32")]
+fn c_wsa_poll(fds: &mut []i64, n: u32, ms: i32) -> i32 {}
+
+/** *kernel32, which every Windows program links. */
+#[os("windows")]
+#[c("SetHandleInformation")]
+fn c_set_handle_information(handle: i64, mask: u32, flags: u32) -> i32 {}
+
+#[os("windows")]
+#[c("Sleep")]
+fn c_sleep(ms: u32) {}
 
 // --- TLS: the slot table (macOS, iOS, Linux) ----------------------------------------------
 //

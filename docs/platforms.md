@@ -41,13 +41,14 @@ OpenSSL's headers.
 name checked and TLS 1.2 at least. Its bindings name their libraries, so a
 program that never connects over TLS links neither Security.framework nor
 libssl. Android and Windows have no TLS client yet (`-1`).
+A library is linked for the OSes of the bindings that name it: on Windows,
+`win-bundle.sh` writes `link||-lws2_32` into a fixture's `.deps` and
+`cross-check.sh` links MinGW's own.
 
-**Known gap: `std:net` on Windows.** TCP is Loam over BSD socket bindings
-(R5.1) with no Winsock port yet, so on Windows every TCP call answers `-1`
-and TLS is unavailable. Every fixture links
-there; the ones that open sockets are left out of the Windows run
-(`tools/win-bundle.sh`). The compiler needs no networking, so this is outside
-the self-hosting work.
+**`std:net` on Windows** is Winsock (R5.4): the same TCP logic as POSIX
+over `ws2_32` bindings, linked only by programs that open a socket.
+`tools/win-run.sh` runs every fixture there, the socket ones included.
+TLS is not there yet (`tls_connect` answers `-1`).
 
 ## C compilers
 

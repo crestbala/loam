@@ -51,14 +51,11 @@ if [ "${1:-}" = --link ]; then
         objs="$objs $o"
     done
     IFS=' '
-    # A library a kept binding names (`"link -lssl"`) links its stub.
-    for want in "$OUT/stubs/$t"/*.want; do
-        [ -e "$want" ] || continue
-        if grep -qFf "$want" "$OUT/c/$b.c"; then
-            lib=$(basename "$want" .want)
-            links="$links -L$OUT/stubs/$t -l$lib"
-        fi
-    done
+    # The libraries the kept bindings name for this OS; on Linux, stubs.
+    case $t in *-windows-*) os=windows ;; *) os=linux ;; esac
+    libs=$(binding_libs_for "$os" "$OUT/stubs/table" "$OUT/c/$b.c")
+    [ -n "$libs" ] && [ "$os" = linux ] && links="$links -L$OUT/stubs/$t"
+    links="$links $libs"
     bin="$OUT/obj/$t-$b"
     # shellcheck disable=SC2086
     zig cc -target "$t" -std=gnu99 -O1 -w -I packages/loam/runtime "$OUT/c/$b.c" $objs -o "$bin" $links 2>&1 | grep -E "error" | head -3 > "$res" || true
@@ -77,22 +74,24 @@ mkdir -p "$OUT/cache" "$OUT/c" "$OUT/obj"
 for t in $targets; do mkdir -p "$OUT/res/$t"; done
 
 # 1. Each target's runtime/net.c object and each fixture's C, at once.
-# On Linux, a stub shared library for each library std's bindings name
-# (`#[c("SSL_new", "link -lssl -lcrypto")]`): zig's sysroot has no OpenSSL,
-# so every bound symbol is a stub fn, and the link still checks that all
-# else resolves. `nob integration c_layouts` checks the names against the
-# real headers. `<lib>.want` holds the `LOAM_CSYM("sym")` of its symbols.
+# The libraries bindings name (`#[c("SSL_new", "link -lssl -lcrypto")]`),
+# with each binding's `#[os]`. On Windows they are MinGW's own (`ws2_32`).
+# On Linux zig ships no OpenSSL, so each library is a stub shared library
+# whose every bound symbol is a stub fn: the link still checks that all else
+# resolves, and `nob integration c_layouts` checks the names against the
+# real headers.
 rm -rf "$OUT/stubs"
+mkdir -p "$OUT/stubs"
+binding_lib_table > "$OUT/stubs/table"
 for t in $targets; do
     case $t in *-linux-*) ;; *) continue ;; esac
     mkdir -p "$OUT/stubs/$t"
-    grep -hoE '#\[c\("[A-Za-z0-9_]+", "link [^"]*"\)\]' packages/loam/std/*.loam | while IFS= read -r attr; do
-        sym=$(printf '%s\n' "$attr" | sed -E 's/^#\[c\("([A-Za-z0-9_]+)".*/\1/')
-        for lib in $(printf '%s\n' "$attr" | grep -oE ' -l[A-Za-z0-9_+.-]+' | sed 's/ -l//'); do
-            echo "void $sym(void) {}" >> "$OUT/stubs/$t/$lib.c"
-            echo "LOAM_CSYM(\"$sym\")" >> "$OUT/stubs/$t/$lib.want"
+    while IFS='|' read -r oses sym libs; do
+        case ",$oses," in ,,|*,linux,*|*,posix,*) ;; *) continue ;; esac
+        for lib in $libs; do
+            echo "void $sym(void) {}" >> "$OUT/stubs/$t/${lib#-l}.c"
         done
-    done
+    done < "$OUT/stubs/table"
     for c in "$OUT/stubs/$t"/*.c; do
         [ -e "$c" ] || continue
         lib=$(basename "$c" .c)
@@ -121,10 +120,7 @@ xargs -P "$jobs" -n 2 sh -c 'bin/loamc "$3" --emit-c -o "$1/c/$2.c" >/dev/null 2
 cat "$list.ok" >> "$list"
 wait
 
-# 2. Every target × fixture link. On Windows std:net's TCP answers -1 (no
-# Winsock port yet) and runtime/net.c compiles to its stubs, so the
-# networking fixtures link there too; win-bundle.sh leaves the ones that
-# open sockets out of the Windows run.
+# 2. Every target × fixture link. On Windows std:net's TCP is Winsock.
 work="$OUT/work"
 : > "$work"
 for t in $targets; do
