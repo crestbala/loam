@@ -18,6 +18,7 @@
 int loam_app_main(void);
 
 static JavaVM *g_jvm;
+static int tls_ready(JNIEnv *env);
 static jobject g_view;
 static jmethodID m_fill, m_fill_a, m_fill_g, m_shadow, m_stroke, m_fill4, m_xform, m_text, m_text_rot, m_save, m_alpha, m_clip, m_restore, m_path, m_image, m_image_size, m_pick, m_measure, m_invalidate;
 static JNIEnv *g_env;
@@ -315,6 +316,8 @@ JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativeStart(JNIEnv *env, jobj
     g_started = 1;
     stdout_to_logcat();
     g_env = env;
+    /* The app classloader can see LoamTls. A later native thread reuses the global ref. */
+    tls_ready(env);
     if (g_view) (*env)->DeleteGlobalRef(env, g_view);
     g_view = (*env)->NewGlobalRef(env, thiz);
     cache_methods(env, thiz);
@@ -434,4 +437,199 @@ JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativePicked(JNIEnv *env, job
     s = src ? (*env)->GetStringUTFChars(env, src, NULL) : NULL;
     loam_zeus_engine_picked_image((loam_str){s ? s : "", s ? (int64_t)strlen(s) : 0, 0}, w, h);
     if (s) (*env)->ReleaseStringUTFChars(env, src, s);
+}
+
+/* TLS for std:net. Loam cannot call through the JNI function table, so these
+   copy between caller-owned buffers and LoamTls. The symbols are not JNI
+   exports; app.c in this library calls them. Handles are 1..8. */
+static jclass g_tls_class;
+static jmethodID m_tls_open, m_tls_status, m_tls_wrap, m_tls_unwrap, m_tls_pending, m_tls_close, m_tls_free;
+static jmethodID m_tls_consumed, m_tls_produced, m_tls_staged;
+static int g_tls_ready;
+static int g_tls_logged;
+
+static void tls_log_once(const char *msg) {
+    if (g_tls_logged) return;
+    g_tls_logged = 1;
+    __android_log_write(ANDROID_LOG_ERROR, "zeus", msg);
+}
+
+static int tls_bind(JNIEnv *env, jclass cls) {
+    m_tls_open = (*env)->GetStaticMethodID(env, cls, "open", "(Ljava/lang/String;I)I");
+    m_tls_status = (*env)->GetStaticMethodID(env, cls, "status", "(I)I");
+    m_tls_wrap = (*env)->GetStaticMethodID(env, cls, "wrap", "(I[BI[B)I");
+    m_tls_unwrap = (*env)->GetStaticMethodID(env, cls, "unwrap", "(I[BI[B)I");
+    m_tls_pending = (*env)->GetStaticMethodID(env, cls, "pending", "(I)I");
+    m_tls_close = (*env)->GetStaticMethodID(env, cls, "close", "(I)I");
+    m_tls_free = (*env)->GetStaticMethodID(env, cls, "free", "(I)V");
+    m_tls_consumed = (*env)->GetStaticMethodID(env, cls, "takeConsumed", "()I");
+    m_tls_produced = (*env)->GetStaticMethodID(env, cls, "takeProduced", "()I");
+    m_tls_staged = (*env)->GetStaticMethodID(env, cls, "takeStaged", "()I");
+    if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    return m_tls_open && m_tls_status && m_tls_wrap && m_tls_unwrap && m_tls_pending &&
+           m_tls_close && m_tls_free && m_tls_consumed && m_tls_produced && m_tls_staged;
+}
+
+static int tls_ready(JNIEnv *env) {
+    jclass local;
+    if (g_tls_ready) return 1;
+    if (!env) return 0;
+    local = (*env)->FindClass(env, "com/loam/zeus/LoamTls");
+    if ((*env)->ExceptionCheck(env) || !local) {
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+        tls_log_once("loam tls: LoamTls class not found");
+        return 0;
+    }
+    g_tls_class = (*env)->NewGlobalRef(env, local);
+    (*env)->DeleteLocalRef(env, local);
+    if (!g_tls_class || !tls_bind(env, g_tls_class)) {
+        if (g_tls_class) (*env)->DeleteGlobalRef(env, g_tls_class);
+        g_tls_class = NULL;
+        tls_log_once("loam tls: LoamTls methods missing");
+        return 0;
+    }
+    g_tls_ready = 1;
+    return 1;
+}
+
+static void tls_drop(JNIEnv *env, jbyteArray a, jbyteArray b) {
+    if (a) (*env)->DeleteLocalRef(env, a);
+    if (b) (*env)->DeleteLocalRef(env, b);
+}
+
+/* counts[0] consumed, counts[1] produced, counts[2] still staged. */
+static int32_t tls_io(JNIEnv *env, jmethodID method, int32_t handle, void *in, int32_t in_len,
+                      void *out, int32_t out_cap, void *counts) {
+    jbyteArray jin, jout;
+    int32_t rc, consumed, produced, staged;
+    int32_t *got;
+    if (!env || !g_tls_ready || in_len < 0 || out_cap < 0) return -1;
+    if ((in_len > 0 && !in) || (out_cap > 0 && !out)) return -1;
+    jin = (*env)->NewByteArray(env, (jsize)in_len);
+    jout = (*env)->NewByteArray(env, (jsize)out_cap);
+    if ((*env)->ExceptionCheck(env) || !jin || !jout) {
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+        tls_drop(env, jin, jout);
+        return -1;
+    }
+    if (in_len > 0) {
+        (*env)->SetByteArrayRegion(env, jin, 0, (jsize)in_len, (const jbyte *)in);
+        if ((*env)->ExceptionCheck(env)) {
+            (*env)->ExceptionClear(env);
+            tls_drop(env, jin, jout);
+            return -1;
+        }
+    }
+    rc = (*env)->CallStaticIntMethod(env, g_tls_class, method, (jint)handle, jin, (jint)in_len, jout);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        rc = -1;
+    }
+    consumed = 0;
+    produced = 0;
+    staged = 0;
+    if (rc >= 0) {
+        consumed = (*env)->CallStaticIntMethod(env, g_tls_class, m_tls_consumed);
+        produced = (*env)->CallStaticIntMethod(env, g_tls_class, m_tls_produced);
+        staged = (*env)->CallStaticIntMethod(env, g_tls_class, m_tls_staged);
+        if ((*env)->ExceptionCheck(env)) {
+            (*env)->ExceptionClear(env);
+            rc = -1;
+        }
+    }
+    if (rc >= 0 && (consumed < 0 || produced < 0 || staged < 0 || consumed > in_len || produced > out_cap)) {
+        rc = -1;
+    }
+    if (rc >= 0 && produced > 0) {
+        (*env)->GetByteArrayRegion(env, jout, 0, (jsize)produced, (jbyte *)out);
+        if ((*env)->ExceptionCheck(env)) {
+            (*env)->ExceptionClear(env);
+            rc = -1;
+        }
+    }
+    if (rc >= 0 && counts) {
+        got = counts;
+        got[0] = consumed;
+        got[1] = produced;
+        got[2] = staged;
+    }
+    tls_drop(env, jin, jout);
+    return rc;
+}
+
+int32_t loam_android_tls_open(const char *host, int32_t port) {
+    JNIEnv *env = env_now();
+    jstring jhost;
+    int32_t handle;
+    if (!env || !tls_ready(env) || !host || !host[0]) return -1;
+    jhost = (*env)->NewStringUTF(env, host);
+    if ((*env)->ExceptionCheck(env) || !jhost) {
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+        if (jhost) (*env)->DeleteLocalRef(env, jhost);
+        return -1;
+    }
+    handle = (*env)->CallStaticIntMethod(env, g_tls_class, m_tls_open, jhost, (jint)port);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        handle = -1;
+    }
+    (*env)->DeleteLocalRef(env, jhost);
+    return handle;
+}
+
+int32_t loam_android_tls_status(int32_t handle) {
+    JNIEnv *env = env_now();
+    int32_t rc;
+    if (!env || !tls_ready(env)) return -1;
+    rc = (*env)->CallStaticIntMethod(env, g_tls_class, m_tls_status, (jint)handle);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        return -1;
+    }
+    return rc;
+}
+
+int32_t loam_android_tls_wrap(int32_t handle, void *in, int32_t in_len, void *out, int32_t out_cap,
+                              void *counts) {
+    JNIEnv *env = env_now();
+    if (!env || !tls_ready(env)) return -1;
+    return tls_io(env, m_tls_wrap, handle, in, in_len, out, out_cap, counts);
+}
+
+int32_t loam_android_tls_unwrap(int32_t handle, void *in, int32_t in_len, void *out, int32_t out_cap,
+                                void *counts) {
+    JNIEnv *env = env_now();
+    if (!env || !tls_ready(env)) return -1;
+    return tls_io(env, m_tls_unwrap, handle, in, in_len, out, out_cap, counts);
+}
+
+int32_t loam_android_tls_pending(int32_t handle) {
+    JNIEnv *env = env_now();
+    int32_t rc;
+    if (!env || !tls_ready(env)) return 0;
+    rc = (*env)->CallStaticIntMethod(env, g_tls_class, m_tls_pending, (jint)handle);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        return 0;
+    }
+    return rc;
+}
+
+int32_t loam_android_tls_close(int32_t handle) {
+    JNIEnv *env = env_now();
+    int32_t rc;
+    if (!env || !tls_ready(env)) return -1;
+    rc = (*env)->CallStaticIntMethod(env, g_tls_class, m_tls_close, (jint)handle);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        return -1;
+    }
+    return rc;
+}
+
+void loam_android_tls_free(int32_t handle) {
+    JNIEnv *env = env_now();
+    if (!env || !tls_ready(env)) return;
+    (*env)->CallStaticVoidMethod(env, g_tls_class, m_tls_free, (jint)handle);
+    if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
 }

@@ -1235,7 +1235,8 @@ fn client_c_ok() -> bool {
                 continue
             }
             // An `#[os]` / `#[arch]` variant for other targets is not built
-            // here; and std binds only libc, which iOS and Android have.
+            // here. std binds libc, which iOS and Android have, and on
+            // Android the host functions in android.c.
             let mask = typecheck.os_mask(d)
             let off_wasm = (ast.target_os(mask) & ast.OS_WASM) == 0 || (ast.target_arch(mask) & ast.ARCH_WASM32) == 0
             if (TARGET_WASM && mask != 0 && off_wasm) || (!TARGET_WASM && typecheck.MODS[m].is_std) {
@@ -1652,9 +1653,9 @@ fn android_app_id(stem: string) -> string {
     return "com.loam.{{buf.to_string(&out)}}"
 }
 
-fn android_cmake(uses_http: bool) -> string {
+fn android_cmake(uses_net: bool) -> string {
     let rt = loader.runtime_dir()
-    let net = if uses_http { "  \"{{rt}}/net.c\"\n" } else { "" }
+    let net = if uses_net { "  \"{{rt}}/net.c\"\n" } else { "" }
     let owns = if types.string_owns { " LOAM_STRING_OWNS" } else { "" }
     // A dev build leaves only the app's code unoptimized, as on the native
     // targets: it is what an edit recompiles.
@@ -1679,8 +1680,8 @@ fn android_emit_project(proj: string, cpath: string, app_id: string) -> bool {
         return false
     }
     let host = "{{zeus_dir()}}/hosts/android"
-    let froms = []string { "{{host}}/java/com/loam/zeus/ZeusActivity.java", "{{host}}/java/com/loam/zeus/ZeusView.java", "{{host}}/AndroidManifest.xml", "{{host}}/network_security_config.xml", "{{host}}/root-build.gradle", "{{host}}/settings.gradle", "{{host}}/gradle.properties", cpath }
-    let tos = []string { "{{proj}}/app/src/main/java/com/loam/zeus/ZeusActivity.java", "{{proj}}/app/src/main/java/com/loam/zeus/ZeusView.java", "{{proj}}/app/src/main/AndroidManifest.xml", "{{proj}}/app/src/main/res/xml/network_security_config.xml", "{{proj}}/build.gradle", "{{proj}}/settings.gradle", "{{proj}}/gradle.properties", "{{proj}}/app/src/main/cpp/app.c" }
+    let froms = []string { "{{host}}/java/com/loam/zeus/ZeusActivity.java", "{{host}}/java/com/loam/zeus/ZeusView.java", "{{host}}/java/com/loam/zeus/LoamTls.java", "{{host}}/AndroidManifest.xml", "{{host}}/network_security_config.xml", "{{host}}/root-build.gradle", "{{host}}/settings.gradle", "{{host}}/gradle.properties", cpath }
+    let tos = []string { "{{proj}}/app/src/main/java/com/loam/zeus/ZeusActivity.java", "{{proj}}/app/src/main/java/com/loam/zeus/ZeusView.java", "{{proj}}/app/src/main/java/com/loam/zeus/LoamTls.java", "{{proj}}/app/src/main/AndroidManifest.xml", "{{proj}}/app/src/main/res/xml/network_security_config.xml", "{{proj}}/build.gradle", "{{proj}}/settings.gradle", "{{proj}}/gradle.properties", "{{proj}}/app/src/main/cpp/app.c" }
     for i in 0..froms.len {
         let r = sys.read(froms[i])
         if r.tag != ResultTag.Ok || !write_with_dir(tos[i], r.val) {
@@ -1688,7 +1689,7 @@ fn android_emit_project(proj: string, cpath: string, app_id: string) -> bool {
             return false
         }
     }
-    if !write_with_dir("{{proj}}/app/src/main/cpp/CMakeLists.txt", android_cmake(mods_use("http"))) {
+    if !write_with_dir("{{proj}}/app/src/main/cpp/CMakeLists.txt", android_cmake(mods_use("http") || mods_use("net"))) {
         return false
     }
     if !write_with_dir("{{proj}}/app/build.gradle", android_app_gradle(app_id)) {

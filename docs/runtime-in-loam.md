@@ -1604,9 +1604,53 @@ done, so every R3 step is checked by `thread_tsan`).
       `zeus_stream`, `c_ffi` and `c_layouts` green; `cross-check.sh` Linux
       and Windows 125/125 on both CPUs. No C deleted: **Runtime stays
       5,359.**
-- [ ] R5.6 TLS on Android: its system BoringSSL is not a public NDK
-      library, so it needs a vendored TLS library or Java's through JNI (a
-      choice to make first).
+- [x] R5.6 TLS on Android through Java's TLS (JNI). Done 2026-11-16.
+      On the yuga emulator (Android 14, arm64) it printed `tls ok`:
+      badssl.com's wrong-host, expired, self-signed and untrusted-root
+      certificates were refused, and a blocking and a non-blocking GET of
+      example.com both completed.
+
+      **A fourth backend** of the shared TLS layer. The engine is
+      `javax.net.ssl.SSLEngine` in client mode, in `LoamTls`, which the
+      compiler copies into the generated Gradle project. It uses the
+      system trust store, SNI from the host passed to `createSSLEngine`,
+      HTTPS endpoint identification, and TLS 1.2 at least. Loam owns the
+      socket and the poll. `wrap` and `unwrap` turn bytes into records.
+      Pending output is parked, and the caller's retry with the same bytes
+      counts it. Plaintext the caller has not taken is kept, so
+      `tls_buffered` reports it. The same contract as SChannel.
+
+      Loam cannot call through JNI's function table, so the calls live in
+      the existing Android host (`android.c`): `loam_android_tls_open`,
+      `status`, `wrap`, `unwrap`, `pending`, `close` and `free`. They copy
+      between caller-owned buffers. `std:net` binds them with
+      `#[os("android")] #[c]`. No new runtime C file.
+
+      Bionic's `addrinfo` matches Apple (`ai_addr` at word 4).
+      `SO_SNDTIMEO` is 21 and `SO_RCVTIMEO` is 20, as on Linux. `nfds_t`
+      is 4 bytes, so Android's `poll` takes a `u32` count. `getaddrinfo`
+      and `freeaddrinfo` cover Android.
+
+      **Checks.** `c_layouts` compiles the bionic asserts with NDK 26's
+      aarch64 clang (zig ships no bionic headers): `addrinfo` is 48 bytes,
+      `ai_canonname` at 24, `ai_addr` at 32, `ai_next` at 40, `nfds_t` is
+      4, and the socket constants match. `android_project` finds
+      `LoamTls.java`. NDK clang (`aarch64-linux-android34`) linked a Zeus
+      program that calls `tls_connect` into `libzeus.so`, defining the
+      seven `loam_android_tls_*` symbols. `gradle assembleDebug` compiled
+      `android.c`, `LoamTls.java` and that program's `app.c`, and
+      `installDebug` ran the checks above. Native `net_`, `http_` (39),
+      `os_variants` and `c_layouts` are green. `cross-check.sh` is Linux
+      and Windows 125/125 on both CPUs. `nob seed` and `nob selfhost`:
+      seed = stage 1 = stage 2 (5,209,438 bytes). No runtime C added:
+      **Runtime stays 5,359.** Hosts are 5,451 (`android.c` 437 to 635,
+      +198). `LoamTls.java` is 299 lines and is outside that C count.
+
+      The live APK was linked at minSdk 28. The generated project stays
+      minSdk 26. A Gradle link at 26 stops on `posix_spawnp`, which bionic
+      exports from API 28. That symbol is `std:sys`'s spawn helper. The
+      TLS objects compiled, and the NDK android-34 link of the same
+      objects succeeded.
 
 **R6. The core: zero runtime.** What remains of `loam_rt.h`: allocation,
 refcounts, owned strings, vec growth and copy-on-write, element and env drop

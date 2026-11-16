@@ -2713,6 +2713,7 @@ fn ig_android_project() {
     let files = []string {
         "app/build.gradle", "app/src/main/AndroidManifest.xml", "app/src/main/cpp/CMakeLists.txt", "app/src/main/cpp/app.c",
         "app/src/main/java/com/loam/zeus/ZeusActivity.java", "app/src/main/java/com/loam/zeus/ZeusView.java",
+        "app/src/main/java/com/loam/zeus/LoamTls.java",
         "app/src/main/res/xml/network_security_config.xml", "build.gradle", "gradle.properties", "settings.gradle",
     }
     let mut missing = ""
@@ -2722,8 +2723,9 @@ fn ig_android_project() {
         }
     }
     let has_entry = file_has("{{project}}/app/src/main/cpp/app.c", "zeus_carousel")
+    let has_tls = file_has("{{project}}/app/src/main/java/com/loam/zeus/LoamTls.java", "SSLEngine")
     sys.exec("rm -rf {{shq(d)}}")
-    if missing.len > 0 || !has_entry {
+    if missing.len > 0 || !has_entry || !has_tls {
         bad("android project (missing or empty:{{missing}})", log)
         return
     }
@@ -2808,12 +2810,20 @@ fn ig_thread_tsan() {
     ok("thread tsan ({{names.len}} thread programs under ThreadSanitizer, no reports)")
 }
 
+/** *An NDK `aarch64-linux-android` clang, or `""` when none is installed. */
+/** *zig has no bionic headers, so `c_layouts` uses this for the Android branch. */
+fn ndk_android_clang() -> string {
+    let script = "found=; for r in ${ANDROID_NDK_HOME:-} ${ANDROID_HOME:-}/ndk ${ANDROID_SDK_ROOT:-}/ndk ${HOME:-}/Library/Android/sdk/ndk ${HOME:-}/Android/Sdk/ndk /opt/homebrew/share/android-commandlinetools/ndk /usr/local/share/android-commandlinetools/ndk; do [ -d \"$r\" ] || continue; for c in \"$r\"/toolchains/llvm/prebuilt/*/bin/aarch64-linux-android*-clang \"$r\"/*/toolchains/llvm/prebuilt/*/bin/aarch64-linux-android*-clang; do [ -x \"$c\" ] || continue; found=$c; done; done; printf %s \"$found\""
+    return trim(sys.exec(script))
+}
+
 /** *The C layouts and constants Loam bindings transcribe by hand, checked */
 /** *against the real headers: a probe of `_Static_assert`s on `sizeof`, */
 /** *`offsetof` and the constants, compiled (not linked) for this machine and, */
 /** *with zig, for x86_64 glibc and aarch64 musl Linux and x86_64 Windows. */
-/** *A field transcribed wrong fails here instead of corrupting memory */
-/** *(docs/runtime-in-loam.md §4). */
+/** *When an NDK clang is installed it is compiled once more for aarch64 */
+/** *Android (zig ships no bionic headers). A field transcribed wrong fails */
+/** *here instead of corrupting memory (docs/runtime-in-loam.md §4). */
 /** *The probe is generated, so no C file lives in the tree for it. */
 fn ig_c_layouts() {
     mark("c layouts")
@@ -2853,6 +2863,16 @@ fn ig_c_layouts() {
     // raygui's RAM probe: `task_vm_info` in 47 `i64` words.
     p = cat(p, "IS(TASK_VM_INFO, 22); IS(TASK_VM_INFO_COUNT, 93); FITS(task_vm_info_data_t, 47);\n")
     p = cat(p, "AT(task_vm_info_data_t, phys_footprint, 144);\n")
+    // Before `__linux__`: Android defines that too, and bionic's `addrinfo`
+    // and `nfds_t` are not glibc's.
+    p = cat(p, "#elif defined(__ANDROID__)\nIS(CLOCK_MONOTONIC, 1);\n")
+    p = cat(p, "AT(struct sockaddr_in, sin_family, 0); IS(SOL_SOCKET, 1); IS(SO_REUSEADDR, 2); IS(SO_RCVTIMEO, 20);\n")
+    p = cat(p, "IS(SO_SNDTIMEO, 21); IS(SO_ERROR, 4); IS(MSG_NOSIGNAL, 16384); IS(O_NONBLOCK, 2048);\n")
+    p = cat(p, "IS(EAGAIN, 11); IS(EINPROGRESS, 115); IS(EALREADY, 114); IS(ECONNRESET, 104); IS(EPIPE, 32); SIZE(nfds_t, 4);\n")
+    p = cat(p, "#include <netdb.h>\n")
+    p = cat(p, "SIZE(struct addrinfo, 48); AT(struct addrinfo, ai_family, 4); AT(struct addrinfo, ai_socktype, 8); AT(struct addrinfo, ai_protocol, 12);\n")
+    p = cat(p, "AT(struct addrinfo, ai_addrlen, 16); AT(struct addrinfo, ai_canonname, 24); AT(struct addrinfo, ai_addr, 32); AT(struct addrinfo, ai_next, 40); SIZE(size_t, 8);\n")
+    p = cat(p, "IS(AF_UNSPEC, 0);\n")
     p = cat(p, "#elif defined(__linux__)\nIS(CLOCK_MONOTONIC, 1); IS(_SC_NPROCESSORS_ONLN, 84);\n")
     p = cat(p, "AT(struct sockaddr_in, sin_family, 0); IS(SOL_SOCKET, 1); IS(SO_REUSEADDR, 2); IS(SO_RCVTIMEO, 20);\n")
     p = cat(p, "IS(SO_ERROR, 4); IS(MSG_NOSIGNAL, 16384); IS(O_NONBLOCK, 2048);\n")
@@ -2941,6 +2961,18 @@ fn ig_c_layouts() {
         if i > 0 {
             names = "{{names}}, {{targets[i]}}"
         }
+    }
+    let ndk = ndk_android_clang()
+    if ndk.len > 0 {
+        let obj = tmpf("c_layouts.android.o")
+        let out = sys.exec("{{shq(ndk)}} -c -std=gnu11 {{shq(probe_c)}} -o {{shq(obj)}} 2>&1")
+        let status = sys.exec_status()
+        sys.remove_path(obj)
+        if status != 0 {
+            bad("c layouts: a transcribed layout differs from the headers (android ndk)", out)
+            return
+        }
+        names = "{{names}}, android-ndk"
     }
     let with_raylib = if raylib.len > 0 { ", raylib" } else { "" }
     let with_openssl = if openssl.len > 0 || sys.exists("/usr/include/openssl/ssl.h") == 1 { ", OpenSSL" } else { "" }

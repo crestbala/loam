@@ -1,7 +1,8 @@
 // The TLS client against the real internet: certificates that must be
 // refused (badssl.com's wrong host name, expired and self-signed), then a
 // blocking and a non-blocking GET of example.com that must succeed, on
-// SecureTransport (Apple), OpenSSL (Linux) or SChannel (Windows).
+// SecureTransport (Apple), OpenSSL (Linux), SChannel (Windows) or
+// Java's SSLEngine (Android).
 //
 // Not in the suite (it takes seconds of network): CI's selfhost workflow
 // runs it on Linux and Windows and requires "tls ok". Offline (example.com
