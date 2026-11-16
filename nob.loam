@@ -2907,7 +2907,7 @@ fn ig_c_layouts() {
         // zig cannot `-fsyntax-only`, so each target compiles one object and
         // deletes it.
         let obj = tmpf("c_layouts.{{target}}.o")
-        let out = sys.exec("{{compiler}} -c -std=gnu11 -Wincompatible-function-pointer-types -Werror=incompatible-function-pointer-types {{raylib}} {{openssl}} {{shq(probe_c)}} -o {{shq(obj)}} 2>&1")
+        let out = sys.exec("{{compiler}} -c -std=gnu11 -Werror=incompatible-pointer-types {{raylib}} {{openssl}} {{shq(probe_c)}} -o {{shq(obj)}} 2>&1")
         let status = sys.exec_status()
         sys.remove_path(obj)
         if status != 0 {
