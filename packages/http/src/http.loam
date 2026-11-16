@@ -2785,6 +2785,22 @@ struct ListenProps {
 const CONN_READING: int = 0
 const CONN_WRITING: int = 1
 const CONN_CLOSED: int = 2
+/** *The whole reply is out: the socket lingers before it closes. */
+const CONN_DONE: int = 3
+/** *A lingering socket waits at most this long (or the server's timeout) */
+/** *for its client to close. */
+const LINGER_MS: int = 2000
+
+/** *A finished connection's socket after `tcp_shutdown`: the client has */
+/** *the reply and an EOF, and what it still sends is read and dropped */
+/** *until it closes or `deadline`. Closing at once with input unread, or */
+/** *with more on the way (the rest of a refused body, an h2c SETTINGS ACK), */
+/** *makes the kernel answer with a reset, and a reset can destroy the */
+/** *reply before the client reads it (Windows always does). */
+struct Linger {
+    fd: int,
+    deadline: i64,
+}
 
 /** *One client. Its socket never blocks, so a slow one only ever costs its own turn. */
 struct Conn {
@@ -2803,6 +2819,8 @@ struct Server {
     port: int,
     p: ListenProps,
     conns: []Conn,
+    /** *Finished sockets waiting for their clients to close (`Linger`). */
+    lingering: []Linger,
 }
 
 /** *Bind and start serving. `fd` is `-1` when the address cannot be bound. */
@@ -2813,15 +2831,20 @@ fn server_start(app: App, port: int, p: ListenProps) -> Server {
     if fd >= 0 {
         let _ = net.tcp_nonblock(fd)
     }
-    return Server { app: app, fd: fd, port: net.tcp_bound_port(fd), p: p, conns: []Conn {} }
+    let port_bound = net.tcp_bound_port(fd)
+    return Server { app: app, fd: fd, port: port_bound, p: p, conns: []Conn {}, lingering: []Linger {} }
 }
 
-/** *Close the server and its connections. Open streams stay with the process. */
+/** *Close the server, its connections, lingering sockets and open streams. */
 fn server_stop(s: &mut Server) {
     for i in 0..s.conns.len {
         net.tcp_close(s.conns[i].fd)
     }
     s.conns = []Conn {}
+    for i in 0..s.lingering.len {
+        net.tcp_close(s.lingering[i].fd)
+    }
+    s.lingering = []Linger {}
     // Open streams too: a stopped server must end them, as a process exit
     // would, or their clients wait forever.
     for i in 0..watchers.len {
@@ -2945,7 +2968,39 @@ fn conn_write(c: &mut Conn) {
         }
         c.off += n
     }
-    c.state = CONN_CLOSED
+    c.state = CONN_DONE
+}
+
+/** *Hand a finished socket to the lingering list: no more writes, then */
+/** *wait for the client to close. When the list is full it closes at once. */
+fn linger(s: &mut Server, fd: int, now: i64) {
+    if s.lingering.len >= s.p.max_conns {
+        net.tcp_close(fd)
+        return
+    }
+    net.tcp_shutdown(fd)
+    let wait = if s.p.timeout_ms < LINGER_MS { s.p.timeout_ms } else { LINGER_MS }
+    push(s.lingering, Linger { fd: fd, deadline: now + i64(wait) })
+}
+
+/** *Read and drop what lingering clients sent; close each one that closed, */
+/** *failed or ran past its deadline. `base` is the first one's poll index. */
+fn linger_step(s: &mut Server, base: int) {
+    let now = async.now_ms()
+    let mut keep = []Linger {}
+    for i in 0..s.lingering.len {
+        let l = s.lingering[i]
+        let mut open = now < l.deadline
+        if open && base >= 0 && net.tcp_poll_ready(base + i) != 0 {
+            open = net.tcp_read(l.fd, 65536).len > 0 || net.tcp_wouldblock() != 0
+        }
+        if open {
+            push(keep, l)
+        } else {
+            net.tcp_close(l.fd)
+        }
+    }
+    s.lingering = keep
 }
 
 /** *Whichever deadline comes first, capped at `ms`. */
@@ -2957,6 +3012,12 @@ fn server_wait(s: &Server, ms: int) -> int {
     let now = async.now_ms()
     for i in 0..s.conns.len {
         let left = s.conns[i].deadline - now
+        if left < i64(wait) {
+            wait = if left < i64(0) { 0 } else { int(left) }
+        }
+    }
+    for i in 0..s.lingering.len {
+        let left = s.lingering[i].deadline - now
         if left < i64(wait) {
             wait = if left < i64(0) { 0 } else { int(left) }
         }
@@ -2991,9 +3052,17 @@ fn server_step(s: &mut Server, ms: int) {
         let want = if watchers[i].off < watchers[i].out.len { 2 } else { 1 }
         let _ = net.tcp_poll_add(watchers[i].fd, want)
     }
+    let mut linger_base = -1
+    for i in 0..s.lingering.len {
+        let at = net.tcp_poll_add(s.lingering[i].fd, 1)
+        if i == 0 {
+            linger_base = at
+        }
+    }
     if net.tcp_poll_wait(server_wait(s, ms)) < 0 {
         return
     }
+    linger_step(s, linger_base)
 
     let now = async.now_ms()
     let mut keep = []Conn {}
@@ -3018,7 +3087,9 @@ fn server_step(s: &mut Server, ms: int) {
         if c.state == CONN_WRITING {
             conn_write(&mut c)
         }
-        if c.state == CONN_CLOSED {
+        if c.state == CONN_DONE {
+            linger(s, c.fd, now)
+        } else if c.state == CONN_CLOSED {
             net.tcp_close(c.fd)
         } else {
             push(keep, c)
