@@ -3414,7 +3414,7 @@ fn grammar() -> int {
 // deletes the C, so the runtime can only shrink. The target is zero.
 
 /** *Lines allowed under `packages/loam/runtime/`. Lower it when a step lands. */
-let RUNTIME_LINE_BUDGET: int = 4296
+let RUNTIME_LINE_BUDGET: int = 3600
 
 /** *The group a tracked C file belongs to, or `""` for C that is not shipped. */
 fn trusted_group(path: string) -> string {
@@ -3588,6 +3588,36 @@ fn trusted_unsafe_lines(verbose: bool) -> int {
     return total
 }
 
+/** *The fns in codegen.loam whose `w("...")` lines are runtime C a program */
+/** *carries when it calls it (docs/runtime-in-loam.md, R6). Still trusted C: */
+/** *counted here so moving C out of `runtime/` does not hide it. */
+let EMITTED_C_FNS: []string = []string {
+    "int_helper_def", "vec_push_defs", "vec_pop_defs", "core_op_def", "rt_verb_def", "wasm_libc_defs",
+}
+
+fn trusted_emitted_lines() {
+    let lines = split_lines(sys.read_file("{{ROOT}}/packages/loam/compiler/codegen.loam"))
+    let mut total = 0
+    let mut inside = false
+    for i in 0..lines.len {
+        let l = lines[i]
+        if starts_with(l, "fn ") || starts_with(l, "}") {
+            inside = false
+            for k in 0..EMITTED_C_FNS.len {
+                if starts_with(l, "fn {{EMITTED_C_FNS[k]}}(") {
+                    inside = true
+                }
+            }
+            continue
+        }
+        if inside && starts_with(trim(l), "w(\"") {
+            total += 1
+        }
+    }
+    fmt.println("emitted C (codegen.loam templates, only what a program calls):")
+    fmt.println("  {{right_align(total, 7)}}  total emitted")
+}
+
 /** *`true`, after saying why, when the runtime C is over its budget or a */
 /** *tool uses `unsafe`. */
 fn trusted_over_budget() -> bool {
@@ -3608,6 +3638,7 @@ fn trusted() -> int {
     if runtime_lines < 0 || trusted_unsafe_lines(true) < 0 || trusted_over_budget() {
         return 1
     }
+    trusted_emitted_lines()
     fmt.println("runtime budget: {{runtime_lines}} of {{RUNTIME_LINE_BUDGET}} lines (target 0)")
     return 0
 }

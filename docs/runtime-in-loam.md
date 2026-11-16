@@ -240,7 +240,7 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       `wasm_inc`), hosts 4,871, vendored 346,122 (sqlite, monocypher, raygui
       and the generated tree-sitter parser).
 - [x] R0.2 The budget: `RUNTIME_LINE_BUDGET` in `nob.loam`, set at 9,939
-      and lowered by each step since (now **4,296**, after R6.5).
+      and lowered by each step since (now **3,600**, during R6.6).
       `nob trusted` and the unfiltered `nob test` fail if `runtime/` grows
       past it. Each step below lowers it to its new count in the same
       change.
@@ -1959,6 +1959,52 @@ with R6.2).
       4,296** (−215; −449 for all of R6.5).
 - [ ] R6.6 `packages/loam/runtime/` deleted; `loader.loam` and `loamc.loam`
       no longer name it; `nob trusted` reports zero runtime lines.
+      Planned 2026-11-16 as five changes, checked against AGENTS.md's
+      filter:
+      - **a** The runtime verbs move to codegen, emitted only when used.
+      - **b** The pure logic in `zeus_plat.c` moves to safe Loam: the
+        text-edit buffer, `wrap_text`, the handler intern table and mem
+        stats.
+      - **c** `net.c`'s wasm `fetch` / websocket glue becomes bindings to
+        wasm imports.
+      - **d** The host seam: the `zeus_set_*` registry, the forwarders and
+        `zeus_rt.h`. Its design is to be agreed first.
+      - **e** The rest of the core moves to codegen, and a small
+        host-contract header goes to `packages/zeus/hosts`. Then the
+        directory is deleted.
+      **Honest count:** a template in `codegen.loam` is still trusted C, so
+      `nob trusted` now prints an "emitted C" total beside the runtime
+      count (the `w("...")` lines of `int_helper_def`, `vec_push_defs`,
+      `vec_pop_defs`, `core_op_def`, `rt_verb_def` and `wasm_libc_defs`).
+      It reads 1,058. "Zero runtime lines" cannot hide C that moved.
+      **R6.6a landed 2026-11-16: `loam_rt.h` 1,205 → 509 lines.** These
+      left the header, as 19 groups: the `fmt` writers, `str.slice`,
+      `string_from_bytes` / `_u8`, the `buf`, `decimal`, `conv` and
+      `floattext` bridges, `sys`'s argv, `read_fd` and `wasm_exit`, its
+      seven `#[c]` shims (`strerror`, `stat`, `lstat`, the dir walk,
+      `argv_fill`, `errno`, `spawnp`), the wasm `async` bridges, and
+      threads and channels. Codegen notes a group in four places: a call
+      it writes (`call_inst`, memoized per IR text id, so the cost per call
+      stays flat), a kept bodyless std fn, a kept binding to a shim, and
+      the six spots that write a verb's name themselves. It defines only
+      the groups it noted, with the header's own `#if` guards
+      (`rt_verb_defs`).
+      What stays in the header is what `zeus_plat.c`, `zeus_rt.h`, `net.c`
+      and the hosts still call: allocation, strings, vec reserve / drop,
+      the trap arm, `write`, the clock and `loam_host_run`.
+      **Bootstrap:** as R6.1. Stage 1 was built with HEAD's runtime as
+      `LOAM_HOME`, it wrote the seed, and `nob seed` then reported it
+      unchanged.
+      **Generated C:** tiny `fmt.println(42)` 87,984 → 64,752 bytes
+      (−26%), `nob` 1,406,534 → 1,392,114. **Binaries:** the tiny one is
+      33,688 bytes with the same `__text` (the verbs were `static inline`,
+      so the code is the same). **Compile:** the compiler on HEAD's
+      sources takes 0.17 s with either compiler (median of 9, two rounds).
+      **Checks:** suite 678 passed, 0 failed. `cross-check.sh`: Linux and
+      Windows, both CPUs, `nob` + 127 fixtures, 0 failed. All 14 wasm
+      programs link. `wasm_smoke`, `wasm_trap`, `wasm_float`,
+      `thread_tsan` and `ownership_asan` pass. Seed 5,538,521 bytes, seed
+      = stage 1 = stage 2. **Runtime: 4,296 → 3,600** (−696).
 
 **R7. Hosts** (`packages/zeus/hosts`, outside the runtime directory).
 
