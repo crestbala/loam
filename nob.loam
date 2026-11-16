@@ -41,6 +41,7 @@
 // `--isolated` is the slower check that no fixture depends on being batched.
 
 import "std:fmt"
+import "std:str"
 import "std:sys"
 
 // --- location and options (set by main) ----------------------------------
@@ -3413,7 +3414,7 @@ fn grammar() -> int {
 // deletes the C, so the runtime can only shrink. The target is zero.
 
 /** *Lines allowed under `packages/loam/runtime/`. Lower it when a step lands. */
-let RUNTIME_LINE_BUDGET: int = 5006
+let RUNTIME_LINE_BUDGET: int = 4914
 
 /** *The group a tracked C file belongs to, or `""` for C that is not shipped. */
 fn trusted_group(path: string) -> string {
@@ -3492,8 +3493,107 @@ fn trusted_runtime_lines(verbose: bool) -> int {
     return group_totals[0]
 }
 
-/** *`true`, after saying why, when the runtime C is over its budget. */
+/** *Lines of `unsafe` Loam in `body`: each `unsafe fn` or `unsafe {` from */
+/** *its first line to the `}` at its own indentation (loam-fmt's layout). A */
+/** *body-less `unsafe fn` (a `#[c]` binding) is its one line. */
+fn unsafe_line_count(body: string) -> int {
+    let lines = split_lines(body)
+    let mut count = 0
+    let mut i = 0
+    while i < lines.len {
+        let line = lines[i]
+        let mut indent = 0
+        while indent < line.len && line[indent] == 32 {
+            indent += 1
+        }
+        let rest = str.slice_from(line, indent)
+        if !starts_with(rest, "unsafe fn ") && rest != "unsafe {" {
+            i += 1
+            continue
+        }
+        // The header may span lines (one parameter a line); it ends at `{`,
+        // or at `{}` for a body-less binding.
+        let mut header_end = i
+        while header_end < lines.len && !str.ends_with(lines[header_end], "{") && !str.ends_with(lines[header_end], "{}") {
+            header_end += 1
+        }
+        if header_end < lines.len && str.ends_with(lines[header_end], "{}") {
+            count += header_end - i + 1
+            i = header_end + 1
+            continue
+        }
+        let mut close = i + 1
+        while close < lines.len {
+            let at = lines[close]
+            if at.len > indent && at[indent] == 125 && (indent == 0 || at[indent - 1] == 32) &&
+                str.slice(at, 0, indent) == str.slice(line, 0, indent) {
+                break
+            }
+            close += 1
+        }
+        count += close - i + 1
+        i = close + 1
+    }
+    return count
+}
+
+/** *The compiler and its tools stay entirely safe Loam. */
+fn is_tool_source(path: string) -> bool {
+    return starts_with(path, "packages/loam/compiler/") || starts_with(path, "packages/tooling/") ||
+        starts_with(path, "packages/zeus/cli/") || path == "nob.loam"
+}
+
+/** *Lines of `unsafe` Loam in tracked files outside the tests; prints the */
+/** *per-file table when `verbose`. `-1`, after saying why, when a tool uses */
+/** *`unsafe` or git cannot list the files. */
+fn trusted_unsafe_lines(verbose: bool) -> int {
+    let listed = sys.exec("cd {{shq(ROOT)}} && git ls-files '*.loam'")
+    if sys.exec_status() != 0 {
+        fmt.println("nob: trusted: git ls-files failed")
+        return -1
+    }
+    let paths = split_lines(listed)
+    let mut total = 0
+    let mut tool_use = ""
+    if verbose {
+        fmt.println("unsafe (Loam):")
+    }
+    for i in 0..paths.len {
+        if starts_with(paths[i], "packages/loam/tests/") {
+            continue
+        }
+        let body = sys.read_file("{{ROOT}}/{{paths[i]}}")
+        if !contains_str(body, "unsafe") {
+            continue
+        }
+        let lines = unsafe_line_count(body)
+        if lines == 0 {
+            continue
+        }
+        if is_tool_source(paths[i]) {
+            tool_use = paths[i]
+        }
+        total += lines
+        if verbose {
+            fmt.println("  {{right_align(lines, 7)}}  {{paths[i]}}")
+        }
+    }
+    if verbose {
+        fmt.println("  {{right_align(total, 7)}}  total unsafe")
+    }
+    if tool_use.len > 0 {
+        fmt.println("nob: trusted: {{tool_use}} uses `unsafe`; the compiler and its tools stay safe Loam")
+        return -1
+    }
+    return total
+}
+
+/** *`true`, after saying why, when the runtime C is over its budget or a */
+/** *tool uses `unsafe`. */
 fn trusted_over_budget() -> bool {
+    if trusted_unsafe_lines(false) < 0 {
+        return true
+    }
     let runtime_lines = trusted_runtime_lines(false)
     if runtime_lines > RUNTIME_LINE_BUDGET {
         fmt.println("nob: trusted: runtime is {{runtime_lines}} lines, over its budget of {{RUNTIME_LINE_BUDGET}}")
@@ -3505,7 +3605,7 @@ fn trusted_over_budget() -> bool {
 
 fn trusted() -> int {
     let runtime_lines = trusted_runtime_lines(true)
-    if runtime_lines < 0 || trusted_over_budget() {
+    if runtime_lines < 0 || trusted_unsafe_lines(true) < 0 || trusted_over_budget() {
         return 1
     }
     fmt.println("runtime budget: {{runtime_lines}} of {{RUNTIME_LINE_BUDGET}} lines (target 0)")

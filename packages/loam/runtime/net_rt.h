@@ -7,8 +7,6 @@
 #include "loam_rt.h"
 #endif
 
-/* `std:net`'s one C helper (native): a string's byte address. */
-int64_t loam_net_string_bytes_at(loam_str s, int64_t off);
 loam_str loam_net_fetch_rpc(loam_str path, loam_str body);
 int64_t loam_net_fetch_issue(loam_str path, loam_str body);
 int64_t loam_net_fetch_ready(void);

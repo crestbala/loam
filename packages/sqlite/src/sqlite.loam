@@ -160,7 +160,7 @@ fn c_sqlite_column_blob(stmt: i64, i: int) -> i64 {}
 fn c_sqlite_column_bytes(stmt: i64, i: int) -> int {}
 
 #[c("memcpy")]
-fn c_sqlite_memcpy(dst: []u8, src: i64, n: i64) -> i64 {}
+unsafe fn c_sqlite_memcpy(dst: []u8, src: i64, n: i64) -> i64 {}
 
 /** *The SQLite library's version, such as "3.54.1". */
 fn version() -> string {
@@ -444,7 +444,8 @@ fn column_f64(st: Stmt, i: int) -> f64 {
     return c_sqlite_column_f64(st.handle, i)
 }
 
-fn copy_bytes(from: i64, n: int) -> []u8 {
+/** *`n` bytes of C memory at `from`, copied into Loam. */
+unsafe fn copy_bytes(from: i64, n: int) -> []u8 {
     let mut out = []u8 {}
     for k in 0..n {
         out.push(u8(0))
@@ -460,12 +461,17 @@ fn column_text(st: Stmt, i: int) -> string {
     // SQLite requires this order: the pointer, then its length.
     let from = c_sqlite_column_text(st.handle, i)
     let n = c_sqlite_column_bytes(st.handle, i)
-    return string_from_bytes(copy_bytes(from, n))
+    // `from` is SQLite's, valid for `n` bytes until the next step.
+    unsafe {
+        return string_from_bytes(copy_bytes(from, n))
+    }
 }
 
 /** *The column as bytes. NULL and an empty blob both read as no bytes. */
 fn column_blob(st: Stmt, i: int) -> []u8 {
     let from = c_sqlite_column_blob(st.handle, i)
     let n = c_sqlite_column_bytes(st.handle, i)
-    return copy_bytes(from, n)
+    unsafe {
+        return copy_bytes(from, n)
+    }
 }

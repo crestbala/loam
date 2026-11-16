@@ -64,6 +64,7 @@ module.exports = grammar({
     function_item: $ => seq(
       repeat($.attribute),
       optional(field('async', 'async')),
+      optional(field('unsafe', 'unsafe')),
       'fn',
       field('name', $.identifier),
       optional($.type_params),
@@ -195,8 +196,14 @@ module.exports = grammar({
 
     block: $ => seq('{', repeat(seq($._statement, optional(','))), '}'),
 
+    /* `unsafe { ... }` at statement start. `unsafe` stays a word, so a
+       local fn is not `unsafe fn` (the compiler accepts that only on a
+       top-level fn) and `unsafe.tick()` is still a call. */
+    unsafe_block: $ => seq('unsafe', $.block),
+
     _statement: $ => choice(
       $.local_function,
+      $.unsafe_block,
       $.let_statement,
       $.if_statement,
       $.for_statement,

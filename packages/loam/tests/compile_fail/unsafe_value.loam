@@ -1,0 +1,8 @@
+// An unsafe fn can only be called, not used as a value.
+#[c("malloc")]
+unsafe fn c_malloc(n: i64) -> i64 {}
+
+fn main() {
+    let f = c_malloc
+    let _ = f
+}

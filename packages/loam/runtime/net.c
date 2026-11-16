@@ -1,12 +1,8 @@
 /* net.c — the C under `std/net.loam` (`loam_net_*`).
  *
- * TCP (R5.1) and the macOS TLS client (R5.2) are Loam over raw bindings.
- * What is left:
- *
- * - `string_bytes_at`: the address of a string's byte, for a binding to read
- *   in the same call.
- * - wasm: the browser bridges (fetch slots, WebSocket, streams), whose XHRs
- *   complete in JS and land per frame. Native builds answer them as stubs.
+ * TCP and TLS are Loam over raw bindings (R5). What is left: the wasm
+ * browser bridges (fetch slots, WebSocket, streams), whose XHRs complete in
+ * JS and land per frame. Native builds answer them as stubs.
  */
 #include "net_rt.h"
 #include <stdint.h>
@@ -317,14 +313,6 @@ loam_str loam_net_fetch_rpc(loam_str path, loam_str body) {
 }
 
 #else
-
-/* `std:net`'s one C helper: the address of a string's byte at `off`, for a
-   `send` or `SSLWrite` binding in the same call (Loam has no pointer into a
-   string, and a `#[c]` string argument would copy it). 0 when out of range. */
-int64_t loam_net_string_bytes_at(loam_str s, int64_t off) {
-    if (!s.ptr || off < 0 || off > s.len) return 0;
-    return (int64_t)(intptr_t)(s.ptr + off);
-}
 
 /* Async fetch is wasm-only (browser XHR). Native: issue fails, nothing is
    ever ready, take returns empty. */

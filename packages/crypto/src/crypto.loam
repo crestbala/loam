@@ -54,10 +54,10 @@ fn c_blake2b_keyed(
 fn c_verify32(a: []u8, b: []u8) -> i32 {}
 
 #[c("crypto_wipe")]
-fn c_wipe(secret: i64, size: i64) {}
+unsafe fn c_wipe(secret: i64, size: i64) {}
 
 #[c("shim_crypto_argon2id")]
-fn c_argon2id(
+unsafe fn c_argon2id(
     out: []u8,
     out_size: int,
     work: i64,
@@ -78,10 +78,10 @@ fn c_argon2id(
 fn c_getentropy(out: []u8, n: i64) -> i32 {}
 
 #[c("malloc")]
-fn c_malloc(n: i64) -> i64 {}
+unsafe fn c_malloc(n: i64) -> i64 {}
 
 #[c("free")]
-fn c_free(p: i64) {}
+unsafe fn c_free(p: i64) {}
 
 fn zeros(n: int) -> []u8 {
     let mut out = []u8 {}
@@ -191,30 +191,32 @@ fn argon2id(
     key: string,
     ad: string
 ) -> bool {
-    let size = i64(memory_kib) * 1024
-    let work = c_malloc(size)
-    if work == 0 {
-        return false
+    unsafe {
+        let size = i64(memory_kib) * 1024
+        let work = c_malloc(size)
+        if work == 0 {
+            return false
+        }
+        c_argon2id(
+            out,
+            out.len,
+            work,
+            memory_kib,
+            passes,
+            lanes,
+            password,
+            password.len,
+            salt,
+            salt.len,
+            key,
+            key.len,
+            ad,
+            ad.len,
+        )
+        c_wipe(work, size)
+        c_free(work)
+        return true
     }
-    c_argon2id(
-        out,
-        out.len,
-        work,
-        memory_kib,
-        passes,
-        lanes,
-        password,
-        password.len,
-        salt,
-        salt.len,
-        key,
-        key.len,
-        ad,
-        ad.len,
-    )
-    c_wipe(work, size)
-    c_free(work)
-    return true
 }
 
 fn params_ok(memory_kib: int, passes: int, lanes: int) -> bool {

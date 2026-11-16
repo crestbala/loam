@@ -1,0 +1,11 @@
+// `raw_addr` takes a string or a buffer of numbers, not an int.
+#[c("strlen")]
+fn c_strlen(s: string) -> i64 {}
+
+fn main() {
+    let _ = c_strlen("x")
+    let x = 1
+    unsafe {
+        let _ = raw_addr(x)
+    }
+}

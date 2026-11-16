@@ -3188,6 +3188,10 @@ fn check_call(n: int, expect: int) -> int {
             ast.NODES[n].ty = types.ty_void()
             return ast.NODES[n].ty
         }
+        if (nm == "raw_addr" || nm == "raw_read" || nm == "raw_write") && scope_find_s(nm).s < 0 &&
+            lookup_unqualified(nm, Kind.Fn) == NONE {
+            return check_raw_op(n, nm, nloc)
+        }
         // `"a {{x}} b"` arrives as __interp(parts...): one `loam_interp`
         // call over the raw parts, which codegen builds in one exact
         // allocation (an integer's digits on the stack). A lone string is
@@ -3822,8 +3826,16 @@ fn decl_mod(d: int) -> int {
 /** *anything (a raw `free`, a `memcpy` from an address held in an `i64`), so */
 /** *only that module's own fns may call it; importers get its safe wrappers. */
 /** *This keeps every place that trusts C inside the module that names it. */
+/** *An `unsafe fn` is private the same way, and an unsafe callee needs an */
+/** *unsafe caller (`note_unsafe`). */
 fn check_c_private(f: int, loc: Loc) {
-    if f == NONE || kind(f) != Kind.Fn || !ast.EXTRA[ast.ex(f)].has_text {
+    if f == NONE || kind(f) != Kind.Fn {
+        return
+    }
+    if is_unsafe_fn(f) {
+        note_unsafe(loc, "calling unsafe fn '{{ast.INFO[f].name}}'")
+    }
+    if !ast.EXTRA[ast.ex(f)].has_text && !is_unsafe_fn(f) {
         return
     }
     let owner = decl_mod(f)
@@ -3832,11 +3844,141 @@ fn check_c_private(f: int, loc: Loc) {
     }
     let fname = ast.INFO[f].name
     let mname = MODS[owner].name
-    err(loc, "#[c] fn '{{fname}}' is private to module '{{mname}}'; call one of its safe wrappers instead")
+    let what = if ast.EXTRA[ast.ex(f)].has_text { "#[c] fn" } else { "unsafe fn" }
+    err(loc, "{{what}} '{{fname}}' is private to module '{{mname}}'; call one of its safe wrappers instead")
+}
+
+// --- unsafe ------------------------------------------------------------------------------
+//
+// `unsafe` is only for the C ABI: reading and writing C memory at an address,
+// and the `#[c]` bindings that hand addresses over (`memcpy`, `calloc`,
+// `free`). So it is allowed only in a module that declares `#[c]` bindings,
+// an unsafe fn or block must do something unsafe, and unsafe regions do not
+// nest. Unsafe fns are private to their module (`check_c_private`), and
+// cannot be values.
+
+/** *How many unsafe fns / blocks enclose the code being checked (0 or 1). */
+let mut UNSAFE_DEPTH: int = 0
+/** *The enclosing unsafe region did a raw op or called an unsafe fn. */
+let mut UNSAFE_USED: bool = false
+
+fn is_unsafe_fn(f: int) -> bool {
+    return f != NONE && kind(f) == Kind.Fn && (ast.NODES[f].op & ast.FN_UNSAFE) != 0
+}
+
+/** *`what` (a raw op, a call to an unsafe fn) is unsafe: it needs an */
+/** *enclosing unsafe fn or block, which it then justifies. */
+fn note_unsafe(loc: Loc, what: string) {
+    if UNSAFE_DEPTH == 0 {
+        err(loc, "{{what}} is unsafe: do it inside an `unsafe` fn or block")
+        return
+    }
+    UNSAFE_USED = true
+}
+
+/** *Module `m` declares a `#[c]` binding: it is at the C ABI. */
+fn module_binds_c(m: int) -> bool {
+    if m < 0 || m >= MODS.len || MODS[m].root == NONE {
+        return false
+    }
+    let decls = ast.NODES[MODS[m].root].kids
+    for i in 0..decls.len {
+        if kind(decls[i]) == Kind.Fn && ast.EXTRA[ast.ex(decls[i])].has_text {
+            return true
+        }
+    }
+    return false
+}
+
+/** *Every unsafe block the checker saw, for `loamc check --ffi`: its module */
+/** *and line (a generic body checked twice is listed once). */
+let mut UNSAFE_BLOCK_MODS: []int = []int {}
+let mut UNSAFE_BLOCK_LINES: []int = []int {}
+
+/** *Start an unsafe region (`what`: "unsafe fn" or "unsafe block"). */
+fn unsafe_enter(loc: Loc, what: string) {
+    if what == "unsafe block" {
+        let mut seen = false
+        for i in 0..UNSAFE_BLOCK_LINES.len {
+            if UNSAFE_BLOCK_LINES[i] == loc.line && UNSAFE_BLOCK_MODS[i] == Gcur {
+                seen = true
+                break
+            }
+        }
+        if !seen {
+            push(UNSAFE_BLOCK_MODS, Gcur)
+            push(UNSAFE_BLOCK_LINES, loc.line)
+        }
+    }
+    if UNSAFE_DEPTH > 0 {
+        err(loc, "this {{what}} is already inside unsafe code: drop the inner `unsafe`")
+    } else if !module_binds_c(Gcur) {
+        err(loc, "`unsafe` is only for the C ABI, and module '{{MODS[Gcur].name}}' declares no #[c] binding")
+    }
+    UNSAFE_DEPTH = UNSAFE_DEPTH + 1
+    UNSAFE_USED = false
+}
+
+/** *End it: a region that did nothing unsafe is an error. */
+fn unsafe_leave(loc: Loc, what: string) {
+    UNSAFE_DEPTH = UNSAFE_DEPTH - 1
+    if UNSAFE_DEPTH == 0 && !UNSAFE_USED {
+        err(loc, "this {{what}} does nothing unsafe (no raw memory op, no unsafe call): drop `unsafe`")
+    }
+    if UNSAFE_DEPTH == 0 {
+        UNSAFE_USED = false
+    }
+}
+
+/** *`raw_addr` / `raw_read` / `raw_write`, the raw memory ops, when no fn */
+/** *of that name is in scope. Each is one `memcpy` or pointer cast in C. */
+fn check_raw_op(n: int, nm: string, nloc: Loc) -> int {
+    let kids = ast.NODES[n].kids
+    note_unsafe(nloc, "{{nm}}")
+    if nm == "raw_addr" {
+        if kids.len != 1 {
+            err(nloc, "raw_addr expects 1 argument: a string or a buffer of numbers")
+            return types.ty_void()
+        }
+        let t = check_expr(kids[0])
+        if t != NO_TYPE && tk(t) != TK.String && !c_number_buf(t) && !c_borrowed_buf(t) {
+            err(ast.INFO[kids[0]].loc, "raw_addr takes a string or a []T / &[]T of numbers or bools, not {{types.type_name(t)}}")
+        }
+        ast.EXTRA[ast.ex_mut(n)].cbuiltin = "__loam_raw_addr"
+        ast.EXTRA[ast.ex_mut(n)].has_cbuiltin = true
+        ast.NODES[n].ty = types.ty_int_bits(64, false)
+        ast.INFO[n].place_mut = 0
+        return ast.NODES[n].ty
+    }
+    if kids.len != 2 {
+        err(nloc, "{{nm}} expects 2 arguments: an address (i64) and a reference to the value")
+        return types.ty_void()
+    }
+    let i64t = types.ty_int_bits(64, false)
+    let at = check_expr_ty(kids[0], i64t)
+    if at != NO_TYPE && !types.type_eq(at, i64t) {
+        err(ast.INFO[kids[0]].loc, "{{nm}}'s address is an i64, not {{types.type_name(at)}}")
+    }
+    let vt = check_expr(kids[1])
+    let want_mut = nm == "raw_read"
+    let is_ref = vt != NO_TYPE && tk(vt) == TK.Ptr && (!want_mut || types.TYPES[vt].is_mut != 0)
+    let elem = if is_ref { types.TYPES[vt].elem } else { NO_TYPE }
+    let plain = elem != NO_TYPE && (tk(elem) == TK.Bool || c_scalar_type(elem) || c_plain_struct(elem))
+    if vt != NO_TYPE && !plain {
+        let shape = if want_mut { "&mut T" } else { "&T" }
+        err(ast.INFO[kids[1]].loc, "{{nm}} takes {{shape}} of a number, a bool or a plain-data struct, not {{types.type_name(vt)}}")
+    }
+    ast.EXTRA[ast.ex_mut(n)].cbuiltin = if want_mut { "__loam_raw_read" } else { "__loam_raw_write" }
+    ast.EXTRA[ast.ex_mut(n)].has_cbuiltin = true
+    ast.NODES[n].ty = types.ty_void()
+    return ast.NODES[n].ty
 }
 
 /** *`n` now names fn `f` as a value. */
 fn resolve_fn_value(n: int, f: int) -> int {
+    if is_unsafe_fn(f) {
+        err(ast.INFO[n].loc, "unsafe fn '{{ast.INFO[f].name}}' can only be called, not used as a value")
+    }
     // Called through a value, its callback arguments would be trampolines.
     if ast.EXTRA[ast.ex(f)].has_text && fn_type_of(f) != NO_TYPE && tk(fn_type_of(f)) == TK.Proc {
         let ps = types.TYPES[fn_type_of(f)].params
@@ -4736,7 +4878,14 @@ fn check_stmt(n: int) {
             switch_depth = switch_depth - 1
             break
         case Kind.Block:
+            let is_unsafe = (ast.NODES[n].flags & ast.F_UNSAFE) != 0
+            if is_unsafe {
+                unsafe_enter(x.loc, "unsafe block")
+            }
             check_block(n)
+            if is_unsafe {
+                unsafe_leave(x.loc, "unsafe block")
+            }
             break
         default:
             return
@@ -4788,7 +4937,17 @@ fn check_fn(f: int) {
     if cur_ret != NO_TYPE && tk(cur_ret) != TK.Void {
         tail_expr_to_return(ast.NODES[f].b)
     }
+    // A `#[c]` binding's body is C, so there is nothing here to justify.
+    // Any other `unsafe fn` is Loam: an empty one is not a binding, and it
+    // still has to do something unsafe.
+    let unsafe_body = is_unsafe_fn(f) && !ast.EXTRA[ast.ex(f)].has_text
+    if unsafe_body {
+        unsafe_enter(ast.INFO[f].loc, "unsafe fn")
+    }
     check_block_in_scope(ast.NODES[f].b)
+    if unsafe_body {
+        unsafe_leave(ast.INFO[f].loc, "unsafe fn")
+    }
     scope_pop()
     cur_ret = NO_TYPE
     cur_async = saved_async
@@ -5828,7 +5987,10 @@ fn typecheck_modules() -> int {
             if is_ffi_mod(MODS[m].name) || user_seam_mod(MODS[m].path) {
                 let body = ast.NODES[d].b
                 if body == NONE || (kind(body) == Kind.Block && ast.NODES[body].kids.len == 0) {
-                    if x.name != "main" {
+                    // A body-less fn is a C hook, except an `unsafe fn` that
+                    // names no C symbol: that one is checked, and rejected
+                    // for doing nothing unsafe, instead of becoming `extern`.
+                    if x.name != "main" && !(is_unsafe_fn(d) && !x.has_text) {
                         ast.INFO[d].marks = ast.INFO[d].marks | ast.M_INTRINSIC
                     }
                     let hr = if ast.NODES[d].ty != NO_TYPE { types.TYPES[ast.NODES[d].ty].ret } else { NO_TYPE }

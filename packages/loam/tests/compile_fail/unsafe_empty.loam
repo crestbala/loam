@@ -1,0 +1,9 @@
+// An `unsafe fn` that is not a `#[c]` binding has to do something unsafe.
+#[c("strlen")]
+fn c_strlen(s: string) -> i64 {}
+
+unsafe fn nothing() {}
+
+fn main() {
+    let _ = c_strlen("x")
+}

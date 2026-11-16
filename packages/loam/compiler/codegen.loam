@@ -3,7 +3,7 @@
 //
 // Layout of the generated file:
 //   1. loam_rt.h pasted in, then zeus_rt.h / net_rt.h when those modules
-//      are loaded, then the integer helpers the unit calls
+//      are loaded, then the integer helpers and vec pushes and pops the unit calls
 //   2. struct typedefs, then definitions in by-value dependency order
 //   3. element hook and ownership helper prototypes, globals, prototypes,
 //      closure envs, `#[c]` bindings, fn-value trampolines
@@ -109,8 +109,9 @@ fn wl(n: i64) {
 }
 
 /** *The runtime header, set aside while the rest of the unit is built: the */
-/** *integer helpers go between the two, and which ones is known only at */
-/** *the end (`int_helper_defs`). */
+/** *integer helpers, vec pushes and vec pops go between the two, and which */
+/** *ones is known only at the end (`int_helper_defs`, `vec_push_defs`, */
+/** *`vec_pop_defs`). */
 let mut PRELUDE: []u8 = []u8 {}
 
 fn flush() {
@@ -1334,6 +1335,161 @@ fn int_helper_defs() {
     }
 }
 
+// --- vec push ----------------------------------------------------------------------------
+//
+// `loam_vec_push`, `_owned` and `_take` used to sit in the runtime header,
+// in every program. Codegen notes each variant as it writes a call and
+// defines only those, after the header and before anything that calls them.
+// The bodies are the header's C: the fast path is still `static inline`, the
+// grow and un-share path is still the out-of-line call into `loam_vec_reserve`
+// (which stays in the header, with the refcount word and copy-on-write).
+
+let mut VEC_PUSH_PLAIN: bool = false
+let mut VEC_PUSH_OWNED: bool = false
+let mut VEC_PUSH_TAKE: bool = false
+
+fn vec_push_reset() {
+    VEC_PUSH_PLAIN = false
+    VEC_PUSH_OWNED = false
+    VEC_PUSH_TAKE = false
+}
+
+/** *The suffix just written (`""`, `_owned`, `_take`), noted so its definition */
+/** *is emitted. A moved element is `_take`; any other owning element is */
+/** *`_owned`; a plain element is `loam_vec_push`. */
+fn w_vec_push_name(h: int, moved: bool) {
+    w("loam_vec_push")
+    if h > 0 && moved {
+        w("_take")
+        VEC_PUSH_TAKE = true
+    } else if h > 0 {
+        w("_owned")
+        VEC_PUSH_OWNED = true
+    } else {
+        VEC_PUSH_PLAIN = true
+    }
+}
+
+fn vec_push_defs() {
+    if !VEC_PUSH_PLAIN && !VEC_PUSH_OWNED && !VEC_PUSH_TAKE {
+        return
+    }
+    w("#if defined(__GNUC__) || defined(__clang__)\n")
+    w("#define LOAM_NOINLINE __attribute__((noinline, unused))\n")
+    w("#define LOAM_LIKELY(x) __builtin_expect(!!(x), 1)\n")
+    w("#else\n")
+    w("#define LOAM_NOINLINE\n")
+    w("#define LOAM_LIKELY(x) (x)\n")
+    w("#endif\n")
+    if VEC_PUSH_PLAIN {
+        w("/* The push that grows or un-shares the buffer: out of line, so the common\n")
+        w("   push below stays small enough to inline with its element size known. */\n")
+        w("static LOAM_NOINLINE void loam_vec_push_slow(loam_vec *v, const void *elem, size_t esz,\n")
+        w("                                             const char *f, int l) {\n")
+        w("    if (!v) loam_panic(f, l, \"push on null array\");\n")
+        w("    loam_vec_reserve(v, v->len + 1, esz, f, l);\n")
+        w("    if (esz && elem) memcpy((char *)v->ptr + (size_t)v->len * esz, elem, esz);\n")
+        w("    v->len++;\n")
+        w("}\n")
+        w("static inline void loam_vec_push(loam_vec *v, const void *elem, size_t esz, const char *f, int l) {\n")
+        w("    /* An owned buffer with room: one element copy. */\n")
+        w("    if (LOAM_LIKELY(v && v->ptr && v->len < v->cap && *loam_vec_rc(v->ptr) == 1)) {\n")
+        w("        if (esz && elem) memcpy((char *)v->ptr + (size_t)v->len * esz, elem, esz);\n")
+        w("        v->len++;\n")
+        w("        return;\n")
+        w("    }\n")
+        w("    loam_vec_push_slow(v, elem, esz, f, l);\n")
+        w("}\n")
+    }
+    if VEC_PUSH_OWNED || VEC_PUSH_TAKE {
+        w("static LOAM_NOINLINE void loam_vec_push_owned_slow(loam_vec *v, const void *elem, size_t esz,\n")
+        w("                                                   loam_elem_fn retain, const char *f, int l) {\n")
+        w("    loam_vec_reserve_owned(v, v->len + 1, esz, retain, f, l);\n")
+        w("    if (esz && elem) memcpy((char *)v->ptr + (size_t)v->len * esz, elem, esz);\n")
+        w("    v->len++;\n")
+        w("}\n")
+    }
+    if VEC_PUSH_OWNED {
+        w("static inline void loam_vec_push_owned(loam_vec *v, const void *elem, size_t esz,\n")
+        w("                                       loam_elem_fn retain, const char *f, int l) {\n")
+        w("    if (!v) loam_panic(f, l, \"push on null array\");\n")
+        w("    if (retain) retain((void *)elem);\n")
+        w("    /* An owned buffer with room: one element copy (see loam_vec_push). */\n")
+        w("    if (LOAM_LIKELY(v->ptr && v->len < v->cap && *loam_vec_rc(v->ptr) == 1)) {\n")
+        w("        if (esz && elem) memcpy((char *)v->ptr + (size_t)v->len * esz, elem, esz);\n")
+        w("        v->len++;\n")
+        w("        return;\n")
+        w("    }\n")
+        w("    loam_vec_push_owned_slow(v, elem, esz, retain, f, l);\n")
+        w("}\n")
+    }
+    if VEC_PUSH_TAKE {
+        w("/* As loam_vec_push_owned, for an element handed over whole (a temporary or\n")
+        w("   a moved value): the slot takes the references it holds, so nothing is\n")
+        w("   retained. `retain` still copies the elements if the buffer is shared. */\n")
+        w("static inline void loam_vec_push_take(loam_vec *v, const void *elem, size_t esz,\n")
+        w("                                      loam_elem_fn retain, const char *f, int l) {\n")
+        w("    if (!v) loam_panic(f, l, \"push on null array\");\n")
+        w("    if (LOAM_LIKELY(v->ptr && v->len < v->cap && *loam_vec_rc(v->ptr) == 1)) {\n")
+        w("        if (esz && elem) memcpy((char *)v->ptr + (size_t)v->len * esz, elem, esz);\n")
+        w("        v->len++;\n")
+        w("        return;\n")
+        w("    }\n")
+        w("    loam_vec_push_owned_slow(v, elem, esz, retain, f, l);\n")
+        w("}\n")
+    }
+}
+
+// --- vec pop -----------------------------------------------------------------------------
+//
+// `loam_vec_pop` and `_owned` left the runtime header the same way push did.
+// The body still calls `loam_vec_unique` / `loam_vec_unique_owned`, which stay
+// in the header with the refcount word and copy-on-write.
+
+let mut VEC_POP_PLAIN: bool = false
+let mut VEC_POP_OWNED: bool = false
+
+fn vec_pop_reset() {
+    VEC_POP_PLAIN = false
+    VEC_POP_OWNED = false
+}
+
+/** *`loam_vec_pop` or `loam_vec_pop_owned`, noted so its definition is emitted. */
+fn w_vec_pop_name(h: int) {
+    w("loam_vec_pop")
+    if h > 0 {
+        w("_owned")
+        VEC_POP_OWNED = true
+    } else {
+        VEC_POP_PLAIN = true
+    }
+}
+
+fn vec_pop_defs() {
+    if VEC_POP_PLAIN {
+        w("static inline void loam_vec_pop(loam_vec *v, void *out, size_t esz, const char *f, int l) {\n")
+        w("    if (!v || v->len <= 0) loam_panic(f, l, \"pop from empty array\");\n")
+        w("    loam_vec_unique(v, esz, f, l);\n")
+        w("    v->len--;\n")
+        w("    if (esz && out) memcpy(out, (char *)v->ptr + (size_t)v->len * esz, esz);\n")
+        w("}\n")
+    }
+    if VEC_POP_OWNED {
+        w("/* Pop an element that owns a string. The copy-on-write reallocation retains\n")
+        w("   every element it duplicates, so the popped slot's own reference transfers to\n")
+        w("   `out` (the slot is now past `len`, so the buffer never releases it) and the\n")
+        w("   remaining elements stay owned by the buffer. Without the retain hook the\n")
+        w("   shared element is released by both buffers. */\n")
+        w("static inline void loam_vec_pop_owned(loam_vec *v, void *out, size_t esz, loam_elem_fn retain,\n")
+        w("                                      const char *f, int l) {\n")
+        w("    if (!v || v->len <= 0) loam_panic(f, l, \"pop from empty array\");\n")
+        w("    loam_vec_unique_owned(v, esz, retain, f, l);\n")
+        w("    v->len--;\n")
+        w("    if (esz && out) memcpy(out, (char *)v->ptr + (size_t)v->len * esz, esz);\n")
+        w("}\n")
+    }
+}
+
 // --- operators and casts ---------------------------------------------------------------
 
 /** *Trapping arithmetic helper for integer type `t` (`loam_add_i32`), "" */
@@ -2264,6 +2420,26 @@ fn builtin_call(x: &Inst) -> bool {
         interp(x)
         return true
     }
+    // The raw memory ops of `unsafe` code. An address is an `int64_t`; a
+    // value is copied with `memcpy`, so an unaligned address is no UB.
+    if name == "__loam_raw_addr" && x.nargs == 1 {
+        let a = lv(arg_of(x, 0))
+        let via = if tkind(call_arg_type(x, 0)) == TK.Ptr { "->" } else { "." }
+        if has_dst {
+            w("{{lv(x.dst)}} = (int64_t)(intptr_t)({{a}}){{via}}ptr;\n")
+        }
+        return true
+    }
+    if (name == "__loam_raw_read" || name == "__loam_raw_write") && x.nargs == 2 {
+        let addr = lv(arg_of(x, 0))
+        let place = lv(arg_of(x, 1))
+        if name == "__loam_raw_read" {
+            w("memcpy({{place}}, (const void *)(intptr_t){{addr}}, sizeof(*{{place}}));\n")
+        } else {
+            w("memcpy((void *)(intptr_t){{addr}}, {{place}}, sizeof(*{{place}}));\n")
+        }
+        return true
+    }
     if name == "loam_value_key" && x.nargs >= 1 && has_dst {
         // A string alone is its own key: the rows of one `Each` share a
         // type, so no tag or length is needed (inside a compound, `push_str`
@@ -2518,11 +2694,8 @@ fn builtin_call(x: &Inst) -> bool {
         // The vec may arrive by value or by address (`let mut v`).
         let amp = if tkind(local_ty(a0)) == TK.Vec { "&" } else { "" }
         let h = elem_hook(x.ty)
-        w("loam_vec_push")
         // A moved element's references go to the slot as they are.
-        if h > 0 {
-            w(if (x.bits & ir.I_MOVED) != 0 { "_take" } else { "_owned" })
-        }
+        w_vec_push_name(h, (x.bits & ir.I_MOVED) != 0)
         w("({{amp}}{{lv(a0)}}, &{{lv(arg_of(x, 1))}}, sizeof(")
         w_ctype(x.ty)
         hook_suffix(h)
@@ -2540,10 +2713,7 @@ fn builtin_call(x: &Inst) -> bool {
         }
         let et = if tkind(vt) == TK.Vec && types.TYPES[vt].elem != NO_TYPE { types.TYPES[vt].elem } else { x.ty }
         let h = elem_hook(et)
-        w("loam_vec_pop")
-        if h > 0 {
-            w("_owned")
-        }
+        w_vec_pop_name(h)
         w("({{amp}}{{lv(a0)}}, &{{lv(x.dst)}}, sizeof(")
         w_ctype(x.ty)
         hook_suffix(h)
@@ -2706,10 +2876,7 @@ fn array_lit(x: &Inst) {
         for k in 0..x.nargs {
             let a = arg_of(x, k)
             indent(1)
-            w("loam_vec_push")
-            if h > 0 {
-                w("_owned")
-            }
+            w_vec_push_name(h, false)
             w("(&{{d}}, &{{lv(a)}}, sizeof(")
             w_ctype(e)
             hook_suffix(h)
@@ -4078,6 +4245,8 @@ fn emit_c() {
         w("#include \"net_rt.h\"\n")
     }
     int_helpers_reset()
+    vec_push_reset()
+    vec_pop_reset()
     PRELUDE = OUT
     OUT = []u8 {}
     wc('\n')
@@ -4397,11 +4566,14 @@ fn emit_c() {
     if TEST_MODE {
         test_runner()
     }
-    // The header, the integer helpers the unit calls, then the unit.
+    // The header, the integer helpers and vec pushes and pops the unit calls,
+    // then the unit.
     let body = OUT
     OUT = PRELUDE
     PRELUDE = []u8 {}
     int_helper_defs()
+    vec_push_defs()
+    vec_pop_defs()
     buf.push_bytes(&mut OUT, &body)
     flush()
     if SINK.len > 0 {

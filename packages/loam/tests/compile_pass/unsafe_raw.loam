@@ -1,0 +1,60 @@
+// The raw memory ops, only inside `unsafe`, round-trip a byte, an i64 and a
+// plain struct through C memory. A safe wrapper is what other code calls.
+import "std:sys"
+import "../mod/unsafe_wrap.loam" as uw
+
+#[c("malloc")]
+unsafe fn c_malloc(n: i64) -> i64 {}
+
+#[c("free")]
+unsafe fn c_free(p: i64) {}
+
+struct Pair {
+    a: i64,
+    b: i32,
+}
+
+fn expect(good: bool) {
+    if !good {
+        sys.exit(1)
+    }
+}
+
+/** *The first byte, read in `unsafe` so the caller stays safe. */
+fn read_first(buf: []u8) -> u8 {
+    let mut b = u8(0)
+    unsafe {
+        raw_read(raw_addr(buf), &mut b)
+    }
+    return b
+}
+
+fn main() {
+    expect(uw.safe_len("hi") == i64(2))
+    let mut buf = []u8 { u8(9), u8(8), u8(7), u8(6) }
+    expect(read_first(buf) == u8(9))
+    let mut byte = u8(0)
+    let mut word = i64(0)
+    let src = Pair { a: i64(11), b: 7 }
+    let mut dst = Pair { a: i64(0), b: 0 }
+    unsafe {
+        let base = raw_addr(buf)
+        expect(base == raw_addr(&buf))
+        raw_read(base + i64(2), &mut byte)
+        expect(byte == u8(7))
+        let text = "hi"
+        raw_read(raw_addr(text), &mut byte)
+        expect(byte == u8(104))
+        let mem = c_malloc(i64(16))
+        expect(mem != i64(0))
+        raw_write(mem, &src)
+        raw_read(mem, &mut dst)
+        expect(dst.a == i64(11) && dst.b == 7)
+        word = i64(42)
+        raw_write(mem, &word)
+        word = i64(0)
+        raw_read(mem, &mut word)
+        expect(word == i64(42))
+        c_free(mem)
+    }
+}
