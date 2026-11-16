@@ -1,0 +1,47 @@
+================================================================================
+unsafe fn, unsafe block, and unsafe as a name
+================================================================================
+
+unsafe fn c_malloc(n: i64) -> i64 {}
+
+fn read_one() -> int {
+    let unsafe = 1
+    unsafe { 1 }
+    unsafe.tick()
+    return unsafe
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_item
+    unsafe: (unsafe_fn_kw)
+    name: (identifier)
+    parameters: (fn_parameters
+      (defaulted_parameter
+        (parameter
+          name: (identifier)
+          type: (identifier))))
+    return_type: (identifier)
+    body: (block))
+  (function_item
+    name: (identifier)
+    parameters: (fn_parameters)
+    return_type: (identifier)
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (number))
+      (unsafe_block
+        (unsafe_block_kw)
+        (block
+          (expression_statement
+            (number))))
+      (expression_statement
+        (call_expression
+          function: (field_expression
+            value: (identifier)
+            field: (identifier))
+          arguments: (arguments)))
+      (return_statement
+        (identifier)))))

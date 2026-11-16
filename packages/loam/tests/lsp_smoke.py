@@ -146,6 +146,21 @@ def main() -> int:
     )
     doc_uri = (ROOT / "tmp" / "lsp_doc.loam").resolve().as_uri()
 
+    unsafe_src = (
+        '#[c("malloc")]\n'
+        "unsafe fn c_malloc(n: i64) -> i64 {}\n"
+        "\n"
+        "fn read_one(buf: []u8) -> u8 {\n"
+        "    let mut b = u8(0)\n"
+        "    let unsafe = 1\n"
+        "    unsafe {\n"
+        "        raw_read(raw_addr(buf), &mut b)\n"
+        "    }\n"
+        "    return b\n"
+        "}\n"
+    )
+    unsafe_uri = (ROOT / "tmp" / "lsp_unsafe.loam").resolve().as_uri()
+
     payload = (
         rpc({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {}}})
         + rpc({"jsonrpc": "2.0", "method": "initialized", "params": {}})
@@ -441,6 +456,28 @@ def main() -> int:
                 "params": {"textDocument": {"uri": doc_uri}},
             }
         )
+        + rpc(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": unsafe_uri,
+                        "languageId": "loam",
+                        "version": 1,
+                        "text": unsafe_src,
+                    }
+                },
+            }
+        )
+        + rpc(
+            {
+                "jsonrpc": "2.0",
+                "id": 26,
+                "method": "textDocument/semanticTokens/full",
+                "params": {"textDocument": {"uri": unsafe_uri}},
+            }
+        )
         + rpc({"jsonrpc": "2.0", "id": 6, "method": "shutdown", "params": None})
         + rpc({"jsonrpc": "2.0", "method": "exit"})
     )
@@ -597,7 +634,7 @@ def main() -> int:
     kres = kcomps[0].get("result")
     kitems = kres.get("items") if isinstance(kres, dict) else kres
     klabels = [it.get("label") for it in kitems if isinstance(it, dict)] if isinstance(kitems, list) else []
-    if "let" not in klabels or "enum" not in klabels:
+    if "let" not in klabels or "enum" not in klabels or "unsafe" not in klabels:
         return fail("completion at line start should list keywords", klabels[:30])
 
     if 13 not in hovers:
@@ -731,6 +768,31 @@ def main() -> int:
         return fail("single-line doc comment should be comment + documentation", dpos)
     if dpos.get((5, 0, len("// note"))) != (10, 0):
         return fail("plain // comment should not be documentation", dpos)
+
+    # `unsafe fn` and `unsafe {` are keywords. `let unsafe = 1` is a name.
+    utoks = [m for m in messages if m.get("id") == 26 and "result" in m]
+    if not utoks:
+        return fail("no semanticTokens/full result for unsafe buffer", messages)
+    udata = utoks[0].get("result", {}).get("data")
+    if not isinstance(udata, list) or len(udata) < 5:
+        return fail("unsafe semantic tokens empty", utoks[0].get("result"))
+    uline = ucol = 0
+    upos = {}
+    for j in range(0, len(udata) - 4, 5):
+        uline += udata[j]
+        if udata[j] == 0:
+            ucol += udata[j + 1]
+        else:
+            ucol = udata[j + 1]
+        upos[(uline, ucol, udata[j + 2])] = udata[j + 3]
+    ulines = unsafe_src.split("\n")
+    if upos.get((1, ulines[1].index("unsafe"), 6)) != 9:
+        return fail("unsafe fn should be keyword type 9", upos)
+    if upos.get((6, ulines[6].index("unsafe"), 6)) != 9:
+        return fail("unsafe block should be keyword type 9", upos)
+    name_col = ulines[5].index("unsafe")
+    if upos.get((5, name_col, 6)) == 9:
+        return fail("let unsafe should stay a name", upos)
 
     print("ok   loam-lsp (%d diagnostic(s), hover, definition, completion, semantic tokens)" % len(items))
     return 0

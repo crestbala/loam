@@ -1249,7 +1249,7 @@ fn send_completions(id: string, c: &[]Completion) {
 }
 
 let KEYWORDS: []string = []string {
-    "fn", "async", "await", "let", "const", "mut", "struct", "enum", "import", "if", "else", "for",
+    "fn", "async", "await", "unsafe", "let", "const", "mut", "struct", "enum", "import", "if", "else", "for",
     "while", "in", "return", "break", "continue", "switch", "case", "default", "as",
 }
 let TYPE_NAMES: []string = []string {
@@ -1891,9 +1891,13 @@ fn st_ident_kind(h: &Highlight, i: int, paren: int) -> int {
     let prev = tok_at(h, i - 1)
     let next = tok_at(h, i + 1)
     let after_dot = prev == Tok.Dot || prev == Tok.ColonColon
-    // Contextual keywords: `async fn` and expression-leading `await`. After a
-    // value or a dot they are plain identifiers.
+    // Contextual keywords: `async fn`, `unsafe fn` / `unsafe {`, and
+    // expression-leading `await`. After a value or a dot they are plain
+    // identifiers (`async.tick()`, `let unsafe = 1`).
     if w == "async" && next == Tok.Fn {
+        return ST_KEYWORD
+    }
+    if w == "unsafe" && !st_prev_ends_value(prev) && (next == Tok.Fn || next == Tok.Lbrace) {
         return ST_KEYWORD
     }
     if w == "await" && !st_prev_ends_value(prev) {

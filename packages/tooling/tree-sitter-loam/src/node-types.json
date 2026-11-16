@@ -659,6 +659,10 @@
           "named": true
         },
         {
+          "type": "unsafe_block",
+          "named": true
+        },
+        {
           "type": "while_statement",
           "named": true
         }
@@ -1996,6 +2000,16 @@
           },
           {
             "type": "reference_type",
+            "named": true
+          }
+        ]
+      },
+      "unsafe": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "unsafe_fn_kw",
             "named": true
           }
         ]
@@ -3604,6 +3618,10 @@
           "named": true
         },
         {
+          "type": "unsafe_block",
+          "named": true
+        },
+        {
           "type": "while_statement",
           "named": true
         }
@@ -4002,6 +4020,25 @@
         },
         {
           "type": "update_expression",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "unsafe_block",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "block",
+          "named": true
+        },
+        {
+          "type": "unsafe_block_kw",
           "named": true
         }
       ]
@@ -4462,6 +4499,14 @@
   {
     "type": "true",
     "named": false
+  },
+  {
+    "type": "unsafe_block_kw",
+    "named": true
+  },
+  {
+    "type": "unsafe_fn_kw",
+    "named": true
   },
   {
     "type": "while",

@@ -14,7 +14,6 @@
 [
   "fn"
   "async"
-  "unsafe"
   "await"
   "let"
   "const"
@@ -35,6 +34,9 @@
   "default"
   "as"
 ] @keyword
+
+(unsafe_fn_kw) @keyword
+(unsafe_block_kw) @keyword
 
 [
   "true"
