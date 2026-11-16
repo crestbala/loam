@@ -2856,6 +2856,12 @@ fn ig_c_layouts() {
     p = cat(p, "AT(struct sockaddr_in, sin_family, 0); IS(SOL_SOCKET, 1); IS(SO_REUSEADDR, 2); IS(SO_RCVTIMEO, 20);\n")
     p = cat(p, "IS(SO_ERROR, 4); IS(MSG_NOSIGNAL, 16384); IS(O_NONBLOCK, 2048);\n")
     p = cat(p, "IS(EAGAIN, 11); IS(EINPROGRESS, 115); IS(EALREADY, 114); SIZE(nfds_t, 8);\n")
+    // std:net's TLS client on Linux: glibc and musl put `ai_addr` before
+    // `ai_canonname`, where Apple has them the other way round.
+    p = cat(p, "#include <netdb.h>\n")
+    p = cat(p, "SIZE(struct addrinfo, 48); AT(struct addrinfo, ai_family, 4); AT(struct addrinfo, ai_socktype, 8); AT(struct addrinfo, ai_protocol, 12);\n")
+    p = cat(p, "AT(struct addrinfo, ai_addrlen, 16); AT(struct addrinfo, ai_addr, 24); AT(struct addrinfo, ai_next, 40); SIZE(size_t, 8);\n")
+    p = cat(p, "SIZE(long, 8); IS(SO_SNDTIMEO, 21); IS(AF_UNSPEC, 0);\n")
     // std:sys watch: `struct inotify_event` and the watch mask.
     p = cat(p, "#include <sys/inotify.h>\n#include <sys/resource.h>\n")
     p = cat(p, "SIZE(struct inotify_event, 16); AT(struct inotify_event, mask, 4); AT(struct inotify_event, len, 12);\n")
@@ -2863,12 +2869,31 @@ fn ig_c_layouts() {
     p = cat(p, "IS(IN_MODIFY | IN_DELETE_SELF | IN_MOVE_SELF | IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO, 2 | 1024 | 2048 | 256 | 512 | 64 | 128);\n")
     // raygui's RAM probe: `struct rusage` in 34 `i64` words.
     p = cat(p, "FITS(struct rusage, 34); AT(struct rusage, ru_maxrss, 32); IS(RUSAGE_SELF, 0);\n#endif\n")
+    // std:net's OpenSSL backend (Linux), when OpenSSL's headers are here:
+    // the `SSL_ctrl` codes its macros expand to, the error and BIO codes,
+    // and the BIO callback types its Loam fns stand in for.
+    p = cat(p, "#if __has_include(<openssl/ssl.h>)\n#include <openssl/ssl.h>\n#include <openssl/bio.h>\n#include <openssl/err.h>\n")
+    p = cat(p, "IS(SSL_VERIFY_PEER, 1); IS(SSL_CTRL_MODE, 33); IS(SSL_CTRL_SET_TLSEXT_HOSTNAME, 55); IS(SSL_CTRL_SET_MIN_PROTO_VERSION, 123);\n")
+    p = cat(p, "IS(SSL_MODE_ENABLE_PARTIAL_WRITE, 1); IS(SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER, 2); IS(TLSEXT_NAMETYPE_host_name, 0); IS(TLS1_2_VERSION, 771);\n")
+    p = cat(p, "IS(SSL_ERROR_WANT_READ, 2); IS(SSL_ERROR_WANT_WRITE, 3); IS(BIO_TYPE_SOURCE_SINK, 1024); IS(BIO_CTRL_FLUSH, 11);\n")
+    p = cat(p, "IS(BIO_FLAGS_READ, 1); IS(BIO_FLAGS_WRITE, 2); IS(BIO_FLAGS_RWS, 7); IS(BIO_FLAGS_SHOULD_RETRY, 8);\n")
+    p = cat(p, "static int (*loam_bio_write)(BIO *, const char *, int); static int (*loam_bio_read)(BIO *, char *, int);\n")
+    p = cat(p, "static long (*loam_bio_ctrl)(BIO *, int, long, void *);\n")
+    p = cat(p, "static void loam_bio_types(BIO_METHOD *m) { BIO_meth_set_write(m, loam_bio_write); BIO_meth_set_read(m, loam_bio_read); BIO_meth_set_ctrl(m, loam_bio_ctrl); }\n")
+    // Every symbol a binding links from OpenSSL is a function its headers
+    // declare (not a macro), so the Linux link finds it.
+    p = cat(p, "static void *const loam_openssl_syms[] = { ")
+    p = cat(p, cat(openssl_binding_syms(), "0 };\n#endif\n"))
     // raygui's `Bounds` and `Rgba8`, when raylib's header is here.
     p = cat(p, "#if __has_include(<raylib.h>)\n#include <raylib.h>\n")
     p = cat(p, "SIZE(Rectangle, 16); AT(Rectangle, y, 4); AT(Rectangle, width, 8); AT(Rectangle, height, 12);\n")
     p = cat(p, "SIZE(Color, 4); AT(Color, g, 1); AT(Color, b, 2); AT(Color, a, 3);\n#endif\n")
     write_text(probe_c, p)
     let raylib = trim(sys.exec("pkg-config --cflags raylib 2>/dev/null || { test -d /opt/homebrew/opt/raylib/include && echo -I/opt/homebrew/opt/raylib/include; }"))
+    // OpenSSL's headers: the system's, or Homebrew's on a Mac, so its codes
+    // are checked here as well as on the Linux job. zig ships none, so the
+    // cross targets reuse them.
+    let openssl = trim(sys.exec("test -f /usr/include/openssl/ssl.h || pkg-config --cflags openssl 2>/dev/null || { test -d /opt/homebrew/opt/openssl@3/include && echo -I/opt/homebrew/opt/openssl@3/include; }"))
     let mut targets = []string { "" }
     sys.exec("command -v zig >/dev/null 2>&1")
     if sys.exec_status() == 0 {
@@ -2882,7 +2907,7 @@ fn ig_c_layouts() {
         // zig cannot `-fsyntax-only`, so each target compiles one object and
         // deletes it.
         let obj = tmpf("c_layouts.{{target}}.o")
-        let out = sys.exec("{{compiler}} -c -std=gnu11 {{raylib}} {{shq(probe_c)}} -o {{shq(obj)}} 2>&1")
+        let out = sys.exec("{{compiler}} -c -std=gnu11 -Wincompatible-function-pointer-types -Werror=incompatible-function-pointer-types {{raylib}} {{openssl}} {{shq(probe_c)}} -o {{shq(obj)}} 2>&1")
         let status = sys.exec_status()
         sys.remove_path(obj)
         if status != 0 {
@@ -2894,7 +2919,27 @@ fn ig_c_layouts() {
         }
     }
     let with_raylib = if raylib.len > 0 { ", raylib" } else { "" }
-    ok("c layouts (timespec, sockaddr_in, pollfd, addrinfo, SecureTransport, kevent, task_vm_info, inotify_event, rusage{{with_raylib}}: {{names}})")
+    let with_openssl = if openssl.len > 0 || sys.exists("/usr/include/openssl/ssl.h") == 1 { ", OpenSSL" } else { "" }
+    ok("c layouts (timespec, sockaddr_in, pollfd, addrinfo, SecureTransport{{with_openssl}}, kevent, task_vm_info, inotify_event, rusage{{with_raylib}}: {{names}})")
+}
+
+/** *`(void *)&sym, ` for each `#[c("sym", "link -lssl ...")]` or */
+/** *`-lcrypto` binding in `std:net`. */
+fn openssl_binding_syms() -> string {
+    let lines = split_lines(sys.read_file("packages/loam/std/net.loam"))
+    let mut out = ""
+    for i in 0..lines.len {
+        let line = lines[i]
+        if !starts_with(line, "#[c(\"") || !(contains_str(line, "\"link -lssl") || contains_str(line, "\"link -lcrypto")) {
+            continue
+        }
+        let mut end = 5
+        while end < line.len && line[end] != '"' {
+            end += 1
+        }
+        out = cat(out, "(void *)&{{slice(line, 5, end)}}, ")
+    }
+    return out
 }
 
 /** *Floats: `std:floattext` gives the host libc's `%.<p>g` and `strtod` */

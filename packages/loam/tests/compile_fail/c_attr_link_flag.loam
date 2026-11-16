@@ -1,0 +1,7 @@
+// `"link"` takes only `-lNAME` libraries: no other linker flag.
+#[c("SSL_new", "link -lssl -Wl,-rpath,/tmp")]
+fn c_ssl_new(ctx: i64) -> i64 {}
+
+fn main() {
+    let _ = c_ssl_new(i64(0))
+}

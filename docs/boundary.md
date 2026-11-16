@@ -88,6 +88,15 @@ cross; a struct that is not plain data still needs a trampoline in the
 package, as `packages/crypto` has for Argon2. A thread worker cannot call a
 `#[c]` fn.
 
+A binding can name the libraries its symbol lives in:
+`#[c("SSL_new", "link -lssl -lcrypto")]`, or `"link -framework Security"`.
+Only `-lNAME` and `-framework NAME` are accepted. The driver links them only
+when a kept binding that builds for this target names them, each library
+once, in the order bindings are declared. So a program that never makes a
+TLS connection links neither libssl nor Security.framework, even though
+`std:net` binds both. A module-wide `#![c_link]` applies whenever any
+binding of the module is kept.
+
 C runs on native builds only. A wasm, iOS, or Android build refuses a `#[c]` fn it
 can reach, and one only a `#[server]` body calls leaves nothing in that build.
 
@@ -112,7 +121,7 @@ from the C library every program already links. `std:batch` binds `fork` /
 | Layer | C | Loam |
 |---|---|---|
 | Language (`loam_rt`) | Allocator, panic/trap, overflow, wrapping bit ops, `string_from_bytes`, `loam_fn` `{fn, env, env_size}`, `env_set` / `exit` | — |
-| net (`packages/loam/std/net`) | `string_bytes_at` (a string's byte address for a binding to read in the same call), the wasm fetch / WebSocket / stream bridges | TCP over raw libc bindings (R5.1); the macOS TLS client over SecureTransport bindings, its I/O callbacks Loam fns C calls through function pointers (R5.2) |
+| net (`packages/loam/std/net`) | `string_bytes_at` (a string's byte address for a binding to read in the same call), the wasm fetch / WebSocket / stream bridges | TCP over raw libc bindings (R5.1); the TLS client over SecureTransport bindings on Apple (R5.2) and OpenSSL bindings on Linux (R5.3), its I/O callbacks (SecureTransport's, OpenSSL's BIO) Loam fns C calls through function pointers |
 | Zeus | Host event loop + replay of the draw list; `runtime.intern_fn` memcpy's a `loam_fn` env so click/styled handlers outlive the interned value | Tree, layout, signals, design system, `platform.loam` signatures |
 | Maya | The package's Cocoa host (`packages/maya/src/hosts/mac.m`): event loop and draw primitives (blit, discs, rings, labels), int-only both ways | Scene, orbits, camera, CPU tracer, 2D map layout, draw order and the RGBA frame, `sin`/`cos` |
 | raygui | raylib and raygui themselves (vendored `raygui.h` compiled as itself); no shim | API, frame loop, window state, headless rule, RAM probe and every retained value; raylib/raygui reached by `#[c]` bindings (`packages/raygui/src/raygui.loam`) |

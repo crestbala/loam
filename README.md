@@ -33,6 +33,8 @@ package manager (Linux: apt / dnf / pacman) can. See [Setup](#setup).
   on Linux)
 - macOS for the native desktop GUI (Cocoa); Linux uses the X11 host
   (`packages/zeus/hosts/desktop/linux.c`, needs `libx11-dev`). Maya is macOS-only
+- On Linux, OpenSSL (`libssl-dev`) for programs that connect over TLS
+  (`net.tls_connect`, HTTPS); a program that does not links none of it
 - [raylib](https://www.raylib.com) (`brew install raylib`) for the `raygui`
   example (`examples/language/raygui.loam`); nothing else needs it
 - [Xcode](https://developer.apple.com/xcode/) for the iOS Simulator target
@@ -61,8 +63,8 @@ every zeus example that has an `android/` host. Full Xcode (App Store) is a
 manual install if you want `./run.sh … ios`.
 
 On Linux, `./install.sh` checks `cc`, then prints the distro command
-for a `wasm32` clang (`clang lld`), the X11 GUI headers (`libx11-dev`), and
-Node; it does not install anything itself. The `android` mode targets macOS —
+for a `wasm32` clang (`clang lld`), the X11 GUI headers (`libx11-dev`),
+OpenSSL (`libssl-dev`) and Node; it does not install anything itself. The `android` mode targets macOS —
 on Linux install the SDK/NDK and Gradle yourself and set `ANDROID_HOME` /
 `ANDROID_NDK_HOME`.
 

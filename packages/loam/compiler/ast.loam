@@ -91,7 +91,7 @@ struct Loc {
 /** *- ImportName: `name` source name, `text` local name. */
 /** *- Fn / Closure: `name` (fn only), `strs` type params, `kids` `Param`s, */
 /** *  `a` return type, `b` body, `text` C symbol; `op` bits 1 async, 2 test, */
-/** *  4 server. */
+/** *  4 server; `cbuiltin` a `#[c]` binding's libraries (`-lssl -lcrypto`). */
 /** *- Param: `name`, `a` type, `b` default. */
 /** *- Struct: `name`, `strs` type params, `kids` `FieldDecl`s; `op` bits 1 */
 /** *  proto, 2 json, 4 must_check, 8 no_send. */

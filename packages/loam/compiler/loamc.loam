@@ -705,7 +705,57 @@ fn c_inputs(link: &mut []string) -> bool {
             }
         }
     }
+    binding_libs(link)
     return true
+}
+
+fn list_has(items: &[]string, item: string) -> bool {
+    for i in 0..items.len {
+        if items[i] == item {
+            return true
+        }
+    }
+    return false
+}
+
+/** *The libraries kept bindings name (`#[c("SSL_new", "link -lssl")]`, */
+/** *`"link -framework Security"`), */
+/** *each once, in first-use order: a program that keeps no binding of a */
+/** *library does not link it, even when its module has other bindings. */
+fn binding_libs(link: &mut []string) {
+    let mut seen = []string {}
+    for m in 0..typecheck.MODS.len {
+        let root = typecheck.MODS[m].root
+        if root == ast.NONE {
+            continue
+        }
+        let decls = ast.NODES[root].kids
+        for i in 0..decls.len {
+            let d = decls[i]
+            if ast.NODES[d].kind != Kind.Fn || codegen.c_sym_of(d).len == 0 {
+                continue
+            }
+            let libs = ast.EXTRA[ast.ex(d)].cbuiltin
+            if libs.len == 0 || !dce.keep(d) || !mask_builds_here(typecheck.os_mask(d)) {
+                continue
+            }
+            let words = str.split(libs, " ")
+            let mut k = 0
+            while k < words.len {
+                // `-framework NAME` is one library in two words.
+                let pair = words[k] == "-framework" && k + 1 < words.len
+                let unit = if pair { "-framework {{words[k + 1]}}" } else { words[k] }
+                if !list_has(&seen, unit) {
+                    push(seen, unit)
+                    push(link, words[k])
+                    if pair {
+                        push(link, words[k + 1])
+                    }
+                }
+                k += if pair { 2 } else { 1 }
+            }
+        }
+    }
 }
 
 // --- hosts -------------------------------------------------------------------------
@@ -849,7 +899,7 @@ fn link_args(cpath: string, binpath: string, copt: &[]string, ld: string, extra_
             let fws = cocoa_frameworks()
             push_all(args, &fws)
         } else if on_mac() {
-            push_list(args, []string { "-framework", "Security", "-framework", "CoreFoundation", "-lm" })
+            push(args, "-lm")
         } else if !headless {
             push_list(args, []string { "-lX11", "-lm" })
         } else {
@@ -862,9 +912,6 @@ fn link_args(cpath: string, binpath: string, copt: &[]string, ld: string, extra_
         push_all(args, app_in)
         // `-x none`: net.c is compiled as what its name says.
         push_list(args, []string { "-x", "none", net_c })
-        if on_mac() {
-            push_list(args, []string { "-framework", "Security", "-framework", "CoreFoundation" })
-        }
         push_all(args, extra_link)
         return true
     }
