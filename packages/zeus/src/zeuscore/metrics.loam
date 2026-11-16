@@ -93,7 +93,7 @@ fn tc_measure(s: string, px: int, max_w: int, wrap: int, w: &mut int, h: &mut in
     } else if metrics_font.len > 0 {
         font.measure_wrap(metrics_font, px, s, max_w, &mut mw, &mut mh)
     } else {
-        platform.plat_measure_wrap(s, px, max_w, &mut mw, &mut mh)
+        host_wrap(s, px, max_w, &mut mw, &mut mh)
     }
     tc_key[k] = s
     tc_px[k] = px
@@ -186,6 +186,88 @@ fn measure_int(v: int, px: int, w: &mut int, h: &mut int) {
 /** *Measure `s` wrapped to `max_w`, for the height a label grows to. */
 fn measure_wrap(s: string, px: int, max_w: int, w: &mut int, h: &mut int) {
     tc_measure(s, px, max_w, 1, w, h)
+}
+
+/** *Height of one line the host draws at `px`: its height for "Mg", or */
+/** *`px + 4` when the host answers nothing. */
+fn host_line_h(px: int) -> int {
+    let mut w = 0
+    let mut h = 0
+    platform.plat_measure_span("Mg", 0, 2, px, &mut w, &mut h)
+    if h < 1 {
+        return px + 4
+    }
+    return h
+}
+
+/** *True for the bytes a wrap splits words on: space, tab and newline. */
+fn wrap_break(c: int) -> bool {
+    return c == 32 || c == 9 || c == 10
+}
+
+/** *The wrapped size of `s` at `px` within `max_w`, by the host's measure */
+/** *(no bound font): words split on space, tab and newline, a space counted */
+/** *only between words on one line. Paint lowers wrapped text with the same */
+/** *rules (`scene.lower_wrap`). Each word is measured in place, unsliced. */
+fn host_wrap(s: string, px: int, max_w: int, w: &mut int, h: &mut int) {
+    let limit = if max_w < 1 { 1 } else { max_w }
+    let line_h = host_line_h(px)
+    let mut space_w = 0
+    let mut space_h = 0
+    platform.plat_measure_span(" ", 0, 1, px, &mut space_w, &mut space_h)
+    let mut i = 0
+    let mut line_w = 0
+    let mut widest = 0
+    let mut lines = 0
+    while i < s.len {
+        let c = s[i]
+        if c == 10 {
+            if line_w > widest {
+                widest = line_w
+            }
+            line_w = 0
+            lines = lines + 1
+            i = i + 1
+        } else if c == 32 || c == 9 {
+            if line_w > 0 {
+                if line_w + space_w > limit {
+                    if line_w > widest {
+                        widest = line_w
+                    }
+                    line_w = 0
+                    lines = lines + 1
+                } else {
+                    line_w = line_w + space_w
+                }
+            }
+            i = i + 1
+        } else {
+            let mut j = i
+            while j < s.len && !wrap_break(s[j]) {
+                j = j + 1
+            }
+            let mut word_w = 0
+            let mut word_h = 0
+            platform.plat_measure_span(s, i, j, px, &mut word_w, &mut word_h)
+            if line_w > 0 && line_w + word_w > limit {
+                if line_w > widest {
+                    widest = line_w
+                }
+                line_w = 0
+                lines = lines + 1
+            }
+            line_w = line_w + word_w
+            i = j
+        }
+    }
+    if s.len > 0 {
+        if line_w > widest {
+            widest = line_w
+        }
+        lines = lines + 1
+    }
+    *w = widest
+    *h = lines * line_h
 }
 
 /** *Measure one line of `s` as the host draws it, ignoring any bound font. Paint */

@@ -240,7 +240,7 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       `wasm_inc`), hosts 4,871, vendored 346,122 (sqlite, monocypher, raygui
       and the generated tree-sitter parser).
 - [x] R0.2 The budget: `RUNTIME_LINE_BUDGET` in `nob.loam`, set at 9,939
-      and lowered by each step since (now **3,600**, during R6.6).
+      and lowered by each step since (now **2,763**, during R6.6).
       `nob trusted` and the unfiltered `nob test` fail if `runtime/` grows
       past it. Each step below lowers it to its new count in the same
       change.
@@ -2005,6 +2005,54 @@ with R6.2).
       programs link. `wasm_smoke`, `wasm_trap`, `wasm_float`,
       `thread_tsan` and `ownership_asan` pass. Seed 5,538,521 bytes, seed
       = stage 1 = stage 2. **Runtime: 4,296 → 3,600** (−696).
+      **R6.6b landed 2026-11-16: `zeus_plat.c` 2,004 → 1,211 lines.** The
+      text-edit slots, the wrap measure, the handler intern table and the
+      mem-stats gate are safe Loam (`zeuscore/runtime.loam`,
+      `metrics.host_wrap`). Callers did not change: the same
+      `runtime.edit_*` / `intern_*` / `invoke_*` names now have bodies.
+      - **Edit slots:** each holds an owned string, the caret, the anchor,
+        the IME mark, wrap width, font size and the mask flag. What a slot
+        shows is built once per change and cached, so painting an input
+        allocates nothing. Caret and click hit-testing measure prefixes in
+        place through one new host-seam call, `plat_measure_span(s, from,
+        to, …)`, which copies to a stack buffer like the old
+        `measure_span`. No slicing, no allocation.
+      - **Wrap:** `plat_measure_wrap` left the host contract.
+        `metrics.host_wrap` is the same word loop over `plat_measure_span`.
+      - **Intern table:** each id records its kind and a row in that kind's
+        own typed table (`[]fn()`, `[]fn() -> int`, …), so an id still
+        costs one `fn` value, as the C table did. Ids and rows are reused
+        last-in first-out, like the C. A wrong-kind invoke is still refused,
+        counted, and reported the first 8 times. The C copied each env
+        (`malloc` + `memcpy` by `env_size`) and freed the copy. That
+        bought nothing: an env is immutable once built (an assignment to a
+        capture does not persist across calls) and is never freed. So the
+        table keeps the `fn` value, which saves one allocation per intern.
+        `intern_limit`, `slot_bits`, `guard_slot` and `note_kind_mismatch`
+        left the seam, and `guard_fn` runs the row's handler under
+        `trap_guard` directly.
+      - **Mem stats:** `ZEUS_MEM_STATS` is read once, at run time, through
+        `sys.env`. The `-DZEUS_MEM_STATS` build flag (and its `.mem` object
+        variant in `loamc`) is gone. Nothing read it after this, and wasm
+        has no environment, so a wasm build no longer reports stats.
+      **Compiler bug fixed on the way:** an argument that already was a
+      `fn` value, passed to a `fn()` parameter, was wrapped in an auto-thunk
+      when `peek_type` could not see its type: an element (`xs[i]`), a
+      module-level `let` named without its module, or a call returning a
+      `fn`. The thunk evaluated the value and dropped it uncalled.
+      `peek_type` now knows index expressions and unqualified globals, and
+      `wants_thunk` uses `peek_value_type` (calls). Fixture:
+      `fn_arg_no_thunk`.
+      **Checks:** a differential probe of every edit verb (typing all key
+      codes, set / insert / mark / mask, back / del at both ends,
+      selections, 48 clicks, moves in six directions, the 64 KB cap) and 50
+      wrap cases prints the same 171 lines built on HEAD's runtime. A probe
+      of the intern table (four kinds, wrong-kind invokes, `guard_fn`, frees
+      of free and unknown ids, reuse order, 3,000 interns, reset) prints the
+      same. Suite: `compile_` 900, `zeus_` 448, `golden` 135, `inlang`,
+      `font` green. `wasm_smoke`, `wasm_trap` and `wasm_float` pass. www and
+      the 9 Zeus example apps link as wasm. **Runtime: 3,600 → 2,763**
+      (−837).
 
 **R7. Hosts** (`packages/zeus/hosts`, outside the runtime directory).
 

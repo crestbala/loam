@@ -2043,7 +2043,20 @@ fn peek_type(a: int) -> int {
             return SC_TYPES[f.i]
         }
         let fd = lookup_unqualified(x.name, Kind.Fn)
-        return if fd != NONE { fn_type_of(fd) } else { NO_TYPE }
+        if fd != NONE {
+            return fn_type_of(fd)
+        }
+        // A module-level `let`, named without its module.
+        let gv = lookup_unqualified(x.name, Kind.Var)
+        return if gv != NONE { ast.NODES[gv].ty } else { NO_TYPE }
+    }
+    if x.kind == Kind.Index {
+        // `xs[i]`: the element type of an array or vec.
+        let bt = peel_ref(peek_value_type(x.a))
+        if tk(bt) == TK.Array || tk(bt) == TK.Vec {
+            return types.TYPES[bt].elem
+        }
+        return NO_TYPE
     }
     if x.kind == Kind.Field && x.op == 0 && x.has_name {
         if x.a != NONE && kind(x.a) == Kind.Ident {
@@ -2076,7 +2089,10 @@ fn wants_thunk(pt: int, arg: int) -> bool {
     if arg == NONE || kind(arg) == Kind.Closure {
         return false
     }
-    let at = peek_type(arg)
+    // An argument that already is a `fn` (a name, a field, an element, or a
+    // call returning one) is passed as is: a thunk around it would evaluate
+    // the value and drop it, never calling it.
+    let at = peek_value_type(arg)
     if tk(at) == TK.Proc {
         return false
     }

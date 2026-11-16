@@ -14,8 +14,8 @@
 //
 // Run headless (one layout, then the stats report on exit):
 //
-//   make bin/loamc
-//   ZEUS_MEM_STATS=1 ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/membench/membench.loam -o out/membench
+//   ./nob.sh
+//   ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/membench/membench.loam -o out/membench
 //   ZEUS_MEM_STATS=1 ZEUS_HEADLESS=1 ./out/membench thousand
 //
 // The window is a fixed 320x240 so the baseline does not move with the host

@@ -1,0 +1,23 @@
+// A `fn()` argument that already is a fn value is passed as is, not wrapped
+// in a thunk: an element of a `[]fn()`, a module-level fn, and a call that
+// returns one. The thunk would evaluate the value and drop it uncalled.
+import "std:fmt"
+
+let mut handlers: []fn() = []fn() {}
+let mut kept: fn() = fn() { fmt.println("kept") }
+
+fn run(body: fn()) {
+    body()
+}
+
+fn make(tag: string) -> fn() {
+    return fn() { fmt.println(tag) }
+}
+
+fn main() {
+    push(handlers, fn() { fmt.println("element") })
+    run(handlers[0])
+    run(kept)
+    run(make("made"))
+    run(fmt.println("thunk"))
+}

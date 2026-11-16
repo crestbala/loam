@@ -380,7 +380,7 @@ fn fresh_key(in_path: string) -> string {
     }
     let envs = []string {
         "ZEUS_HEADLESS", "LOAM_HEADLESS", "MAYA_HEADLESS", "LOAM_DEV", "LOAM_DEBUG",
-        "ZEUS_MEM_STATS", "LOAM_LINK_EXTRA", "CC", "RAYLIB_PREFIX",
+        "LOAM_LINK_EXTRA", "CC", "RAYLIB_PREFIX",
         "LOAM_BATCH", "LOAM_SHARD", "LOAM_HOST", "LOAM_SERVER_SPLIT", "LOAM_WASM_CC", "LOAM_NO_DCE",
     }
     for i in 0..envs.len {
@@ -782,22 +782,16 @@ fn uses_zeus() -> bool {
 fn zeus_objects(headless: bool, ok: &mut bool) -> []string {
     let rt = loader.runtime_dir()
     let zd = zeus_dir()
-    let mem = env_on("ZEUS_MEM_STATS")
     // A host build (`LOAM_HOST`) compiles the platform layer and the desktop
     // host against the loaded image's dispatch table (`LOAM_HOST_BUILD`), into
     // objects of their own, so the next app build does not link them.
     let host = env_on("LOAM_HOST")
-    let host_tag = if host { ".host" } else { "" }
-    let mem_tag = if mem { ".mem" } else { "" }
-    let tag = "{{host_tag}}{{mem_tag}}"
+    let tag = if host { ".host" } else { "" }
     let mut host_flags = []string {}
     if host {
         push(host_flags, "-DLOAM_HOST_BUILD")
     }
     push(host_flags, "-DLOAM_ALLOC_TRACE")
-    if mem {
-        push(host_flags, "-DZEUS_MEM_STATS")
-    }
     let rt_h = "{{rt}}/zeus_rt.h"
     let plat_c = "{{rt}}/zeus_plat.c"
     let plat_o = "{{rt}}/.obj/zeus_plat{{tag}}.o"
@@ -941,9 +935,6 @@ fn copt_flags() -> []string {
     }
     if uses_zeus() {
         push(f, "-DLOAM_ALLOC_TRACE")
-    }
-    if env_on("ZEUS_MEM_STATS") {
-        push(f, "-DZEUS_MEM_STATS")
     }
     if types.string_owns {
         push(f, "-DLOAM_STRING_OWNS")
