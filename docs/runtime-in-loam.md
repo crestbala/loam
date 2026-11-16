@@ -1501,7 +1501,9 @@ done, so every R3 step is checked by `thread_tsan`).
 
       **Scripts.** `fixture-deps.sh` reads each binding's `#[os]` and
       `"link"` into one table. `win-bundle.sh` adds a fixture's Windows
-      libraries to its `.deps` and no longer leaves the socket fixtures out
+      libraries to its `.deps`, and `runtime/net.c` when its C calls
+      std:net (as the driver links it; the first CI run failed 9 links
+      without it), and no longer leaves the socket fixtures out
       (125 go to Windows, was 104). `cross-check.sh` links MinGW's
       `ws2_32` on Windows and, on Linux, stubs only of the libraries Linux
       bindings name. `c_layouts` gains `x86_64-windows-gnu`: `SOCKET`,
