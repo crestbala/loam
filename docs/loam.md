@@ -12,8 +12,6 @@ files, and no backend other than `cc` is used. The generated C may be large
 same shape is what a **self-hosting** `loamc` (the compiler written in Loam,
 building and testing itself from whole Loam sources) will keep.
 
-C vs Loam: [boundary.md](boundary.md).
-Self-improvement phases: [downsides.md](downsides.md).
 This file is architecture plus how to write and run programs.
 
 ## Architecture
@@ -99,8 +97,7 @@ with `let` and borrow the name. Four rules, all checked at compile time:
    given `&mut p` may aim `p` at any of its other reference arguments.
 
 Instead of a stored reference, store an owned value, a `Box`, an index into a
-list, or a handle (`Signal`). The design and its phases:
-[reference-escape.md](reference-escape.md).
+list, or a handle (`Signal`).
 
 ## Repository map
 
@@ -214,8 +211,8 @@ Useful flags:
 ### App C seams
 
 Bodyless fns are not just for std: any fn whose body is missing is an **extern
-C hook** (`loam_<module>_<name>`, no Loam body emitted — see
-[boundary.md](boundary.md)). Std modules resolve theirs in `loam_rt` / the
+C hook** (`loam_<module>_<name>`, no Loam body emitted).
+Std modules resolve theirs in `loam_rt` / the
 runtime headers; an app resolves its own by shipping one C file:
 
 - `runtime/<app>_runtime.c` beside the entry program is compiled and linked
@@ -523,9 +520,8 @@ per-width arithmetic builtins `wrapping_add` / `wrapping_sub` / `wrapping_mul`
 / `wrapping_neg` / `wrapping_shl` / `wrapping_shr` / `wrapping_and` /
 `wrapping_or` / `wrapping_xor` and `saturating_add` / `saturating_sub` /
 `saturating_mul`, whose width comes from their operands. `+ - *` trap on
-overflow at every width. `s[i]` is the unsigned byte at `i`. Things that must
-stay 64-bit (clocks, hashes, large byte counts) are listed in
-`docs/numeric-widths.md`.
+overflow at every width. `s[i]` is the unsigned byte at `i`. Clocks, hashes and
+large byte counts stay 64-bit.
 
 ### 4. Modules
 

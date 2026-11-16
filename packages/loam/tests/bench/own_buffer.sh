@@ -12,8 +12,8 @@
 #   hosts/desktop/mac.m)
 #
 # For each run this reports the physical footprint (now and peak) and the
-# IOSurface / IOAccelerator regions, so the numbers in
-# docs/mem-baseline.md can be reproduced instead of hand-copied. It also
+# IOSurface / IOAccelerator regions, so the numbers
+# can be reproduced instead of hand-copied. It also
 # byte-compares the window crops, which is how "the paths draw the same pixels"
 # is checked rather than asserted.
 #

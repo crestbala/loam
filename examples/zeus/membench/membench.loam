@@ -1,4 +1,4 @@
-// membench — the Phase 0 Zeus memory baseline (`docs/mem-baseline.md`).
+// membench — the Phase 0 Zeus memory baseline.
 //
 // Fixed modes so bytes-per-node can be derived from a slope:
 //
@@ -7,7 +7,7 @@
 //   membench thousand   1000 Ghost buttons
 //   membench scroll     a keyed windowed list scrolled 500 one-row frames
 //
-// `scroll` is the Phase 2 proof for `docs/mem-baseline.md` §5.1: it mirrors
+// `scroll` is the Phase 2 proof for per-scroll growth: it mirrors
 // the reported reproduction (a windowed list scrolled one row at a time) on the
 // keyed path (`zui.VirtualListKeyed`), so the scroll is a bounded delta instead
 // of a rebuild of every visible row per frame.

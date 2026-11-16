@@ -1,6 +1,6 @@
 # Builds the analytics server for Fly.io's machines, and proves it works on Linux.
-# `loamc` has no cross target, so the binary has to be built on Linux. See phase 7 of
-# docs/site-analytics.md. This does not deploy.
+# `loamc` has no cross target, so the binary has to be built on Linux.
+# This does not deploy.
 #
 # It runs by hand only, not on pushes or PRs. Before `www/deploy.sh server`, push,
 # then run: gh workflow run analytics-server.yml --ref <branch>

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Check the fixed point natively on Windows, from the checkout alone
-# (docs/self-hosting-loam.md §3). Runs under MSYS2 bash with a MinGW-w64 gcc on
+# Runs under MSYS2 bash with a MinGW-w64 gcc on
 # PATH, from the repo root, after `./nob.sh` built bin/loamc.exe (the current
 # compiler, built by the committed seed, bootstrap/loamc.c) and
 # tools/win-bundle.sh emitted the fixtures' C with it.

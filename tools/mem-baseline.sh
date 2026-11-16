@@ -1,5 +1,5 @@
 #!/bin/sh
-# Phase 0 memory baseline for Zeus (`docs/mem-baseline.md`).
+# Phase 0 memory baseline for Zeus.
 #
 # Two halves:
 #
@@ -98,4 +98,4 @@ footprint -p "$PID"                   > "$OUT/footprint-thousand.txt" 2>&1 || tr
 } > "$OUT/regions.md"
 
 echo "mem-baseline: GUI results in $OUT/vmmap-thousand.txt, $OUT/footprint-thousand.txt, $OUT/regions.md" >&2
-echo "mem-baseline: copy the DIRTY split into docs/mem-baseline.md §4" >&2
+echo "mem-baseline: the DIRTY split is in $OUT/regions.md" >&2

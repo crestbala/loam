@@ -92,5 +92,4 @@ To add a new endpoint:
    `LOAM_RPC_ADDR`.
 4. `./run.sh zeus/counter` (web) or `./run.sh zeus/counter macos` (native).
 
-For the full request/response type story see [`docs/spec.md`](docs/spec.md) and
-[`../../docs/boundary.md`](../../docs/boundary.md).
+For the full request/response type story see [`docs/spec.md`](docs/spec.md).

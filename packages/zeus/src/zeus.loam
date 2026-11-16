@@ -91,7 +91,7 @@
 // Reactive presence is `Show(when = cond) { ... }` (`lazy = true` builds on
 // demand); a reactive `Style(display = ...)` hides one element. Internals: `packages/zeus/src/zeuscore/*.loam`.
 // C is host FFI (`platform.loam`). `Node` is `{ id: int }`.
-// See `docs/boundary.md`. `ZEUS_HEADLESS=1` layouts once and exits.
+// `ZEUS_HEADLESS=1` layouts once and exits.
 
 import "zeuscore/geometry.loam"
 import "zeuscore/platform.loam"
@@ -1792,7 +1792,7 @@ fn arena_bytes() -> i64 {
 }
 
 /** *Phase 0 diagnostics: live (non-recycled) node count. Additive; no */
-/** *allocation behavior reads it. See `docs/mem-baseline.md`. */
+/** *allocation behavior reads it. */
 fn mem_live_nodes() -> int {
     return nodes.mem_live_nodes()
 }

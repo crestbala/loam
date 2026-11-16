@@ -1,9 +1,9 @@
 # Security plan: what holds, what does not, and what to do
 
-Moved out of [self-hosting-loam.md](self-hosting-loam.md) (§5.2) on
+Moved out of the self-hosting plan on
 2026-11-12. **None of this is part of the 100% self-hosting claim.** That
 claim needs memory safety from safe Loam (definition item 6), and it holds
-since the `Box` fix ([box-and-init-ownership.md](box-and-init-ownership.md)).
+since the `Box` fix.
 The work here hardens what surrounds it: checker soundness found by a
 generator rather than by accident, the trusted C, FFI, the shell, servers,
 the binary and the seed. It is checked after self-hosting is declared.
@@ -34,8 +34,8 @@ docs). Each of these traps with a message instead of corrupting memory:
 Also in place:
 
 - Ownership, moves and borrows are checked. References are second-class.
-  Safe code has no pointer type and no null. `unsafe` is the C ABI only
-  ([unsafe.md](unsafe.md)): a module that declares a `#[c]` binding, a
+  Safe code has no pointer type and no null. `unsafe` is the C ABI only:
+  a module that declares a `#[c]` binding, a
   private fn or a block, and `raw_addr` / `raw_read` / `raw_write`.
 - `sys.spawn` / `sys.run` take an argument list, with no shell.
 - Vendored packages are pinned by checksum in `loam.lock`.
@@ -71,10 +71,8 @@ Fixed (2026-11-12): **`Box::new` of a value with owned fields dangled**
 once the box outlived its fn: `Box::new(Node { name: "n{{n}}" })`
 returned from a fn read a freed string. Codegen copied the value into the
 box without taking references (`Op.Alloc`), and a box's drop was shallow, so
-the two hid each other. Both halves, the fix and its checks (the
-`ownership_asan` stanza, the compiler under ASan) are in
-[box-and-init-ownership.md](box-and-init-ownership.md) (item 0a of "Next
-changes (pending)" in [self-hosting-loam.md](self-hosting-loam.md)).
+the two hid each other. Both halves are fixed, and the
+`ownership_asan` stanza (the compiler under ASan) checks them.
 
 ## Gaps, by how much they matter
 
@@ -102,8 +100,7 @@ changes (pending)" in [self-hosting-loam.md](self-hosting-loam.md)).
    one bad request kills a server. A stack overflow ends as a bare
    `SIGSEGV` from the guard page. That is memory-safe, but it prints no Loam
    message, and deep input (nested JSON, a deep expression) can trigger it.
-6. **Unbounded memory growth.** Capturing closures are never freed
-   ([self-hosting-loam.md](self-hosting-loam.md) §2.4),
+6. **Unbounded memory growth.** Capturing closures are never freed,
    so a long-running server that makes one per request grows until it is
    killed.
 7. **Hash flooding.** `std:map` hashes with unkeyed FNV, truncated to 26
@@ -159,10 +156,8 @@ changes (pending)" in [self-hosting-loam.md](self-hosting-loam.md)).
       run the generated programs under ASan + UBSan. Keep a fixed seed range
       as a quick stanza, and a long run on a schedule. Every hole it finds
       becomes a `compile_fail` or `compile_pass` fixture and is fixed in the
-      compiler. `Box` construction and drops belong in the generator (the hole
-      of [box-and-init-ownership.md](box-and-init-ownership.md) was found by
-      accident). Write the borrow rules in
-      [reference-escape.md](reference-escape.md) as a numbered list, each with
+      compiler. `Box` construction and drops belong in the generator (the `Box`
+      hole was found by accident). Write the borrow rules down as a numbered list, each with
       its fixtures, so a missing case is visible.
 - [ ] **S2. Fuzz the trusted C.** Small libFuzzer (or AFL) drivers for the
       runtime entry points that take outside bytes: `std:conv` parsing,
@@ -181,7 +176,7 @@ changes (pending)" in [self-hosting-loam.md](self-hosting-loam.md)).
 - [ ] **S5. Hardened native builds.** Release builds add
       `-fstack-protector-strong -D_FORTIFY_SOURCE=2 -fPIE -pie` and
       `-Wl,-z,relro,-z,now` where the linker supports them (Linux; the macOS
-      and MinGW equivalents per [platforms.md](platforms.md)). Measure the
+      and MinGW equivalents). Measure the
       cost on the compiler building itself and a Zeus app first; dev builds
       keep their flags.
 - [ ] **S6. Stack overflow with a message.** An alternate signal stack and a
@@ -191,9 +186,7 @@ changes (pending)" in [self-hosting-loam.md](self-hosting-loam.md)).
       parsers in std (`std:json`) get a depth limit that returns an error.
 - [ ] **S7. Keyed map hash.** Seed `std:map`'s hash per process from the OS
       random source, so an attacker cannot predict collisions. Emitted C
-      stays deterministic, because the compiler never iterates a map
-      ([self-hosting-loam.md](self-hosting-loam.md), Fixed-point and
-      tooling). Check the cost on the compiler building itself.
+      stays deterministic, because the compiler never iterates a map. Check the cost on the compiler building itself.
 - [ ] **S8. Fix the closure env leak** (self-hosting §2.4) before recommending
       Loam for long-running servers. Then any per-request allocation is
       bounded by the request.

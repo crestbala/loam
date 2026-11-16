@@ -1,6 +1,5 @@
 # The analytics server on Fly.io. There is no Dockerfile and nothing is built here:
-# a stock image runs the static binary that analytics-server.yml builds. See phase 7
-# of docs/site-analytics.md.
+# a stock image runs the static binary that analytics-server.yml builds.
 
 app = "loam-analytics"
 primary_region = "sin"

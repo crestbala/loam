@@ -1,5 +1,5 @@
-// platform — the host contract. Bodyless `fn`s are the link boundary
-// (docs/boundary.md): the compiler emits `loam_platform_plat_*` declarations
+// platform — the host contract. Bodyless `fn`s are the link boundary:
+// the compiler emits `loam_platform_plat_*` declarations
 // and the host provides them, through `zeus_plat.c`'s hooks. Everything here is
 // an OS service (paint, text measure, window, clock, clipboard, media…). The
 // engine's own runtime builtins live in `runtime.loam`. No widget or layout

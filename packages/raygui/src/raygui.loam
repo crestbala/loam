@@ -32,8 +32,7 @@
 // with `RAYGUI_IMPLEMENTATION`), bound directly: raygui's `Rectangle` and
 // raylib's `Color` cross as Loam structs of the same fields, and its `bool *`
 // / `int *` / `float *` state as one-cell buffers. The window state, the
-// headless rule, the frame cap and the guards below are Loam, per
-// `docs/boundary.md`.
+// headless rule, the frame cap and the guards below are Loam.
 
 #![c_source("vendor/raygui.h", "-x", "c", "-DRAYGUI_IMPLEMENTATION", "pkg-config:raylib")]
 #![c_link("pkg-config:raylib")]

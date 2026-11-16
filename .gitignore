@@ -49,7 +49,7 @@ www/macos/build/
 examples/zeus/counter/backend/build/
 bezel/
 
-# Phase 0 generated memory dumps (the curated numbers live in docs/mem-baseline.md)
+# Phase 0 generated memory dumps
 docs/mem/
 # Phase 0 golden runner scratch
 tests/golden/.tmp/

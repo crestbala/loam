@@ -1,4 +1,4 @@
-// Sockets and TLS (`docs/boundary.md`).
+// Sockets and TLS.
 //
 // TCP (R5.1, Windows R5.4) and the TLS client (macOS R5.2, Linux R5.3,
 // Windows R5.5, Android R5.6) are Loam over raw bindings: addresses, socket
@@ -9,7 +9,7 @@
 // pointers. The Android engine never sees the socket: the backend feeds it
 // records through the host's JNI shims. Where Loam hands C an address (a
 // string's bytes, an `addrinfo`, SChannel's connection block) it does so in
-// `unsafe` code, the only kind that may (docs/unsafe.md). The fetch,
+// `unsafe` code, the only kind that may. The fetch,
 // WebSocket and stream bridges are the browser's (wasm). No HTTP parsing lives here:
 // that is `packages/http/src/http.loam`.
 

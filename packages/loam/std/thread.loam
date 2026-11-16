@@ -83,7 +83,7 @@ fn chan<T>(cap: int, init: T) -> Chan<T> {
 // --- Channel table (R3.2): ids and S0 keys in Loam --------------------------
 // The id→channel map and the type keys live here; the per-channel sync block
 // (mutex, condvars, ring, counts) stays C-allocated, named by an `i64`
-// cookie (`boundary.md`: an `i64` carries any pointer). Every op is still
+// cookie (an `i64` carries any pointer). Every op is still
 // one atomic C section on the cookie — the table lock below orders the Loam
 // metadata against worker threads (TSan instruments the C lock calls, so the
 // happens-before edges hold; `thread_tsan` gates every step).

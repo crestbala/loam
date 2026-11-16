@@ -12,8 +12,8 @@ Scope of this document:
    folder structure the framework imposes.
 7. Phases, in order, with exit criteria.
 
-This supersedes the framing in `docs/downsides.md`. That file closed eight phases
-of "make the same app run on every host." This one is about making Loam a language
+Earlier work closed eight phases of "make the same app run on every host."
+This one is about making Loam a language
 people can write large programs in, and Zeus a framework people can ship products
 with.
 
@@ -102,7 +102,7 @@ cluster layer. Consequences:
   is true for layout boxes and false for text — the one thing users actually look at.
 - Any server-side or build-time rendering is impossible while metrics live in the
   host, because the server has no Canvas2D.
-- Rich text spans are already blocked on this (`downsides.md` Phase 8, "Won't").
+- Rich text spans are already blocked on this.
 
 **One fix unlocks all four: in-tree font metrics.** Ship a font, parse its tables
 in Loam, do shaping and line breaking in Loam, and make `measure_text` a pure
@@ -125,7 +125,7 @@ kills the framework's main claim.
 **Decision (recorded; implementation deferred — "look at later").** The
 direction this tree takes is **option 1**: port a minimal shaper into Loam for
 the scripts it targets, so shaping, metrics, and glyph runs stay Loam values and
-`docs/boundary.md` holds. Until the port lands, metrics are unshaped — one glyph
+the C seam holds. Until the port lands, metrics are unshaped — one glyph
 per grapheme cluster — and `std:font.glyph_run` returns that unshaped run.
 **Option 2 (HarfBuzz) is not adopted as the architecture:** it is C *library
 logic*, which the boundary rule rejects; it computes advances only (drawing still
@@ -316,7 +316,7 @@ Today `int` is `int64_t` and `float` is 64-bit. For this stack specifically:
 
 ## 3.2 What this contradicts
 
-`docs/downsides.md` lists "width integers" under **do not add**. This document
+Earlier plans listed "width integers" under **do not add**. This document
 deliberately reverses that. Be clear-eyed about what it costs:
 
 - Integer promotion and conversion rules must be specified and implemented in
@@ -1049,7 +1049,7 @@ loam/
     language/
     zeus/                   gallery, dashboard, counter, greeninfer
 
-  docs/                     loam.md, boundary.md, this file
+  docs/                     loam.md, this file
   bin/                      loam, loam-lsp, loam-fmt, zeus
   install.sh  run.sh  Makefile
 ```
@@ -1120,7 +1120,7 @@ One phase at a time. The ordering is a dependency chain, not a preference.
 
 **Position: Phases 9, 10, and 12 are green. Phase 11 is green on the two layout
 steps that landed (grouping, narrowing); `f32` geometry and struct-of-arrays
-are deferred and recorded in `docs/numeric-widths.md`. Phase 13 is green on
+are deferred. Phase 13 is green on
 its engine and editing steps — grapheme clusters, the in-tree font
 parser/metrics, and grapheme-aware caret/backspace/delete; shipping a font and
 `plat_glyphs`/shaping are open, with the reason below. Next: Phase 14.**
@@ -1140,8 +1140,8 @@ shift-overflow. `int`/`float` still mean 64-bit. Existing goldens byte-identical
 
 ### Phase 10 — Flip the defaults
 
-**Status: done.** The §3.6 64-bit list is audited in `docs/numeric-widths.md`,
-with the before/after benchmark.
+**Status: done.** The §3.6 64-bit list is audited, with the
+before/after benchmark.
 
 `int` = `i32`, `float` = `f32`, behind `--int64-compat`. Fix std, examples, and
 the §3.6 list of things that must stay 64-bit.
@@ -1155,9 +1155,9 @@ size before and after. **Green.**
 `Rect`/`Color`/`Node`/`Signal` are 32-bit (`int` = `i32`); handles and packed
 colors stay at the 32-bit default. Draw-list ops re-typed. Fields then grouped
 by width and narrowed (`u16`/`u8`), each measured — `UiNode` 544 → 480 B,
-`Draw` 64 → 56 B (per-step table in `docs/numeric-widths.md`).
+`Draw` 64 → 56 B.
 
-Deferred, with the reason written down in `docs/numeric-widths.md`:
+Deferred:
 
 - **geometry as `f32`** — layout in this tree is integer-pixel throughout, so
   this is a behavior change (fractional geometry) with new DRAW goldens, not a

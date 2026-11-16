@@ -275,7 +275,7 @@ fn drop_keyed_spacer(node_id: int, k: string) {
 /** **moves** the rows whose key is still in the window and builds only the row */
 /** *entering it, instead of rebuilding every visible row. That is what keeps a */
 /** *scroll from allocating a fresh closure per visible row per frame (the */
-/** *`docs/mem-baseline.md` §5.1 growth): the delta is O(rows entering/leaving), */
+/** *per-scroll growth): the delta is O(rows entering/leaving), */
 /** *not O(window). `key(item)` must be stable and unique. */
 fn virtual_refresh_keyed<T>(
     node_id: int,
@@ -1455,7 +1455,7 @@ fn VirtualList<T>(items: Signal<[]T>, row_h: int, build: fn(int, T) -> Node) -> 
 /** *Keyed windowed list: `VirtualList` with a stable `key(item)`. Scrolling */
 /** **moves** the rows whose key stays in the window instead of rebuilding every */
 /** *visible row, so a scroll allocates only the rows entering it — the fix for */
-/** *the `docs/mem-baseline.md` §5.1 per-scroll growth. `key` must be stable and */
+/** *the per-scroll growth. `key` must be stable and */
 /** *unique among the items. Row state that must follow the item should read a */
 /** *signal inside the row, not `i`. Falls back to the unkeyed path if a key is */
 /** *empty or duplicated. */

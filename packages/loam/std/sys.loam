@@ -1,4 +1,4 @@
-// Language-level seam (`docs/boundary.md`).
+// Language-level seam.
 //
 // Bodyless `fn`s resolve to `loam_sys_<name>` in `loam_rt`. No protocol here.
 
