@@ -55,6 +55,20 @@ jobs:
       - name: Test suite
         run: ./nob.sh test
 
+      # The suite's https fixture passes with "skipped" when offline; here a
+      # real handshake over OpenSSL (certificate and host name verified) must
+      # happen, or the job fails.
+      - name: HTTPS over OpenSSL, for real
+        run: |
+          bin/loamc packages/loam/tests/compile_pass/http_https_live.loam -o "$RUNNER_TEMP/https_live"
+          ldd "$RUNNER_TEMP/https_live" | grep -E 'libssl|libcrypto'
+          out=$("$RUNNER_TEMP/https_live")
+          echo "$out"
+          case "$out" in
+            "https ok"*) ;;
+            *) echo "::error::no TLS handshake: $out"; exit 1 ;;
+          esac
+
       - name: Bundle fixtures for Windows
         if: matrix.os == 'ubuntu-24.04'
         run: tools/win-bundle.sh out/win-bundle
