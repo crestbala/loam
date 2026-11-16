@@ -1348,7 +1348,6 @@ fn wasm_build(in_path: string, cpath: string, binpath: string, shard_dir: string
     if uses_zeus() {
         // The runtime and the web host never change between edits, so a
         // shard build keeps them as objects too.
-        let w_libc = "{{rt}}/zeus_wasm_libc.c"
         let w_host = "{{zeus_dir()}}/hosts/web/wasm.c"
         let w_plat = "{{rt}}/zeus_plat.c"
         let mut wasm_in = []string { "-x", "c", cpath }
@@ -1364,7 +1363,7 @@ fn wasm_build(in_path: string, cpath: string, binpath: string, shard_dir: string
                     push(unit_cc_set, unit_cc[i])
                 }
             }
-            let mut extra = []string { w_libc, w_host, w_plat }
+            let mut extra = []string { w_host, w_plat }
             if net_c.len > 0 {
                 push(extra, net_c)
             }
@@ -1389,12 +1388,15 @@ fn wasm_build(in_path: string, cpath: string, binpath: string, shard_dir: string
         push_list(&mut args, []string { "-Wl,--no-entry", "-Wl,--export-dynamic", "-Wl,--fatal-warnings", "-Wl,--export=__stack_pointer", "-Wl,-z,stack-size=4194304", "-Wl,--stack-first" })
         push_all(&mut args, &wasm_in)
         if !SHARD_LINKED {
-            push_list(&mut args, []string { "-x", "none", w_libc, w_host, w_plat, net_c })
+            push_list(&mut args, []string { "-x", "none", w_host, w_plat, net_c })
         }
     } else {
         push_list(&mut args, []string { "-Oz", "-ffp-contract=off", owns, "-I{{rt}}/wasm_inc", "-I{{rt}}" })
         push_list(&mut args, []string { "-Wl,--no-entry", "-Wl,--export-dynamic", "-Wl,--export=main", "-Wl,--fatal-warnings", "-Wl,-z,stack-size=4194304", "-Wl,--stack-first" })
-        push_list(&mut args, []string { "-x", "c", cpath, "-x", "none", "{{rt}}/zeus_wasm_libc.c", net_c })
+        push_list(&mut args, []string { "-x", "c", cpath })
+        if net_c.len > 0 {
+            push_list(&mut args, []string { "-x", "none", net_c })
+        }
     }
     push_list(&mut args, []string { "-o", binpath })
     let mut argv = []string {}
@@ -2250,6 +2252,7 @@ fn main() {
     // Wasm is published: Loam locations are written relative to where the
     // compiler ran, and any other absolute path as its file name only.
     codegen.PATH_STRIP = if target_wasm { sys.cwd() } else { "" }
+    codegen.WASM = target_wasm
     codegen.emit_c()
     if show_time {
         fmt.eprintln("loam: codegen {{secs(async.now_ms() - t0)}}s")

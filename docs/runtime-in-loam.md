@@ -122,7 +122,8 @@ safely today:
 - **`zeus_key.c`**: all of it (tables and mapping).
 - **`batch_run.c`**: the batched-test runner, a plain Loam program.
 - **`zeus_wasm_libc.c`**: it shrinks as the code that needed libc moves to
-  Loam; what remains is core.
+  Loam; what remains is core. Gone in R6.5: the rest is bulk-memory
+  instructions and C that codegen writes into wasm units only.
 - **Hosts**: layout, event routing and state move to Loam; the toolkit calls
   stay native. `mac.m` is the largest (2,207 lines) and goes last.
 
@@ -239,7 +240,7 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       `wasm_inc`), hosts 4,871, vendored 346,122 (sqlite, monocypher, raygui
       and the generated tree-sitter parser).
 - [x] R0.2 The budget: `RUNTIME_LINE_BUDGET` in `nob.loam`, set at 9,939
-      and lowered by each step since (now **4,511**, during R6.5).
+      and lowered by each step since (now **4,296**, after R6.5).
       `nob trusted` and the unfiltered `nob test` fail if `runtime/` grows
       past it. Each step below lowers it to its new count in the same
       change.
@@ -1876,9 +1877,10 @@ with R6.2).
       (−169). **Suite:** 678 passed, 0 failed (25 s). **Seed:** 5,373,610
       bytes, seed = stage 1 = stage 2.
 
-- [ ] R6.5 `zeus_wasm_libc.c` reduced to nothing: what wasm still needs
-      (memory growth, `memcpy`) is Loam or a wasm import.
-      Started 2026-11-16, three changes in, **439 → 215 lines**. The
+- [x] R6.5 `zeus_wasm_libc.c` reduced to nothing: what wasm still needs
+      (memory growth, `memcpy`) is Loam or a wasm import. Done 2026-11-16,
+      in two commits.
+      The first took the file from **439 to 215 lines**. The
       inventory linked all 15 wasm programs in the repo (the wasm stanza
       apps, the Zeus examples, both galleries, `www`, `oob`). It stubbed
       the libc out to see which symbols any link needs. It also linked a
@@ -1912,11 +1914,49 @@ with R6.2).
       checks, 0 mismatches) pass. Suite 678 passed, 0 failed. Seed
       5,373,383 bytes, seed = stage 1 = stage 2. **Runtime: 4,745 → 4,511**
       (−234).
-      **Left:** the allocator (`malloc` / `realloc` / `free` /
-      `zeus_heap_used` over a fixed 64 MB array), `abort`, `memcmp`,
-      `strlen`, `write`, `errno`, and `__multi3`. Homebrew LLVM ships no
-      wasm32 compiler-rt, and a checked `i64` multiply lowers to a
-      `__multi3` call.
+      **Then the file was deleted.** The rest was the allocator (`malloc` /
+      `realloc` / `free` / `zeus_heap_used` over a fixed 64 MB array),
+      `abort`, `memcmp`, `strlen`, `write`, `errno` and `__multi3`.
+      Homebrew LLVM ships no wasm32 compiler-rt, and a checked `i64`
+      multiply lowers to a `__multi3` call. Following R6.3, codegen now
+      writes that C (`wasm_libc_defs`) when the unit is `--target wasm32`
+      (`codegen.WASM`). Native units get none of it. In a shard build the
+      head is every unit's precompiled header, so the code sits under
+      `LOAM_SHARD_DEFS` and one unit defines it. `loamc` no longer links a
+      libc file.
+      **The heap grows.** It starts at `__heap_base` (after the 4 MB stack
+      and the data) and grows the memory with `memory.grow`, at least 1 MB
+      at a time. It does not reserve 64 MB in every module. The free-list
+      design is the old one: a header and footer per block, `free`
+      coalesces both ways, and `malloc` walks free blocks only. `malloc`
+      now refuses a size over half the address space (the old one could
+      wrap in `align8`). `zeus_heap_used` reports live bytes, 0 when empty
+      (the old one counted the 8-byte reserved offset). The JS hosts
+      rebuild their `memory.buffer` views on each access, so growth
+      invalidates nothing they hold.
+      **Fuzzed:** 20 seeds × 50,000 random `malloc` / `realloc` / `free`
+      operations, as wasm under Deno, every block filled with a pattern
+      and checked, plus one 80 MB block past the old ceiling. Every seed
+      ends with the heap counter back at its start. The same run passes
+      built with `-fsanitize=undefined -fsanitize-trap=undefined`.
+      **Speed and memory**, an allocation-heavy plain wasm program (300
+      rounds of 2,000 strings and 2,000 ints, copied on write and
+      dropped) under Deno: 52.3–52.5 ms vs 52.4–60.5 ms with the old libc,
+      and peak memory **1,089 pages (68 MB) → 81 pages (5.2 MB)**.
+      **Size:** modules change by −543 to +2,433 bytes (`www` dev
+      1,497,681 → 1,500,114, +0.16%; the `www` release is 1,456,208). The
+      new `malloc` is 494 bytes of `-Oz` code, because it carries growth.
+      `noinline` on the allocator, `memcmp` or `strlen` changed no byte,
+      so it is not there.
+      **Fixed on the way:** a non-Zeus wasm link passed a trailing `-x
+      none`, and clang warned.
+      **Checks:** all 15 wasm programs (dev, plus release and shard builds
+      of `www`, the gallery and mune) and the `std:net` and `http` ones
+      link. `wasm_smoke`, `wasm_trap`, `wasm_float` (420,026 checks),
+      `build_exits`, `build_partial`, `serve_build`, `serve_boot`,
+      `server_split` and `fresh_cache` pass. Suite 678 passed, 0 failed.
+      Seed 5,410,759 bytes, seed = stage 1 = stage 2. **Runtime: 4,511 →
+      4,296** (−215; −449 for all of R6.5).
 - [ ] R6.6 `packages/loam/runtime/` deleted; `loader.loam` and `loamc.loam`
       no longer name it; `nob trusted` reports zero runtime lines.
 

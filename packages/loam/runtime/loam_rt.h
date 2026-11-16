@@ -494,7 +494,7 @@ static inline loam_str loam_trap_guard(loam_fn build) {
    pair with "import module mismatch for symbol: zeus_js_now_ms" (one object
    says `zeus`, the other `env`), which is why it is declared here and not
    redeclared below. `zeus_heap_used` is not an import at all: it is the wasm
-   libc's own allocator statistic (`zeus_wasm_libc.c`). */
+   libc's own allocator statistic (codegen.loam, `wasm_libc_defs`). */
 __attribute__((import_module("zeus"), import_name("now_ms")))
 int64_t zeus_js_now_ms(void);
 int32_t zeus_heap_used(void);
