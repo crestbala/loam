@@ -240,7 +240,7 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       `wasm_inc`), hosts 4,871, vendored 346,122 (sqlite, monocypher, raygui
       and the generated tree-sitter parser).
 - [x] R0.2 The budget: `RUNTIME_LINE_BUDGET` in `nob.loam`, set at 9,939
-      and lowered by each step since (now **2,327**, during R6.6).
+      and lowered by each step since (now **1,990**, during R6.6).
       `nob trusted` and the unfiltered `nob test` fail if `runtime/` grows
       past it. Each step below lowers it to its new count in the same
       change.
@@ -2090,13 +2090,64 @@ with R6.2).
       refusal), `serve_build`, `serve_boot` and `fresh_cache` pass.
       `cross-check.sh`: Linux and Windows on both CPUs, `nob` + 128
       fixtures, 0 failed. **Runtime: 2,763 → 2,327** (−436).
+      **R6.6d1 landed 2026-11-17: the web half of `zeus_plat.c` is Loam.**
+      R6.6d is done in three steps: d1 the browser calls, d2 the state the
+      seam still keeps, d3 the native hook registry. d1 moved 38 of its 45
+      `#ifdef __wasm32__` branches. Each moved one is now an `#[os("wasm")]`
+      variant calling a host-import binding (`js_*`), next to an
+      `#[os("posix", "windows")]` variant, in `zeuscore/platform.loam`,
+      `mediastate.loam` and `imagesize.loam`. That covers the title, `<head>`
+      metadata, Apple keys, router history, boot path, route chunks,
+      appearance, analytics, opening a URL, layout verify and the media
+      players.
+      What only a native host provides stays a bodyless C hook, renamed
+      `native_*` (title, media). What does nothing outside a browser is a
+      Loam no-op. Layout verify reads `ZEUS_LAYOUT_VERIFY` through
+      `sys.env`. `loamc`'s reachable-`#[c]` check now passes host imports
+      for iOS and Android too: they are not built there.
+      - **A host import takes a string as its bytes and count.** Codegen
+        passes `s.ptr, s.len` in place. It no longer makes the
+        NUL-terminated copy a libc binding needs (stack buffer, or `malloc`
+        past 256 bytes). So a fetch body is not copied any more, and the
+        host never scans for a NUL, which an embedded NUL used to cut short.
+        The `*_len` parameters left `std:net`'s bindings, and `set_title`,
+        `history_push` / `_replace` and `media_open` in `loader.js` read
+        `(ptr, len)` like the rest.
+      - **Image headers:** `read_head` is `sys.read_prefix(path, cap)`, a
+        new std call over the libc bindings `std:sys` already has. It sizes
+        the file with `fseek`/`ftell` and allocates once, at exactly the
+        bytes it reads. Empty on wasm. The C `fopen` hook is gone.
+      - **Media text** reads into one buffer that is grown once and reused,
+        so asking for a player's error each frame allocates nothing while
+        there is none.
+      - **Left for d2:** 7 wasm branches (headless, view size, clipboard,
+        mem KB) belong to state the seam still keeps.
+      **Size:** every app is smaller than on HEAD: vidy −1,036 bytes,
+      counter −589, ws −403, gallery −240, www −131 over all its chunks.
+      Before wasm-opt, `layout_verify_memo` (5.7 KB) is now dead code on
+      wasm.
+      **Checks:** a wasm probe calls every moved path in headless Chrome.
+      It covers a 400-byte head value and history entry, `open_external`,
+      and media text from a wrapped host import (a pick, and a 5,000-byte
+      error clamped to 4,095). Built on HEAD with HEAD's loader and on this
+      change with its loader, it gives the same output and the same browser
+      effects (pushes, replaces, back, beacon events, `<head>` tags, title,
+      localStorage, URL). www deep-linked to `/language/` behaves the same
+      on both builds: nav to Types (URL, title, canonical), the appearance
+      toggle (storage, `--zeus-paper`, theme colour), back and reload, with
+      no page errors. `sys.read_prefix` matches C `fopen`/`fread` on 35
+      cases (short, long, empty, a directory, missing, `cap` 0 / negative /
+      past the end), and cross-links for Linux and Windows on both CPUs.
+      Suite: `zeus_` 448, `golden` 135, `router`, `http` 39, `net`, `ffi`,
+      `sys` green. `wasm_smoke`, `wasm_trap`, `wasm_float`, `serve_build`,
+      `serve_boot`, `server_split`, `fresh_cache`, `android_project`, `lsp`,
+      `api_freeze`, `one_surface`, `c_layouts`, `cost`, `modules` and
+      `loader_cases` pass. www and the 9 Zeus example apps link as wasm, and counter
+      builds for the iOS Simulator. Seed 5,529,585 bytes, seed = stage 1 =
+      stage 2. **Runtime: 2,327 → 1,990** (−337).
 
 **R7. Hosts** (`packages/zeus/hosts`, outside the runtime directory).
 
 - [ ] R7.1 Layout, event routing and state out of `linux.c`, `android.c`,
       `wasm.c` and `ios.m`; toolkit calls stay native.
 - [ ] R7.2 Then `mac.m` and `apple_draw.m`.
-
-Not in scope: rewriting vendored libraries, raw pointers or `unsafe`
-beyond the rules of §4, or moving the C compiler `cc` itself. Loam still
-emits C, and `cc` stays the backend.

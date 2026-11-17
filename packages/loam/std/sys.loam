@@ -459,6 +459,48 @@ fn read_sized(path: string) -> string {
     return ""
 }
 
+/** *The first `cap` bytes of a file (fewer when it is shorter), without */
+/** *reading the rest. Empty when it is missing, unreadable or `cap <= 0`. */
+/** *Native only; wasm returns empty. */
+fn read_prefix(path: string, cap: int) -> []u8 {
+    return read_prefix_os(path, cap)
+}
+
+/** *Native `read_prefix`: sized by `fseek`/`ftell` first, so the buffer is */
+/** *allocated once at exactly the length that is read. */
+#[os("posix", "windows")]
+fn read_prefix_os(path: string, cap: int) -> []u8 {
+    if cap <= 0 || path.len == 0 || path.len >= 4095 {
+        return []u8 {}
+    }
+    let f = c_fopen(path, "rb")
+    if f == 0 {
+        return []u8 {}
+    }
+    let mut size: i64 = -1
+    if c_fseek(f, 0, 2) == 0 {
+        size = c_ftell(f)
+    }
+    if size <= 0 || c_fseek(f, 0, 0) != 0 {
+        c_fclose(f)
+        return []u8 {}
+    }
+    let want = if size < i64(cap) { size } else { i64(cap) }
+    let mut bytes = buf.with_len(int(want))
+    let got = c_fread(bytes, 1, want, f)
+    c_fclose(f)
+    if got != want {
+        return []u8 {}
+    }
+    return bytes
+}
+
+/** *No filesystem on wasm: nothing is read. */
+#[os("wasm")]
+fn read_prefix_os(path: string, cap: int) -> []u8 {
+    return []u8 {}
+}
+
 /** *`ferror` straight from libc: nonzero when the stream hit an error. */
 #[os("posix", "windows")]
 #[c("ferror")]

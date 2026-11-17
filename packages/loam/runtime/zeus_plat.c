@@ -518,40 +518,12 @@ void loam_platform_plat_set_window(loam_str title, int64_t width, int64_t height
     loam_zeus_plat_set_window(title, width, height);
 }
 
-#ifdef __wasm32__
-__attribute__((import_module("zeus"), import_name("set_title")))
-void zeus_js_set_title(const char *t);
-#endif
-
-#ifdef __wasm32__
-__attribute__((import_module("zeus"), import_name("set_head")))
-void zeus_js_set_head(const char *key, int32_t key_len, const char *value, int32_t value_len);
-#endif
-
-/* One `Meta` field for the page's head. Passed by length: JSON-LD has no limit. */
-void loam_platform_plat_set_head(loam_str key, loam_str value) {
-#ifdef __wasm32__
-    zeus_js_set_head(key.ptr, (int32_t)key.len, value.ptr, (int32_t)value.len);
-#else
-    (void)key;
-    (void)value;
-#endif
-}
-
-/* Retitle the open window without reopening it (router `Meta.title`). */
-void loam_platform_plat_set_title(loam_str title) {
-#ifdef __wasm32__
-    static char buf[512];
-    size_t n = (title.len > 0 && title.ptr) ? (size_t)title.len : 0;
-    if (n >= sizeof buf) n = sizeof buf - 1;
-    if (n) memcpy(buf, title.ptr, n);
-    buf[n] = '\0';
-    zeus_js_set_title(buf);
-#else
+/* Retitle the open window without reopening it (router `Meta.title`). The
+   web host's title is a Loam import (`platform.set_title_os`). */
+void loam_platform_native_set_title(loam_str title) {
     free(win_title);
     win_title = dup_ys(title);
     if (plat_title_fn) plat_title_fn(win_title ? win_title : "");
-#endif
 }
 /* Window chrome (`zeus.window_chrome`). 0: the host's own title bar. 1: the
    app draws it (`TitleBar`): a desktop host runs the content under a
@@ -594,8 +566,6 @@ void zeus_set_clipboard_hook(void (*fn)(const char *)) { plat_clip_fn = fn; }
 #ifdef __wasm32__
 __attribute__((import_module("zeus"), import_name("clipboard_write")))
 void zeus_js_clipboard_write(const char *t);
-__attribute__((import_module("zeus"), import_name("apple_keys")))
-int32_t zeus_js_apple_keys(void);
 #endif
 
 void loam_platform_plat_clipboard_write(loam_str text) {
@@ -621,19 +591,6 @@ loam_str loam_platform_plat_clipboard_last(void) {
 static ZeusMedia media_host;
 
 void zeus_set_media(ZeusMedia media) { media_host = media; }
-
-/* 1 when shortcuts follow Apple conventions (⌘ rather than Ctrl): macOS and
-   iOS builds, and a browser on an Apple platform. A headless run (snapshots,
-   draw goldens) answers 1 on every OS, so its output is host-independent. */
-int64_t loam_platform_plat_apple_keys(void) {
-#ifdef __wasm32__
-    return zeus_js_apple_keys();
-#elif defined(__APPLE__)
-    return 1;
-#else
-    return loam_zeus_plat_headless() ? 1 : 0;
-#endif
-}
 
 int64_t loam_platform_plat_view_width(void) { return loam_zeus_plat_view_width(); }
 int64_t loam_platform_plat_view_height(void) { return loam_zeus_plat_view_height(); }
@@ -711,196 +668,6 @@ __attribute__((weak)) void loam_router_engine_chunks_slow(int32_t index) { (void
    push / replace / back into the host's own affordance. The web host forwards
    to `history.pushState` / `replaceState` / `back`; other hosts ignore them
    until wired. */
-#ifdef __wasm32__
-__attribute__((import_module("zeus"), import_name("history_push")))
-void zeus_js_history_push(const char *path);
-__attribute__((import_module("zeus"), import_name("history_replace")))
-void zeus_js_history_replace(const char *path);
-__attribute__((import_module("zeus"), import_name("history_back")))
-void zeus_js_history_back(void);
-#endif
-
-#ifdef __wasm32__
-__attribute__((import_module("zeus"), import_name("boot_path")))
-int32_t zeus_js_boot_path(char *buf, int32_t cap);
-#endif
-
-loam_str loam_platform_plat_boot_path(void) {
-#ifdef __wasm32__
-    char buf[2048];
-    int32_t n = zeus_js_boot_path(buf, (int32_t)sizeof buf);
-    if (n > 0) {
-        char *p = (char *)loam_new((size_t)n + 1, "boot_path", 0);
-        if (p) {
-            memcpy(p, buf, (size_t)n);
-            p[n] = '\0';
-            return (loam_str){p, n};
-        }
-    }
-#endif
-    return (loam_str){"", 0};
-}
-
-#ifdef __wasm32__
-__attribute__((import_module("zeus"), import_name("chunks_ready")))
-int32_t zeus_js_chunks_ready(int32_t index);
-__attribute__((import_module("zeus"), import_name("chunks_load")))
-void zeus_js_chunks_load(int32_t index);
-__attribute__((import_module("zeus"), import_name("chunks_preload")))
-void zeus_js_chunks_preload(int32_t index);
-#endif
-
-int64_t loam_platform_plat_chunks_ready(int64_t index) {
-#ifdef __wasm32__
-    return zeus_js_chunks_ready((int32_t)index);
-#else
-    (void)index;
-    return 1;
-#endif
-}
-
-void loam_platform_plat_chunks_load(int64_t index) {
-#ifdef __wasm32__
-    zeus_js_chunks_load((int32_t)index);
-#else
-    (void)index;
-#endif
-}
-
-void loam_platform_plat_chunks_preload(int64_t index) {
-#ifdef __wasm32__
-    zeus_js_chunks_preload((int32_t)index);
-#else
-    (void)index;
-#endif
-}
-
-#ifdef __wasm32__
-__attribute__((import_module("zeus"), import_name("appearance_load")))
-int32_t zeus_js_appearance_load(void);
-__attribute__((import_module("zeus"), import_name("appearance_save")))
-void zeus_js_appearance_save(int32_t dark);
-#endif
-
-int64_t loam_platform_plat_appearance_load(void) {
-#ifdef __wasm32__
-    return zeus_js_appearance_load();
-#else
-    return -1;
-#endif
-}
-
-void loam_platform_plat_appearance_save(int64_t dark) {
-#ifdef __wasm32__
-    zeus_js_appearance_save((int32_t)dark);
-#else
-    (void)dark;
-#endif
-}
-
-#ifdef __wasm32__
-__attribute__((import_module("zeus"), import_name("track_start")))
-void zeus_js_track_start(const char *endpoint, int32_t len, int32_t local);
-__attribute__((import_module("zeus"), import_name("track_send")))
-void zeus_js_track_send(int32_t kind, const char *name, int32_t name_len, const char *data, int32_t data_len);
-__attribute__((import_module("zeus"), import_name("track_opt_out")))
-void zeus_js_track_opt_out(int32_t off);
-__attribute__((import_module("zeus"), import_name("track_opted_out")))
-int32_t zeus_js_track_opted_out(void);
-#endif
-
-void loam_platform_plat_track_start(loam_str endpoint, int64_t local) {
-#ifdef __wasm32__
-    zeus_js_track_start(endpoint.ptr, (int32_t)endpoint.len, (int32_t)local);
-#else
-    (void)endpoint;
-    (void)local;
-#endif
-}
-
-void loam_platform_plat_track_send(int64_t kind, loam_str name, loam_str data) {
-#ifdef __wasm32__
-    zeus_js_track_send((int32_t)kind, name.ptr, (int32_t)name.len, data.ptr, (int32_t)data.len);
-#else
-    (void)kind;
-    (void)name;
-    (void)data;
-#endif
-}
-
-void loam_platform_plat_track_opt_out(int64_t off) {
-#ifdef __wasm32__
-    zeus_js_track_opt_out((int32_t)off);
-#else
-    (void)off;
-#endif
-}
-
-int64_t loam_platform_plat_track_opted_out(void) {
-#ifdef __wasm32__
-    return zeus_js_track_opted_out();
-#else
-    return 0;
-#endif
-}
-
-#ifdef __wasm32__
-__attribute__((import_module("zeus"), import_name("open_external")))
-void zeus_js_open_external(const char *url, int32_t len);
-#endif
-
-int64_t loam_platform_plat_layout_verify(void) {
-#if defined(LOAM_WEB_RELEASE) || defined(__wasm32__)
-    return 0; /* no environment on wasm */
-#else
-    static int on = -1;
-    if (on < 0) {
-        const char *v = getenv("ZEUS_LAYOUT_VERIFY");
-        on = v && strcmp(v, "1") == 0;
-    }
-    return on;
-#endif
-}
-
-void loam_platform_plat_open_external(loam_str url) {
-#ifdef __wasm32__
-    zeus_js_open_external(url.ptr, (int32_t)url.len);
-#else
-    (void)url;
-#endif
-}
-
-#ifdef __wasm32__
-static const char *history_path(loam_str path, char *buf, size_t cap) {
-    size_t n = (path.len > 0 && path.ptr) ? (size_t)path.len : 0;
-    if (n >= cap) n = cap - 1;
-    if (n) memcpy(buf, path.ptr, n);
-    buf[n] = '\0';
-    return buf;
-}
-#endif
-
-void loam_platform_plat_history_push(loam_str path) {
-#ifdef __wasm32__
-    char buf[1024];
-    zeus_js_history_push(history_path(path, buf, sizeof buf));
-#else
-    (void)path;
-#endif
-}
-void loam_platform_plat_history_replace(loam_str path) {
-#ifdef __wasm32__
-    char buf[1024];
-    zeus_js_history_replace(history_path(path, buf, sizeof buf));
-#else
-    (void)path;
-#endif
-}
-void loam_platform_plat_history_back(void) {
-#ifdef __wasm32__
-    zeus_js_history_back();
-#endif
-}
 
 /* --- the frame (`platform.plat_frame`, `replay.loam`) ----------------------
    A frame is one buffer in the format of packages/zeus/docs/frame-format.md.
@@ -1047,30 +814,11 @@ void loam_replay_draw_path(const loam_vec *path, int32_t start, int32_t n, int32
 }
 #undef ZD
 
-
 /* --- media host forwarders (`zeuscore/mediastate.loam`) -------------------
-   One call each, no player state. Strings are NUL-terminated in a stack
-   buffer when they fit (`cstr_in`). Wasm uses the same JS imports the old
-   `plat_media_*` functions did. */
-#ifdef __wasm32__
-__attribute__((import_module("zeus"), import_name("media_open")))
-int32_t zeus_js_media_open(int32_t slot, const char *src);
-__attribute__((import_module("zeus"), import_name("media_cmd")))
-void zeus_js_media_cmd(int32_t slot, int32_t cmd, int32_t value);
-__attribute__((import_module("zeus"), import_name("media_get")))
-int32_t zeus_js_media_get(int32_t slot, int32_t what);
-__attribute__((import_module("zeus"), import_name("media_text")))
-int32_t zeus_js_media_text(int32_t slot, int32_t what, char *out, int32_t cap);
-__attribute__((import_module("zeus"), import_name("media_pick")))
-void zeus_js_media_pick(void);
-__attribute__((import_module("zeus"), import_name("fullscreen")))
-int32_t zeus_js_fullscreen(int32_t on);
-#endif
-
-int32_t loam_mediastate_media_host_caps(void) {
-#ifdef __wasm32__
-    return 256;
-#else
+   One call each, no player state, native hosts only: the web host's player
+   is Loam over its imports (`mediastate.host_*`). Strings are NUL-terminated
+   in a stack buffer when they fit (`cstr_in`). */
+int32_t loam_mediastate_native_caps(void) {
     int32_t bits = 0;
     if (media_host.open) bits |= 1;
     if (media_host.cmd) bits |= 2;
@@ -1081,109 +829,49 @@ int32_t loam_mediastate_media_host_caps(void) {
     if (media_host.voice) bits |= 64;
     if (media_host.fullscreen) bits |= 128;
     return bits;
-#endif
 }
 
 int32_t loam_imagesize_image_host_bound(void) {
     return plat_image_size_fn ? 1 : 0;
 }
 
-loam_vec loam_imagesize_read_head(loam_str path, int32_t cap) {
-#ifdef __wasm32__
-    (void)path;
-    (void)cap;
-    return loam_vec_new();
-#else
-    loam_vec out = loam_vec_new();
-    char stack_buf[4096];
-    char *text;
-    FILE *file;
-    size_t got;
-    if (cap <= 0) return out;
-    text = cstr_in(path, stack_buf, sizeof stack_buf);
-    file = fopen(text, "rb");
-    cstr_done(text, stack_buf);
-    if (!file) return out;
-    loam_vec_reserve(&out, (int64_t)cap, 1, "imagesize.read_head", 0);
-    got = fread(out.ptr, 1, (size_t)cap, file);
-    fclose(file);
-    out.len = (int64_t)got;
-    return out;
-#endif
-}
-
-int32_t loam_mediastate_host_open(int32_t slot, loam_str src) {
+int32_t loam_mediastate_native_open(int32_t slot, loam_str src) {
     char stack_buf[256];
     char *text = cstr_in(src, stack_buf, sizeof stack_buf);
     int32_t opened = 0;
-#ifdef __wasm32__
-    opened = zeus_js_media_open(slot, text);
-#else
     if (media_host.open) opened = (int32_t)media_host.open((int64_t)slot, text);
-#endif
     cstr_done(text, stack_buf);
     return opened;
 }
 
-void loam_mediastate_host_cmd(int32_t slot, int32_t command, int32_t value) {
-#ifdef __wasm32__
-    zeus_js_media_cmd(slot, command, value);
-#else
+void loam_mediastate_native_cmd(int32_t slot, int32_t command, int32_t value) {
     if (media_host.cmd) media_host.cmd((int64_t)slot, (int64_t)command, (int64_t)value);
-#endif
 }
 
-int32_t loam_mediastate_host_get(int32_t slot, int32_t what) {
-#ifdef __wasm32__
-    return zeus_js_media_get(slot, what);
-#else
+int32_t loam_mediastate_native_get(int32_t slot, int32_t what) {
     if (!media_host.get) return 0;
     return (int32_t)media_host.get((int64_t)slot, (int64_t)what);
-#endif
 }
 
-loam_str loam_mediastate_host_text(int32_t slot, int32_t what) {
+loam_str loam_mediastate_native_text(int32_t slot, int32_t what) {
     char buffer[4096];
     buffer[0] = 0;
-#ifdef __wasm32__
-    {
-        int32_t got = zeus_js_media_text(slot, what, buffer, (int32_t)sizeof buffer);
-        if (got < 0) got = 0;
-        if (got >= (int32_t)sizeof buffer) got = (int32_t)sizeof buffer - 1;
-        buffer[got] = 0;
-    }
-#else
     if (media_host.text) {
         media_host.text((int64_t)slot, (int64_t)what, buffer, (int)sizeof buffer);
         buffer[sizeof buffer - 1] = 0;
     }
-#endif
     return loam_str_copy(buffer, (int64_t)strlen(buffer));
 }
 
-void loam_mediastate_host_pick(void) {
-#ifdef __wasm32__
-    zeus_js_media_pick();
-#else
+void loam_mediastate_native_pick(void) {
     if (media_host.pick) media_host.pick();
-#endif
 }
 
-void loam_mediastate_host_pick_audio(void) {
-#ifdef __wasm32__
-    zeus_js_media_pick();
-#else
+void loam_mediastate_native_pick_audio(void) {
     if (media_host.pick_audio) media_host.pick_audio();
-#endif
 }
 
-int32_t loam_mediastate_host_voice(int32_t what, loam_str src, loam_str out_path) {
-#ifdef __wasm32__
-    (void)what;
-    (void)src;
-    (void)out_path;
-    return 0;
-#else
+int32_t loam_mediastate_native_voice(int32_t what, loam_str src, loam_str out_path) {
     char src_buf[256], out_buf[256];
     char *src_text, *out_text;
     int32_t started = 0;
@@ -1194,16 +882,11 @@ int32_t loam_mediastate_host_voice(int32_t what, loam_str src, loam_str out_path
     cstr_done(src_text, src_buf);
     cstr_done(out_text, out_buf);
     return started;
-#endif
 }
 
-int32_t loam_mediastate_host_fullscreen(int32_t on) {
-#ifdef __wasm32__
-    return zeus_js_fullscreen(on);
-#else
+int32_t loam_mediastate_native_fullscreen(int32_t on) {
     if (!media_host.fullscreen) return 0;
     return (int32_t)media_host.fullscreen((int64_t)on);
-#endif
 }
 
 void loam_mediastate_host_redraw(void) {

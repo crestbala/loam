@@ -428,7 +428,7 @@ fn stream_close(slot: int) {
 /** *blocks until the reply is in. 0, or -1 when it could not start. */
 #[os("wasm")]
 fn host_fetch_start(path: string, body: string, handle: int, sync: int) -> int {
-    return js_fetch_start(path, path.len, body, body.len, handle, sync)
+    return js_fetch_start(path, body, handle, sync)
 }
 
 #[os("posix", "windows")]
@@ -473,7 +473,7 @@ fn host_fetch_forget(handle: int) {
 
 #[os("wasm")]
 fn host_ws_open(url: string, slot: int) -> int {
-    return js_ws_open(url, url.len, slot)
+    return js_ws_open(url, slot)
 }
 
 #[os("posix", "windows")]
@@ -529,7 +529,7 @@ fn host_ws_close(slot: int) {
 
 #[os("wasm")]
 fn host_stream_open(path: string, body: string, slot: int) -> int {
-    return js_rs_open(path, path.len, body, body.len, slot)
+    return js_rs_open(path, body, slot)
 }
 
 #[os("posix", "windows")]
@@ -578,7 +578,7 @@ fn host_stream_close(slot: int) {
 
 #[os("wasm")]
 #[c("fetch_start")]
-fn js_fetch_start(path: string, path_len: int, body: string, body_len: int, handle: int, sync: int) -> int {}
+fn js_fetch_start(path: string, body: string, handle: int, sync: int) -> int {}
 
 #[os("wasm")]
 #[c("fetch_state")]
@@ -594,7 +594,7 @@ fn js_fetch_forget(handle: int) {}
 
 #[os("wasm")]
 #[c("ws_open")]
-fn js_ws_open(url: string, url_len: int, slot: int) -> int {}
+fn js_ws_open(url: string, slot: int) -> int {}
 
 #[os("wasm")]
 #[c("ws_state")]
@@ -614,7 +614,7 @@ fn js_ws_close(slot: int) {}
 
 #[os("wasm")]
 #[c("rs_open")]
-fn js_rs_open(path: string, path_len: int, body: string, body_len: int, slot: int) -> int {}
+fn js_rs_open(path: string, body: string, slot: int) -> int {}
 
 #[os("wasm")]
 #[c("rs_state")]

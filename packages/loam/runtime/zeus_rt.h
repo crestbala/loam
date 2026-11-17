@@ -160,19 +160,17 @@ typedef struct {
 } ZeusMedia;
 void zeus_set_media(ZeusMedia media);
 /* `zeuscore/mediastate.loam` and `imagesize.loam`: bodyless hooks. One bit of
-   `media_host_caps` per non-NULL `ZeusMedia` callback, plus 256 on wasm.
-   `read_head` is the file read behind an image header (empty on wasm). */
-loam_vec loam_imagesize_read_head(loam_str path, int32_t cap);
+   `media_host_caps` per non-NULL `ZeusMedia` callback, plus 256 on wasm. */
 int32_t loam_imagesize_image_host_bound(void);
-int32_t loam_mediastate_media_host_caps(void);
-int32_t loam_mediastate_host_open(int32_t slot, loam_str src);
-void loam_mediastate_host_cmd(int32_t slot, int32_t command, int32_t value);
-int32_t loam_mediastate_host_get(int32_t slot, int32_t what);
-loam_str loam_mediastate_host_text(int32_t slot, int32_t what);
-void loam_mediastate_host_pick(void);
-void loam_mediastate_host_pick_audio(void);
-int32_t loam_mediastate_host_voice(int32_t what, loam_str src, loam_str out);
-int32_t loam_mediastate_host_fullscreen(int32_t on);
+int32_t loam_mediastate_native_caps(void);
+int32_t loam_mediastate_native_open(int32_t slot, loam_str src);
+void loam_mediastate_native_cmd(int32_t slot, int32_t command, int32_t value);
+int32_t loam_mediastate_native_get(int32_t slot, int32_t what);
+loam_str loam_mediastate_native_text(int32_t slot, int32_t what);
+void loam_mediastate_native_pick(void);
+void loam_mediastate_native_pick_audio(void);
+int32_t loam_mediastate_native_voice(int32_t what, loam_str src, loam_str out);
+int32_t loam_mediastate_native_fullscreen(int32_t on);
 void loam_mediastate_host_redraw(void);
 
 /* Phase 4: the ONE blit of a frame Zeus rasterized itself — the sole place a
@@ -234,14 +232,12 @@ void loam_platform_plat_measure_int(int32_t v, int32_t px, int32_t *w, int32_t *
 void loam_platform_plat_measure_span(loam_str s, int32_t from, int32_t to, int32_t px,
                                      int32_t *w, int32_t *h);
 void loam_platform_plat_set_window(loam_str title, int64_t width, int64_t height);
-void loam_platform_plat_set_title(loam_str title);
-void loam_platform_plat_set_head(loam_str key, loam_str value);
+void loam_platform_native_set_title(loam_str title);
 void loam_platform_plat_set_chrome(int64_t mode);
 void loam_platform_plat_set_titlebar_box(int64_t height, int64_t lead, int64_t trail);
 void loam_platform_plat_titlebar_get(loam_vec *out);
 void loam_platform_plat_clipboard_write(loam_str text);
 loam_str loam_platform_plat_clipboard_last(void);
-int64_t loam_platform_plat_apple_keys(void);
 int64_t loam_platform_plat_view_width(void);
 int64_t loam_platform_plat_view_height(void);
 void loam_platform_plat_image_size(loam_str src, int32_t *w, int32_t *h);
@@ -291,22 +287,6 @@ loam_str loam_runtime_panic_text(void);
 /* Startup preset, filled by the web loader before `main`. */
 void loam_runtime_preset_store(int32_t seq, loam_str msg);
 void zeus_boundary_preset_add(int32_t seq, const char *msg, size_t n);
-/* Router history mirror (host back stack). */
-void loam_platform_plat_history_push(loam_str path);
-void loam_platform_plat_history_replace(loam_str path);
-void loam_platform_plat_history_back(void);
-loam_str loam_platform_plat_boot_path(void);
-int64_t loam_platform_plat_chunks_ready(int64_t index);
-void loam_platform_plat_chunks_load(int64_t index);
-void loam_platform_plat_open_external(loam_str url);
-int64_t loam_platform_plat_layout_verify(void);
-int64_t loam_platform_plat_appearance_load(void);
-void loam_platform_plat_appearance_save(int64_t dark);
-void loam_platform_plat_chunks_preload(int64_t index);
-void loam_platform_plat_track_start(loam_str endpoint, int64_t local);
-void loam_platform_plat_track_send(int64_t kind, loam_str name, loam_str data);
-void loam_platform_plat_track_opt_out(int64_t off);
-int64_t loam_platform_plat_track_opted_out(void);
 int64_t loam_platform_plat_overlay_scroll(void);
 void loam_platform_plat_set_overlay_scroll(int64_t on);
 void loam_platform_plat_inset_get(loam_vec *out);

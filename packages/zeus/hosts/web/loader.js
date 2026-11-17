@@ -1037,8 +1037,8 @@
       /* Monotonic milliseconds (std:async `now_ms`). i64: return a BigInt. */
       now_ms: () => BigInt(Math.floor(performance.now())),
       /* Window title from the router's `Meta.title`. */
-      set_title: (t) => {
-        document.title = cstr(t);
+      set_title: (ptr, len) => {
+        document.title = bytes(ptr, len);
       },
       /* `CopyButton`: best effort — the browser may refuse without a gesture. */
       clipboard_write: (t) => {
@@ -1098,14 +1098,14 @@
       chunks_ready: (index) => (routeReady(index) ? 1 : 0),
       chunks_load: (index) => loadRoute(index),
       chunks_preload: (index) => preloadRoute(index),
-      history_push: (p) => {
-        const path = cstr(p);
+      history_push: (ptr, len) => {
+        const path = bytes(ptr, len);
         if (location.pathname + location.search !== path) {
           history.pushState(null, "", path);
         }
       },
-      history_replace: (p) => {
-        history.replaceState(null, "", cstr(p));
+      history_replace: (ptr, len) => {
+        history.replaceState(null, "", bytes(ptr, len));
       },
       history_back: () => {
         history.back();
@@ -1393,9 +1393,9 @@
         view.setInt32(hPtr, rec.naturalHeight, true);
       },
       /* `plat_media_*`: see `media` above. Codes match zeus_plat.c. */
-      media_open: (slot, ptr) => {
+      media_open: (slot, ptr, len) => {
         if (slot <= 0 || slot >= media.length) return 0;
-        const src = cstr(ptr);
+        const src = bytes(ptr, len);
         const m = mediaEl(slot);
         m.error = "";
         m.waiting = false;
