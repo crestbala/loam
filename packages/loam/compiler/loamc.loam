@@ -1407,11 +1407,18 @@ fn write_ios_plist(path: string, exe: string, bid: string) -> bool {
 
 /** *Boot a simulator, install `app`, launch it. `ZEUS_RUN_LOG` gets the app's */
 /** *console (what `zeli serve` follows). */
+/** */
+/** *One device, named by UDID throughout: an iPhone that is already booted, */
+/** *else the first iPhone of the newest iOS runtime (the SDK the app is built */
+/** *with). `booted` is ambiguous once two devices run, and opening Simulator */
+/** *before booting made it boot its own last device beside ours. */
 fn ios_sim_run(app: string, bid: string) -> bool {
     let run_log = sys.env("ZEUS_RUN_LOG")
-    let launch = if run_log.len > 0 { "(xcrun simctl launch --console booted {{bid}} >>\"{{run_log}}\" 2>&1 </dev/null &)" } else { "xcrun simctl launch booted {{bid}}" }
-    sh_run("open -a Simulator >/dev/null 2>&1")
-    return sh_run("udid=$(xcrun simctl list devices available 2>/dev/null | awk -F '[()]' '/iPhone/{gsub(/^ +| +$/,\"\",$2); print $2; exit}'); if [ -z \"$udid\" ]; then echo 'loam: no iPhone Simulator found' >&2; exit 1; fi; xcrun simctl boot \"$udid\" >/dev/null 2>&1 || true; xcrun simctl bootstatus \"$udid\" -b >/dev/null; xcrun simctl install booted \"{{app}}\" && {{launch}}")
+    let launch = if run_log.len > 0 { "(xcrun simctl launch --console \"$udid\" {{bid}} >>\"{{run_log}}\" 2>&1 </dev/null &)" } else { "xcrun simctl launch \"$udid\" {{bid}}" }
+    let uuid = "grep -oE '[0-9A-F]{8}(-[0-9A-F]{4}){3}-[0-9A-F]{12}' | head -1"
+    let booted = "xcrun simctl list devices booted 2>/dev/null | grep iPhone | {{uuid}}"
+    let newest = "xcrun simctl list devices available 2>/dev/null | awk '/^-- iOS/{first=\"\"} /iPhone/ && first==\"\"{first=$0; pick=$0} END{print pick}' | {{uuid}}"
+    return sh_run("udid=$({{booted}}); [ -n \"$udid\" ] || udid=$({{newest}}); if [ -z \"$udid\" ]; then echo 'loam: no iPhone Simulator found' >&2; exit 1; fi; xcrun simctl boot \"$udid\" >/dev/null 2>&1 || true; open -a Simulator --args -CurrentDeviceUDID \"$udid\" >/dev/null 2>&1; xcrun simctl bootstatus \"$udid\" -b >/dev/null && xcrun simctl install \"$udid\" \"{{app}}\" && {{launch}}")
 }
 
 /** *`ensure_obj` for the iOS objects: their own compiler and flags, and one */
