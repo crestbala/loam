@@ -1393,14 +1393,12 @@ fn layout(width: int, height: int) {
     if height > 0 {
         arena.win_h = height
     }
-    // The whole safe-area box in one read (platform.loam `plat_inset_get`):
-    // four calls could observe a host that updated them mid-pass.
-    let mut insets = []int { 0, 0, 0, 0 }
-    platform.plat_inset_get(insets)
-    arena.safe_t = insets[0]
-    arena.safe_r = insets[1]
-    arena.safe_b = insets[2]
-    arena.safe_l = insets[3]
+    // The safe-area box the host wrote (`platform.plat_set_insets`). A host
+    // writes it on this thread between passes, so it is never half-updated.
+    arena.safe_t = platform.insets[0]
+    arena.safe_r = platform.insets[1]
+    arena.safe_b = platform.insets[2]
+    arena.safe_l = platform.insets[3]
     if arena.root_id <= 0 {
         return
     }

@@ -193,7 +193,6 @@ void zeus_set_blit(void *ctx, ZeusBlit fn);
 
 /* Empty packages/zeus/src/zeus.loam fns → these C symbols. */
 void loam_zeus_plat_run(void);
-int64_t loam_zeus_plat_headless(void);
 /* Current global font family ("" = host default) and the hook a host
    registers to load one. See zeus_plat.c for why the family is global. */
 const char *zeus_font_family(void);
@@ -207,9 +206,6 @@ int64_t loam_platform_plat_load_font(loam_str family, loam_str src);
 
 void loam_zeus_plat_measure(loam_str s, int32_t px, int32_t *w, int32_t *h);
 void loam_zeus_plat_measure_int(int32_t v, int32_t px, int32_t *w, int32_t *h);
-void loam_zeus_plat_set_window(loam_str title, int64_t width, int64_t height);
-int64_t loam_zeus_plat_view_width(void);
-int64_t loam_zeus_plat_view_height(void);
 void loam_zeus_plat_image_size(loam_str src, int32_t *w, int32_t *h);
 loam_str loam_zeus_plat_pick_image(int32_t *w, int32_t *h);
 
@@ -219,30 +215,34 @@ int64_t loam_zeus_plat_blit(const uint8_t *px, int64_t w, int64_t h, int64_t gen
                            int64_t scale);
 
 void zeus_set_insets(int64_t top, int64_t right, int64_t bottom, int64_t left);
-void zeus_set_overlay_scroll(int64_t on);
-int64_t loam_zeus_plat_overlay_scroll(void);
-void loam_zeus_plat_inset_get(loam_vec *out);
 
 /* packages/zeus/src/zeuscore/platform.loam FFI (aliases of loam_zeus_plat_*). */
 void loam_platform_plat_run(void);
-int64_t loam_platform_plat_headless(void);
+/* The seam state is Loam (`zeuscore/platform.loam`). Hosts reach it through
+   `zeus_set_insets`, `zeus_window_width`, ... which call these. */
+int32_t loam_platform_plat_headless(void);
+void loam_platform_plat_set_insets(int32_t top, int32_t right, int32_t bottom, int32_t left);
+void loam_platform_plat_set_titlebar_box(int32_t height, int32_t lead, int32_t trail);
+int32_t loam_platform_host_window_width(void);
+int32_t loam_platform_host_window_height(void);
+void loam_platform_host_set_window_size(int32_t width, int32_t height);
+int32_t loam_platform_host_window_chrome(void);
+void loam_platform_host_window_opened(void);
+void loam_platform_host_retitle(void);
+/* Its bodyless hooks, answered from what a native host registered. */
+int32_t loam_platform_native_run_bound(void);
+int32_t loam_platform_native_initial_w(void);
+int32_t loam_platform_native_initial_h(void);
+int64_t loam_platform_native_clock_ms(void);
+void loam_platform_native_title_changed(loam_str title);
+void loam_platform_native_clipboard_write(loam_str text);
 void loam_platform_plat_measure(loam_str s, int32_t px, int32_t *w, int32_t *h);
 loam_str loam_platform_plat_font_bytes(loam_str src);
 void loam_platform_plat_measure_int(int32_t v, int32_t px, int32_t *w, int32_t *h);
 void loam_platform_plat_measure_span(loam_str s, int32_t from, int32_t to, int32_t px,
                                      int32_t *w, int32_t *h);
-void loam_platform_plat_set_window(loam_str title, int64_t width, int64_t height);
-void loam_platform_native_set_title(loam_str title);
-void loam_platform_plat_set_chrome(int64_t mode);
-void loam_platform_plat_set_titlebar_box(int64_t height, int64_t lead, int64_t trail);
-void loam_platform_plat_titlebar_get(loam_vec *out);
-void loam_platform_plat_clipboard_write(loam_str text);
-loam_str loam_platform_plat_clipboard_last(void);
-int64_t loam_platform_plat_view_width(void);
-int64_t loam_platform_plat_view_height(void);
 void loam_platform_plat_image_size(loam_str src, int32_t *w, int32_t *h);
 loam_str loam_platform_plat_pick_image(int32_t *w, int32_t *h);
-int64_t loam_platform_plat_mem_kb(void);
 /* `zeuscore/replay.loam`'s forwarders into the bound ZeusDraw (zeus_plat.c). */
 int32_t loam_replay_draw_caps(void);
 void loam_replay_draw_fill(int32_t x, int32_t y, int32_t w, int32_t h, int32_t rgb, int32_t r);
@@ -270,8 +270,6 @@ void loam_replay_draw_xform(int32_t dx, int32_t dy, int32_t scale, int32_t rot, 
                             int32_t oy);
 void loam_replay_draw_path(const loam_vec *path, int32_t start, int32_t n, int32_t rgb, int32_t a,
                            int32_t width, int32_t style);
-int64_t loam_platform_plat_now_ms(void);
-void loam_platform_plat_clock_skip(int32_t ms);
 /* Phase 4 blit. The Loam `[]u8` arrives as a `loam_vec` (ptr/len/cap) BY VALUE,
    so the pixels are handed over rather than copied. See loam_zeus_plat_blit.
    The parameter types are `int32_t` because that is exactly what codegen emits
@@ -287,12 +285,7 @@ loam_str loam_runtime_panic_text(void);
 /* Startup preset, filled by the web loader before `main`. */
 void loam_runtime_preset_store(int32_t seq, loam_str msg);
 void zeus_boundary_preset_add(int32_t seq, const char *msg, size_t n);
-int64_t loam_platform_plat_overlay_scroll(void);
-void loam_platform_plat_set_overlay_scroll(int64_t on);
-void loam_platform_plat_inset_get(loam_vec *out);
 int64_t loam_runtime_alloc_count(void);
-void loam_platform_plat_set_insets(int64_t top, int64_t right, int64_t bottom,
-                                  int64_t left);
 
 /* Loam engine entry points (packages/zeus/src/zeus.loam). Every host calls
    these directly; there is no C layer in between. A `loam_str` argument is
@@ -369,10 +362,10 @@ void loam_zeus_engine_media_picked(loam_str name, loam_str src);
 
 /* Paint one frame into `draw` (with `ctx` passed to every callback). */
 void zeus_paint(void *ctx, ZeusDraw draw);
-const char *zeus_window_title(void);
 
-/** Live title updates: a host registers a callback so `plat_set_title` can
- *  retitle the open window (router `Meta.title` on navigation). */
+/** The window title: a host registers a callback, which is handed the current
+ *  title at once (open the window with it) and every later one (router
+ *  `Meta.title` on navigation). */
 void zeus_set_title_hook(void (*fn)(const char *));
 /** Window chrome: 0 the host's title bar, 1 app-drawn (`zeus.window_chrome`).
  *  A desktop host reads it when it opens the window. */
@@ -381,7 +374,7 @@ int64_t zeus_window_chrome(void);
  *  chrome: bar height, the window buttons' room on the left, and on the right. */
 void zeus_set_titlebar_box(int64_t height, int64_t lead, int64_t trail);
 /** Clipboard writes (`plat_clipboard_write`): a desktop host registers the
- *  system pasteboard here. Unset, the runtime only remembers the text. */
+ *  system pasteboard here. Unset, the text is only remembered. */
 void zeus_set_clipboard_hook(void (*fn)(const char *));
 int64_t zeus_window_width(void);
 int64_t zeus_window_height(void);
@@ -448,6 +441,16 @@ typedef struct {
     void (*media_picked)(loam_str name, loam_str src);
     int32_t (*context_click)(int32_t x, int32_t y);
     int32_t (*window_drag_at)(int32_t x, int32_t y);
+    /* The seam state the app image keeps (`zeuscore/platform.loam`). */
+    int32_t (*headless)(void);
+    void (*set_insets)(int32_t top, int32_t right, int32_t bottom, int32_t left);
+    void (*set_titlebar_box)(int32_t height, int32_t lead, int32_t trail);
+    int32_t (*window_width)(void);
+    int32_t (*window_height)(void);
+    void (*set_window_size)(int32_t width, int32_t height);
+    int32_t (*window_chrome)(void);
+    void (*window_opened)(void);
+    void (*retitle)(void);
 } ZeusAppApi;
 
 extern ZeusAppApi zeus_app_api;
@@ -490,6 +493,15 @@ void zeus_set_host_hooks(void (*run)(const char *path));
 #define loam_zeus_engine_media_picked zeus_app_api.media_picked
 #define loam_zeus_engine_context_click zeus_app_api.context_click
 #define loam_zeus_engine_window_drag_at zeus_app_api.window_drag_at
+#define loam_platform_plat_headless zeus_app_api.headless
+#define loam_platform_plat_set_insets zeus_app_api.set_insets
+#define loam_platform_plat_set_titlebar_box zeus_app_api.set_titlebar_box
+#define loam_platform_host_window_width zeus_app_api.window_width
+#define loam_platform_host_window_height zeus_app_api.window_height
+#define loam_platform_host_set_window_size zeus_app_api.set_window_size
+#define loam_platform_host_window_chrome zeus_app_api.window_chrome
+#define loam_platform_host_window_opened zeus_app_api.window_opened
+#define loam_platform_host_retitle zeus_app_api.retitle
 #endif /* LOAM_HOST_BUILD */
 
 #endif

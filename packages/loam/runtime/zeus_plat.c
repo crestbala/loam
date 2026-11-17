@@ -9,11 +9,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#if defined(__APPLE__)
-#include <mach/mach.h>
-#elif defined(__linux__)
-#include <unistd.h>
-#endif
 
 /* The signal byte store is Loam (`zeuscore/sigcells.loam`, R4.1b). */
 
@@ -57,17 +52,20 @@ static void (*plat_pick_image)(char *out, int cap, int64_t *w, int64_t *h);
    with neither width nor height stays empty until the host reports a size). */
 static void (*plat_image_size_fn)(const char *src, int64_t *w, int64_t *h);
 
-static char *win_title;
+/* The window title, size and the rest of what the seam remembers are Loam
+   (`zeuscore/platform.loam`). The title reaches a host through its hook, which
+   is handed the current title as soon as it is registered. */
 static void (*plat_title_fn)(const char *);
-void zeus_set_title_hook(void (*fn)(const char *)) { plat_title_fn = fn; }
-static int64_t win_w = ZEUS_DEFAULT_WIN_W, win_h = ZEUS_DEFAULT_WIN_H;
+void zeus_set_title_hook(void (*fn)(const char *)) {
+    plat_title_fn = fn;
+    loam_platform_host_retitle();
+}
 
 /* Desktop "initial view" providers: the size the host will open its window
    at (device screen work area). Only consulted before the window exists and
    only on real (non-headless) runs, so headless layout stays deterministic. */
 static int64_t (*plat_initial_w)(void);
 static int64_t (*plat_initial_h)(void);
-static int opened_window;
 
 static void *paint_ctx;
 static ZeusDraw paint_draw;
@@ -198,14 +196,7 @@ void loam_host_run(loam_str path) {
 #endif
 }
 
-int64_t loam_zeus_plat_headless(void) {
-#ifdef __wasm32__
-    return plat_run ? 0 : 1; /* no environment on wasm */
-#else
-    if (getenv("ZEUS_HEADLESS") || !plat_run) return 1;
-    return 0;
-#endif
-}
+int32_t loam_platform_native_run_bound(void) { return plat_run ? 1 : 0; }
 
 /* The one blit of a finished frame (Phase 4). The pixels were produced by the
    Loam rasterizer; this forwards the raw bytes to whatever host registered a
@@ -313,136 +304,40 @@ void loam_platform_plat_measure_span(loam_str s, int32_t from, int32_t to, int32
     if (h) *h = (int32_t)th;
 }
 
-void loam_zeus_plat_set_window(loam_str title, int64_t width, int64_t height) {
-    free(win_title);
-    win_title = dup_ys(title);
-#if defined(LOAM_IOS) || defined(LOAM_ANDROID)
-    /* Phone hosts layout to the view every frame. Page(560, 520) must not
-       replace that width or the UI is clipped on the right. */
-    (void)width;
-    (void)height;
-#else
-    if (width > 0) win_w = width;
-    if (height > 0) win_h = height;
-#endif
-}
-
-#ifdef __wasm32__
-__attribute__((import_module("zeus"), import_name("view_w")))
-int32_t zeus_js_view_w(void);
-__attribute__((import_module("zeus"), import_name("view_h")))
-int32_t zeus_js_view_h(void);
-#endif
-
-int64_t loam_zeus_plat_view_width(void) {
-#ifdef __wasm32__
-    int32_t w = zeus_js_view_w();
-    if (w > 0) return (int64_t)w;
-#endif
-    /* Desktop: before the window exists, report the size the host will open
-       it at (full device screen) instead of the 640×480 placeholder, so an
-       app that passes zeus.window_size() to zeus.App opens screen-filling. */
-    if (!opened_window && !loam_zeus_plat_headless() && plat_initial_w) {
-        int64_t w = plat_initial_w();
-        if (w > 0) return w;
-    }
-    return win_w;
-}
-
-int64_t loam_zeus_plat_view_height(void) {
-#ifdef __wasm32__
-    int32_t h = zeus_js_view_h();
-    if (h > 0) return (int64_t)h;
-#endif
-    if (!opened_window && !loam_zeus_plat_headless() && plat_initial_h) {
-        int64_t h = plat_initial_h();
-        if (h > 0) return h;
-    }
-    return win_h;
-}
-
-void zeus_set_window_size(int64_t width, int64_t height) {
-    if (width > 0) win_w = width;
-    if (height > 0) win_h = height;
-}
-
 void zeus_set_initial_view(int64_t (*width)(void), int64_t (*height)(void)) {
     plat_initial_w = width;
     plat_initial_h = height;
 }
 
-void zeus_window_opened(void) {
-    opened_window = 1;
+/* Before the window exists, the size a desktop host will open it at. */
+int32_t loam_platform_native_initial_w(void) {
+    return plat_initial_w ? (int32_t)plat_initial_w() : 0;
+}
+int32_t loam_platform_native_initial_h(void) {
+    return plat_initial_h ? (int32_t)plat_initial_h() : 0;
 }
 
-/* Safe-area insets (notch / home indicator / landscape inset).
-
-   Held in one struct rather than four file-scope ints read back through four
-   getters: the engine's layout pass already keeps `safe_t/r/b/l` in the arena
-   (layout.loam), so the *authority* is Loam and this side is only the store a
-   host can write before the engine runs. `plat_set_insets` writes it; a layout
-   reads it once per pass through `plat_inset_get`. Four separate accessors made
-   it possible for a host to update half the box between two reads. */
-typedef struct {
-    int64_t t, r, b, l;
-} ZeusInsets;
-
-static ZeusInsets g_insets;
+/* Host writes and reads of the window state, forwarded to Loam. */
+void zeus_window_opened(void) { loam_platform_host_window_opened(); }
+int64_t zeus_window_width(void) { return loam_platform_host_window_width(); }
+int64_t zeus_window_height(void) { return loam_platform_host_window_height(); }
+void zeus_set_window_size(int64_t width, int64_t height) {
+    loam_platform_host_set_window_size((int32_t)width, (int32_t)height);
+}
+int64_t zeus_window_chrome(void) { return loam_platform_host_window_chrome(); }
 
 void zeus_set_insets(int64_t top, int64_t right, int64_t bottom, int64_t left) {
-    g_insets.t = top < 0 ? 0 : top;
-    g_insets.r = right < 0 ? 0 : right;
-    g_insets.b = bottom < 0 ? 0 : bottom;
-    g_insets.l = left < 0 ? 0 : left;
+    loam_platform_plat_set_insets((int32_t)top, (int32_t)right, (int32_t)bottom, (int32_t)left);
 }
 
-/* Read all four at once, into the caller's `[]int` (the ABI passes a
-   `loam_vec *`, so the callee writes through `->ptr`).
-
-   The element width is `int32_t`, NOT `int64_t`: `int` in Loam is i32 (the
-   Phase 10 width flip), and the generated vec literal pushes with
-   `sizeof(int32_t)`. Writing 8-byte values into a 4-byte-per-element buffer
-   corrupts it and silently loses the insets — which is exactly what the
-   `zeus_anchor_safe` test caught. */
-void loam_platform_plat_inset_get(loam_vec *out) {
-    int32_t *p;
-    if (!out || !out->ptr) return;
-    if (out->len < 4) return;
-    p = (int32_t *)out->ptr;
-    p[0] = (int32_t)g_insets.t;
-    p[1] = (int32_t)g_insets.r;
-    p[2] = (int32_t)g_insets.b;
-    p[3] = (int32_t)g_insets.l;
+void zeus_set_titlebar_box(int64_t height, int64_t lead, int64_t trail) {
+    loam_platform_plat_set_titlebar_box((int32_t)height, (int32_t)lead, (int32_t)trail);
 }
-
-void loam_zeus_plat_inset_get(loam_vec *out) { loam_platform_plat_inset_get(out); }
-
-static int64_t g_overlay_scroll = -1;
-
-void zeus_set_overlay_scroll(int64_t on) {
-    g_overlay_scroll = on <= 0 ? 0 : 1;
-}
-
-int64_t loam_zeus_plat_overlay_scroll(void) {
-    if (g_overlay_scroll >= 0) {
-        return g_overlay_scroll;
-    }
-#if defined(LOAM_IOS) || defined(LOAM_ANDROID)
-    return 1;
-#else
-    return 0;
-#endif
-}
-
-/* The four `inset_*` getters are gone: `plat_inset_get` above returns the whole
-   box in one call. Kept as a comment rather than deleted silently because the
-   old names are referenced from `zeus_rt.h`'s history and from older hosts. */
 
 /* packages/zeus/src/zeuscore/platform.loam is the GPUI-style platform leaf. Empty Loam stubs
    compile to loam_platform_plat_*; the Cocoa implementations stay as
    loam_zeus_plat_* so existing callers do not change. */
 void loam_platform_plat_run(void) { loam_zeus_plat_run(); }
-int64_t loam_platform_plat_headless(void) { return loam_zeus_plat_headless(); }
 
 loam_str loam_platform_plat_pick_image(int32_t *w, int32_t *h) {
     return loam_zeus_plat_pick_image(w, h);
@@ -451,46 +346,9 @@ void loam_platform_plat_image_size(loam_str src, int32_t *w, int32_t *h) {
     loam_zeus_plat_image_size(src, w, h);
 }
 
-/* Wall clock for host-sleep-safe deadlines (scrollbar hide). The clock itself is
-   the runtime's `loam_now_ms`, so there is exactly one monotonic clock in the
-   tree instead of one per library. */
-static int64_t plat_clock_skipped;
-
-int64_t loam_platform_plat_now_ms(void) { return loam_now_ms() + plat_clock_skipped; }
-
-/* Tests move this clock instead of sleeping through a timeline. */
-void loam_platform_plat_clock_skip(int32_t ms) { plat_clock_skipped += ms; }
-
-/* Host process memory in KB for the gallery RAM chip: Apple phys_footprint
-   (the number Xcode's memory gauge shows — RSS overstates iOS processes),
-   Linux/Android resident set, live wasm heap on the web host (0 = unknown). */
-int64_t loam_platform_plat_mem_kb(void) {
-#ifdef __wasm32__
-    return loam_heap_used() / 1024;
-#elif defined(__APPLE__)
-    {
-        struct task_vm_info info;
-        mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
-        if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&info, &count) == KERN_SUCCESS)
-            return (int64_t)(info.phys_footprint / 1024);
-        return 0;
-    }
-#elif defined(__linux__)
-    {
-        long rss_kb = 0;
-        FILE *f = fopen("/proc/self/statm", "r");
-        if (f) {
-            unsigned long size_pages = 0, res_pages = 0;
-            if (fscanf(f, "%lu %lu", &size_pages, &res_pages) == 2)
-                rss_kb = (long)res_pages * (long)sysconf(_SC_PAGESIZE) / 1024;
-            fclose(f);
-        }
-        return (int64_t)rss_kb;
-    }
-#else
-    return 0;
-#endif
-}
+/* The clock `platform.plat_now_ms` runs on (it adds a test's skip itself):
+   the runtime's `loam_now_ms`, so there is one monotonic clock in the tree. */
+int64_t loam_platform_native_clock_ms(void) { return loam_now_ms(); }
 
 /* Phase 4: the one blit. `buf` is the Loam framebuffer vector handed over by
    value — we pass its first byte and its length straight through, so not one
@@ -514,74 +372,28 @@ void loam_platform_plat_measure(loam_str s, int32_t px, int32_t *w, int32_t *h) 
 void loam_platform_plat_measure_int(int32_t v, int32_t px, int32_t *w, int32_t *h) {
     loam_zeus_plat_measure_int(v, px, w, h);
 }
-void loam_platform_plat_set_window(loam_str title, int64_t width, int64_t height) {
-    loam_zeus_plat_set_window(title, width, height);
+
+/* The title and the clipboard text are kept in Loam. These hand a native host
+   each new one, NUL-terminated for the moment of the call. */
+void loam_platform_native_title_changed(loam_str title) {
+    char stack_buf[256];
+    char *text;
+    if (!plat_title_fn) return;
+    text = cstr_in(title, stack_buf, sizeof stack_buf);
+    plat_title_fn(text);
+    cstr_done(text, stack_buf);
 }
 
-/* Retitle the open window without reopening it (router `Meta.title`). The
-   web host's title is a Loam import (`platform.set_title_os`). */
-void loam_platform_native_set_title(loam_str title) {
-    free(win_title);
-    win_title = dup_ys(title);
-    if (plat_title_fn) plat_title_fn(win_title ? win_title : "");
-}
-/* Window chrome (`zeus.window_chrome`). 0: the host's own title bar. 1: the
-   app draws it (`TitleBar`): a desktop host runs the content under a
-   transparent bar, keeps the window buttons, and reports the bar's box here —
-   height, the room the buttons take on the left, and on the right — every
-   frame. Hosts without a title bar (web, mobile, headless) leave it zero, so a
-   `TitleBar` there takes no space. Tests write the box through
-   `zeus.engine_set_titlebar`. */
-static int64_t chrome_mode;
-static int64_t titlebar_box[3];
-
-void loam_platform_plat_set_chrome(int64_t mode) { chrome_mode = mode; }
-int64_t zeus_window_chrome(void) { return chrome_mode; }
-
-void zeus_set_titlebar_box(int64_t height, int64_t lead, int64_t trail) {
-    titlebar_box[0] = height < 0 ? 0 : height;
-    titlebar_box[1] = lead < 0 ? 0 : lead;
-    titlebar_box[2] = trail < 0 ? 0 : trail;
-}
-void loam_platform_plat_set_titlebar_box(int64_t height, int64_t lead, int64_t trail) {
-    zeus_set_titlebar_box(height, lead, trail);
-}
-void loam_platform_plat_titlebar_get(loam_vec *out) {
-    int32_t *p;
-    if (!out || !out->ptr || out->len < 3) return;
-    p = (int32_t *)out->ptr;
-    p[0] = (int32_t)titlebar_box[0];
-    p[1] = (int32_t)titlebar_box[1];
-    p[2] = (int32_t)titlebar_box[2];
-}
-
-/* Clipboard write (`CopyButton`). The runtime keeps the last string so a
-   headless run can read it back (`plat_clipboard_last`); a desktop host
-   registers a hook that hands it to the system pasteboard, and the web asks
-   `navigator.clipboard`. */
-static char *clip_last;
 static void (*plat_clip_fn)(const char *);
 void zeus_set_clipboard_hook(void (*fn)(const char *)) { plat_clip_fn = fn; }
 
-#ifdef __wasm32__
-__attribute__((import_module("zeus"), import_name("clipboard_write")))
-void zeus_js_clipboard_write(const char *t);
-#endif
-
-void loam_platform_plat_clipboard_write(loam_str text) {
-    free(clip_last);
-    clip_last = dup_ys(text);
-#ifdef __wasm32__
-    zeus_js_clipboard_write(clip_last);
-#else
-    if (plat_clip_fn) plat_clip_fn(clip_last);
-#endif
-}
-
-loam_str loam_platform_plat_clipboard_last(void) {
-    if (!clip_last) return (loam_str){"", 0};
-    /* A copy: the next clipboard write frees `clip_last`. */
-    return loam_str_copy(clip_last, (int64_t)strlen(clip_last));
+void loam_platform_native_clipboard_write(loam_str text) {
+    char stack_buf[256];
+    char *copy;
+    if (!plat_clip_fn) return;
+    copy = cstr_in(text, stack_buf, sizeof stack_buf);
+    plat_clip_fn(copy);
+    cstr_done(copy, stack_buf);
 }
 
 /* Media state (the null player, the pick queue, fullscreen) lives in
@@ -591,25 +403,6 @@ loam_str loam_platform_plat_clipboard_last(void) {
 static ZeusMedia media_host;
 
 void zeus_set_media(ZeusMedia media) { media_host = media; }
-
-int64_t loam_platform_plat_view_width(void) { return loam_zeus_plat_view_width(); }
-int64_t loam_platform_plat_view_height(void) { return loam_zeus_plat_view_height(); }
-
-int64_t loam_platform_plat_overlay_scroll(void) {
-    return loam_zeus_plat_overlay_scroll();
-}
-void loam_platform_plat_set_overlay_scroll(int64_t on) {
-    zeus_set_overlay_scroll(on);
-}
-/* Forward to the one insets read. The four per-edge forms are gone. */
-void loam_platform_plat_set_insets(int64_t top, int64_t right, int64_t bottom,
-                                  int64_t left) {
-    zeus_set_insets(top, right, bottom, left);
-}
-
-const char *zeus_window_title(void) { return win_title ? win_title : ""; }
-int64_t zeus_window_width(void) { return win_w; }
-int64_t zeus_window_height(void) { return win_h; }
 
 void zeus_bind_draw(ZeusDraw draw) {
     paint_ctx = NULL;

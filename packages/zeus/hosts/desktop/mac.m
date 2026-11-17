@@ -17,6 +17,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <malloc/malloc.h>
+#include <mach/mach.h>
 
 static NSView *g_view;
 static NSWindow *g_win;
@@ -41,6 +42,15 @@ static void mac_redraw(void) {
    `phys` with `malloc` flat is the graphics stack (window drawable, CoreText
    caches), not the engine — which is the first thing to check when chasing
    app memory. */
+/* This process's `phys_footprint` in KB, the number Xcode's memory gauge shows. */
+static long long mac_phys_kb(void) {
+    struct task_vm_info info;
+    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+    if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&info, &count) != KERN_SUCCESS)
+        return 0;
+    return (long long)(info.phys_footprint / 1024);
+}
+
 static void mac_mem_debug(void) {
     static int frames;
     malloc_statistics_t ms;
@@ -49,7 +59,7 @@ static void mac_mem_debug(void) {
     malloc_zone_statistics(malloc_default_zone(), &ms);
     fprintf(stderr, "[mem] malloc=%uKB blocks=%u phys=%lldKB win=%lldx%lld view=%.0fx%.0f\n",
             (unsigned)(ms.size_in_use / 1024), (unsigned)ms.blocks_in_use,
-            (long long)loam_platform_plat_mem_kb(),
+            mac_phys_kb(),
             (long long)zeus_window_width(), (long long)zeus_window_height(),
             g_view ? g_view.bounds.size.width : 0.0, g_view ? g_view.bounds.size.height : 0.0);
 }
@@ -1800,10 +1810,8 @@ static void mac_run(void) {
                                                     styleMask:style
                                                       backing:NSBackingStoreBuffered
                                                         defer:NO];
-        const char *t = zeus_window_title();
-        [win setTitle:t ? [NSString stringWithUTF8String:t] : @"Zeus"];
         g_win = win;
-        zeus_set_title_hook(mac_apply_title);
+        zeus_set_title_hook(mac_apply_title); /* titles the window now */
         zeus_set_clipboard_hook(mac_clipboard_write);
         /* The window clears to white until the engine's first paper fill, so
            scroll edges / the first frame never flash black. */
@@ -1931,10 +1939,22 @@ static int host_load_image(void) {
     ZEUS_BIND(media_picked, "loam_zeus_engine_media_picked");
     ZEUS_BIND(context_click, "loam_zeus_engine_context_click");
     ZEUS_BIND(window_drag_at, "loam_zeus_engine_window_drag_at");
+    ZEUS_BIND(headless, "loam_platform_plat_headless");
+    ZEUS_BIND(set_insets, "loam_platform_plat_set_insets");
+    ZEUS_BIND(set_titlebar_box, "loam_platform_plat_set_titlebar_box");
+    ZEUS_BIND(window_width, "loam_platform_host_window_width");
+    ZEUS_BIND(window_height, "loam_platform_host_window_height");
+    ZEUS_BIND(set_window_size, "loam_platform_host_set_window_size");
+    ZEUS_BIND(window_chrome, "loam_platform_host_window_chrome");
+    ZEUS_BIND(window_opened, "loam_platform_host_window_opened");
+    ZEUS_BIND(retitle, "loam_platform_host_retitle");
     if (!zeus_app_api.context_click) zeus_app_api.context_click = host_no_point;
     if (!zeus_app_api.window_drag_at) zeus_app_api.window_drag_at = host_no_point;
     if (!zeus_app_api.set_reduced_motion) zeus_app_api.set_reduced_motion = host_no_flag;
-    if (!zeus_app_api.layout || !zeus_app_api.paint) {
+    if (!zeus_app_api.layout || !zeus_app_api.paint || !zeus_app_api.headless ||
+        !zeus_app_api.set_insets || !zeus_app_api.set_titlebar_box ||
+        !zeus_app_api.window_width || !zeus_app_api.window_height || !zeus_app_api.set_window_size ||
+        !zeus_app_api.window_chrome || !zeus_app_api.window_opened || !zeus_app_api.retitle) {
         fprintf(stderr, "zeli: host: %s is not a Loam app image\n", g_image_path);
         return 0;
     }
@@ -1976,6 +1996,8 @@ static int host_load_image(void) {
         free(keep);
         return;
     }
+    /* The window state lives in the image: tell the new one its window is up. */
+    zeus_window_opened();
     if (keep && zeus_app_api.state_load)
         zeus_app_api.state_load((loam_str){keep, (int64_t)strlen(keep)});
     free(keep);
@@ -1994,7 +2016,7 @@ void loam_mac_host_run(const char *path) {
         if (!host_load_image()) exit(1);
         /* Headless: no window, but the same loop and the same reload poll, so the
            mechanism can be exercised (and gated) without a screen. */
-        if (loam_zeus_plat_headless()) {
+        if (loam_platform_plat_headless()) {
             [NSApplication sharedApplication];
             zeus_window_opened();
             rel = [ZeusReloader new];
@@ -2021,12 +2043,9 @@ void loam_mac_host_run(const char *path) {
                                                         styleMask:style
                                                           backing:NSBackingStoreBuffered
                                                             defer:NO];
-            const char *t = zeus_window_title();
-            [win setTitle:t ? [NSString stringWithUTF8String:t] : @"Zeus"];
             g_win = win;
-            zeus_set_title_hook(mac_apply_title);
+            zeus_set_title_hook(mac_apply_title); /* titles the window now */
             zeus_set_clipboard_hook(mac_clipboard_write);
-        zeus_set_clipboard_hook(mac_clipboard_write);
             [win setBackgroundColor:[NSColor whiteColor]];
             ZeusView *view = [[ZeusView alloc] initWithFrame:frame];
             g_view = view;
@@ -2167,7 +2186,7 @@ static int64_t mac_blit(void *ctx, const uint8_t *px, int64_t w, int64_t h,
     (void)ctx;
     if (!px || w <= 0 || h <= 0) return 0;
     /* Headless, or no window yet: say so rather than pretend we presented. */
-    if (loam_zeus_plat_headless() || !g_view) return 0;
+    if (loam_platform_plat_headless() || !g_view) return 0;
     if (!g_view.layer) return 0;
     if (!blit_prov || blit_gen != gen) {
         if (blit_prov) { CGDataProviderRelease(blit_prov); blit_prov = NULL; }

@@ -36,14 +36,14 @@ still runs, without that feature.
 
 | Feature | Hook | Without it |
 |---|---|---|
-| Window title | `zeus_set_title_hook` | the title is fixed at start-up |
+| Window title | `zeus_set_title_hook`: called at once with the current title, then with each new one | the window has no title |
 | Clipboard | `zeus_set_clipboard_hook` | copy is kept in-process only |
 | Image intrinsic size | `zeus_set_image_size` | images need an explicit size |
 | Image picker | `zeus_set_pick_image` | the picker does nothing |
 | Media playback, pickers, voice tools, full screen | `zeus_set_media(ZeusMedia)` (any field may be NULL) | a null player: state changes, the clock stays at 0 |
 | Fonts | `zeus_set_font_hooks`, `zeus_set_font_bytes_hook` | the system font; files are read from disk |
 | Software-rasterized frames | `zeus_set_blit` | not used unless the app opts in to `zeus:zeusraster` |
-| Safe area, overlay scrollbars | `zeus_set_insets`, `zeus_set_overlay_scroll` | no insets; classic scrollbars |
+| Safe area | `zeus_set_insets` | no insets |
 | Initial window size | `zeus_set_initial_view` | 640 × 480 until the window opens |
 
 The web host also implements `zeus:analytics` (`track_start`, `track_send`,

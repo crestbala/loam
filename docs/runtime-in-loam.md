@@ -240,7 +240,7 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       `wasm_inc`), hosts 4,871, vendored 346,122 (sqlite, monocypher, raygui
       and the generated tree-sitter parser).
 - [x] R0.2 The budget: `RUNTIME_LINE_BUDGET` in `nob.loam`, set at 9,939
-      and lowered by each step since (now **1,990**, during R6.6).
+      and lowered by each step since (now **1,782**, during R6.6).
       `nob trusted` and the unfiltered `nob test` fail if `runtime/` grows
       past it. Each step below lowers it to its new count in the same
       change.
@@ -2145,6 +2145,71 @@ with R6.2).
       `loader_cases` pass. www and the 9 Zeus example apps link as wasm, and counter
       builds for the iOS Simulator. Seed 5,529,585 bytes, seed = stage 1 =
       stage 2. **Runtime: 2,327 → 1,990** (−337).
+      **R6.6d2 landed 2026-11-17: what the seam remembers is Loam.** The
+      window title and size, the opened flag, chrome mode, the title-bar box,
+      the insets, overlay scroll, the clock skip and the clipboard text are
+      module globals in `zeuscore/platform.loam`, and so are the `plat_*` that
+      read and write them. The last 7 `__wasm32__` branches went with them
+      (headless, view size, clipboard, memory). `zeus_plat.c` keeps only the
+      callbacks a host registers, plus one-line forwarders.
+      - **Host entry points** are DCE roots of `platform` (`dce.c_roots`):
+        `plat_headless`, `plat_set_insets`, `plat_set_titlebar_box`, and
+        `host_window_width` / `_height` / `_chrome` / `_opened`,
+        `host_set_window_size`, `host_retitle`. The C names hosts call
+        (`zeus_set_insets`, `zeus_window_width`, ...) forward to them, so
+        no host's calls changed. Under `LOAM_HOST_BUILD` they go through
+        `zeus_app_api`, re-bound on each image load, and the reloader tells
+        the new image its window is open.
+      - **`zeus_window_title()` is gone.** A `const char *` over a Loam
+        string would need a C copy, which is state again.
+        `zeus_set_title_hook` now hands the hook the current title as soon
+        as it is registered. mac.m opens its window that way. linux.c
+        registers a hook too, so a Linux window now follows `Meta.title`
+        like a Mac one. `zeus_set_overlay_scroll` (no host called it) is
+        gone: overlay scroll is `#[os("ios", "android")]`.
+      - **No allocation per layout:** layout and `titlebar_packed` used to
+        allocate a `[]int` each pass for the C getter to fill. They now
+        read `platform.insets[i]` / `titlebar_box[i]`: constant indexes into
+        fixed arrays, so no checks and no heap.
+      - **`sys.mem_kb()`** (std) replaces the C `plat_mem_kb`: Apple
+        `phys_footprint` through `task_info`, `VmRSS` from
+        `/proc/self/status` on Linux and Android (already in kB, so no page
+        size to look up per libc), and the live heap on wasm. The wasm libc
+        defines that as `loam_sys_wasm_heap_used` (was `zeus_heap_used`),
+        so `sys`'s bodyless binding links to it with no bridge.
+        `loam_heap_used` left `loam_rt.h`. mac.m's debug memory line reads
+        `task_info` itself.
+      - `headless` reads `ZEUS_HEADLESS` once (`sys.env_set`), and on wasm
+        not at all. An empty `ZEUS_HEADLESS=` no longer counts as set.
+      **Size:** wasm apps are about 600 bytes smaller than after d1 (vidy
+      −591, counter −598, gallery −515, ws −607). In native counter
+      `__text` grows 20 bytes and unwind info 350. www's route split
+      changed: its runtime C now names the `host_*` roots, so the planner
+      keeps those leaves in the primary module. The 13 chunks lose 243 KB
+      raw, 495,048 → 450,357 bytes Brotli. Follow-up: the compiler does not
+      yet prove that indexes 0–3 are in bounds after `if out.len < 4 {
+      return }`. With that proof, out-param copies like the old
+      `plat_inset_get` would lose their per-element checks.
+      **Checks:** a native probe drives every moved path from Loam and, via
+      a `c_source` shim, as a C host does (`zeus_set_insets` with
+      negatives, `zeus_set_titlebar_box`, `zeus_set_window_size(800, 0)`,
+      `zeus_window_opened`, the title and clipboard hooks, a 400-byte
+      title). Headless and linked to the Cocoa host (screen size before
+      the window opens), it prints what d1 prints. The one difference is
+      the intended title delivered at registration. In headless Chrome, a
+      wasm probe (canvas size, `navigator.clipboard`, heap KB, insets)
+      matches d1, and all 28 www routes deep-link with the same titles and
+      canvas ink as d1, with no errors. `sys.vmrss_kb` parses real, short,
+      empty and missing `VmRSS` lines, and `sys.mem_kb` cross-links for
+      Linux (glibc, musl) and Windows on both CPUs. `zeus_plat.c` and
+      mac.m compile under `LOAM_HOST_BUILD`; linux.c checks clean against
+      X11 headers. Suite: `zeus_` 448, `golden` 135, `router`, `sys` green.
+      `wasm_smoke`, `wasm_trap`, `serve_build`, `serve_boot`,
+      `serve_native`, `android_project`, `server_split`, `fresh_cache`,
+      `lsp`, `api_freeze`, `one_surface`, `c_layouts`, `modules`,
+      `arena_lint` and `design_lint` pass. counter builds for the iOS
+      Simulator. Seed 5,531,352 bytes, seed = stage 1 = stage 2. **Runtime:
+      1,990 → 1,782** (−208).
 
 **R7. Hosts** (`packages/zeus/hosts`, outside the runtime directory).
 

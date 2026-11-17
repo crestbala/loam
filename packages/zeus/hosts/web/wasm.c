@@ -176,10 +176,10 @@ void zeus_start(void) {
 
 /* Live wasm heap in KB (allocated minus the free list), for the RAM chip and
    for leak checks from a harness. */
-int32_t zeus_heap_used(void);
+int32_t loam_sys_wasm_heap_used(void);
 __attribute__((export_name("zeus_heap_kb")))
 int32_t zeus_heap_kb(void) {
-    return zeus_heap_used() / 1024;
+    return loam_sys_wasm_heap_used() / 1024;
 }
 
 __attribute__((export_name("zeus_resize")))
