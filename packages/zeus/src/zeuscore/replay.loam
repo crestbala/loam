@@ -48,7 +48,7 @@ fn trace_draw(on: int) {
     tracing = if on != 0 { 1 } else { 0 }
 }
 
-// The bound host's callbacks (zeus_plat.c), one each, no logic: `draw_caps`
+// The bound host's callbacks (zeus_host.c), one each, no logic: `draw_caps`
 // says which exist, and nothing below calls one it did not report.
 fn draw_caps() -> int {}
 fn draw_fill(x: int, y: int, w: int, h: int, rgb: int, radius: int) {}

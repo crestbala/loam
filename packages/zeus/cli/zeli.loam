@@ -5375,15 +5375,14 @@ fn route_builders(appdir: string) -> []string {
     return out
 }
 
-/** *The C the runtime and the web host are written in. The names it uses are the */
+/** *The C of the host contract and the web host. The names it uses are the */
 /** *entry points into Loam code. */
 fn runtime_sources() -> string {
-    let rt = join(repo_root(), "packages/loam/runtime")
+    let common = join(repo_root(), "packages/zeus/hosts/common")
     let web = join(repo_root(), "packages/zeus/hosts/web")
     let files = []string {
-        join(rt, "zeus_plat.c"),
-        join(rt, "zeus_key.c"),
-        join(rt, "zeus_rt.h"),
+        join(common, "zeus_host.c"),
+        join(common, "zeus_host.h"),
         join(web, "wasm.c"),
     }
     let mut out = ""

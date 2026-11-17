@@ -1,12 +1,12 @@
-/* zeus_rt.h — platform seam and handle types for `import "std:zeus"`.
- *
- * Node and Signal are typed handles (id + struct). The retained tree,
- * layout, paint, and hit-test live in packages/zeus/src/zeus.loam. Empty fns in that
- * file (plat_*, keyboard) map to the hooks below. Hosts call the engine's
- * Loam exports (`loam_zeus_engine_*`) directly, and paint through zeus_paint.
+/* zeus_host.h — the host contract: what a Zeus host (mac.m, linux.c, ios.m,
+ * android.c, wasm.c) registers and calls. The retained tree, layout, paint and
+ * hit-test are Loam (packages/zeus/src). Hosts call the engine's Loam exports
+ * (`loam_zeus_engine_*`) directly, register their callbacks here, and paint
+ * through zeus_paint. Generated C does not include this header: the
+ * `host_contract` stanza checks that it agrees with what codegen emits.
  */
-#ifndef ZEUS_RT_H
-#define ZEUS_RT_H
+#ifndef ZEUS_HOST_H
+#define ZEUS_HOST_H
 
 #include <stdint.h>
 
@@ -15,23 +15,6 @@
 #else
 #include "loam_rt.h"
 #endif
-
-typedef struct {
-    uint32_t id;
-} Node;
-
-typedef struct {
-    uint32_t id;
-} Signal;
-
-/* --- Loam API: import "std:zeus" → loam_zeus_* --- */
-
-void loam_zeus_raw_init(void);
-void loam_zeus_open_window(loam_str title, int32_t width, int32_t height);
-void loam_zeus_raw_run(void);
-
-Node loam_zeus_bind(Node label, Signal sig);
-Node loam_zeus_bind_n(Node label, int32_t n);
 
 /* --- Platform hosts: zeus/desktop/mac.m, zeus/ios/ios.m, zeus/web/wasm.c --- */
 
@@ -194,7 +177,7 @@ void zeus_set_blit(void *ctx, ZeusBlit fn);
 /* Empty packages/zeus/src/zeus.loam fns → these C symbols. */
 void loam_zeus_plat_run(void);
 /* Current global font family ("" = host default) and the hook a host
-   registers to load one. See zeus_plat.c for why the family is global. */
+   registers to load one. See zeus_host.c for why the family is global. */
 const char *zeus_font_family(void);
 void zeus_set_font_hooks(int (*load)(const char *family, const char *src),
                          void (*set_family)(const char *family));
@@ -202,7 +185,7 @@ void zeus_set_font_hooks(int (*load)(const char *family, const char *src),
    file; the web host (no filesystem) installs a hook that fetches it. */
 void zeus_set_font_bytes_hook(loam_str (*fetch)(loam_str src));
 void loam_platform_plat_set_font_family(loam_str name);
-int64_t loam_platform_plat_load_font(loam_str family, loam_str src);
+int32_t loam_platform_plat_load_font(loam_str family, loam_str src);
 
 void loam_zeus_plat_measure(loam_str s, int32_t px, int32_t *w, int32_t *h);
 void loam_zeus_plat_measure_int(int32_t v, int32_t px, int32_t *w, int32_t *h);
@@ -243,7 +226,7 @@ void loam_platform_plat_measure_span(loam_str s, int32_t from, int32_t to, int32
                                      int32_t *w, int32_t *h);
 void loam_platform_plat_image_size(loam_str src, int32_t *w, int32_t *h);
 loam_str loam_platform_plat_pick_image(int32_t *w, int32_t *h);
-/* `zeuscore/replay.loam`'s forwarders into the bound ZeusDraw (zeus_plat.c). */
+/* `zeuscore/replay.loam`'s forwarders into the bound ZeusDraw (zeus_host.c). */
 int32_t loam_replay_draw_caps(void);
 void loam_replay_draw_fill(int32_t x, int32_t y, int32_t w, int32_t h, int32_t rgb, int32_t r);
 void loam_replay_draw_fill_a(int32_t x, int32_t y, int32_t w, int32_t h, int32_t rgb, int32_t r,
@@ -278,14 +261,9 @@ void loam_replay_draw_path(const loam_vec *path, int32_t start, int32_t n, int32
 void loam_platform_plat_frame(loam_vec head, loam_vec ops, loam_vec strs, loam_vec path);
 int32_t loam_platform_plat_blit(loam_vec buf, int32_t w, int32_t h, int32_t gen,
                                 int32_t scale);
-/* Recoverable-trap kernel. The policy (which handler, the preset table) is
-   `zeuscore/runtime.loam`. These are the calls it cannot make itself. */
-loam_str loam_runtime_trap_guard(loam_fn build);
-loam_str loam_runtime_panic_text(void);
 /* Startup preset, filled by the web loader before `main`. */
 void loam_runtime_preset_store(int32_t seq, loam_str msg);
 void zeus_boundary_preset_add(int32_t seq, const char *msg, size_t n);
-int64_t loam_runtime_alloc_count(void);
 
 /* Loam engine entry points (packages/zeus/src/zeus.loam). Every host calls
    these directly; there is no C layer in between. A `loam_str` argument is
@@ -394,114 +372,5 @@ void zeus_window_opened(void);
 #define ZEUS_DEFAULT_WIN_W 640
 #define ZEUS_DEFAULT_WIN_H 480
 
-/* ── the app image, as a host sees it ────────────────────────────────────────
-
-   A normal build is one program: the app *defines* the engine entry points above
-   and `zeus_plat.c` / `mac.m` call them directly. A `zeli serve` host instead
-   keeps the platform layer and the window and loads the app as a shared image,
-   so those entry points belong to whatever image is loaded *now*.
-
-   That is why the calls go through a table in a host build. A plain dlopen is not
-   enough: a direct call binds once (lazy binding caches the address), so after an
-   edit the host would keep painting the tree the *first* image built, with the
-   window still up and nothing to say it had gone stale. The loader re-reads these
-   from the new image on every load.
-
-   Without LOAM_HOST_BUILD this whole section is absent, the calls are the direct
-   ones they have always been, and what ships is unchanged. */
-#ifdef LOAM_HOST_BUILD
-typedef struct {
-    void (*layout)(int32_t width, int32_t height);
-    void (*paint)(void);
-    int32_t (*step)(void);
-    int32_t (*step_dt)(int32_t dt_ms);
-    void (*set_reduced_motion)(int32_t on);
-    int32_t (*next_ms)(void);
-    int32_t (*click)(int32_t x, int32_t y);
-    int32_t (*scroll)(int32_t x, int32_t y, int32_t dx, int32_t dy);
-    int32_t (*scroll_step)(int32_t x, int32_t y, int32_t dx, int32_t dy);
-    int32_t (*scroll_smooth)(int32_t x, int32_t y, int32_t dx, int32_t dy);
-    int32_t (*drag)(int32_t x, int32_t y);
-    int32_t (*hover)(int32_t x, int32_t y);
-    void (*mouseup)(void);
-    int32_t (*over_button)(void);
-    loam_str (*cursor)(void);
-    loam_str (*a11y_dump)(void);
-    loam_str (*tree_dump)(void);
-    loam_str (*signals_dump)(void);
-    int32_t (*state_load)(loam_str snapshot);
-    int32_t (*focus_captures_text)(void);
-    int32_t (*key)(int32_t key);
-    int32_t (*key_ev)(int32_t key, int32_t mods);
-    int32_t (*key_up)(int32_t key, int32_t mods);
-    void (*set_mods)(int32_t mods);
-    int32_t (*insert)(loam_str text);
-    int32_t (*marked)(loam_str text);
-    void (*picked_image)(loam_str src, int32_t w, int32_t h);
-    void (*media_picked)(loam_str name, loam_str src);
-    int32_t (*context_click)(int32_t x, int32_t y);
-    int32_t (*window_drag_at)(int32_t x, int32_t y);
-    /* The seam state the app image keeps (`zeuscore/platform.loam`). */
-    int32_t (*headless)(void);
-    void (*set_insets)(int32_t top, int32_t right, int32_t bottom, int32_t left);
-    void (*set_titlebar_box)(int32_t height, int32_t lead, int32_t trail);
-    int32_t (*window_width)(void);
-    int32_t (*window_height)(void);
-    void (*set_window_size)(int32_t width, int32_t height);
-    int32_t (*window_chrome)(void);
-    void (*window_opened)(void);
-    void (*retitle)(void);
-} ZeusAppApi;
-
-extern ZeusAppApi zeus_app_api;
-
-/* A host: it owns the loop, and loads app images on its own. `zeus_set_host_mode`
-   makes `loam_zeus_plat_run` yield (the app registers and returns);
-   `zeus_set_host_hooks` hands the platform layer the loader that
-   `zeus.host_run(path)` calls. */
-void zeus_set_host_mode(void);
-void zeus_set_host_hooks(void (*run)(const char *path));
-
-/* One line each, so the call sites read as the engine they call. */
-#define loam_zeus_engine_layout zeus_app_api.layout
-#define loam_zeus_engine_paint zeus_app_api.paint
-#define loam_zeus_engine_step zeus_app_api.step
-#define loam_zeus_engine_step_dt zeus_app_api.step_dt
-#define loam_zeus_engine_set_reduced_motion zeus_app_api.set_reduced_motion
-#define loam_zeus_engine_next_ms zeus_app_api.next_ms
-#define loam_zeus_engine_click zeus_app_api.click
-#define loam_zeus_engine_scroll zeus_app_api.scroll
-#define loam_zeus_engine_scroll_step zeus_app_api.scroll_step
-#define loam_zeus_engine_scroll_smooth zeus_app_api.scroll_smooth
-#define loam_zeus_engine_drag zeus_app_api.drag
-#define loam_zeus_engine_hover zeus_app_api.hover
-#define loam_zeus_engine_mouseup zeus_app_api.mouseup
-#define loam_zeus_engine_over_button zeus_app_api.over_button
-#define loam_zeus_engine_cursor zeus_app_api.cursor
-#define loam_zeus_engine_a11y_dump zeus_app_api.a11y_dump
-#define loam_zeus_engine_tree_dump zeus_app_api.tree_dump
-#define loam_zeus_engine_signals_dump zeus_app_api.signals_dump
-#define loam_zeus_engine_state_load zeus_app_api.state_load
-#define loam_zeus_engine_focus_captures_text zeus_app_api.focus_captures_text
-#define loam_zeus_engine_key zeus_app_api.key
-#define loam_zeus_engine_key_ev zeus_app_api.key_ev
-#define loam_zeus_engine_key_up zeus_app_api.key_up
-#define loam_zeus_engine_set_mods zeus_app_api.set_mods
-#define loam_zeus_engine_insert zeus_app_api.insert
-#define loam_zeus_engine_marked zeus_app_api.marked
-#define loam_zeus_engine_picked_image zeus_app_api.picked_image
-#define loam_zeus_engine_media_picked zeus_app_api.media_picked
-#define loam_zeus_engine_context_click zeus_app_api.context_click
-#define loam_zeus_engine_window_drag_at zeus_app_api.window_drag_at
-#define loam_platform_plat_headless zeus_app_api.headless
-#define loam_platform_plat_set_insets zeus_app_api.set_insets
-#define loam_platform_plat_set_titlebar_box zeus_app_api.set_titlebar_box
-#define loam_platform_host_window_width zeus_app_api.window_width
-#define loam_platform_host_window_height zeus_app_api.window_height
-#define loam_platform_host_set_window_size zeus_app_api.set_window_size
-#define loam_platform_host_window_chrome zeus_app_api.window_chrome
-#define loam_platform_host_window_opened zeus_app_api.window_opened
-#define loam_platform_host_retitle zeus_app_api.retitle
-#endif /* LOAM_HOST_BUILD */
 
 #endif

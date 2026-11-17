@@ -26,8 +26,8 @@
 #include <setjmp.h>
 #endif
 /* Recoverable traps. A panic that would abort instead winds the stack back to
-   the innermost arm installed through `loam_trap_guard`, which returns the
-   panic message in place of its body's result.
+   the innermost arm installed through `loam_panic_arm` (`std:panic`), and
+   `loam_panic_message` reads why.
 
    The state is part of the runtime and the runtime defines it (see the
    LOAM_RT_DEFINE_JMP block below), not the library that happens to want a
@@ -201,10 +201,10 @@ static inline void loam_alloc_note(size_t sz) {
     (void)sz;
     loam_alloc_count++;
 }
-static inline int64_t loam_alloc_total(void) { return loam_alloc_count; }
+static inline int64_t loam_sys_alloc_count(void) { return loam_alloc_count; }
 #else
 static inline void loam_alloc_note(size_t sz) { (void)sz; }
-static inline int64_t loam_alloc_total(void) { return 0; }
+static inline int64_t loam_sys_alloc_count(void) { return 0; }
 #endif
 
 static inline void *loam_new(size_t sz, const char *f, int l) {
@@ -402,26 +402,16 @@ static inline void loam_vec_drop(loam_vec *v) {
     v->cap = 0;
 }
 
-/* --- recoverable traps ---------------------------------------------------
+/* --- recoverable traps (`std:panic` `arm` / `message`) --------------------
 
-   Run `build` on the stack of an installed arm. Returns "" when the body
-   completed, else the panic message — the same contract a library-level
-   boundary wants, expressed as one runtime verb rather than as library code in
-   C. Nesting works: the arm chains to the previous target, so the inner-most
-   guard wins and an outer one stays installed.
+   Run `build` on the stack of an installed arm: 0 when the body completed, 1
+   when it panicked (`loam_panic_message` holds why). Nesting works: the arm
+   chains to the previous target, so the innermost wins and an outer one stays
+   installed. `build`'s env is borrowed: the call is synchronous.
 
-   On wasm there is no setjmp, so the body runs unprotected and a trap aborts.
-   That is the honest answer for the platform, not a missing implementation: a
-   wasm trap is a host-visible abort either way, and faking recovery over one
-   would cost more than it buys.
-
-   `build`'s env is borrowed, not copied: the call is synchronous, so the frame
-   that owns the env is still live for the whole body. */
-static inline loam_str loam_trap_guard(loam_fn build) {
-    loam_str none;
-    none.ptr = "";
-    none.len = 0;
-    none.own = 0;
+   On wasm there is no setjmp, so the body runs unprotected and a trap unwinds
+   to the host, which recovers at the export boundary. */
+static inline int32_t loam_panic_arm(loam_fn build) {
 #ifndef __wasm32__
     LoamJmp b;
     b.prev = loam_jmp_top;
@@ -430,20 +420,20 @@ static inline loam_str loam_trap_guard(loam_fn build) {
     if (setjmp(b.jb) == 0) {
         if (build.fn) ((void (*)(void *))build.fn)(build.env);
         loam_jmp_top = b.prev;
-        return none;
+        return 0;
     }
     loam_jmp_top = b.prev;
-    {
-        loam_str msg;
-        msg.ptr = loam_jmp_msg;
-        msg.len = (int64_t)strlen(loam_jmp_msg);
-        msg.own = 0;
-        return msg;
-    }
+    return 1;
 #else
     if (build.fn) ((void (*)(void *))build.fn)(build.env);
-    return none;
+    return 0;
 #endif
+}
+
+/* The panic buffer as an owned copy. Never a view: the next panic rewrites the
+   buffer, and a kept message must not change (or outlive its length) with it. */
+static inline loam_str loam_panic_message(void) {
+    return loam_str_copy(loam_jmp_msg, (int64_t)strlen(loam_jmp_msg));
 }
 
 /* --- runtime verbs libraries read ----------------------------------------
@@ -482,11 +472,6 @@ static inline int64_t loam_now_ms(void) {
 #ifndef __wasm32__
 #include <sys/stat.h>
 #include <dirent.h>
-/* The development-host seam (`std:host`): hand the process to a `zeli serve` host
-   that loads the app as a shared image. Declared here because that is where a
-   bodyless std fn is seen by generated code; `zeus_plat.c` defines it — as a
-   no-op outside a host build, so an app that calls it still runs its own loop. */
-void loam_host_run(loam_str path);
 #endif
 
 /* The fmt writers, `str.slice`, `string_from_bytes`, the `buf` / `decimal` /

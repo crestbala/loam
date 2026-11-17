@@ -59,7 +59,7 @@ fi
 # them it would be rebuilt, unoptimized, whenever one is set or cleared.
 (
   unset ZEUS_HEADLESS LOAM_HEADLESS MAYA_HEADLESS LOAM_DEV LOAM_DEBUG ZEUS_MEM_STATS \
-    LOAM_LINK_EXTRA LOAM_BATCH LOAM_SHARD LOAM_HOST LOAM_SERVER_SPLIT LOAM_NO_DCE LOAM_HOME
+    LOAM_LINK_EXTRA LOAM_BATCH LOAM_SHARD LOAM_SERVER_SPLIT LOAM_NO_DCE LOAM_HOME
   [ -n "${CC:-}" ] || [ "$c_compiler" = cc ] || export CC="$c_compiler"
   # The compiler's C as cached units, so an edit recompiles only what it
   # touched, in parallel. LOAM_WHOLE=1 builds one optimized unit instead.

@@ -519,7 +519,7 @@
   /* Match Cocoa: line box is ascent+descent, paint origin is the top of that
      box. Canvas `textBaseline = "top"` is the em square and `size+4` is taller
      than the glyphs, so labels sit high in buttons, chips, and avatars. */
-  /* One global family (see zeus_plat.c). `set_font_family` swaps it and
+  /* One global family (see zeus_host.c). `set_font_family` swaps it and
      drops every cached metric, because ascent, descent and every measured
      width belong to the face that produced them. */
   const fontFallback = "system-ui, sans-serif";
@@ -1392,7 +1392,7 @@
         view.setInt32(wPtr, rec.naturalWidth, true);
         view.setInt32(hPtr, rec.naturalHeight, true);
       },
-      /* `plat_media_*`: see `media` above. Codes match zeus_plat.c. */
+      /* `plat_media_*`: see `media` above. Codes match zeus_host.c. */
       media_open: (slot, ptr, len) => {
         if (slot <= 0 || slot >= media.length) return 0;
         const src = bytes(ptr, len);

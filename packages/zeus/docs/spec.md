@@ -644,7 +644,7 @@ packages/zeus/hosts/ios/ios.m            iOS Simulator present (paint only)
 packages/zeus/hosts/android/android.c    JNI + Android Canvas present (paint only)
 packages/zeus/hosts/web/loader.js        Canvas2D host
 packages/zeus/hosts/web/wasm.c           WASM entry / JS imports
-runtime/zeus_plat.c        shared C seam
+packages/zeus/hosts/common/zeus_host.c  host contract (C side, every host)
 src/zeuscore/keymap.loam   keyboard
 std/net.loam               TCP, TLS and the browser bridges, all Loam
 examples/zeus/counter/frontend   wasm UI (`http.client("").call`)

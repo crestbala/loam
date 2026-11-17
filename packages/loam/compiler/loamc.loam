@@ -14,7 +14,7 @@
 //
 // `LOAM_BATCH` builds a program of many fixtures that runs the one `LOAM_CASE`
 // names; `LOAM_SHARD=<dir>` compiles a Zeus program as cached units in
-// parallel (see "shard builds"); `LOAM_HOST` builds a `zeli serve` host;
+// parallel (see "shard builds");
 // `LOAM_SERVER_SPLIT` gives `#[server]` fns trap bodies, as a client build does.
 //
 // A native build with `-o` records what it read in `<output>.fresh`, and the
@@ -381,7 +381,7 @@ fn fresh_key(in_path: string) -> string {
     let envs = []string {
         "ZEUS_HEADLESS", "LOAM_HEADLESS", "MAYA_HEADLESS", "LOAM_DEV", "LOAM_DEBUG",
         "LOAM_LINK_EXTRA", "CC", "RAYLIB_PREFIX",
-        "LOAM_BATCH", "LOAM_SHARD", "LOAM_HOST", "LOAM_SERVER_SPLIT", "LOAM_WASM_CC", "LOAM_NO_DCE",
+        "LOAM_BATCH", "LOAM_SHARD", "LOAM_SERVER_SPLIT", "LOAM_WASM_CC", "LOAM_NO_DCE",
     }
     for i in 0..envs.len {
         h = fnv(sys.env(envs[i]), fnv("\n", fnv(envs[i], fnv("\n", h))))
@@ -769,39 +769,28 @@ fn mods_use(name: string) -> bool {
     return false
 }
 
-/** *Links the Zeus platform layer: a Zeus program, or a `zeli serve` host */
-/** *(`LOAM_HOST`), whose own source is a shim but whose loaded images call */
-/** *into that layer. */
+/** *Links the Zeus host contract (`hosts/common`): a Zeus program. */
 fn uses_zeus() -> bool {
-    return mods_use("zeus") || env_on("LOAM_HOST")
+    return mods_use("zeus")
 }
 
-/** *The Zeus platform layer and key state, and on a GUI build the desktop */
-/** *host, compiled if stale; their objects, or an empty list on failure */
-/** *(`ok` false). */
+/** *The Zeus host contract, and on a GUI build the desktop host, compiled if */
+/** *stale; their objects, or an empty list on failure (`ok` false). */
 fn zeus_objects(headless: bool, ok: &mut bool) -> []string {
     let rt = loader.runtime_dir()
     let zd = zeus_dir()
-    // A host build (`LOAM_HOST`) compiles the platform layer and the desktop
-    // host against the loaded image's dispatch table (`LOAM_HOST_BUILD`), into
-    // objects of their own, so the next app build does not link them.
-    let host = env_on("LOAM_HOST")
-    let tag = if host { ".host" } else { "" }
-    let mut host_flags = []string {}
-    if host {
-        push(host_flags, "-DLOAM_HOST_BUILD")
-    }
-    push(host_flags, "-DLOAM_ALLOC_TRACE")
-    let rt_h = "{{rt}}/zeus_rt.h"
-    let plat_c = "{{rt}}/zeus_plat.c"
-    let plat_o = "{{rt}}/.obj/zeus_plat{{tag}}.o"
-    let plat_deps = []string { plat_c, rt_h }
-    if !ensure_obj(plat_c, plat_o, &host_flags, &plat_deps) {
-        fmt.eprintln("loam: failed to compile zeus runtime")
+    let common = "{{zd}}/hosts/common"
+    let host_h = "{{common}}/zeus_host.h"
+    let mut host_flags = []string { "-DLOAM_ALLOC_TRACE", "-I{{common}}" }
+    let host_c = "{{common}}/zeus_host.c"
+    let host_o = "{{rt}}/.obj/zeus_host.o"
+    let host_deps = []string { host_c, host_h }
+    if !ensure_obj(host_c, host_o, &host_flags, &host_deps) {
+        fmt.eprintln("loam: failed to compile {{host_c}}")
         *ok = false
         return []string {}
     }
-    let mut objs = []string { plat_o }
+    let mut objs = []string { host_o }
     if headless {
         return objs
     }
@@ -811,17 +800,13 @@ fn zeus_objects(headless: bool, ok: &mut bool) -> []string {
         let mac_m = "{{zd}}/hosts/desktop/mac.m"
         let draw_m = "{{zd}}/hosts/apple/apple_draw.m"
         let media_m = "{{zd}}/hosts/apple/apple_media.m"
-        let mac_o = "{{rt}}/.obj/zeus_mac{{tag}}.o"
-        let draw_o = "{{rt}}/.obj/zeus_apple_draw{{tag}}.o"
-        let media_o = "{{rt}}/.obj/zeus_apple_media{{tag}}.o"
-        let mut mac_flags = []string { "-x", "objective-c" }
-        if host {
-            push(mac_flags, "-DLOAM_HOST_BUILD")
-        }
-        push(mac_flags, "-I{{zd}}/hosts/apple")
-        let mac_deps = []string { mac_m, rt_h, apple_h }
-        let draw_deps = []string { draw_m, rt_h, apple_h }
-        let media_deps = []string { media_m, rt_h, apple_h }
+        let mac_o = "{{rt}}/.obj/zeus_mac.o"
+        let draw_o = "{{rt}}/.obj/zeus_apple_draw.o"
+        let media_o = "{{rt}}/.obj/zeus_apple_media.o"
+        let mac_flags = []string { "-x", "objective-c", "-I{{common}}", "-I{{zd}}/hosts/apple" }
+        let mac_deps = []string { mac_m, host_h, apple_h }
+        let draw_deps = []string { draw_m, host_h, apple_h }
+        let media_deps = []string { media_m, host_h, apple_h }
         if !ensure_obj(mac_m, mac_o, &mac_flags, &mac_deps) ||
             !ensure_obj(draw_m, draw_o, &mac_flags, &draw_deps) ||
             !ensure_obj(media_m, media_o, &mac_flags, &media_deps) {
@@ -835,8 +820,8 @@ fn zeus_objects(headless: bool, ok: &mut bool) -> []string {
         return objs
     }
     let linux_c = "{{zd}}/hosts/desktop/linux.c"
-    let linux_o = "{{rt}}/.obj/zeus_linux{{tag}}.o"
-    let linux_deps = []string { linux_c, rt_h }
+    let linux_o = "{{rt}}/.obj/zeus_linux.o"
+    let linux_deps = []string { linux_c, host_h }
     if !ensure_obj(linux_c, linux_o, &host_flags, &linux_deps) {
         fmt.eprintln("loam: failed to compile {{linux_c}} (need libx11)")
         *ok = false
@@ -1332,14 +1317,14 @@ fn wasm_build(in_path: string, cpath: string, binpath: string, shard_dir: string
         // The runtime and the web host never change between edits, so a
         // shard build keeps them as objects too.
         let w_host = "{{zeus_dir()}}/hosts/web/wasm.c"
-        let w_plat = "{{rt}}/zeus_plat.c"
+        let w_plat = "{{zeus_dir()}}/hosts/common/zeus_host.c"
         let mut wasm_in = []string { "-x", "c", cpath }
         if shard_dir.len > 0 {
             let mut unit_cc = []string { wcc }
             push_all(&mut unit_cc, &maps)
             push_list(&mut unit_cc, []string { "--target=wasm32", "-nostdlib", "-ffreestanding", "-fno-stack-protector", "-mbulk-memory", "-Oz", "-ffp-contract=off" })
             push_all(&mut unit_cc, &rel_flags)
-            push_list(&mut unit_cc, []string { owns, "-I{{rt}}/wasm_inc", "-I{{rt}}" })
+            push_list(&mut unit_cc, []string { owns, "-I{{rt}}/wasm_inc", "-I{{rt}}", "-I{{zeus_dir()}}/hosts/common" })
             let mut unit_cc_set = []string {}
             for i in 0..unit_cc.len {
                 if unit_cc[i].len > 0 {
@@ -1359,7 +1344,7 @@ fn wasm_build(in_path: string, cpath: string, binpath: string, shard_dir: string
         }
         push(args, "-ffp-contract=off")
         push_all(&mut args, &rel_flags)
-        push_list(&mut args, []string { owns, "-I{{rt}}/wasm_inc", "-I{{rt}}" })
+        push_list(&mut args, []string { owns, "-I{{rt}}/wasm_inc", "-I{{rt}}", "-I{{zeus_dir()}}/hosts/common" })
         // --fatal-warnings: wasm-ld downgrades a prototype that disagrees with
         // its definition to a warning and links a trapping stub. The loader
         // resets the shadow stack after a trap (`__stack_pointer`). A 4 MB
@@ -1439,7 +1424,7 @@ fn ios_sim_run(app: string, bid: string) -> bool {
 /** *list of headers they all read. */
 fn ios_obj(cc_args: &[]string, src: string, obj: string) -> bool {
     let rt = loader.runtime_dir()
-    let deps = []string { src, "{{rt}}/zeus_rt.h", "{{rt}}/loam_rt.h", "{{zeus_dir()}}/hosts/apple/zeus_apple.h" }
+    let deps = []string { src, "{{zeus_dir()}}/hosts/common/zeus_host.h", "{{rt}}/loam_rt.h", "{{zeus_dir()}}/hosts/apple/zeus_apple.h" }
     if sys.exists(obj) == 1 {
         let mut stale = false
         for i in 0..deps.len {
@@ -1502,13 +1487,14 @@ fn ios_build(in_path: string, cpath: string, binpath: string, stem: string, shar
         push(flags, owns)
     }
     push(flags, "-I{{rt}}")
+    push(flags, "-I{{zd}}/hosts/common")
     let mut ios_cc = []string { "xcrun", "clang", "-O1" }
     push_all(&mut ios_cc, &flags)
     let mut ios_mcc = []string {}
     push_all(&mut ios_mcc, &ios_cc)
     push_list(&mut ios_mcc, []string { "-x", "objective-c", "-fno-objc-arc", "-I{{zd}}/hosts/apple" })
-    let c_srcs = []string { "{{rt}}/zeus_plat.c" }
-    let c_names = []string { "zeus_plat" }
+    let c_srcs = []string { "{{zd}}/hosts/common/zeus_host.c" }
+    let c_names = []string { "zeus_host" }
     let m_srcs = []string { "{{zd}}/hosts/ios/ios.m", "{{zd}}/hosts/apple/apple_draw.m", "{{zd}}/hosts/apple/apple_media.m" }
     let m_names = []string { "ios", "apple_draw", "apple_media" }
     let noowns = if types.string_owns { "" } else { ".noowns" }
@@ -1634,7 +1620,7 @@ fn android_cmake() -> string {
     // A dev build leaves only the app's code unoptimized, as on the native
     // targets: it is what an edit recompiles.
     let dev = if want_dev() { "set_source_files_properties(app.c PROPERTIES COMPILE_OPTIONS -O0)\n" } else { "" }
-    return "cmake_minimum_required(VERSION 3.22.1)\nproject(zeus C)\nadd_library(zeus SHARED\n  app.c\n  \"{{zeus_dir()}}/hosts/android/android.c\"\n  \"{{rt}}/zeus_plat.c\"\n)\ntarget_include_directories(zeus PRIVATE \"{{rt}}\")\ntarget_compile_definitions(zeus PRIVATE LOAM_ANDROID LOAM_ALLOC_TRACE{{owns}})\ntarget_compile_options(zeus PRIVATE -std=gnu99 -O1 -ffp-contract=off -fno-asynchronous-unwind-tables)\n{{dev}}target_link_libraries(zeus android log)\n"
+    return "cmake_minimum_required(VERSION 3.22.1)\nproject(zeus C)\nadd_library(zeus SHARED\n  app.c\n  \"{{zeus_dir()}}/hosts/android/android.c\"\n  \"{{zeus_dir()}}/hosts/common/zeus_host.c\"\n)\ntarget_include_directories(zeus PRIVATE \"{{rt}}\" \"{{zeus_dir()}}/hosts/common\")\ntarget_compile_definitions(zeus PRIVATE LOAM_ANDROID LOAM_ALLOC_TRACE{{owns}})\ntarget_compile_options(zeus PRIVATE -std=gnu99 -O1 -ffp-contract=off -fno-asynchronous-unwind-tables)\n{{dev}}target_link_libraries(zeus android log)\n"
 }
 
 fn android_app_gradle(app_id: string) -> string {

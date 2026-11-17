@@ -4,7 +4,7 @@
  * widgets, and system colors are not used. Theme, layout, and paint stay in
  * Loam — the same fill / text / clip / SVG list as Cocoa, iOS, and Canvas2D.
  */
-#include "zeus_rt.h"
+#include "zeus_host.h"
 #include <android/log.h>
 #include <jni.h>
 #include <pthread.h>

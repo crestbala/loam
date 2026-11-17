@@ -660,7 +660,7 @@ fn engine_key_up(key: int, mods: int) -> int {
 }
 
 // --- engine entry points ---
-/** *Hosts call these directly (`loam_zeus_engine_*`, declared in zeus_rt.h). */
+/** *Hosts call these directly (`loam_zeus_engine_*`, declared in zeus_host.h). */
 /** *Do not use from app code; use `App`, clicks, and signals instead. */
 
 fn engine_paint() {

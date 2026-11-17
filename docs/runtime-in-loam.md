@@ -240,7 +240,7 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       `wasm_inc`), hosts 4,871, vendored 346,122 (sqlite, monocypher, raygui
       and the generated tree-sitter parser).
 - [x] R0.2 The budget: `RUNTIME_LINE_BUDGET` in `nob.loam`, set at 9,939
-      and lowered by each step since (now **1,782**, during R6.6).
+      and lowered by each step since (now **573**, during R6.6).
       `nob trusted` and the unfiltered `nob test` fail if `runtime/` grows
       past it. Each step below lowers it to its new count in the same
       change.
@@ -2210,6 +2210,65 @@ with R6.2).
       `arena_lint` and `design_lint` pass. counter builds for the iOS
       Simulator. Seed 5,531,352 bytes, seed = stage 1 = stage 2. **Runtime:
       1,990 → 1,782** (−208).
+      **R6.6d3 landed 2026-11-17: the seam is the host contract, in
+      `packages/zeus/hosts/common/`.** `zeus_plat.c` → `zeus_host.c` and
+      `zeus_rt.h` → `zeus_host.h`. What is left there is host code: the
+      callbacks a host registers, the bodyless hooks that call them, the
+      `ZeusDraw` replay and media forwarders, the weak router stubs and the
+      startup preset. `loamc` (native, wasm, iOS, the Android CMake),
+      zeli's route split and the Linux kit build it from there.
+      - **Generated C no longer includes a Zeus header.** Codegen writes the
+        `Node` and `Signal` handles itself (one `uint32_t id` struct each),
+        and gives every bodyless fn outside the language std an extern
+        prototype (`codegen`, `runtime_seam`). Before, only an app module's
+        did, so Zeus relied on the header for its prototypes.
+      - **New stanza `host_contract`:** a Zeus program's C, with
+        `LOAM_NO_DCE=1` so every hook and entry point is declared, compiles
+        with `zeus_host.h` in front, and `zeus_host.c` compiles with
+        `-Wmissing-prototypes -Werror`. A native build has no
+        `--fatal-warnings` link to catch a drifted type, so this does. It
+        caught one at once: `plat_load_font` returns `int` (i32), but the C
+        defined it as `int64_t`. A hand-broken header makes it fail.
+      - **Runtime kernels went to std, not to the hosts.**
+        `zeuscore/runtime.loam`'s bodyless `trap_guard`, `panic_text` and
+        `alloc_count` are now `panic.guard` (Loam over the
+        `loam_panic_arm` verb), `panic.message` and `sys.alloc_count`, all
+        over `loam_rt.h`.
+      - **Bug fixed:** a Boundary's message was a view of the 512-byte
+        panic buffer (`own` 0). A message kept from one panic was rewritten
+        by the next, and read with its old length it showed a NUL-spliced
+        mix ("2nd\0t failure, a long message"). `loam_panic_message` now
+        returns an owned copy, which allocates only when a panic happened.
+        The copy is a local, so like any local it is not freed when a later
+        panic `longjmp`s out of the frame holding it.
+      - **Dead code removed:** the `LOAM_HOST` dev host, which loaded the
+        app as a reloadable image (`ZeusAppApi`, mac.m's loader and
+        reloader, `loam_host_run`, `zeus_set_host_mode` / `_hooks`, loamc's
+        host objects). Nothing set `LOAM_HOST` or reached `host.run`, and
+        `zeli serve --target macos` restarts the process instead
+        (`serve_native`). Also gone: codegen's unused `mods_use`, and
+        zeli's read of the long-gone `zeus_key.c`. `kit.sh` packaged files
+        that no longer existed; it builds again.
+      **Count:** runtime 1,782 → 573 (−1,209). Hosts 5,475 → 6,248
+      (+773: the moved 940 lines, less what was deleted). Trusted C overall
+      is 433 lines smaller.
+      **Size:** wasm apps −141 to −162 bytes on d2; www's chunks −466 bytes
+      Brotli; native counter `__text` +64.
+      **Checks:** the d2 probes give the same output (the native state probe
+      headless and with the Cocoa host; the wasm probe in headless Chrome,
+      now with the HTTP cache off, since a cached `loader.js` had made one
+      d2 run read the wrong loader). All 28 www routes match d2. A
+      Boundary probe (a kept message across a second panic, a clean body,
+      nested arms, the allocation count) shows the fix. `kit.sh` builds
+      a kit whose C checks clean against X11 headers. Suite: `zeus_` 448,
+      `golden` 135, `router`, `panic`, `sys`, `boundary` green.
+      `wasm_smoke`, `wasm_trap`, `serve_build`, `serve_boot`,
+      `serve_native`, `android_project`, `server_split`, `fresh_cache`,
+      `lsp`, `api_freeze`, `host_contract`, `one_surface`, `c_layouts`,
+      `modules`, `cost`, `arena_lint`, `design_lint`, `loader_cases`,
+      `wasm_float`, `ownership_asan` and `thread_tsan` pass. counter builds
+      for the iOS Simulator. Seed 5,531,944 bytes, seed = stage 1 = stage 2.
+      **Runtime: 1,782 → 573** (−1,209).
 
 **R7. Hosts** (`packages/zeus/hosts`, outside the runtime directory).
 

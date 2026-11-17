@@ -41,7 +41,7 @@ static void za_set_fill(CGContextRef cg, int64_t rgb, CGFloat a) {
 /* --- fonts and text ------------------------------------------------------ */
 
 /* Keyed by size and dropped when the family changes (`zeus_font_family()` is
-   global, see zeus_plat.c). A missing face falls back to the system font. */
+   global, see zeus_host.c). A missing face falls back to the system font. */
 ZAFont *za_font(int64_t px) {
     static ZAFont *cache[72];
     static char family[128];

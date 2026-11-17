@@ -13,7 +13,7 @@ Decoders that exist today:
 
 | Host | Decoder |
 |---|---|
-| C, Objective-C, JNI (macOS, iOS, Android, Linux) | `present` in `packages/zeus/src/zeuscore/replay.loam`, into a `ZeusDraw` callback table (one-line forwarders in `zeus_plat.c`) |
+| C, Objective-C, JNI (macOS, iOS, Android, Linux) | `present` in `packages/zeus/src/zeuscore/replay.loam`, into a `ZeusDraw` callback table (one-line forwarders in `zeus_host.c`) |
 | Browser | `decodeFrame` in `hosts/web/loader.js`, straight from wasm memory into Canvas2D |
 | Tests | `replay.trace_draw` (prints every call), and the Deno smoke test `hosts/web/wasm_smoke.ts` |
 
@@ -37,7 +37,7 @@ All integers are little-endian `int32`.
 
 A decoder must check `version` and `stride`, and draw nothing for a frame it
 does not understand. C hosts see the header as the `ZeusFrame` struct in
-`zeus_rt.h`. The web host's JS gets 8 ints, `version stride n ops ns strs np
+`zeus_host.h`. The web host's JS gets 8 ints, `version stride n ops ns strs np
 path`, where each pointer is an offset into wasm memory and `strs` is `ns`
 (pointer, byte length) pairs.
 

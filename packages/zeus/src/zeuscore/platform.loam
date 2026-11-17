@@ -1,6 +1,6 @@
 // platform — the host contract. Bodyless `fn`s are the link boundary:
 // the compiler emits `loam_platform_plat_*` declarations
-// and the host provides them, through `zeus_plat.c`'s hooks. Everything here is
+// and the host provides them, through `zeus_host.c`'s hooks. Everything here is
 // an OS service (paint, text measure, window, clock, clipboard, media…). The
 // engine's own runtime builtins live in `runtime.loam`. No widget or layout
 // logic here. Media state and image-header sizes live in `mediastate.loam`
@@ -356,7 +356,7 @@ fn host_retitle() {
 
 // --- native hooks -----------------------------------------------------------
 // What only a native host can answer, through the callbacks it registered in
-// `zeus_plat.c`. Each answers 0 / does nothing when none is.
+// `zeus_host.c`. Each answers 0 / does nothing when none is.
 
 /** *1 when a host run loop is bound (`zeus_set_platform`). */
 fn native_run_bound() -> int {}
@@ -373,7 +373,7 @@ fn native_clipboard_write(text: string) {}
 // --- per target -------------------------------------------------------------
 // The web host's side of the contract is its `zeus` imports (`#[os("wasm")]`
 // `#[c]` bindings, `hosts/web/loader.js`). Elsewhere a browser-only service
-// does nothing, and what a native host provides is a C hook in `zeus_plat.c`.
+// does nothing, and what a native host provides is a C hook in `zeus_host.c`.
 
 #[os("wasm")]
 fn set_title_os(title: string) {

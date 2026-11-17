@@ -1,26 +1,16 @@
-/* zeus_plat.c — Cocoa/headless seam for the Loam zeus library.
+/* zeus_host.c — the host contract's C side, shared by every Zeus host.
  *
- * packages/zeus/src/zeus.loam owns the node arena, layout, paint, and hit-test. This file
- * is the other side of that seam: window title/size, text measure, present,
- * and the zeus_* entry points the Cocoa/iOS/web hosts already call. Keyboard chords,
- * the focus chain and Tab are Loam (zeuscore/keymap.loam, zeus.loam).
+ * The engine and every bit of state it keeps are Loam (packages/zeus/src). This
+ * file holds only what a C host needs to meet it: the callbacks a host
+ * registers (`zeus_set_*`), the bodyless Loam hooks that call them, and the
+ * one-line forwarders from the host's C names into Loam's entry points.
  */
-#include "zeus_rt.h"
+#include "zeus_host.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 /* The signal byte store is Loam (`zeuscore/sigcells.loam`, R4.1b). */
-
-/* Allocation accounting (phase 3 proof harness). `loam_rt.h` increments this
-   from `loam_new` / array growth when the program was compiled with
-   `-DLOAM_ALLOC_TRACE` (all Zeus programs are); `zeus.proof_allocs()` reads it. */
-int64_t loam_runtime_alloc_count(void) {
-    /* The counter is the runtime's (`loam_rt.h`, `LOAM_RT_DEFINE_ALLOC`); this
-       seam only reports it. The copy that used to live here — one line, but a
-       Zeus translation unit defining a language-runtime symbol — is gone. */
-    return loam_alloc_total();
-}
 
 static void (*plat_run)(void);
 static void (*plat_measure)(const char *s, int64_t px, int64_t *w, int64_t *h);
@@ -156,44 +146,8 @@ loam_str loam_zeus_plat_pick_image(int32_t *w, int32_t *h) {
     return loam_str_copy(buf, (int64_t)strlen(buf));
 }
 
-#ifdef LOAM_HOST_BUILD
-/* The table `zeus_rt.h` routes the host's engine calls through. Zeroed until
-   the loader fills it from the image it just loaded. */
-ZeusAppApi zeus_app_api;
-
-static int host_mode;
-static void (*plat_host_run_fn)(const char *path);
-
-/* Called by a host once it is the one owning the loop, before it loads the
-   app image. */
-void zeus_set_host_mode(void) { host_mode = 1; }
-
-/* The loader (a host provides one; see `mac.m`). */
-void zeus_set_host_hooks(void (*run)(const char *path)) { plat_host_run_fn = run; }
-#endif
-
 void loam_zeus_plat_run(void) {
-#ifdef LOAM_HOST_BUILD
-    /* A host owns the loop: the app has registered its tree by now (`zeus.App`
-       builds and roots it before `raw_run`), so this returns and the host drives
-       the frames. */
-    if (host_mode) return;
-#endif
     if (plat_run) plat_run();
-}
-
-/* `host.run(path)` (std:host) — hand this process to a host that loads the app
-   image at `path`. Only a host build has one; elsewhere this is a no-op, so a
-   program that calls it still links and still runs its own loop. */
-void loam_host_run(loam_str path) {
-#ifdef LOAM_HOST_BUILD
-    if (!plat_host_run_fn) return;
-    char *p = dup_ys(path);
-    plat_host_run_fn(p);
-    free(p);
-#else
-    (void)path;
-#endif
 }
 
 int32_t loam_platform_native_run_bound(void) { return plat_run ? 1 : 0; }
@@ -224,7 +178,7 @@ void loam_platform_plat_set_font_family(loam_str name) {
     if (plat_redraw) plat_redraw();
 }
 
-int64_t loam_platform_plat_load_font(loam_str family, loam_str src) {
+int32_t loam_platform_plat_load_font(loam_str family, loam_str src) {
     char *f, *u;
     int ok = 0;
     if (!plat_load_font_fn) return 0;
@@ -416,24 +370,6 @@ void zeus_paint(void *ctx, ZeusDraw draw) {
     have_draw = 1;
     loam_zeus_engine_paint();
     have_draw = 0;
-}
-
-/* --- recoverable traps (zeus.Boundary) ---
-
-   The policy and the interned-handler table are `zeuscore/runtime.loam`.
-   This is the arm (`loam_trap_guard`, loam_rt.h) and the panic buffer. On
-   wasm the arm runs the body unprotected. */
-
-loam_str loam_runtime_trap_guard(loam_fn build) {
-    return loam_trap_guard(build);
-}
-
-loam_str loam_runtime_panic_text(void) {
-    loam_str msg;
-    msg.ptr = loam_jmp_msg;
-    msg.len = (int64_t)strlen(loam_jmp_msg);
-    msg.own = 0;
-    return msg;
 }
 
 void zeus_boundary_preset_add(int32_t seq, const char *msg, size_t n) {
