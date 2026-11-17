@@ -13,6 +13,7 @@
 // every path is quoted on the way in.
 
 import "std:async"
+import "std:buf"
 import "std:fmt"
 import "http"
 import "std:json"
@@ -1148,15 +1149,40 @@ fn ui_frame() -> string {
     return cat(out, ui_dim(cat(cat("╰", ui_repeat("─", width)), "╯\n")))
 }
 
-/** *Clear the panel and leave the cursor where it began. */
-fn ui_erase() {
+/** *Back to where the panel began, as a prefix for the next write. */
+fn ui_home() -> string {
     if ui_drawn > 0 {
-        fmt.write("\r{{ui_esc}}[{{ui_drawn}}A{{ui_esc}}[J")
+        return "\r{{ui_esc}}[{{ui_drawn}}A"
     }
+    return ""
 }
 
-fn ui_write_frame(frame: string) {
-    fmt.write(frame)
+/** *`text` with each line cleared just before it is written, so a redraw */
+/** *overwrites the old panel in place. The whole line goes: the panel moves */
+/** *the cursor by column, and a cell it skips would keep the old character. */
+/** *Clearing the screen first and drawing after is two states on screen, */
+/** *which the terminal shows as a blink on every tick. */
+fn ui_overwrite(text: string) -> string {
+    let mut out = []u8 {}
+    let clear = "{{ui_esc}}[2K"
+    let mut line_start = true
+    for i in 0..text.len {
+        if line_start {
+            buf.push_str(&mut out, clear)
+            line_start = false
+        }
+        push(out, u8(text[i]))
+        if text[i] == 10 {
+            line_start = true
+        }
+    }
+    return buf.to_string(&out)
+}
+
+/** *Repaint the panel, with `above` (lines that scroll up) before it, in one */
+/** *write; `ESC[J` drops whatever the old panel left below the new one. */
+fn ui_repaint(above: string, frame: string) {
+    fmt.write("{{ui_home()}}{{ui_overwrite(above)}}{{ui_overwrite(frame)}}{{ui_esc}}[J")
     ui_frame_last = frame
     ui_drawn = 0
     for i in 0..frame.len {
@@ -1171,8 +1197,7 @@ fn ui_draw() {
     if ui_on {
         let frame = ui_frame()
         if frame != ui_frame_last {
-            ui_erase()
-            ui_write_frame(frame)
+            ui_repaint("", frame)
         }
     }
 }
@@ -1183,9 +1208,7 @@ fn say(msg: string) {
         fmt.println(msg)
         return
     }
-    ui_erase()
-    fmt.println(msg)
-    ui_write_frame(ui_frame())
+    ui_repaint("{{msg}}\n", ui_frame())
 }
 
 /** *A line the panel already shows while serving. */
@@ -3280,10 +3303,10 @@ fn stop_device(appdir: string, target: string, stem: string) -> bool {
         if bid == "" {
             return false
         }
-        let out = sys.exec(cat(
-            cat("xcrun simctl terminate booted ", shell_quote(bid)),
-            " >/dev/null 2>&1",
-        ))
+        // Every booted simulator: `booted` alone is ambiguous once two run.
+        let out = sys.exec(
+            "ok=1; for u in $(xcrun simctl list devices booted 2>/dev/null | grep -oE '[0-9A-F]{8}(-[0-9A-F]{4}){3}-[0-9A-F]{12}'); do xcrun simctl terminate \"$u\" {{shell_quote(bid)}} >/dev/null 2>&1 && ok=0; done; exit $ok",
+        )
         return sys.exec_status() == 0
     }
     let pkg = android_app_id(appdir, stem)
