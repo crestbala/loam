@@ -240,7 +240,7 @@ lines in 14 files (`loam_rt.h` 2,762, `zeus_plat.c` 2,973, `net.c` 1,295,
       `wasm_inc`), hosts 4,871, vendored 346,122 (sqlite, monocypher, raygui
       and the generated tree-sitter parser).
 - [x] R0.2 The budget: `RUNTIME_LINE_BUDGET` in `nob.loam`, set at 9,939
-      and lowered by each step since (now **573**, during R6.6).
+      and lowered by each step since (**0** since R6.6e).
       `nob trusted` and the unfiltered `nob test` fail if `runtime/` grows
       past it. Each step below lowers it to its new count in the same
       change.
@@ -1957,8 +1957,9 @@ with R6.2).
       `server_split` and `fresh_cache` pass. Suite 678 passed, 0 failed.
       Seed 5,410,759 bytes, seed = stage 1 = stage 2. **Runtime: 4,511 →
       4,296** (−215; −449 for all of R6.5).
-- [ ] R6.6 `packages/loam/runtime/` deleted; `loader.loam` and `loamc.loam`
-      no longer name it; `nob trusted` reports zero runtime lines.
+- [x] R6.6 `packages/loam/runtime/` deleted; `loader.loam` and `loamc.loam`
+      no longer name it; `nob trusted` reports zero runtime lines. Done
+      2026-11-17.
       Planned 2026-11-16 as five changes, checked against AGENTS.md's
       filter:
       - **a** The runtime verbs move to codegen, emitted only when used.
@@ -2269,6 +2270,114 @@ with R6.2).
       `wasm_float`, `ownership_asan` and `thread_tsan` pass. counter builds
       for the iOS Simulator. Seed 5,531,944 bytes, seed = stage 1 = stage 2.
       **Runtime: 1,782 → 573** (−1,209).
+
+      **R6.6e landed 2026-11-17: `packages/loam/runtime/` is deleted.**
+      `nob trusted` reports runtime 0 of a budget of 0. Three steps, each
+      tested on its own:
+      - **e1, the host ABI.** C linked into a program (the Zeus hosts, an
+        app's `runtime/` seam) sees Loam values only through
+        `packages/zeus/hosts/common/loam_abi.h`, 68 lines. It has the
+        `loam_str` and `loam_vec` layouts (with `_Static_assert`s on size
+        and offsets), `loam_jmp_msg`, and three exports:
+        `loam_abi_str_copy`, `loam_abi_str_release` and
+        `loam_abi_vec_drop`. On wasm it also declares the eight libc
+        functions the hosts use. Codegen writes the three exports
+        (`host_abi_defs`, one line each, over the core's inline fns) only
+        when a unit has a C seam, meaning a kept bodyless fn outside the
+        language std with no `#[c]` name. In a shard build only the
+        `LOAM_SHARD_DEFS` unit writes them. Other programs pay nothing.
+        Before this the hosts included all of `loam_rt.h`, but they called
+        only seven of its functions. The ABI is smaller than that: `loam_new`
+        went because wasm.c's three users now copy, call and release;
+        `loam_ewrite_bytes` became `write(2)`; and `loam_now_ms` left
+        because the host reads its own clock. That clock is
+        `CLOCK_MONOTONIC`, the one `std:async` reads, or the JS import on
+        wasm. It did not become a call to `async.now_ms`: that allocates its
+        two-slot `timespec` vec on every call, which would be a heap
+        allocation per frame. `host_contract` now compiles generated C
+        *followed by* `zeus_host.h`, so every prototype meets its
+        definition and the layout asserts check codegen's own types. A
+        changed `loam_abi_vec_drop` signature fails it, and so does a wrong
+        `own` offset.
+      - **e2, the core is compiler code.** `loam_rt.h` became
+        `compiler/rtcore.loam`: 424 lines of `w("...")`, written at the top
+        of every unit. Typecheck claims every `loam_*` name in that text,
+        as it once did from the file, so `RT_PATH` and `loader.rt_path` are
+        gone. Three pieces are now emitted only when a program calls them,
+        as new `rt_verb` groups: the trap arm with its message
+        (`panic.arm` / `message`), `sys.alloc_count`, and the wasm clock
+        (folded into the `async_wasm` group). Nothing else moved to Loam.
+        What is left is `setjmp`/`longjmp`, the atomic refcount, `malloc`,
+        and the inline vec growth on the hot reserve path, which is the C
+        floor. Making `loam_vec_grown_cap` a Loam fn would need a
+        prototype ahead of the core and a DCE root wherever a vec grows,
+        for no gain.
+      - **e3, wasm_inc and the directory.** A wasm unit uses clang's
+        freestanding `stdint`/`stddef`/`stdbool`/`limits` and gets twelve
+        declarations from the core, so no include path is needed. The C
+        object cache moved from `runtime/.obj` to `<home>/obj`, which is
+        already gitignored and cleared by `nob clean`. Every `-I` to the
+        runtime is gone from loamc (native, wasm, shard units, iOS, the
+        Android CMake, loadable images), `cross-check.sh`, `win-run.sh`,
+        `kit.sh` (which now ships `loam_abi.h`) and the greeninfer README.
+        The seven vite watch lists now cover `hosts/common`. Then
+        `git rm -r packages/loam/runtime` and `RUNTIME_LINE_BUDGET = 0`;
+        the `runtime` group stays, so C added back there fails the check.
+      **Bootstrap:** the old seed pastes `loam_rt.h` at run time, so I wrote
+      the new seed (`nob seed`) before deleting the directory. Then
+      `bin/loamc0` was rebuilt from it, and with the directory gone `nob
+      seed` reports it unchanged.
+      **Bugs fixed:**
+      - wasm.c handed Loam `loam_new` buffers as `own` 0 strings, which
+        were never freed, so every deep link or popstate (`zeus_open_url`)
+        and every hot-reload restore leaked its text.
+      - greeninfer's `read_file` / `dir_list` leaked their whole result the
+        same way on every watcher pass. They now return owned strings.
+      - The `.fresh` key did not cover `hosts/common`, so after an edit to
+        `zeus_host.c` a cached binary was reused.
+      - The vite watchers did not watch `hosts/common` either.
+      - greeninfer got `remove` from `loam_rt.h`'s `<stdio.h>`; it now
+        includes it.
+      **Count:** runtime 573 → 0. Hosts 6,248 → 6,319 (+71: `loam_abi.h`,
+      the host clock). Bindings 276 → 283 (greeninfer). Emitted C 1,058 →
+      1,531 (+473: `rtcore.loam` 424, plus the arm, alloc-count and host-ABI
+      groups). Trusted C overall 8,155 → 8,133.
+      **Size:** generated C for a tiny `fmt.println(42)` 63,150 → 60,602
+      bytes. The binary stays 33,688 bytes, and a tiny wasm program is
+      byte-identical (498 bytes). The native gallery's `__text` is 160 bytes
+      smaller. In the www release only the primary chunk changes, 641,614 →
+      640,830 bytes (Brotli 177,322 → 177,120); the 25 route chunks are
+      byte-identical. The seed grows 5,531,944 → 5,600,815 bytes and
+      `bin/loamc` grows by 16,816 bytes: the core is now code in the
+      compiler, not a file it reads.
+      **Compile:** gallery `--emit-c` takes 0.379 s with either compiler
+      (median of 21 alternating pairs). The check and codegen phases are
+      equal (median of 15).
+      **Checks:**
+      - A native probe (a panic message kept across a second panic, a
+        clean guard, nested arms, the allocation count, a Boundary
+        fallback) prints the same output under HEAD and e.
+      - The Cocoa host's gallery snapshot (2800×10400) is pixel-identical.
+      - In headless Chrome with the HTTP cache off, all 28 www routes are
+        pixel-identical with no exceptions. Popstate navigation over four
+        routes gives the same screenshots, a11y mirror sizes, cursor and
+        titles.
+      - The Linux kit compiles for x86_64 Linux against X11, and its
+        `loam_abi_*` references resolve against `app.o`.
+      - `cross-check.sh`: Linux and Windows, both CPUs, `nob` + 128
+        fixtures, 0 failed.
+      - counter builds for the iOS Simulator, and the greeninfer smoke
+        passes.
+      - Suite: `zeus_` 448, `golden` 135, `router`, `panic`, `sys` and
+        `boundary` green.
+      - These stanzas pass: `host_contract`, `wasm_smoke`, `wasm_trap`,
+        `serve_build`, `serve_boot`, `serve_native`, `android_project`,
+        `server_split`, `fresh_cache`, `lsp`, `c_layouts`, `modules`,
+        `wasm_float`, `ownership_asan`, `thread_tsan`, `api_freeze`,
+        `one_surface`, `cost`, `arena_lint`, `design_lint` and
+        `loader_cases`.
+      - Seed 5,600,815 bytes, seed = stage 1 = stage 2 (`nob selfhost`).
+      **Runtime: 573 → 0** (−573).
 
 **R7. Hosts** (`packages/zeus/hosts`, outside the runtime directory).
 

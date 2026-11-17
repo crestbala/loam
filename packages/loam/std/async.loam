@@ -85,7 +85,7 @@ fn now_ms_os() -> i64 {
     return wasm_now_ms()
 }
 
-/** *The wasm `now_ms` bridge in `loam_rt.h` (over the `zeus_js_now_ms` host */
+/** *The wasm `now_ms` bridge codegen defines (over the `zeus_js_now_ms` host */
 /** *import), like `sys.wasm_exit` bridges `abort`. */
 #[os("wasm")]
 fn wasm_now_ms() -> i64 {}
@@ -150,7 +150,7 @@ fn sleep_os(ms: int) {
     wasm_sleep(i64(ms))
 }
 
-/** *The wasm `sleep` bridge in `loam_rt.h` (a spin on the JS clock). */
+/** *The wasm `sleep` bridge codegen defines (a spin on the JS clock). */
 #[os("wasm")]
 fn wasm_sleep(ms: i64) {}
 

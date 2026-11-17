@@ -171,7 +171,7 @@ frame buffer:
 | Checker 96x54 | 60 | 5,184 | 20 MB |
 
 That is about **1 byte per frame byte**, which is exactly the string
-`string_from_bytes` returns: `loam_rt.h` frees no string ("the language has no
+`string_from_bytes` returns: the runtime then freed no string ("the language has no
 string ownership story to hook into yet"), so one frame's bytes stay resident
 per frame. Everything else — the `[]int` staging buffer, which is four bytes
 per frame byte — is allocated and released once per frame.

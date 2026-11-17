@@ -13,7 +13,7 @@
 // sys.write_bytes("out.txt", b)
 // ```
 //
-// Empty bodies are runtime hooks (`loam_buf_*` in loam_rt.h); the integer
+// Empty bodies are runtime hooks (`loam_buf_*`, defined by codegen); the integer
 // appends are `std:decimal`.
 
 import "std:decimal"

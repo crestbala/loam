@@ -14,7 +14,7 @@
 // `println` is not a real function: the compiler turns the arguments into
 // `write` / `write_int` / `write_bool` plus a newline; a float is written
 // by `std:floattext` (`%.15g`). Empty bodies below are runtime hooks
-// (`loam_fmt_*` in loam_rt.h).
+// (`loam_fmt_*`, defined by codegen).
 
 import "std:decimal"
 

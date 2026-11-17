@@ -50,7 +50,7 @@ function wasmIsCurrent() {
   newestMtime(here, acc);
   newestMtime(resolve(here, ".."), acc);
   newestMtime(resolve(repo, "packages/loam/std"), acc);
-  newestMtime(resolve(repo, "packages/loam/runtime"), acc);
+  newestMtime(resolve(repo, "packages/zeus/hosts/common"), acc);
   newestMtime(resolve(repo, "packages/zeus/src"), acc);
   newestMtime(resolve(repo, "packages/http/src"), acc);
   newestMtime(resolve(repo, "packages/maya/src"), acc);
@@ -149,7 +149,7 @@ export default defineConfig({
           here,
           resolve(here, ".."),
           resolve(repo, "packages/loam/std"),
-          resolve(repo, "packages/loam/runtime"),
+          resolve(repo, "packages/zeus/hosts/common"),
           resolve(repo, "packages/zeus/src"),
           resolve(repo, "packages/http/src"),
           resolve(repo, "packages/maya/src"),

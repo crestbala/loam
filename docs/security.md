@@ -86,9 +86,11 @@ the two hid each other. Both halves are fixed, and the
 
    There are likely more. `nob fuzz-borrow` exists (ASan over generated
    programs) but is run by hand, and only on borrowck.
-2. **Trusted C.** `runtime/loam_rt.h` and the host C (~7k lines in
-   `loam_rt.h`, `net.c` and `zeus_plat.c` alone) carry every safety
-   guarantee. The generated C trusts them, and nothing fuzzes them.
+2. **Trusted C.** The C core codegen writes into every program
+   (`compiler/rtcore.loam`, 424 lines, plus about 1,100 lines of templates it
+   emits only when called) and the host C (about 6,250 lines under
+   `packages/zeus/hosts`) carry every safety guarantee. The generated C
+   trusts them, and nothing fuzzes them. `nob trusted` counts both.
 3. **FFI is trusted code.** A `#[c]` binding or a `#![c_source]` file can
    break every guarantee. Since 2026-11-11 only its own module can call a
    binding, so the trust ends at that module's wrappers, but nothing yet

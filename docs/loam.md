@@ -274,8 +274,9 @@ on macOS a GUI build also compiles Cocoa.
 
 What `loam` does about that:
 
-- Runtime files (`zeus_plat.c`, `packages/zeus/hosts/desktop/mac.m`) compile once into
-  `packages/loam/runtime/.obj/` and are reused until those sources change.
+- Host files (`packages/zeus/hosts/common/zeus_host.c`,
+  `packages/zeus/hosts/desktop/mac.m`) and `#![c_source]` files compile once
+  into `obj/` and are reused until those sources change.
 - `ZEUS_HEADLESS=1` (tests) skips Cocoa and uses `-O0` on generated C.
 - GUI builds use `-O1` on generated C, not `-O2` (same overflow checks,
   much less optimizer work).

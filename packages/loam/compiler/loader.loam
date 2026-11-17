@@ -118,12 +118,10 @@ fn std_dir() -> string {
     return "{{home()}}/packages/loam/std"
 }
 
-fn rt_path() -> string {
-    return "{{home()}}/packages/loam/runtime/loam_rt.h"
-}
-
-fn runtime_dir() -> string {
-    return "{{home()}}/packages/loam/runtime"
+/** *Where loamc caches the C objects it compiles once (the Zeus hosts, */
+/** *`#![c_source]` files). `nob clean` removes it. */
+fn obj_dir() -> string {
+    return "{{home()}}/obj"
 }
 
 /** *The framework roots a build always searches, after `LOAM_PATH`. */
@@ -1264,7 +1262,6 @@ fn load_module(path: string, alias: string) -> bool {
 /** *Load the program whose entry file is `path`. False after a load or parse */
 /** *error (the diagnostics are in `ast.DIAGS`). */
 fn load(path: string) -> bool {
-    typecheck.RT_PATH = rt_path()
     typecheck.STD_DIR = std_dir()
     discover(path)
     PARSER.value_key = false

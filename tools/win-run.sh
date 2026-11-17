@@ -33,7 +33,7 @@ for c in "$IN"/*.c; do
         objs="$objs $work/$b.dep$i.o"
     done < "$IN/$b.deps"
     # shellcheck disable=SC2086
-    [ $ok = 1 ] && { $CC -std=gnu99 -O1 -w -I packages/loam/runtime "$c" $objs -o "$work/$b.exe" $links >>"$log" 2>&1 || ok=0; }
+    [ $ok = 1 ] && { $CC -std=gnu99 -O1 -w "$c" $objs -o "$work/$b.exe" $links >>"$log" 2>&1 || ok=0; }
     if [ $ok = 1 ] && [ -f "$IN/$b.trap" ]; then
         # Must panic, with the `.trap` message on stderr.
         if ZEUS_HEADLESS=1 MAYA_HEADLESS=1 timeout "$limit" "$work/$b.exe" < /dev/null > "$work/$b.out" 2>"$work/$b.err"; then

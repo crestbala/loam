@@ -7,7 +7,7 @@
 # reuses the output (`loam: fresh` under LOAM_TIME) and when it must not.
 # Prints one line per failed case and nothing when every case holds.
 # <tag> names the C source, so two compilers checked at once keep apart the
-# objects they leave in `<runtime>/.obj/`.
+# objects they leave in `<home>/obj/`.
 #
 # The cases come in independent groups, each from its own first build in its
 # own directory (and its own C source name, so no two share an object), and
@@ -17,7 +17,7 @@ set -u
 L=$1
 W=$2
 T=$3
-RT_OBJ="${LOAM_HOME:?}/packages/loam/runtime/.obj"
+OBJ_DIR="${LOAM_HOME:?}/obj"
 
 # `app <dir> <tag>`: the two-module app with a C source named after <tag>.
 app() {
@@ -130,5 +130,5 @@ wait
 for g in $groups; do
     cat "$W/$g.failures"
 done
-rm -f "$RT_OBJ"/c_probe_"$T"*_*.o
+rm -f "$OBJ_DIR"/c_probe_"$T"*_*.o
 exit 0

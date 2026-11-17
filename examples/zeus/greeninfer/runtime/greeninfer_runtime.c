@@ -18,12 +18,13 @@
  *   [row cap:       scratch]               query staging for the Loam sweep
  *
  * Linked automatically by loam for native targets when this file sits in
- * runtime/ next to the entry program (driver.c). Requires -I runtime dir.
+ * runtime/ next to the entry program (driver.c). Its view of Loam values is
+ * `loam_abi.h` (packages/zeus/hosts/common).
  */
 #ifndef _DARWIN_C_SOURCE
 #define _DARWIN_C_SOURCE /* clock_gettime on macOS (10.12+) */
 #endif
-#include "loam_rt.h"
+#include "loam_abi.h"
 #if defined(__aarch64__)
 #include <arm_neon.h>
 #endif
@@ -36,6 +37,7 @@
 #include <stdlib.h>
 #include <dirent.h>
 #include <stdint.h>
+#include <stdio.h> /* remove */
 
 #define GI_DIM 384
 #define GI_MAX_MAPS 8
@@ -208,10 +210,17 @@ int32_t loam_engine_gi_now_us(void) {
 /* ---- file data-movement trampolines (watcher.loam) -----------------------
  * Reading, listing, and mtimes are OS I/O; *what* to read, recurse into, or
  * exclude is Loam policy (walk, filters, manifest diff all in watcher.loam).
- * Fresh allocations each call: Loam strings are never freed, and the caller
- * (the walk) holds several of these at once, so no static buffer. */
+ * Each result is an owned Loam string (`loam_abi_str_copy`), freed when the
+ * caller (the walk) drops it; the scratch buffer is freed here. */
 
 static loam_str loam_empty_str(void) { return (loam_str){ .ptr = "", .len = 0 }; }
+
+/* `buf[0..n]` as an owned Loam string; frees `buf`. */
+static loam_str owned_from(char *buf, size_t n) {
+    loam_str s = loam_abi_str_copy(buf, (int64_t)n);
+    free(buf);
+    return s;
+}
 
 /* Whole file as a Loam string (NUL-terminated, len = bytes). Empty on error
  * or when the file is larger than 256 MB. */
@@ -231,8 +240,7 @@ loam_str loam_watcher_gi_read_file(loam_str path) {
         got += (size_t)r;
     }
     close(fd);
-    buf[got] = 0;
-    return (loam_str){ .ptr = buf, .len = (int64_t)got };
+    return owned_from(buf, got);
 }
 
 /* One directory level as "name\n" lines; directories carry a trailing '/'
@@ -263,8 +271,7 @@ loam_str loam_watcher_gi_dir_list(loam_str path) {
         buf[len++] = '\n';
     }
     closedir(d);
-    buf[len] = 0;
-    return (loam_str){ .ptr = buf, .len = (int64_t)len };
+    return owned_from(buf, len);
 }
 
 /* Modification time in whole seconds since the epoch; -1 on error. */

@@ -2,9 +2,9 @@
 //
 // Every panic ends here: a checked op that traps, a bounds check, `panic(msg)`,
 // and the runtime's own (out of memory). C calls `report` through the
-// two-line `loam_panic` / `loam_panic_str` in `loam_rt.h`, which only turn C
-// strings into views. The loader imports this module into every program,
-// and DCE keeps `report` and `trap` as C roots.
+// two-line `loam_panic` / `loam_panic_str` in the C core (`rtcore.loam`),
+// which only turn C strings into views. The loader imports this module into
+// every program, and DCE keeps `report` and `trap` as C roots.
 //
 // It must work when nothing else does, so it:
 // - allocates nothing (an out-of-memory panic comes through here);
@@ -12,7 +12,7 @@
 //   initialize, or on a worker thread);
 // - keeps no check that could panic again (`ranges` proves every one).
 //
-// What stays C, in `loam_rt.h`: the recoverable-trap arm (`setjmp` must run
+// What stays C, in the core and codegen: the recoverable-trap arm (`setjmp` must run
 // in the frame it returns to) with its 512-byte message buffer, which the
 // hosts read; `unwind` jumps to that arm, and `record` fills the buffer.
 

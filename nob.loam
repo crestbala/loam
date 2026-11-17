@@ -2567,24 +2567,26 @@ fn ig_api_freeze() {
     ok("api freeze (every name in packages/zeus/docs/api-freeze.md still exists)")
 }
 
-/** *The host contract (`packages/zeus/hosts/common/zeus_host.h`) agrees with */
-/** *what codegen emits: a Zeus program's C with every fn kept (so every */
-/** *bodyless hook and every entry point has its prototype) compiles with the */
-/** *header in front, and every definition in `zeus_host.c` has a prototype */
-/** *there. Generated C does not include the header, so on a native build */
-/** *nothing else would catch a type that drifted. */
+/** *The host contract (`packages/zeus/hosts/common/zeus_host.h` and the */
+/** *`loam_abi.h` it includes) agrees with what codegen emits: a Zeus */
+/** *program's C with every fn kept (so every bodyless hook, entry point and */
+/** *host ABI export is defined) compiles with the header after it, so each */
+/** *prototype meets its definition and the layout asserts see codegen's */
+/** *types; and every definition in `zeus_host.c` has a prototype there. */
+/** *Generated C does not include the header, so on a native build nothing */
+/** *else would catch a type that drifted. */
 fn ig_host_contract() {
     mark("host contract")
     let common = "packages/zeus/hosts/common"
     let gen = tmpf("host_contract.c")
     let l = tmpf("host_contract.log")
-    let flags = "-std=gnu99 -fsyntax-only -DLOAM_ALLOC_TRACE -Ipackages/loam/runtime -I{{common}}"
+    let flags = "-std=gnu99 -fsyntax-only -DLOAM_ALLOC_TRACE -I{{common}}"
     if !sh("LOAM_NO_DCE=1 {{shq(LOAMC)}} --emit-c packages/loam/tests/compile_pass/zeus_virt_var.loam -o {{shq(gen)}} > {{shq(l)}} 2>&1") {
         bad("host contract (emit C)", l)
         return
     }
-    if !sh("cc {{flags}} -w -include zeus_host.h {{shq(gen)}} > {{shq(l)}} 2>&1") {
-        bad("host contract (zeus_host.h disagrees with generated C)", l)
+    if !sh("grep -q '^loam_str loam_abi_str_copy(' {{shq(gen)}} && printf '\\n#include \"zeus_host.h\"\\n' >> {{shq(gen)}} && cc {{flags}} -w {{shq(gen)}} > {{shq(l)}} 2>&1") {
+        bad("host contract (zeus_host.h or loam_abi.h disagrees with generated C)", l)
         return
     }
     if !sh("cc {{flags}} -Wmissing-prototypes -Werror {{common}}/zeus_host.c > {{shq(l)}} 2>&1") {
@@ -3441,11 +3443,13 @@ fn grammar() -> int {
 // --- trusted: lines of C nothing checks (docs/runtime-in-loam.md, R0) -------
 //
 // Every tracked .c / .h / .m file, by group. The runtime group has a budget:
-// each step of docs/runtime-in-loam.md lowers it in the same change that
-// deletes the C, so the runtime can only shrink. The target is zero.
+// each step of docs/runtime-in-loam.md lowered it in the same change that
+// deleted the C, and R6.6e took it to zero with the directory. The group
+// stays, so C that comes back under `packages/loam/runtime/` fails the check;
+// the C core codegen writes is counted as emitted C instead.
 
-/** *Lines allowed under `packages/loam/runtime/`. Lower it when a step lands. */
-let RUNTIME_LINE_BUDGET: int = 573
+/** *Lines allowed under `packages/loam/runtime/`: none since R6.6e. */
+let RUNTIME_LINE_BUDGET: int = 0
 
 /** *The group a tracked C file belongs to, or `""` for C that is not shipped. */
 fn trusted_group(path: string) -> string {
@@ -3623,7 +3627,7 @@ fn trusted_unsafe_lines(verbose: bool) -> int {
 /** *carries when it calls it (docs/runtime-in-loam.md, R6). Still trusted C: */
 /** *counted here so moving C out of `runtime/` does not hide it. */
 let EMITTED_C_FNS: []string = []string {
-    "int_helper_def", "vec_push_defs", "vec_pop_defs", "core_op_def", "rt_verb_def", "wasm_libc_defs",
+    "int_helper_def", "vec_push_defs", "vec_pop_defs", "core_op_def", "rt_verb_def", "wasm_libc_defs", "host_abi_defs",
 }
 
 fn trusted_emitted_lines() {
@@ -3645,8 +3649,18 @@ fn trusted_emitted_lines() {
             total += 1
         }
     }
-    fmt.println("emitted C (codegen.loam templates, only what a program calls):")
-    fmt.println("  {{right_align(total, 7)}}  total emitted")
+    // The core every unit starts with (`rtcore.loam`), formerly `loam_rt.h`.
+    let core_lines = split_lines(sys.read_file("{{ROOT}}/packages/loam/compiler/rtcore.loam"))
+    let mut core_total = 0
+    for i in 0..core_lines.len {
+        if starts_with(trim(core_lines[i]), "w(\"") {
+            core_total += 1
+        }
+    }
+    fmt.println("emitted C (compiler templates):")
+    fmt.println("  {{right_align(core_total, 7)}}  rtcore.loam (every unit)")
+    fmt.println("  {{right_align(total, 7)}}  codegen.loam (only what a program calls)")
+    fmt.println("  {{right_align(total + core_total, 7)}}  total emitted")
 }
 
 /** *`true`, after saying why, when the runtime C is over its budget or a */
@@ -3670,14 +3684,14 @@ fn trusted() -> int {
         return 1
     }
     trusted_emitted_lines()
-    fmt.println("runtime budget: {{runtime_lines}} of {{RUNTIME_LINE_BUDGET}} lines (target 0)")
+    fmt.println("runtime budget: {{runtime_lines}} of {{RUNTIME_LINE_BUDGET}} lines")
     return 0
 }
 
 fn clean() -> int {
     let size_before = trim(sys.exec("cd {{shq(ROOT)}} && du -sk . | cut -f1"))
     let fixed_paths = []string {
-        "obj", "packages/loam/tests/tmp", "packages/loam/runtime/.obj", "out/cross",
+        "obj", "packages/loam/tests/tmp", "out/cross",
         "packages/tooling/editors/zed/target", "packages/tooling/editors/zed/grammars",
         "packages/tooling/editors/zed/extension.wasm",
     }
