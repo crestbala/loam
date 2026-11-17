@@ -5307,7 +5307,8 @@ fn c_sym_of(d: int) -> string {
 }
 
 /** *True for a `#[c]` binding built only for wasm (`#[os("wasm")]`): the */
-/** *symbol is a web-host import, not a C library function. */
+/** *symbol is a web-host import, not a C library function. A `string` it */
+/** *takes goes as two arguments, its bytes and its count, without a copy. */
 fn is_host_import(d: int) -> bool {
     return (typecheck.os_mask(d) & ast.OS_ALL) == ast.OS_WASM
 }
@@ -5389,6 +5390,9 @@ fn c_bindings() {
                     w(", ")
                 }
                 c_abi_type(param_type(ft, k))
+                if host_import && tkind(param_type(ft, k)) == TK.String {
+                    w(", int32_t")
+                }
             }
             if fixed >= 0 {
                 w(", ...")
@@ -5401,8 +5405,10 @@ fn c_bindings() {
             w("static ")
             fn_sig(d, false)
             w(" {\n")
+            // A host import reads a string as its bytes and count, so it is
+            // passed in place: no NUL-terminated copy.
             for k in 0..np {
-                if tkind(param_type(ft, k)) == TK.String {
+                if tkind(param_type(ft, k)) == TK.String && !host_import {
                     w("    char _cb{{k}}[256];\n")
                     w("    char *_cs{{k}} = loam_csym_cstr({{cid(param_name(d, k))}}, _cb{{k}}, sizeof _cb{{k}});\n")
                 }
@@ -5421,7 +5427,9 @@ fn c_bindings() {
                 }
                 let pt = param_type(ft, k)
                 let pk = tkind(pt)
-                if pk == TK.String {
+                if pk == TK.String && host_import {
+                    w("{{cid(param_name(d, k))}}.ptr, (int32_t){{cid(param_name(d, k))}}.len")
+                } else if pk == TK.String {
                     w("_cs{{k}}")
                 } else if pk == TK.Vec {
                     w("{{cid(param_name(d, k))}}.ptr")
@@ -5440,7 +5448,7 @@ fn c_bindings() {
             }
             for k in 0..np {
                 let pk = tkind(param_type(ft, k))
-                if pk == TK.String {
+                if pk == TK.String && !host_import {
                     w("    if (_cs{{k}} != _cb{{k}}) free(_cs{{k}});\n")
                 } else if pk == TK.Vec {
                     // An owned buffer was retained by the caller. A borrowed

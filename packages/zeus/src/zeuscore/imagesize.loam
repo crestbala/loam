@@ -11,10 +11,13 @@
 // The base64 body is decoded into `header_bytes`, grown once to 4096.
 
 import "std:str"
+import "std:sys"
 import "platform.loam"
 
 /** *First `cap` bytes of `path`, or empty on wasm and on any failure. */
-fn read_head(path: string, cap: int) -> []u8 {}
+fn read_head(path: string, cap: int) -> []u8 {
+    return sys.read_prefix(path, cap)
+}
 
 /** *1 when the host has an image-size hook. Hosts bind it before `main`. */
 fn image_host_bound() -> int {}

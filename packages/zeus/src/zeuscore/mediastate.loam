@@ -13,6 +13,7 @@
 // promotes the next one once the current file was read or the app was already
 // told its count.
 
+import "std:buf"
 import "std:str"
 
 const SLOT_COUNT: int = 8
@@ -29,17 +30,153 @@ const CAP_VOICE: int = 64
 const CAP_FULLSCREEN: int = 128
 const CAP_WASM: int = 256
 
+// The player behind a slot: on the web, the loader's `zeus` imports; on a
+// native host, the callbacks it registered (`zeus_set_media`, C hooks in
+// `zeus_plat.c`, each 0 / "" when the host left it out).
+
 /** *One bit per non-NULL host callback, plus `CAP_WASM` on wasm. */
-fn media_host_caps() -> int {}
-fn host_open(slot: int, src: string) -> int {}
-fn host_cmd(slot: int, command: int, value: int) {}
-fn host_get(slot: int, what: int) -> int {}
-fn host_text(slot: int, what: int) -> string {}
-fn host_pick() {}
-fn host_pick_audio() {}
-fn host_voice(what: int, src: string, out: string) -> int {}
-fn host_fullscreen(on: int) -> int {}
+#[os("wasm")]
+fn media_host_caps() -> int {
+    return CAP_WASM
+}
+
+#[os("posix", "windows")]
+fn media_host_caps() -> int {
+    return native_caps()
+}
+
+#[os("wasm")]
+fn host_open(slot: int, src: string) -> int {
+    return js_media_open(slot, src)
+}
+
+#[os("posix", "windows")]
+fn host_open(slot: int, src: string) -> int {
+    return native_open(slot, src)
+}
+
+#[os("wasm")]
+fn host_cmd(slot: int, command: int, value: int) {
+    js_media_cmd(slot, command, value)
+}
+
+#[os("posix", "windows")]
+fn host_cmd(slot: int, command: int, value: int) {
+    native_cmd(slot, command, value)
+}
+
+#[os("wasm")]
+fn host_get(slot: int, what: int) -> int {
+    return js_media_get(slot, what)
+}
+
+#[os("posix", "windows")]
+fn host_get(slot: int, what: int) -> int {
+    return native_get(slot, what)
+}
+
+/** *The text buffer a player answers into (a title, an error): the host */
+/** *writes at most one byte less. */
+const HOST_TEXT_CAP: int = 4096
+
+/** *Reused by every `host_text`, grown once: a call allocates only its */
+/** *answer, and nothing when the answer is empty (an error asked per frame). */
+let mut host_text_buf: []u8 = []u8 {}
+
+#[os("wasm")]
+fn host_text(slot: int, what: int) -> string {
+    if host_text_buf.len < HOST_TEXT_CAP {
+        host_text_buf = buf.with_len(HOST_TEXT_CAP)
+    }
+    let got = js_media_text(slot, what, &mut host_text_buf, host_text_buf.len)
+    if got <= 0 {
+        return ""
+    }
+    return buf.prefix_to_string(&host_text_buf, got)
+}
+
+#[os("posix", "windows")]
+fn host_text(slot: int, what: int) -> string {
+    return native_text(slot, what)
+}
+
+#[os("wasm")]
+fn host_pick() {
+    js_media_pick()
+}
+
+#[os("posix", "windows")]
+fn host_pick() {
+    native_pick()
+}
+
+/** *The web picker takes audio too. */
+#[os("wasm")]
+fn host_pick_audio() {
+    js_media_pick()
+}
+
+#[os("posix", "windows")]
+fn host_pick_audio() {
+    native_pick_audio()
+}
+
+/** *No speech on the web host. */
+#[os("wasm")]
+fn host_voice(what: int, src: string, out: string) -> int {
+    return 0
+}
+
+#[os("posix", "windows")]
+fn host_voice(what: int, src: string, out: string) -> int {
+    return native_voice(what, src, out)
+}
+
+#[os("wasm")]
+fn host_fullscreen(on: int) -> int {
+    return js_fullscreen(on)
+}
+
+#[os("posix", "windows")]
+fn host_fullscreen(on: int) -> int {
+    return native_fullscreen(on)
+}
+
 fn host_redraw() {}
+
+fn native_caps() -> int {}
+fn native_open(slot: int, src: string) -> int {}
+fn native_cmd(slot: int, command: int, value: int) {}
+fn native_get(slot: int, what: int) -> int {}
+fn native_text(slot: int, what: int) -> string {}
+fn native_pick() {}
+fn native_pick_audio() {}
+fn native_voice(what: int, src: string, out: string) -> int {}
+fn native_fullscreen(on: int) -> int {}
+
+#[os("wasm")]
+#[c("media_open")]
+fn js_media_open(slot: int, src: string) -> int {}
+
+#[os("wasm")]
+#[c("media_cmd")]
+fn js_media_cmd(slot: int, command: int, value: int) {}
+
+#[os("wasm")]
+#[c("media_get")]
+fn js_media_get(slot: int, what: int) -> int {}
+
+#[os("wasm")]
+#[c("media_text")]
+fn js_media_text(slot: int, what: int, out: &mut []u8, cap: int) -> int {}
+
+#[os("wasm")]
+#[c("media_pick")]
+fn js_media_pick() {}
+
+#[os("wasm")]
+#[c("fullscreen")]
+fn js_fullscreen(on: int) -> int {}
 
 let mut slot_state = [8]int { 0, 0, 0, 0, 0, 0, 0, 0 }
 let mut slot_position = [8]int { 0, 0, 0, 0, 0, 0, 0, 0 }

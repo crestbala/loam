@@ -7,6 +7,8 @@
 // and `imagesize.loam`; the functions below forward to them.
 
 import "mediastate.loam"
+import "std:buf"
+import "std:sys"
 
 fn plat_run() {}
 fn plat_headless() -> int {}
@@ -39,10 +41,14 @@ fn plat_measure_span(s: string, from: int, to: int, px: int, w: &mut int, h: &mu
 fn plat_font_bytes(src: string) -> string {}
 fn plat_set_window(title: string, width: int, height: int) {}
 /** *Update the host window title without reopening it (router `Meta.title`). */
-fn plat_set_title(title: string) {}
+fn plat_set_title(title: string) {
+    set_title_os(title)
+}
 /** *Update one piece of the page's metadata (`Meta`, by field name). "" removes */
 /** *it. Only a browser has a `<head>`; other hosts ignore this. */
-fn plat_set_head(key: string, value: string) {}
+fn plat_set_head(key: string, value: string) {
+    set_head_os(key, value)
+}
 /** *Window chrome: 0 the host's title bar, 1 drawn by the app (`TitleBar`). */
 fn plat_set_chrome(mode: int) {}
 /** *The host title bar's box under app-drawn chrome: [height, lead, trail] in */
@@ -56,7 +62,9 @@ fn plat_clipboard_write(text: string) {}
 fn plat_clipboard_last() -> string {}
 /** *1 when shortcuts follow Apple conventions (⌘, ⌥, ⇧ glyphs): macOS, iOS, */
 /** *and a browser on an Apple platform. */
-fn plat_apple_keys() -> int {}
+fn plat_apple_keys() -> int {
+    return apple_keys_os()
+}
 /** *Host view size in points (browser canvas or native content view). On */
 /** *desktop hosts before the window exists this is the device screen's work */
 /** *area (window_size() → the default window is screen-filling); after the */
@@ -143,37 +151,70 @@ fn plat_now_ms() -> int {}
 fn plat_clock_skip(ms: int) {}
 /** *Router history: mirror a pushed / replaced entry into the host's own */
 /** *back stack (browser history, Cocoa/Android back button). */
-fn plat_history_push(path: string) {}
-fn plat_history_replace(path: string) {}
-fn plat_history_back() {}
+fn plat_history_push(path: string) {
+    history_push_os(path)
+}
+
+fn plat_history_replace(path: string) {
+    history_replace_os(path)
+}
+
+fn plat_history_back() {
+    history_back_os()
+}
+
 /** *1 when route `index`'s code is loaded. Always 1 where code is not split. */
-fn plat_chunks_ready(index: int) -> int {}
+fn plat_chunks_ready(index: int) -> int {
+    return chunks_ready_os(index)
+}
 /** *Start loading route `index`'s code. The host answers through */
 /** *`router.engine_chunks_done`. */
-fn plat_chunks_load(index: int) {}
+fn plat_chunks_load(index: int) {
+    chunks_load_os(index)
+}
 /** *Fetch route `index`'s code ahead of a navigation that may not happen. */
-fn plat_chunks_preload(index: int) {}
+fn plat_chunks_preload(index: int) {
+    chunks_preload_os(index)
+}
 /** *The light / dark choice the user saved: 0 light, 1 dark, -1 none yet. */
-fn plat_appearance_load() -> int {}
+fn plat_appearance_load() -> int {
+    return appearance_load_os()
+}
 /** *Remember the user's light / dark choice across visits. */
-fn plat_appearance_save(dark: int) {}
+fn plat_appearance_save(dark: int) {
+    appearance_save_os(dark)
+}
 /** *Send analytics to `endpoint`. `local` also reports from a loopback host. */
 /** *Web only, like the two below: elsewhere these do nothing. */
-fn plat_track_start(endpoint: string, local: int) {}
+fn plat_track_start(endpoint: string, local: int) {
+    track_start_os(endpoint, local)
+}
 /** *Report one thing. `kind`: 0 page (`name` is the path), 1 click, 2 event. */
-fn plat_track_send(kind: int, name: string, data: string) {}
+fn plat_track_send(kind: int, name: string, data: string) {
+    track_send_os(kind, name, data)
+}
 /** *Opt this browser out of analytics (1) or back in (0). */
-fn plat_track_opt_out(off: int) {}
+fn plat_track_opt_out(off: int) {
+    track_opt_out_os(off)
+}
 /** *1 when this browser is opted out. */
-fn plat_track_opted_out() -> int {}
+fn plat_track_opted_out() -> int {
+    return track_opted_out_os()
+}
 /** *1 when `ZEUS_LAYOUT_VERIFY=1` asks layout to check its memo. Always 0 in a web */
 /** *release, which leaves the check's code out of the download. */
-fn plat_layout_verify() -> int {}
+fn plat_layout_verify() -> int {
+    return layout_verify_os()
+}
 /** *Open a URL outside the app. A no-op on hosts without a browser to hand it to. */
-fn plat_open_external(url: string) {}
+fn plat_open_external(url: string) {
+    open_external_os(url)
+}
 /** *The path a host wants the app to start on (the browser's URL), "" for none. */
 /** *Read before the first build, so a deep link never builds another page first. */
-fn plat_boot_path() -> string {}
+fn plat_boot_path() -> string {
+    return boot_path_os()
+}
 /** *1 = overlay scroll hosts (iOS/Android): thumb drag is disabled in input */
 /** *and the track/thumb is not painted — panes scroll by touch only. */
 fn plat_overlay_scroll() -> int {}
@@ -191,3 +232,284 @@ fn plat_inset_get(out: &mut []int) {}
 /** *inset). iOS and Android write these every frame; tests set them through */
 /** *`zeus.engine_set_insets` so a layout pass sees a notched viewport. */
 fn plat_set_insets(top: int, right: int, bottom: int, left: int) {}
+
+// --- per target -------------------------------------------------------------
+// The web host's side of the contract is its `zeus` imports (`#[os("wasm")]`
+// `#[c]` bindings, `hosts/web/loader.js`). Elsewhere a browser-only service
+// does nothing, and what a native host provides is a C hook in `zeus_plat.c`.
+
+#[os("wasm")]
+fn set_title_os(title: string) {
+    js_set_title(title)
+}
+
+#[os("posix", "windows")]
+fn set_title_os(title: string) {
+    native_set_title(title)
+}
+
+/** *The native title: kept for `zeus_window_title` and handed to the host's */
+/** *title hook. */
+fn native_set_title(title: string) {}
+
+#[os("wasm")]
+fn set_head_os(key: string, value: string) {
+    js_set_head(key, value)
+}
+
+#[os("posix", "windows")]
+fn set_head_os(key: string, value: string) {
+    return
+}
+
+#[os("wasm")]
+fn apple_keys_os() -> int {
+    return js_apple_keys()
+}
+
+#[os("apple")]
+fn apple_keys_os() -> int {
+    return 1
+}
+
+/** *A headless run tests the Apple glyphs, so its snapshots are the same on */
+/** *every machine. */
+#[os("linux", "android", "other", "windows")]
+fn apple_keys_os() -> int {
+    return if plat_headless() != 0 { 1 } else { 0 }
+}
+
+#[os("wasm")]
+fn history_push_os(path: string) {
+    js_history_push(path)
+}
+
+#[os("posix", "windows")]
+fn history_push_os(path: string) {
+    return
+}
+
+#[os("wasm")]
+fn history_replace_os(path: string) {
+    js_history_replace(path)
+}
+
+#[os("posix", "windows")]
+fn history_replace_os(path: string) {
+    return
+}
+
+#[os("wasm")]
+fn history_back_os() {
+    js_history_back()
+}
+
+#[os("posix", "windows")]
+fn history_back_os() {
+    return
+}
+
+#[os("wasm")]
+fn chunks_ready_os(index: int) -> int {
+    return js_chunks_ready(index)
+}
+
+#[os("posix", "windows")]
+fn chunks_ready_os(index: int) -> int {
+    return 1
+}
+
+#[os("wasm")]
+fn chunks_load_os(index: int) {
+    js_chunks_load(index)
+}
+
+#[os("posix", "windows")]
+fn chunks_load_os(index: int) {
+    return
+}
+
+#[os("wasm")]
+fn chunks_preload_os(index: int) {
+    js_chunks_preload(index)
+}
+
+#[os("posix", "windows")]
+fn chunks_preload_os(index: int) {
+    return
+}
+
+#[os("wasm")]
+fn appearance_load_os() -> int {
+    return js_appearance_load()
+}
+
+#[os("posix", "windows")]
+fn appearance_load_os() -> int {
+    return -1
+}
+
+#[os("wasm")]
+fn appearance_save_os(dark: int) {
+    js_appearance_save(dark)
+}
+
+#[os("posix", "windows")]
+fn appearance_save_os(dark: int) {
+    return
+}
+
+#[os("wasm")]
+fn track_start_os(endpoint: string, local: int) {
+    js_track_start(endpoint, local)
+}
+
+#[os("posix", "windows")]
+fn track_start_os(endpoint: string, local: int) {
+    return
+}
+
+#[os("wasm")]
+fn track_send_os(kind: int, name: string, data: string) {
+    js_track_send(kind, name, data)
+}
+
+#[os("posix", "windows")]
+fn track_send_os(kind: int, name: string, data: string) {
+    return
+}
+
+#[os("wasm")]
+fn track_opt_out_os(off: int) {
+    js_track_opt_out(off)
+}
+
+#[os("posix", "windows")]
+fn track_opt_out_os(off: int) {
+    return
+}
+
+#[os("wasm")]
+fn track_opted_out_os() -> int {
+    return js_track_opted_out()
+}
+
+#[os("posix", "windows")]
+fn track_opted_out_os() -> int {
+    return 0
+}
+
+/** *A browser has no environment to ask. */
+#[os("wasm")]
+fn layout_verify_os() -> int {
+    return 0
+}
+
+/** *-1 until `layout_verify_os` first reads the environment. */
+let mut layout_verify_state: int = -1
+
+#[os("posix", "windows")]
+fn layout_verify_os() -> int {
+    if layout_verify_state < 0 {
+        layout_verify_state = if sys.env("ZEUS_LAYOUT_VERIFY") == "1" { 1 } else { 0 }
+    }
+    return layout_verify_state
+}
+
+#[os("wasm")]
+fn open_external_os(url: string) {
+    js_open_external(url)
+}
+
+#[os("posix", "windows")]
+fn open_external_os(url: string) {
+    return
+}
+
+/** *The longest start path the browser's is read up to. */
+const BOOT_PATH_CAP: int = 2048
+
+#[os("wasm")]
+fn boot_path_os() -> string {
+    let mut path = buf.with_len(BOOT_PATH_CAP)
+    let got = js_boot_path(&mut path, path.len)
+    if got <= 0 {
+        return ""
+    }
+    return buf.prefix_to_string(&path, got)
+}
+
+#[os("posix", "windows")]
+fn boot_path_os() -> string {
+    return ""
+}
+
+// The web host's imports. A string goes as its bytes and count.
+
+#[os("wasm")]
+#[c("set_title")]
+fn js_set_title(title: string) {}
+
+#[os("wasm")]
+#[c("set_head")]
+fn js_set_head(key: string, value: string) {}
+
+#[os("wasm")]
+#[c("apple_keys")]
+fn js_apple_keys() -> int {}
+
+#[os("wasm")]
+#[c("history_push")]
+fn js_history_push(path: string) {}
+
+#[os("wasm")]
+#[c("history_replace")]
+fn js_history_replace(path: string) {}
+
+#[os("wasm")]
+#[c("history_back")]
+fn js_history_back() {}
+
+#[os("wasm")]
+#[c("chunks_ready")]
+fn js_chunks_ready(index: int) -> int {}
+
+#[os("wasm")]
+#[c("chunks_load")]
+fn js_chunks_load(index: int) {}
+
+#[os("wasm")]
+#[c("chunks_preload")]
+fn js_chunks_preload(index: int) {}
+
+#[os("wasm")]
+#[c("appearance_load")]
+fn js_appearance_load() -> int {}
+
+#[os("wasm")]
+#[c("appearance_save")]
+fn js_appearance_save(dark: int) {}
+
+#[os("wasm")]
+#[c("track_start")]
+fn js_track_start(endpoint: string, local: int) {}
+
+#[os("wasm")]
+#[c("track_send")]
+fn js_track_send(kind: int, name: string, data: string) {}
+
+#[os("wasm")]
+#[c("track_opt_out")]
+fn js_track_opt_out(off: int) {}
+
+#[os("wasm")]
+#[c("track_opted_out")]
+fn js_track_opted_out() -> int {}
+
+#[os("wasm")]
+#[c("open_external")]
+fn js_open_external(url: string) {}
+
+#[os("wasm")]
+#[c("boot_path")]
+fn js_boot_path(out: &mut []u8, cap: int) -> int {}

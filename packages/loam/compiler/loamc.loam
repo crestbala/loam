@@ -1221,8 +1221,9 @@ fn client_c_ok() -> bool {
             if (TARGET_WASM && mask != 0 && off_wasm) || (!TARGET_WASM && typecheck.MODS[m].is_std) {
                 continue
             }
-            // An `#[os("wasm")]` binding is a web-host import, which is there.
-            if TARGET_WASM && codegen.is_host_import(d) {
+            // An `#[os("wasm")]` binding is a web-host import: there on wasm,
+            // and not built for iOS or Android.
+            if codegen.is_host_import(d) {
                 continue
             }
             fmt.eprintln("{{typecheck.MODS[m].path}}:{{ast.INFO[d].loc.line}}: error: #[c] fn '{{ast.INFO[d].name}}' is reachable, and C runs only on native builds. Keep it behind #[server] or out of this target")
