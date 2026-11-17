@@ -4382,8 +4382,7 @@ let mut titlebar_sig: Signal<int> = Signal { id: 0 }
 
 /** *The box as one int (height, lead, trail: 10 bits each). */
 fn titlebar_packed() -> int {
-    let mut b = []int { 0, 0, 0 }
-    platform.plat_titlebar_get(b)
+    let b = platform.titlebar_box
     return b[0] % 1024 * 1048576 + b[1] % 1024 * 1024 + b[2] % 1024
 }
 

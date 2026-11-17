@@ -88,18 +88,23 @@ static void linux_paint(void) {
     XFlush(g_dpy);
 }
 
+/* The title hook (`zeus_set_title_hook`): handed the current title when it is
+   registered, then each new one (router `Meta.title`). */
+static void linux_apply_title(const char *t) {
+    if (!t || !t[0]) return;
+    strncpy(g_title, t, sizeof g_title - 1);
+    g_title[sizeof g_title - 1] = 0;
+    if (g_open) XStoreName(g_dpy, g_win, g_title);
+}
+
 static void linux_run(void) {
     XEvent ev;
     Atom wm_del;
     if (g_open) return;
+    zeus_set_title_hook(linux_apply_title);
     {
-        const char *t = zeus_window_title();
         int64_t ww = zeus_window_width();
         int64_t hh = zeus_window_height();
-        if (t && t[0]) {
-            strncpy(g_title, t, sizeof g_title - 1);
-            g_title[sizeof g_title - 1] = 0;
-        }
         if (ww > 0) g_w = (int)ww;
         if (hh > 0) g_h = (int)hh;
     }

@@ -501,6 +501,88 @@ fn read_prefix_os(path: string, cap: int) -> []u8 {
     return []u8 {}
 }
 
+/** *This process's memory in KB: Apple's `phys_footprint` (the number */
+/** *Xcode's memory gauge shows), the resident set on Linux and Android, the */
+/** *live heap on wasm. 0 where none is known (Windows, other). */
+fn mem_kb() -> int {
+    return mem_kb_os()
+}
+
+/** *This task's port, as `mach_task_self()`. Asked once: each */
+/** *`task_self_trap` adds a user reference to the send right. */
+let mut task_port: u32 = 0
+
+/** *`phys_footprint`: the u64 at byte 144 of `struct task_vm_info`, read */
+/** *whole (`TASK_VM_INFO` 22, 93 `natural_t`s, in 47 words). */
+#[os("apple")]
+fn mem_kb_os() -> int {
+    if task_port == 0 {
+        task_port = c_task_self_trap()
+    }
+    let mut info = buf_words(47)
+    let mut count = []u32 { 93 }
+    if c_task_info(task_port, 22, info, count) != 0 {
+        return 0
+    }
+    return int(info[18] / i64(1024))
+}
+
+/** *The `VmRSS:` line of `/proc/self/status`, already in kB. */
+#[os("linux", "android")]
+fn mem_kb_os() -> int {
+    return vmrss_kb(read_file("/proc/self/status"))
+}
+
+/** *The kB count on the `VmRSS:` line of a `/proc/<pid>/status` text, or 0. */
+fn vmrss_kb(status: string) -> int {
+    let at = str.index_of(status, "VmRSS:")
+    if at < 0 {
+        return 0
+    }
+    let mut kb = 0
+    let mut i = at + 6
+    while i < status.len && (status[i] == 32 || status[i] == 9) {
+        i = i + 1
+    }
+    while i < status.len && status[i] >= 48 && status[i] <= 57 {
+        kb = kb * 10 + int(status[i] - 48)
+        i = i + 1
+    }
+    return kb
+}
+
+#[os("wasm")]
+fn mem_kb_os() -> int {
+    return wasm_heap_used() / 1024
+}
+
+#[os("windows", "other")]
+fn mem_kb_os() -> int {
+    return 0
+}
+
+/** *Live wasm heap bytes: the wasm libc's own count (codegen's */
+/** *`wasm_libc_defs`). */
+#[os("wasm")]
+fn wasm_heap_used() -> int {}
+
+/** *`n` zeroed words for a C struct to be written into. */
+fn buf_words(n: int) -> []i64 {
+    let mut words = []i64 {}
+    for i in 0..n {
+        words.push(i64(0))
+    }
+    return words
+}
+
+#[os("apple")]
+#[c("task_self_trap")]
+fn c_task_self_trap() -> u32 {}
+
+#[os("apple")]
+#[c("task_info")]
+fn c_task_info(task: u32, flavor: i32, info: &mut []i64, count: &mut []u32) -> i32 {}
+
 /** *`ferror` straight from libc: nonzero when the stream hit an error. */
 #[os("posix", "windows")]
 #[c("ferror")]

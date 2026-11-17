@@ -449,30 +449,21 @@ static inline loam_str loam_trap_guard(loam_fn build) {
 /* --- runtime verbs libraries read ----------------------------------------
 
    The numbers a UI library needs and should not have to own: the monotonic
-   clock its deadlines run on, the live heap, and the allocation counter above.
+   clock its deadlines run on, and the allocation counter above.
    Each is defined once, here, so a library asks the runtime instead of reaching
    into a sibling translation unit.
 
-   On wasm the clock and the heap come from the host, which declares the two
-   imports below. Both are declared *once* in this file with their import
-   attributes: the host's own C declares them too, and a second declaration
-   without the attribute makes wasm-ld reject the pair with "import module
-   mismatch for symbol: zeus_js_now_ms" (one object says `zeus`, the other
-   `env`). The `__wasm32__` ordering matters as well — the import block lives
-   further down, so the attribute-bearing declaration is the one that wins. */
+   On wasm the clock comes from the host, through the import below. */
 #if defined(__wasm32__)
 /* `zeus_js_now_ms` is the browser's `performance.now` import, whose attribute
    must appear exactly once for the whole link — the host's own C declares it
    too, and a second declaration without the attribute makes wasm-ld reject the
    pair with "import module mismatch for symbol: zeus_js_now_ms" (one object
    says `zeus`, the other `env`), which is why it is declared here and not
-   redeclared below. `zeus_heap_used` is not an import at all: it is the wasm
-   libc's own allocator statistic (codegen.loam, `wasm_libc_defs`). */
+   redeclared below. */
 __attribute__((import_module("zeus"), import_name("now_ms")))
 int64_t zeus_js_now_ms(void);
-int32_t zeus_heap_used(void);
 static inline int64_t loam_now_ms(void) { return zeus_js_now_ms(); }
-static inline int64_t loam_heap_used(void) { return (int64_t)zeus_heap_used(); }
 #else
 static inline int64_t loam_now_ms(void) {
     struct timespec ts;
@@ -483,10 +474,6 @@ static inline int64_t loam_now_ms(void) {
 #endif
     return (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000);
 }
-/* No process footprint on a native host here: the platform layer answers that
-   through its own OS call (mach task_info, /proc), so this stays 0 as the
-   "unknown" answer `plat_mem_kb` documents. */
-static inline int64_t loam_heap_used(void) { return 0; }
 #endif
 
 #if !defined(__wasm32__) && !defined(_WIN32)

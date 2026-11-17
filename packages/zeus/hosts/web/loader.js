@@ -1041,8 +1041,8 @@
         document.title = bytes(ptr, len);
       },
       /* `CopyButton`: best effort — the browser may refuse without a gesture. */
-      clipboard_write: (t) => {
-        const s = cstr(t);
+      clipboard_write: (ptr, len) => {
+        const s = bytes(ptr, len);
         if (navigator.clipboard) navigator.clipboard.writeText(s).catch(() => {});
       },
       /* ⌘-style shortcuts on Apple platforms (`KbdCombo`). */

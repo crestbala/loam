@@ -11,7 +11,11 @@ import "std:buf"
 import "std:sys"
 
 fn plat_run() {}
-fn plat_headless() -> int {}
+/** *1 with no window to draw in: no host run loop is bound, or */
+/** *`ZEUS_HEADLESS` is set (read once). */
+fn plat_headless() -> int {
+    return if native_run_bound() == 0 || headless_env_os() != 0 { 1 } else { 0 }
+}
 fn plat_measure(s: string, px: int, w: &mut int, h: &mut int) {}
 /** *The frame: the whole draw list in one call, in the versioned format of */
 /** *`packages/zeus/docs/frame-format.md` (the op table lives there, once). */
@@ -39,7 +43,10 @@ fn plat_measure_span(s: string, from: int, to: int, px: int, w: &mut int, h: &mu
 /** *reads `src` as a path, and keeps host measurement if that is empty too */
 /** *(`packages/zeus/src/zeuscore/metrics.loam`). */
 fn plat_font_bytes(src: string) -> string {}
-fn plat_set_window(title: string, width: int, height: int) {}
+fn plat_set_window(title: string, width: int, height: int) {
+    window_title = title
+    set_window_size_os(width, height)
+}
 /** *Update the host window title without reopening it (router `Meta.title`). */
 fn plat_set_title(title: string) {
     set_title_os(title)
@@ -50,16 +57,25 @@ fn plat_set_head(key: string, value: string) {
     set_head_os(key, value)
 }
 /** *Window chrome: 0 the host's title bar, 1 drawn by the app (`TitleBar`). */
-fn plat_set_chrome(mode: int) {}
-/** *The host title bar's box under app-drawn chrome: [height, lead, trail] in */
-/** *points (window buttons' room on the left / right). Zero without one. */
-fn plat_titlebar_get(out: &mut []int) {}
+fn plat_set_chrome(mode: int) {
+    chrome_mode = mode
+}
 /** *Write the title-bar box (desktop hosts do; tests through `engine_set_titlebar`). */
-fn plat_set_titlebar_box(height: int, lead: int, trail: int) {}
-/** *Put `text` on the system clipboard (`CopyButton`). The runtime also keeps */
-/** *it, so `plat_clipboard_last` reads it back on a headless run. */
-fn plat_clipboard_write(text: string) {}
-fn plat_clipboard_last() -> string {}
+fn plat_set_titlebar_box(height: int, lead: int, trail: int) {
+    titlebar_box[0] = at_least_zero(height)
+    titlebar_box[1] = at_least_zero(lead)
+    titlebar_box[2] = at_least_zero(trail)
+}
+/** *Put `text` on the system clipboard (`CopyButton`). It is also kept, so */
+/** *`plat_clipboard_last` reads it back on a headless run. */
+fn plat_clipboard_write(text: string) {
+    clipboard_text = text
+    clipboard_write_os(text)
+}
+
+fn plat_clipboard_last() -> string {
+    return clipboard_text
+}
 /** *1 when shortcuts follow Apple conventions (⌘, ⌥, ⇧ glyphs): macOS, iOS, */
 /** *and a browser on an Apple platform. */
 fn plat_apple_keys() -> int {
@@ -69,8 +85,33 @@ fn plat_apple_keys() -> int {
 /** *desktop hosts before the window exists this is the device screen's work */
 /** *area (window_size() → the default window is screen-filling); after the */
 /** *window opens it is the live view size. */
-fn plat_view_width() -> int {}
-fn plat_view_height() -> int {}
+fn plat_view_width() -> int {
+    let w = view_width_os()
+    if w > 0 {
+        return w
+    }
+    if !window_opened && plat_headless() == 0 {
+        let screen = native_initial_w()
+        if screen > 0 {
+            return screen
+        }
+    }
+    return window_w
+}
+
+fn plat_view_height() -> int {
+    let h = view_height_os()
+    if h > 0 {
+        return h
+    }
+    if !window_opened && plat_headless() == 0 {
+        let screen = native_initial_h()
+        if screen > 0 {
+            return screen
+        }
+    }
+    return window_h
+}
 /** *Intrinsic size of the decoded image at `src` in layout points: 0 while the */
 /** *host is still decoding it (remote loads) or cannot decode it at all. */
 /** *Layout reads it so an `Image` with no explicit `width` keeps the source */
@@ -142,13 +183,19 @@ fn plat_blit(buf: []u8, w: int, h: int, gen: int, scale: int) -> int {}
 /** *Host process memory in KB: Apple phys_footprint (Xcode's memory-gauge */
 /** *number), Linux/Android resident set, or the live wasm heap on the web */
 /** *host. 0 when the host reports nothing. */
-fn plat_mem_kb() -> int {}
+fn plat_mem_kb() -> int {
+    return sys.mem_kb()
+}
 /** *Wall clock in ms (the async timer clock). For deadlines that must hold */
 /** *across an idle host sleep: the engine's own `now_ms` advances by a capped */
 /** *frame delta, so it lags wall time after a wake. */
-fn plat_now_ms() -> int {}
+fn plat_now_ms() -> int {
+    return int(native_clock_ms() + clock_skipped)
+}
 /** *Move that clock forward: a test's way through a timeline without waiting. */
-fn plat_clock_skip(ms: int) {}
+fn plat_clock_skip(ms: int) {
+    clock_skipped = clock_skipped + i64(ms)
+}
 /** *Router history: mirror a pushed / replaced entry into the host's own */
 /** *back stack (browser history, Cocoa/Android back button). */
 fn plat_history_push(path: string) {
@@ -217,21 +264,111 @@ fn plat_boot_path() -> string {
 }
 /** *1 = overlay scroll hosts (iOS/Android): thumb drag is disabled in input */
 /** *and the track/thumb is not painted — panes scroll by touch only. */
-fn plat_overlay_scroll() -> int {}
-/** *Test / host override for `plat_overlay_scroll` (1 = iOS/Android-like). */
-fn plat_set_overlay_scroll(on: int) {}
-/** *Host safe-area insets in layout points (notch / home indicator / landscape */
-/** *inset), written together into `out[0..3]` as top, right, bottom, left. */
-/** */
-/** *One call, not four: the four edges are one box, and reading them separately */
-/** *let a host that updated them between two reads hand layout a torn rectangle. */
-/** *iOS and Android write these on every frame; tests set them through */
-/** *`zeus.engine_set_insets` so a layout pass sees a notched viewport. */
-fn plat_inset_get(out: &mut []int) {}
+fn plat_overlay_scroll() -> int {
+    if overlay_scroll_state >= 0 {
+        return overlay_scroll_state
+    }
+    return overlay_scroll_os()
+}
+/** *Test override for `plat_overlay_scroll` (1 = iOS/Android-like). */
+fn plat_set_overlay_scroll(on: int) {
+    overlay_scroll_state = if on <= 0 { 0 } else { 1 }
+}
 /** *Host safe-area insets in layout points (notch / home indicator / landscape */
 /** *inset). iOS and Android write these every frame; tests set them through */
 /** *`zeus.engine_set_insets` so a layout pass sees a notched viewport. */
-fn plat_set_insets(top: int, right: int, bottom: int, left: int) {}
+fn plat_set_insets(top: int, right: int, bottom: int, left: int) {
+    insets[0] = at_least_zero(top)
+    insets[1] = at_least_zero(right)
+    insets[2] = at_least_zero(bottom)
+    insets[3] = at_least_zero(left)
+}
+
+// --- what the seam remembers ------------------------------------------------
+// Written by the app (`plat_set_*`) and by its host, through the entry points
+// below (`dce.c_roots`; C hosts reach them as `zeus_set_insets`,
+// `zeus_window_width`, ...).
+
+/** *The window size before the app asks for one. */
+const DEFAULT_WINDOW_W: int = 640
+const DEFAULT_WINDOW_H: int = 480
+
+let mut window_title: string = ""
+let mut window_w: int = DEFAULT_WINDOW_W
+let mut window_h: int = DEFAULT_WINDOW_H
+/** *Set once the host's window exists: the view size is the window's from */
+/** *then on, not the screen's. */
+let mut window_opened: bool = false
+/** *`plat_set_chrome`: 0 the host's title bar, 1 drawn by the app. */
+let mut chrome_mode: int = 0
+/** *The host title bar's box under app-drawn chrome, in points: height, then */
+/** *the room the window buttons take on the left and right. Zero without one. */
+let mut titlebar_box: [3]int = [3]int { 0, 0, 0 }
+/** *Safe-area insets in layout points (notch, home indicator, landscape */
+/** *inset): top, right, bottom, left. iOS and Android write them every frame; */
+/** *tests through `zeus.engine_set_insets`. Layout reads them once a pass. */
+let mut insets: [4]int = [4]int { 0, 0, 0, 0 }
+/** *-1 until a test overrides the target's own answer. */
+let mut overlay_scroll_state: int = -1
+let mut clock_skipped: i64 = 0
+let mut clipboard_text: string = ""
+/** *-1 until `plat_headless` reads `ZEUS_HEADLESS`. */
+let mut headless_env: int = -1
+
+fn at_least_zero(v: int) -> int {
+    return if v < 0 { 0 } else { v }
+}
+
+/** *Host entry: the window size the app asked for. */
+fn host_window_width() -> int {
+    return window_w
+}
+
+fn host_window_height() -> int {
+    return window_h
+}
+
+/** *Host entry: the view was resized (web, Android) or a snapshot asks for */
+/** *a size. A side that is not positive is left as it was. */
+fn host_set_window_size(width: int, height: int) {
+    if width > 0 {
+        window_w = width
+    }
+    if height > 0 {
+        window_h = height
+    }
+}
+
+/** *Host entry: the app's chrome mode (`plat_set_chrome`). */
+fn host_window_chrome() -> int {
+    return chrome_mode
+}
+
+/** *Host entry: the window is open. */
+fn host_window_opened() {
+    window_opened = true
+}
+
+/** *Host entry: hand the current title to the title hook just registered. */
+fn host_retitle() {
+    native_title_changed(window_title)
+}
+
+// --- native hooks -----------------------------------------------------------
+// What only a native host can answer, through the callbacks it registered in
+// `zeus_plat.c`. Each answers 0 / does nothing when none is.
+
+/** *1 when a host run loop is bound (`zeus_set_platform`). */
+fn native_run_bound() -> int {}
+/** *The screen work area a desktop window will open at, or 0. */
+fn native_initial_w() -> int {}
+fn native_initial_h() -> int {}
+/** *The runtime's monotonic clock, in ms. */
+fn native_clock_ms() -> i64 {}
+/** *To the host's title hook (`zeus_set_title_hook`). */
+fn native_title_changed(title: string) {}
+/** *To the host's pasteboard hook (`zeus_set_clipboard_hook`). */
+fn native_clipboard_write(text: string) {}
 
 // --- per target -------------------------------------------------------------
 // The web host's side of the contract is its `zeus` imports (`#[os("wasm")]`
@@ -245,12 +382,83 @@ fn set_title_os(title: string) {
 
 #[os("posix", "windows")]
 fn set_title_os(title: string) {
-    native_set_title(title)
+    window_title = title
+    native_title_changed(title)
 }
 
-/** *The native title: kept for `zeus_window_title` and handed to the host's */
-/** *title hook. */
-fn native_set_title(title: string) {}
+/** *A browser has no environment to ask. */
+#[os("wasm")]
+fn headless_env_os() -> int {
+    return 0
+}
+
+#[os("posix", "windows")]
+fn headless_env_os() -> int {
+    if headless_env < 0 {
+        headless_env = sys.env_set("ZEUS_HEADLESS")
+    }
+    return headless_env
+}
+
+/** *Phone hosts lay out to their view every frame: an app's `Page(560, 520)` */
+/** *must not replace that, or the UI is clipped on the right. */
+#[os("ios", "android")]
+fn set_window_size_os(width: int, height: int) {
+    return
+}
+
+#[os("macos", "linux", "windows", "other", "wasm")]
+fn set_window_size_os(width: int, height: int) {
+    if width > 0 {
+        window_w = width
+    }
+    if height > 0 {
+        window_h = height
+    }
+}
+
+/** *Phones scroll by touch only. */
+#[os("ios", "android")]
+fn overlay_scroll_os() -> int {
+    return 1
+}
+
+#[os("macos", "linux", "windows", "other", "wasm")]
+fn overlay_scroll_os() -> int {
+    return 0
+}
+
+#[os("wasm")]
+fn clipboard_write_os(text: string) {
+    js_clipboard_write(text)
+}
+
+#[os("posix", "windows")]
+fn clipboard_write_os(text: string) {
+    native_clipboard_write(text)
+}
+
+/** *The browser canvas size, or 0 before the page has one. */
+#[os("wasm")]
+fn view_width_os() -> int {
+    return js_view_w()
+}
+
+#[os("wasm")]
+fn view_height_os() -> int {
+    return js_view_h()
+}
+
+/** *A native view's size is the window's: see `plat_view_width`. */
+#[os("posix", "windows")]
+fn view_width_os() -> int {
+    return 0
+}
+
+#[os("posix", "windows")]
+fn view_height_os() -> int {
+    return 0
+}
 
 #[os("wasm")]
 fn set_head_os(key: string, value: string) {
@@ -449,6 +657,18 @@ fn boot_path_os() -> string {
 #[os("wasm")]
 #[c("set_title")]
 fn js_set_title(title: string) {}
+
+#[os("wasm")]
+#[c("clipboard_write")]
+fn js_clipboard_write(text: string) {}
+
+#[os("wasm")]
+#[c("view_w")]
+fn js_view_w() -> int {}
+
+#[os("wasm")]
+#[c("view_h")]
+fn js_view_h() -> int {}
 
 #[os("wasm")]
 #[c("set_head")]
