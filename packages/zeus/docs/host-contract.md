@@ -3,7 +3,7 @@
 A host is the small piece of platform code that gives Zeus a window, input
 and a way to draw. Everything else (layout, styling, animation, text
 wrapping, SVG, scrolling, focus) runs in the engine and is the same on every
-platform. The C API is `packages/loam/runtime/zeus_rt.h`.
+platform. The C API is `packages/zeus/hosts/common/zeus_host.h`.
 
 ## Required
 

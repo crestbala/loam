@@ -6,7 +6,7 @@
 // `Node` and `Signal<T>` come from the `structs` leaf module; the internal
 // modules `arena`, `track`, and `platform` come from `zeuscore`. The C side
 // provides `loam_zeusbase_on_action`, `loam_zeusbase_on_range`, and friends
-// (see `packages/loam/runtime/zeus_plat.c`), and `zeus` re-exports them.
+// (see `packages/zeus/hosts/common/zeus_host.c`), and `zeus` re-exports them.
 //
 // Dependency direction is one-way: `zeus` imports this file, so this file must
 // never import `zeus` (that is an import cycle). Enums, consts, and fns

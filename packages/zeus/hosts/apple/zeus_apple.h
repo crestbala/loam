@@ -26,7 +26,7 @@ typedef UIColor ZAColor;
 typedef NSFont ZAFont;
 typedef NSColor ZAColor;
 #endif
-#include "zeus_rt.h"
+#include "zeus_host.h"
 #include <string.h>
 
 /* A C string as the borrowed `loam_str` the engine's entry points take

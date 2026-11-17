@@ -84,7 +84,7 @@ fn c_roots(module_name: string) -> []string {
         return []string { "preset_store" }
     }
     // Hosts write the insets and title-bar box, and read the window the app
-    // asked for (`zeus_set_insets`, `zeus_window_width`, ... in zeus_plat.c).
+    // asked for (`zeus_set_insets`, `zeus_window_width`, ... in zeus_host.c).
     if module_name == "platform" {
         return []string {
             "plat_headless", "plat_set_insets", "plat_set_titlebar_box", "host_window_width",

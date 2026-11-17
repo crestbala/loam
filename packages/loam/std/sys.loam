@@ -501,6 +501,10 @@ fn read_prefix_os(path: string, cap: int) -> []u8 {
     return []u8 {}
 }
 
+/** *Allocations since start (`loam_new` and array growth) when the program */
+/** *was built with `LOAM_ALLOC_TRACE` (every Zeus program is), else 0. */
+fn alloc_count() -> int {}
+
 /** *This process's memory in KB: Apple's `phys_footprint` (the number */
 /** *Xcode's memory gauge shows), the resident set on Linux and Android, the */
 /** *live heap on wasm. 0 where none is known (Windows, other). */

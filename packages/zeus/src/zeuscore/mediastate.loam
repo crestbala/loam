@@ -32,7 +32,7 @@ const CAP_WASM: int = 256
 
 // The player behind a slot: on the web, the loader's `zeus` imports; on a
 // native host, the callbacks it registered (`zeus_set_media`, C hooks in
-// `zeus_plat.c`, each 0 / "" when the host left it out).
+// `zeus_host.c`, each 0 / "" when the host left it out).
 
 /** *One bit per non-NULL host callback, plus `CAP_WASM` on wasm. */
 #[os("wasm")]

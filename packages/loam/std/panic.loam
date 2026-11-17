@@ -62,6 +62,23 @@ fn trap(msg: string) {
 /** *Keep `msg` (up to 511 bytes) where a recoverable arm and the hosts read it. */
 fn record(msg: string) {}
 
+/** *Run `build` under a recoverable arm: "" when it returned, else the message */
+/** *it panicked with. Arms nest; the innermost catches. On wasm there is no */
+/** *`setjmp`: the body runs unprotected, and a panic unwinds to the host. */
+fn guard(build: fn()) -> string {
+    if arm(build) == 0 {
+        return ""
+    }
+    return message()
+}
+
+/** *Run `build` on a fresh arm: 0 when it returned, 1 when it panicked. */
+fn arm(build: fn()) -> int {}
+
+/** *The last panic's message, "" before any. A copy: the next panic does not */
+/** *change it. */
+fn message() -> string {}
+
 /** *Jump to the innermost recoverable arm, if one is installed. */
 fn unwind() {}
 

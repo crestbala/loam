@@ -6,6 +6,7 @@
 
 import "platform.loam"
 import "std:fmt"
+import "std:panic"
 import "std:str"
 import "std:sys"
 import "std:unicode"
@@ -806,18 +807,11 @@ fn intern_fn_reset() {
     handler_live = 0
 }
 
-// Recoverable traps. The arm itself (`setjmp`, and the panic buffer it
-// returns into) is C in `loam_rt.h`. What lives here is the policy: which
-// interned handler may run under that arm, and the wasm restart table. The table is a constant initializer, so a store from the web loader
-// before `main` is still there when `__init` runs — `__init` does not write
-// a global whose initializer is plain data.
-
-/** *Run `build` on the installed arm. "" when it returned, else the panic */
-/** *message (a view of the runtime's panic buffer). On wasm the body runs */
-/** *unprotected. */
-fn trap_guard(build: fn()) -> string {}
-/** *The panic buffer as a string. A view: copy it before the next panic. */
-fn panic_text() -> string {}
+// Recoverable traps. The arm itself is `std:panic` (`guard`). What lives here
+// is the policy: which interned handler may run under that arm, and the wasm
+// restart table. The table is a constant initializer, so a store from the web
+// loader before `main` is still there when `__init` runs — `__init` does not
+// write a global whose initializer is plain data.
 
 /** *How many startup presets the web loader may record. Further ones drop. */
 const PRESET_LIMIT: int = 16
@@ -843,7 +837,7 @@ fn preset_store(seq: int, msg: string) {
 /** *build completed, else the panic message. On wasm a trap is not caught here; */
 /** *it unwinds to the host, which recovers through `zeus.engine_recover`. */
 fn boundary(build: fn()) -> string {
-    return trap_guard(build)
+    return panic.guard(build)
 }
 
 /** *Invoke interned handler `id` under a trap arm: "" when it returned, else the */
@@ -853,12 +847,12 @@ fn guard_fn(id: int) -> string {
     if !kind_is(id, KIND_VOID) {
         return ""
     }
-    return trap_guard(void_fns[handler_rows[id]])
+    return panic.guard(void_fns[handler_rows[id]])
 }
 
-/** *The last panic's message, "" before any. Static storage: copy before keeping. */
+/** *The last panic's message, "" before any. */
 fn trap_msg() -> string {
-    return panic_text()
+    return panic.message()
 }
 
 /** *The message boundary number `seq` trapped with during a previous wasm */
@@ -876,8 +870,10 @@ fn boundary_preset(seq: int) -> string {
 }
 /** *Runtime allocation count since boot, for the animation proof harness. The */
 /** *runtime counts `loam_new` and array growth; an animated frame must not move */
-/** *it. 0 when the host/runtime does not track it. */
-fn alloc_count() -> int {}
+/** *it. 0 when the runtime does not track it. */
+fn alloc_count() -> int {
+    return sys.alloc_count()
+}
 /** *-1 until `mem_stats` first reads the environment. */
 let mut mem_stats_state: int = -1
 

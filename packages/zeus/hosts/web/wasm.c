@@ -5,7 +5,7 @@
  * whole; loader.js decodes it into Canvas2D. The browser owns rAF: `zeus_paint`
  * returns 0 when idle so the loader can stop, like Cocoa `engine_next_ms`.
  */
-#include "zeus_rt.h"
+#include "zeus_host.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>

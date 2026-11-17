@@ -1,7 +1,6 @@
 // structs — the two handle types the whole toolkit is built on: `Node` (a
-// widget slot) and `Signal<T>` (a reactive cell). The C side owns the real
-// typedefs (`zeus_rt.h`), so these declarations are what the compiler types
-// against; they are not emitted (see `zeus_handle_mod` in `codegen_c.c`).
+// widget slot) and `Signal<T>` (a reactive cell). Codegen writes both as one
+// C struct of a `uint32_t id` (`Signal` erases `T`; see `struct_decl`).
 //
 // They live in a leaf module with no imports of its own, so every layer above
 // — `zeusbase`, the components, `zeus` itself — can name them without

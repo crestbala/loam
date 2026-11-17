@@ -428,7 +428,7 @@ fn split_lines(s: string) -> []string {
 /** *tool built under a test run's environment would be rebuilt, unoptimized. */
 let BUILD_MODE_VARS: []string = []string {
     "ZEUS_HEADLESS", "LOAM_HEADLESS", "MAYA_HEADLESS", "LOAM_DEV", "LOAM_DEBUG", "ZEUS_MEM_STATS",
-    "LOAM_LINK_EXTRA", "LOAM_BATCH", "LOAM_SHARD", "LOAM_HOST", "LOAM_SERVER_SPLIT", "LOAM_NO_DCE", "LOAM_HOME",
+    "LOAM_LINK_EXTRA", "LOAM_BATCH", "LOAM_SHARD", "LOAM_SERVER_SPLIT", "LOAM_NO_DCE", "LOAM_HOME",
 }
 
 /** *Build the Loam program `src` into `out` (both repo-relative) with */
@@ -2567,6 +2567,34 @@ fn ig_api_freeze() {
     ok("api freeze (every name in packages/zeus/docs/api-freeze.md still exists)")
 }
 
+/** *The host contract (`packages/zeus/hosts/common/zeus_host.h`) agrees with */
+/** *what codegen emits: a Zeus program's C with every fn kept (so every */
+/** *bodyless hook and every entry point has its prototype) compiles with the */
+/** *header in front, and every definition in `zeus_host.c` has a prototype */
+/** *there. Generated C does not include the header, so on a native build */
+/** *nothing else would catch a type that drifted. */
+fn ig_host_contract() {
+    mark("host contract")
+    let common = "packages/zeus/hosts/common"
+    let gen = tmpf("host_contract.c")
+    let l = tmpf("host_contract.log")
+    let flags = "-std=gnu99 -fsyntax-only -DLOAM_ALLOC_TRACE -Ipackages/loam/runtime -I{{common}}"
+    if !sh("LOAM_NO_DCE=1 {{shq(LOAMC)}} --emit-c packages/loam/tests/compile_pass/zeus_virt_var.loam -o {{shq(gen)}} > {{shq(l)}} 2>&1") {
+        bad("host contract (emit C)", l)
+        return
+    }
+    if !sh("cc {{flags}} -w -include zeus_host.h {{shq(gen)}} > {{shq(l)}} 2>&1") {
+        bad("host contract (zeus_host.h disagrees with generated C)", l)
+        return
+    }
+    if !sh("cc {{flags}} -Wmissing-prototypes -Werror {{common}}/zeus_host.c > {{shq(l)}} 2>&1") {
+        bad("host contract (a zeus_host.c definition is not in zeus_host.h)", l)
+        return
+    }
+    sys.remove_path(gen)
+    ok("host contract (zeus_host.h matches generated C; zeus_host.c defines only what it declares)")
+}
+
 fn fresh_cache_case(compiler: string, work: string, tag: string) -> string {
     let script = "{{ROOT}}/packages/loam/tests/fresh/check.sh"
     return sys.exec("rm -rf {{shq(work)}} && LOAM_HOME={{shq(ROOT)}} sh {{shq(script)}} {{shq(compiler)}} {{shq(work)}} {{shq(tag)}} 2>&1")
@@ -3185,6 +3213,8 @@ fn stanza_dispatch(name: string) -> bool {
         ig_design_lint()
     } else if name == "api_freeze" {
         ig_api_freeze()
+    } else if name == "host_contract" {
+        ig_host_contract()
     } else if name == "modules" {
         ig_modules()
     } else if name == "wasm_float" {
@@ -3248,6 +3278,7 @@ fn stanza_names() -> []string {
     push(v, "arena_lint")
     push(v, "design_lint")
     push(v, "api_freeze")
+    push(v, "host_contract")
     push(v, "modules")
     push(v, "selfhost_seed")
     push(v, "fresh_cache")
@@ -3319,7 +3350,7 @@ fn pool_stanzas(names: []string, limit_s: int) -> int {
 /** *app. The wasm module's entry points, the server/client split, and the */
 /** *language server all sit next to the compiler. */
 fn host_stanzas() -> []string {
-    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "design_lint", "api_freeze", "modules", "fresh_cache", "android_project", "ownership_asan", "thread_tsan", "loader_cases", "wasm_float", "c_layouts" }
+    return []string { "wasm_smoke", "wasm_trap", "server_split", "lsp", "cost", "stale_capture", "one_surface", "arena_lint", "design_lint", "api_freeze", "host_contract", "modules", "fresh_cache", "android_project", "ownership_asan", "thread_tsan", "loader_cases", "wasm_float", "c_layouts" }
 }
 
 /** *How long one stanza may run before its pool kills it. `selfhost_seed` */
@@ -3414,7 +3445,7 @@ fn grammar() -> int {
 // deletes the C, so the runtime can only shrink. The target is zero.
 
 /** *Lines allowed under `packages/loam/runtime/`. Lower it when a step lands. */
-let RUNTIME_LINE_BUDGET: int = 1782
+let RUNTIME_LINE_BUDGET: int = 573
 
 /** *The group a tracked C file belongs to, or `""` for C that is not shipped. */
 fn trusted_group(path: string) -> string {
