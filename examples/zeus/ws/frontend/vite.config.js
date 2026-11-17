@@ -80,7 +80,7 @@ export default defineConfig({
           resolve(here, ".."),
           resolve(here, "../backend"),
           resolve(repo, "packages/loam/std"),
-          resolve(repo, "packages/loam/runtime"),
+          resolve(repo, "packages/zeus/hosts/common"),
           resolve(repo, "packages/zeus/src"),
           resolve(repo, "packages/http/src"),
           resolve(repo, "packages/maya/src"),

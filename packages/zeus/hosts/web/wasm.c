@@ -6,9 +6,6 @@
  * returns 0 when idle so the loader can stop, like Cocoa `engine_next_ms`.
  */
 #include "zeus_host.h"
-#include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
 
 int main(void);
 
@@ -77,11 +74,14 @@ char *zeus_font_reserve(int32_t n) {
 
 __attribute__((export_name("zeus_font_set")))
 int32_t zeus_font_set(int32_t n) {
-    char *p;
+    loam_str bytes;
+    int32_t bound;
     if (n <= 0 || n > wasm_font_cap || !wasm_font_buf) return 0;
-    p = (char *)loam_new((size_t)n, "font_bytes", 0);
-    memcpy(p, wasm_font_buf, (size_t)n);
-    return loam_metrics_bind((loam_str){p, n});
+    /* Borrowed by the call: the metrics retain the copy they keep. */
+    bytes = loam_abi_str_copy(wasm_font_buf, n);
+    bound = loam_metrics_bind(bytes);
+    loam_abi_str_release(&bytes);
+    return bound;
 }
 
 static void wasm_measure(const char *s, int64_t px, int64_t *w, int64_t *h) {
@@ -294,7 +294,7 @@ const char *zeus_cursor_sync(void) {
     if (n >= sizeof wasm_cursor) n = sizeof wasm_cursor - 1;
     if (n) memcpy(wasm_cursor, name.ptr, n);
     wasm_cursor[n] = '\0';
-    loam_str_release(&name);
+    loam_abi_str_release(&name);
     return wasm_cursor;
 }
 
@@ -334,7 +334,7 @@ const char *zeus_a11y_sync(int32_t force) {
         while (cap < n + 1) cap *= 2;
         p = (char *)realloc(wasm_a11y_buf, cap);
         if (!p) {
-            loam_vec_drop(&b);
+            loam_abi_vec_drop(&b);
             return NULL;
         }
         wasm_a11y_buf = p;
@@ -342,7 +342,7 @@ const char *zeus_a11y_sync(int32_t force) {
     }
     for (i = 0; i < n; i++) wasm_a11y_buf[i] = (char)(el ? (el[i] & 255) : 0);
     wasm_a11y_buf[n] = '\0';
-    loam_vec_drop(&b);
+    loam_abi_vec_drop(&b);
     return wasm_a11y_buf;
 }
 
@@ -366,15 +366,12 @@ int32_t zeus_focus_id(void) {
 }
 
 /* Deep link / popstate: route the app to `path`. The loader passes a C string
-   in `wasm_text_buf`; copy it into the arena so the router can store it. */
+   in `wasm_text_buf`, which it reuses; the router retains the copy it keeps. */
 __attribute__((export_name("zeus_open_url")))
 void zeus_open_url(const char *path) {
-    size_t n = path ? strlen(path) : 0;
-    char *p = (char *)loam_new(n + 1, "open_url", 0);
-    if (!p) return;
-    if (n) memcpy(p, path, n);
-    p[n] = '\0';
-    loam_router_engine_open_url((loam_str){p, n});
+    loam_str owned = loam_abi_str_copy(path, path ? (int64_t)strlen(path) : 0);
+    loam_router_engine_open_url(owned);
+    loam_abi_str_release(&owned);
 }
 
 /* A route's chunks have landed: mount the page that was waiting for them. */
@@ -407,12 +404,13 @@ const char *zeus_state_snapshot(void) {
 __attribute__((export_name("zeus_state_restore")))
 int32_t zeus_state_restore(const char *snapshot) {
     size_t n = snapshot ? strlen(snapshot) : 0;
+    loam_str owned;
+    int32_t loaded;
     if (n == 0) return 0;
-    char *p = (char *)loam_new(n + 1, "state_restore", 0);
-    if (!p) return 0;
-    memcpy(p, snapshot, n);
-    p[n] = '\0';
-    return loam_zeus_engine_state_load((loam_str){p, n});
+    owned = loam_abi_str_copy(snapshot, (int64_t)n);
+    loaded = loam_zeus_engine_state_load(owned);
+    loam_abi_str_release(&owned);
+    return loaded;
 }
 #endif
 

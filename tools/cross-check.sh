@@ -58,7 +58,7 @@ if [ "${1:-}" = --link ]; then
     links="$links $libs"
     bin="$OUT/obj/$t-$b"
     # shellcheck disable=SC2086
-    zig cc -target "$t" -std=gnu99 -O1 -w -I packages/loam/runtime "$OUT/c/$b.c" $objs -o "$bin" $links 2>&1 | grep -E "error" | head -3 > "$res" || true
+    zig cc -target "$t" -std=gnu99 -O1 -w "$OUT/c/$b.c" $objs -o "$bin" $links 2>&1 | grep -E "error" | head -3 > "$res" || true
     # Only "it links" is checked: drop what this link made (the binary, a
     # Windows .pdb/.lib, the dep objects) right away.
     rm -f "$bin" "$bin".* "$OUT"/obj/"$t-$b"-dep*.o

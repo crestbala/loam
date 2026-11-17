@@ -5383,6 +5383,7 @@ fn runtime_sources() -> string {
     let files = []string {
         join(common, "zeus_host.c"),
         join(common, "zeus_host.h"),
+        join(common, "loam_abi.h"),
         join(web, "wasm.c"),
     }
     let mut out = ""

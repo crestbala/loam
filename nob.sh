@@ -16,12 +16,12 @@
 #      regenerates it when it can no longer build the current sources).
 #   2. bin/loamc0 builds bin/loamc from packages/loam/compiler/loamc.loam, the
 #      current compiler. Its `.fresh` cache makes this a no-op until a source,
-#      std, the runtime or the seed changes; its C builds as cached units
+#      std or the seed changes; its C builds as cached units
 #      under bin/.shard/ (LOAM_SHARD), so an edit recompiles only what moved.
 #      LOAM_WHOLE=1 builds every tool as one optimized unit instead.
 #   3. bin/loamc builds bin/nob from nob.loam.
 #
-# The compiler finds std and the runtime from its own path (<root>/bin/loamc),
+# The compiler finds std and the Zeus hosts from its own path (<root>/bin/loamc),
 # so both binaries must sit in bin/ and the C holds no absolute paths.
 #
 # On Windows (MSYS2 / MinGW) `nob` itself does not run (`sys.exec` goes through

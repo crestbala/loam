@@ -1,6 +1,6 @@
 #!/bin/sh
 # Package the gallery as a self-contained Linux build kit, on any OS with the
-# loam repo: the generated C, the Zeus runtime, and the X11 host, plus a
+# loam repo: the generated C, the Zeus host contract, and the X11 host, plus a
 # build.sh that needs only cc and libx11-dev on the Linux machine.
 #
 #   ./kit.sh              -> ../build/linux-kit/ and ../build/gallery-linux-kit.tar.gz
@@ -25,12 +25,11 @@ if [ ! -x "$REPO/bin/loamc" ]; then
   (cd "$REPO" && ./nob.sh)
 fi
 OUT=${1:-$HERE/../build/linux-kit}
-RT=$REPO/packages/loam/runtime
 HOSTS=$REPO/packages/zeus/hosts
 rm -rf "$OUT"
 mkdir -p "$OUT/runtime"
 "$REPO/bin/loamc" --emit-c "$HERE/app.loam" -o "$OUT/app.c"
-cp "$RT/loam_rt.h" "$HOSTS/common/zeus_host.h" "$HOSTS/common/zeus_host.c" \
+cp "$HOSTS/common/loam_abi.h" "$HOSTS/common/zeus_host.h" "$HOSTS/common/zeus_host.c" \
   "$HOSTS/desktop/linux.c" "$OUT/runtime/"
 cat > "$OUT/build.sh" <<'BUILD'
 #!/bin/sh
@@ -47,7 +46,7 @@ for f in zeus_host linux; do
   $CC -std=gnu99 -O1 -c -Iruntime -DLOAM_ALLOC_TRACE "runtime/$f.c" -o "obj/$f.o"
 done
 $CC -std=gnu99 -O1 -fno-asynchronous-unwind-tables -fomit-frame-pointer -ffp-contract=off \
-  -DLOAM_ALLOC_TRACE -DLOAM_STRING_OWNS -Iruntime -w app.c obj/zeus_host.o obj/linux.o \
+  -DLOAM_ALLOC_TRACE -DLOAM_STRING_OWNS -w app.c obj/zeus_host.o obj/linux.o \
   -Wl,--gc-sections -lX11 -lm -o gallery
 echo "built ./gallery — run it with ./gallery (needs an X11 or XWayland display)"
 BUILD

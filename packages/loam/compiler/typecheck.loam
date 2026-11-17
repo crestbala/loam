@@ -14,6 +14,7 @@ import "std:sys"
 import "ast.loam"
 import "types.loam"
 import "lexer.loam"
+import "rtcore.loam"
 
 /** *One module of the session, as the loader resolved it. */
 struct Module {
@@ -29,8 +30,6 @@ struct Module {
 }
 
 let mut MODS: []Module = []Module {}
-/** *The runtime header, whose `loam_*` names user C names must avoid. */
-let mut RT_PATH: string = ""
 /** *`LOAM_STD_DIR`, as the C compiler was built with it. */
 let mut STD_DIR: string = ""
 
@@ -5873,13 +5872,9 @@ fn ident_char(c: int) -> bool {
     return is_alnum(c) || c == '_'
 }
 
-/** *Claim every `loam_*` name in the runtime header. */
+/** *Claim every `loam_*` name in the C core (`rtcore`). */
 fn claim_runtime_cnames() {
-    let r = sys.read(RT_PATH)
-    if r.tag == ResultTag.Err {
-        return
-    }
-    let text = r.val
+    let text = rtcore.core_c()
     let n = text.len
     let mut c = 0
     while c + 5 <= n {

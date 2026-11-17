@@ -8,13 +8,7 @@
 #ifndef ZEUS_HOST_H
 #define ZEUS_HOST_H
 
-#include <stdint.h>
-
-#ifdef LOAM_RT_H
-/* loam_str already defined in generated C */
-#else
-#include "loam_rt.h"
-#endif
+#include "loam_abi.h"
 
 /* --- Platform hosts: zeus/desktop/mac.m, zeus/ios/ios.m, zeus/web/wasm.c --- */
 
@@ -269,7 +263,7 @@ void zeus_boundary_preset_add(int32_t seq, const char *msg, size_t n);
    these directly; there is no C layer in between. A `loam_str` argument is
    borrowed for the call (a host may pass `(loam_str){ptr, len}` over its own
    buffer: the engine copies what it keeps). A returned `loam_str` is the
-   host's: `loam_str_release` it once read. Points are in view coordinates,
+   host's: `loam_abi_str_release` it once read. Points are in view coordinates,
    and calls that answer an `int32_t` answer 1 when the view needs a redraw. */
 void loam_zeus_engine_layout(int32_t width, int32_t height);
 void loam_zeus_engine_paint(void);

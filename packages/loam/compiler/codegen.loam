@@ -2,7 +2,7 @@
 // of the C compiler's codegen_c.c, which it matched byte for byte.
 //
 // Layout of the generated file:
-//   1. loam_rt.h pasted in, then the integer helpers, core ops (moves, retains, drops)
+//   1. the core (`rtcore.loam`), then the integer helpers, core ops (moves, retains, drops)
 //      and vec pushes and pops the unit calls, the runtime verbs it calls,
 //      then (wasm32) the C library
 //   2. struct typedefs, then definitions in by-value dependency order
@@ -30,6 +30,7 @@ import "lexer.loam"
 import "typecheck.loam"
 import "dce.loam"
 import "ir.loam"
+import "rtcore.loam"
 
 const NONE: int = -1
 const NO_TYPE: int = -1
@@ -429,7 +430,7 @@ fn w_ctype(t: int) {
     w(ctype(t))
 }
 
-// Typed handle cells (loam_rt.h): a channel, future or signal cell records the
+// Typed handle cells (the C core, `rtcore.loam`): a channel, future or signal cell records the
 // key of its value type, and every access passes the key it expects. The key
 // is FNV-1a over the type's spelling: its C type, with what C erases spelled in
 // (the element of `[]T`, `[N]T` and `Box<T>`, a fn's signature, a handle's
@@ -1745,9 +1746,9 @@ fn core_op_defs() {
 // `strlen`, `write` to the host, the 128-bit multiply a checked i64 multiply
 // lowers to) is written here into its own unit, so no runtime file ships for
 // it. `memcpy`, `memmove` and `memset` are not functions at all: they are
-// bulk-memory instructions (`wasm_inc/string.h`). In a shard build the head
-// is every unit's precompiled header, so only the unit that owns the
-// program's storage (`LOAM_SHARD_DEFS`) defines these.
+// bulk-memory instructions (macros in the core, `rtcore.loam`). In a shard
+// build the head is every unit's precompiled header, so only the unit that
+// owns the program's storage (`LOAM_SHARD_DEFS`) defines these.
 
 /** *This unit is for `--target wasm32`. */
 let mut WASM: bool = false
@@ -1977,6 +1978,34 @@ fn wasm_libc_defs() {
     }
 }
 
+// --- the host ABI ------------------------------------------------------------------------
+//
+// C linked into a program (a Zeus host, an app's `runtime/` seam) sees Loam
+// values through `packages/zeus/hosts/common/loam_abi.h`: two layouts, the
+// panic message buffer, and these three exports. They are written only when
+// the unit has such a seam, a kept bodyless fn outside the language std
+// without a `#[c]` name, and in a shard build only by the unit that owns the
+// program's storage.
+
+/** *The unit declared a C seam (set while prototyping, read at the end). */
+let mut HOST_SEAM: bool = false
+
+fn host_abi_defs() {
+    if !HOST_SEAM {
+        return
+    }
+    if SHARD {
+        w("#ifdef LOAM_SHARD_DEFS\n")
+    }
+    w("/* --- the host ABI (loam_abi.h): share, copy and drop as generated code does --- */\n")
+    w("loam_str loam_abi_str_copy(const char *p, int64_t n) { return loam_str_copy(p, n); }\n")
+    w("void loam_abi_str_release(loam_str *s) { loam_str_release(s); }\n")
+    w("void loam_abi_vec_drop(loam_vec *v) { loam_vec_drop(v); }\n")
+    if SHARD {
+        w("#endif\n")
+    }
+}
+
 // --- runtime verbs ---------------------------------------------------------------------
 //
 // The C under std's bodyless fns (`buf`, `decimal`, `conv`, `floattext`,
@@ -2036,12 +2065,15 @@ let RT_VERB_NAMES: []string = []string {
     "loam_ch_do_try_send_owned",
     "loam_ch_do_ready",
     "loam_thread_spawn",
-    "loam_thread_running"
+    "loam_thread_running",
+    "loam_panic_arm",
+    "loam_panic_message",
+    "loam_sys_alloc_count"
 }
 
 /** *`RT_VERB_GROUP[i]`: the group that defines `RT_VERB_NAMES[i]`. */
-let RT_VERB_GROUP: []int = []int { 0, 0, 0, 1, 2, 2, 3, 3, 3, 3, 3, 4, 4, 4, 4, 5, 6, 6, 6, 6, 6, 7, 7, 7, 8, 9, 10, 11, 11, 11, 12, 13, 14, 15, 16, 17, 17, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18 }
-const RT_VERB_GROUPS: int = 19
+let RT_VERB_GROUP: []int = []int { 0, 0, 0, 1, 2, 2, 3, 3, 3, 3, 3, 4, 4, 4, 4, 5, 6, 6, 6, 6, 6, 7, 7, 7, 8, 9, 10, 11, 11, 11, 12, 13, 14, 15, 16, 17, 17, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 19, 19, 20 }
+const RT_VERB_GROUPS: int = 21
 
 let mut RT_GROUP_USED: []bool = []bool {}
 /** *Per IR text id: 0 not looked up yet, 1 no verb, else the group + 2. */
@@ -2504,12 +2536,16 @@ fn rt_verb_def(gi: int) {
             w("#ifdef __wasm32__\n")
             w("/* `std:async` binds `clock_gettime` / `nanosleep` itself on native (`#[c]`);\n")
             w("   wasm binds no libc, so the two wasm bridges live here (like `sys.wasm_exit`\n")
-            w("   bridges `abort`): the clock is the `zeus_js_now_ms` host import\n")
-            w("   (`loam_now_ms`, above), and the sleep is its spin. */\n")
-            w("static inline int64_t loam_async_wasm_now_ms(void) { return loam_now_ms(); }\n")
+            w("   bridges `abort`): the clock is the browser's `performance.now`, the\n")
+            w("   `zeus.now_ms` import, and the sleep is its spin. Every unit that declares\n")
+            w("   the import carries the attribute: wasm-ld rejects a declaration without it\n")
+            w("   (\"import module mismatch for symbol: zeus_js_now_ms\"). */\n")
+            w("__attribute__((import_module(\"zeus\"), import_name(\"now_ms\")))\n")
+            w("int64_t zeus_js_now_ms(void);\n")
+            w("static inline int64_t loam_async_wasm_now_ms(void) { return zeus_js_now_ms(); }\n")
             w("static inline void loam_async_wasm_sleep(int64_t ms) {\n")
-            w("    int64_t t0 = loam_now_ms();\n")
-            w("    while (loam_now_ms() - t0 < ms) {\n")
+            w("    int64_t t0 = zeus_js_now_ms();\n")
+            w("    while (zeus_js_now_ms() - t0 < ms) {\n")
             w("    }\n")
             w("}\n")
             w("#endif\n")
@@ -2779,10 +2815,53 @@ fn rt_verb_def(gi: int) {
             w("static inline int64_t loam_thread_running(void) { return 0; }\n")
             w("#endif\n")
             break
+        case 19: // panic_arm
+            w("/* --- recoverable traps (`std:panic` `arm` / `message`) ---------------------\n")
+            w("   Run `build` on the stack of an installed arm: 0 when the body completed, 1\n")
+            w("   when it panicked (`loam_panic_message` holds why). Nesting works: the arm\n")
+            w("   chains to the previous target, so the innermost wins and an outer one stays\n")
+            w("   installed. `build`'s env is borrowed: the call is synchronous.\n")
+            w("\n")
+            w("   On wasm there is no setjmp, so the body runs unprotected and a trap unwinds\n")
+            w("   to the host, which recovers at the export boundary. */\n")
+            w("static inline int32_t loam_panic_arm(loam_fn build) {\n")
+            w("#ifndef __wasm32__\n")
+            w("    LoamJmp b;\n")
+            w("    b.prev = loam_jmp_top;\n")
+            w("    loam_jmp_top = &b;\n")
+            w("    loam_jmp_msg[0] = 0;\n")
+            w("    if (setjmp(b.jb) == 0) {\n")
+            w("        if (build.fn) ((void (*)(void *))build.fn)(build.env);\n")
+            w("        loam_jmp_top = b.prev;\n")
+            w("        return 0;\n")
+            w("    }\n")
+            w("    loam_jmp_top = b.prev;\n")
+            w("    return 1;\n")
+            w("#else\n")
+            w("    if (build.fn) ((void (*)(void *))build.fn)(build.env);\n")
+            w("    return 0;\n")
+            w("#endif\n")
+            w("}\n")
+            w("\n")
+            w("/* The panic buffer as an owned copy. Never a view: the next panic rewrites the\n")
+            w("   buffer, and a kept message must not change (or outlive its length) with it. */\n")
+            w("static inline loam_str loam_panic_message(void) {\n")
+            w("    return loam_str_copy(loam_jmp_msg, (int64_t)strlen(loam_jmp_msg));\n")
+            w("}\n")
+            break
+        case 20: // alloc_count
+            w("/* `sys.alloc_count`: the allocations `loam_alloc_note` counted (zero unless\n")
+            w("   `LOAM_ALLOC_TRACE`). */\n")
+            w("#ifdef LOAM_ALLOC_TRACE\n")
+            w("static inline int64_t loam_sys_alloc_count(void) { return loam_alloc_count; }\n")
+            w("#else\n")
+            w("static inline int64_t loam_sys_alloc_count(void) { return 0; }\n")
+            w("#endif\n")
+            break
     }
 }
 
-/** *A definition for every group the unit called, in header order. */
+/** *A definition for every group the unit called, in group order. */
 fn rt_verb_defs() {
     if RT_GROUP_USED.len == 0 {
         return
@@ -5522,13 +5601,8 @@ fn copy_runtime() {
     if SHARD {
         w("#endif\n")
     }
-    let r = if typecheck.RT_PATH.len > 0 { sys.read(typecheck.RT_PATH) } else { res_err("no runtime", "") }
-    if r.tag == ResultTag.Ok {
-        w(r.val)
-        wc('\n')
-        return
-    }
-    w("#include <stdio.h>\n#include <stdint.h>\n#include <stdlib.h>\n#include <stdbool.h>\n\n")
+    w(rtcore.core_c())
+    wc('\n')
 }
 
 /** *Write the whole C translation unit to stdout, or to `SINK`. Dead-code */
@@ -5544,6 +5618,7 @@ fn emit_c() {
         ir.lower_modules()
     }
     collect_elem_hooks()
+    HOST_SEAM = false
     let nmods = typecheck.MODS.len
 
     w("/* Generated by loam */\n")
@@ -5673,7 +5748,7 @@ fn emit_c() {
         if root == NONE {
             continue
         }
-        // The language std's seams are defined by the runtime (`loam_rt.h`,
+        // The language std's seams are defined by the C core (`rtcore.loam`,
         // `rt_verb_defs`); a bodyless fn anywhere else (a package such as
         // Zeus, or the app) is a C seam and gets an extern prototype.
         let std_mod = typecheck.MODS[m].is_std
@@ -5691,6 +5766,7 @@ fn emit_c() {
                 if runtime_seam || c_sym_of(d).len > 0 {
                     continue
                 }
+                HOST_SEAM = true
                 os_begin(d)
                 fn_sig(d, false)
                 w(";\n")
@@ -5881,6 +5957,7 @@ fn emit_c() {
     int_helper_defs()
     core_op_defs()
     rt_verb_defs()
+    host_abi_defs()
     vec_push_defs()
     vec_pop_defs()
     wasm_libc_defs()

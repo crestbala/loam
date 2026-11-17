@@ -6,9 +6,9 @@
  * one-line forwarders from the host's C names into Loam's entry points.
  */
 #include "zeus_host.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#ifndef __wasm32__
+#include <time.h>
+#endif
 
 /* The signal byte store is Loam (`zeuscore/sigcells.loam`, R4.1b). */
 
@@ -77,7 +77,7 @@ static size_t plat_put_int(char *out, int64_t v) {
 }
 
 static void plat_out_of_memory(void) {
-    loam_ewrite_bytes("zeus: out of memory\n", 20);
+    (void)write(2, "zeus: out of memory\n", 20);
     abort();
 }
 
@@ -143,7 +143,7 @@ loam_str loam_zeus_plat_pick_image(int32_t *w, int32_t *h) {
     if (plat_pick_image) plat_pick_image(buf, (int)sizeof buf, &lw, &lh);
     if (w) *w = (int32_t)lw;
     if (h) *h = (int32_t)lh;
-    return loam_str_copy(buf, (int64_t)strlen(buf));
+    return loam_abi_str_copy(buf, (int64_t)strlen(buf));
 }
 
 void loam_zeus_plat_run(void) {
@@ -301,8 +301,19 @@ void loam_platform_plat_image_size(loam_str src, int32_t *w, int32_t *h) {
 }
 
 /* The clock `platform.plat_now_ms` runs on (it adds a test's skip itself):
-   the runtime's `loam_now_ms`, so there is one monotonic clock in the tree. */
-int64_t loam_platform_native_clock_ms(void) { return loam_now_ms(); }
+   the one `std:async` reads, CLOCK_MONOTONIC (the JS clock on wasm), without
+   the allocation `async.now_ms` makes for its `timespec`. */
+#ifdef __wasm32__
+__attribute__((import_module("zeus"), import_name("now_ms")))
+int64_t zeus_js_now_ms(void);
+int64_t loam_platform_native_clock_ms(void) { return zeus_js_now_ms(); }
+#else
+int64_t loam_platform_native_clock_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000);
+}
+#endif
 
 /* Phase 4: the one blit. `buf` is the Loam framebuffer vector handed over by
    value — we pass its first byte and its length straight through, so not one
@@ -380,9 +391,9 @@ void zeus_boundary_preset_add(int32_t seq, const char *msg, size_t n) {
     }
     /* The parameter is borrowed: the store retains what it keeps, and drops
        nothing. Release the temporary here, including the one past the cap. */
-    owned = loam_str_copy(msg, (int64_t)n);
+    owned = loam_abi_str_copy(msg, (int64_t)n);
     loam_runtime_preset_store(seq, owned);
-    loam_str_release(&owned);
+    loam_abi_str_release(&owned);
 }
 
 /* Router host entry points. A build that never imports `std:router` has no
@@ -589,7 +600,7 @@ loam_str loam_mediastate_native_text(int32_t slot, int32_t what) {
         media_host.text((int64_t)slot, (int64_t)what, buffer, (int)sizeof buffer);
         buffer[sizeof buffer - 1] = 0;
     }
-    return loam_str_copy(buffer, (int64_t)strlen(buffer));
+    return loam_abi_str_copy(buffer, (int64_t)strlen(buffer));
 }
 
 void loam_mediastate_native_pick(void) {

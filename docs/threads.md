@@ -9,7 +9,8 @@ claim. Related plans: [security.md](security.md) (S9 relies on T4) and
 ## What exists
 
 Checked on 2026-11-11 against `std/thread.loam`, `src/threadcheck.c` (since
-deleted) / `compiler/threadcheck.loam` and `runtime/loam_rt.h`:
+deleted) / `compiler/threadcheck.loam` and `runtime/loam_rt.h` (since
+moved into codegen's `thread` group):
 
 - `thread.spawn(cb)` runs a closure or a named fn on a new detached pthread.
   `thread.chan<T>(cap, init)` makes a bounded FIFO with blocking `send` /

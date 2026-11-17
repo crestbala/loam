@@ -454,7 +454,7 @@ static NSCursor *mac_cursor_now(void) {
     if (n > sizeof name - 1) n = sizeof name - 1;
     if (n) memcpy(name, s.ptr, n);
     name[n] = '\0';
-    loam_str_release(&s);
+    loam_abi_str_release(&s);
     return zeus_cursor_for(name);
 }
 
@@ -1149,7 +1149,7 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
         s = [[[NSString alloc] initWithBytes:dump.ptr
                                       length:(NSUInteger)dump.len
                                     encoding:NSUTF8StringEncoding] autorelease];
-    loam_str_release(&dump);
+    loam_abi_str_release(&dump);
     if (!s) return kids;
     for (NSString *line in [s componentsSeparatedByString:@"\n"]) {
         if (line.length == 0) continue;
