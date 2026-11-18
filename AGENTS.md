@@ -42,7 +42,7 @@ These rules are non-negotiable. Apply them on every design decision, code change
 - Goal: memory-related attack surface as close to nil as practical.
 
 ### 5. Multi-Platform Including Embedded
-- Same source targets: native, web (wasm), mobile, Raspberry Pi, Arduino-class, and bare-metal.
+- Same source targets: native(macOS, linux, windows), web (wasm), mobile, Raspberry Pi, Arduino-class, and bare-metal.
 - Use `#[os]` and `#[arch]` attributes for platform/CPU variants. No hidden platform logic.
 - Platform differences handled by thin host layers or compile-time flags only.
 - Embedded must support no OS / minimal or no libc, static allocation preferred, deterministic behavior.
