@@ -1261,17 +1261,17 @@
       frame: (head) => decodeFrame(mem.buffer, head, paint),
       /* "" restores the host default. Quoting the family lets names with
          spaces ("Universal Sans") survive the CSS shorthand. */
-      set_font_family: (ptr) => {
-        const name = cstr(ptr);
+      set_font_family: (ptr, len) => {
+        const name = bytes(ptr, len);
         fontFace = name ? '"' + name + '", ' + fontFallback : fontFallback;
         resetFontCaches();
       },
       /* Loads asynchronously; 1 means "accepted", not "ready". Metrics are
          dropped again on arrival so the first frames using the fallback are
          re-measured once the real face lands. */
-      load_font: (famPtr, srcPtr) => {
-        const family = cstr(famPtr);
-        const src = cstr(srcPtr);
+      load_font: (famPtr, famLen, srcPtr, srcLen) => {
+        const family = bytes(famPtr, famLen);
+        const src = bytes(srcPtr, srcLen);
         if (!family || !src || typeof FontFace === "undefined") return 0;
         try {
           const face = new FontFace(family, 'url("' + src + '")');
@@ -1289,8 +1289,8 @@
       /* In-tree metrics need the font's bytes, which wasm cannot read from a
          URL. Fetch them, copy into the wasm buffer, and bind — async like
          load_font, so layout keeps measureText until this lands. */
-      font_fetch: (ptr) => {
-        const src = cstr(ptr);
+      font_fetch: (ptr, len) => {
+        const src = bytes(ptr, len);
         if (!src) return 0;
         fetch(src).then((r) => r.arrayBuffer()).then((buf) => {
           if (!exp || !mem) return;
@@ -1360,21 +1360,14 @@
         fileInput.click();
       },
       /* Intrinsic size for layout (`platform.plat_image_size`): the two i32
-         out-params. Decode is shared with `image`; a not-yet-decoded source
-         reports 0 and the load's `schedule` re-lays out on the next frame. */
-      image_size: (ptr, wPtr, hPtr) => {
+         out-params at `outPtr`. Decode is shared with `image`; a not-yet-decoded
+         source reports 0 and the load's `schedule` re-lays out on the next frame. */
+      image_size: (ptr, len, outPtr) => {
         const view = new DataView(mem.buffer);
-        view.setInt32(wPtr, 0, true);
-        view.setInt32(hPtr, 0, true);
-        const src = cstr(ptr);
+        view.setInt32(outPtr, 0, true);
+        view.setInt32(outPtr + 4, 0, true);
+        const src = bytes(ptr, len);
         if (!src) return;
-        if (src.startsWith("media:")) {
-          const m = media[parseInt(src.slice(6), 10) | 0];
-          if (!m || !m.src || !m.el.videoWidth) return;
-          view.setInt32(wPtr, m.el.videoWidth, true);
-          view.setInt32(hPtr, m.el.videoHeight, true);
-          return;
-        }
         let rec = imgCache.get(src);
         if (rec === "fail") return;
         if (!rec) {
@@ -1389,8 +1382,8 @@
           rec = im;
         }
         if (!rec.complete || !rec.naturalWidth) return;
-        view.setInt32(wPtr, rec.naturalWidth, true);
-        view.setInt32(hPtr, rec.naturalHeight, true);
+        view.setInt32(outPtr, rec.naturalWidth, true);
+        view.setInt32(outPtr + 4, rec.naturalHeight, true);
       },
       /* `plat_media_*`: see `media` above. Codes match zeus_host.c. */
       media_open: (slot, ptr, len) => {

@@ -343,7 +343,14 @@ fn edit_measure(slot: int, s: string, from: int, to: int, font: int, w: &mut int
     if edit_secure_on[slot] {
         let mut bullet_w = 0
         let mut bullet_h = 0
-        platform.plat_measure_span(EDIT_BULLET, 0, EDIT_BULLET.len, font, &mut bullet_w, &mut bullet_h)
+        platform.plat_measure_span(
+            EDIT_BULLET,
+            0,
+            EDIT_BULLET.len,
+            font,
+            &mut bullet_w,
+            &mut bullet_h,
+        )
         *w = bullet_w * edit_cp_count(s, from, to)
         *h = bullet_h
         return
@@ -683,7 +690,9 @@ fn intern_str_fn(thunk: fn() -> string) -> int {
 fn note_kind_mismatch(id: int, want: int, got: int) {
     kind_mismatches = kind_mismatches + 1
     if kind_mismatches <= MISMATCH_REPORTS {
-        fmt.ewrite("zeus: interned handler {{id}} invoked as kind {{want}} but interned as kind {{got}} — refusing the call\n")
+        fmt.ewrite(
+            "zeus: interned handler {{id}} invoked as kind {{want}} but interned as kind {{got}} — refusing the call\n",
+        )
     }
 }
 
@@ -829,7 +838,7 @@ fn preset_store(seq: int, msg: string) {
         return
     }
     preset_seq[preset_count] = seq
-    preset_text[preset_count] = msg
+    preset_text[preset_count] = str.slice(msg, 0, msg.len)
     preset_count = preset_count + 1
 }
 

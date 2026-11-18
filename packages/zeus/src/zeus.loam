@@ -108,6 +108,7 @@ import "zeuscore/input.loam"
 import "zeuscore/track.loam"
 import "zeuscore/style.loam"
 import "std:async"
+import "std:buf"
 import "std:fmt"
 import "std:str"
 import "std:sys"
@@ -351,15 +352,30 @@ fn refresh_lists() {
     arena.refresh_hosts()
 }
 
+let mut host_booting: int = 0
+
+fn engine_boot_begin() {
+    host_booting = 1
+}
+
+fn engine_boot_end() {
+    host_booting = 0
+}
+
 /** *Web host: a trap unwound out of an export (wasm has no `setjmp`, so */
 /** *`Boundary` cannot catch it in-process). The innermost boundary that was */
 /** *building, or whose handler / effect / list refresh was running, takes the */
 /** *panic message and shows its fallback on the next frame; the transient state */
 /** *every entry point starts from (build stack, tracking stack, scope) is reset. */
-/** *Returns 1 when a boundary took the trap, 0 when none was at work. */
+/** *Returns 1 when a boundary took the trap (2 during `main` startup), 0 when */
+/** *none was at work. */
 fn engine_recover() -> int {
     view_building = 0
-    return arena.recover_trap(runtime.trap_msg())
+    let r = arena.recover_trap(runtime.trap_msg())
+    if r != 0 && host_booting != 0 {
+        return if arena.last_trap_seq > 0 { 2 } else { 0 }
+    }
+    return r
 }
 
 /** *Build-order number of the boundary the last `engine_recover` failed in its */
@@ -1088,15 +1104,15 @@ fn a11y_num(v: int) {
         push(A11Y_out, 48)
         return
     }
-    let mut buf = []int {}
+    let mut digits = []int {}
     while x > 0 {
-        push(buf, 48 + x % 10)
+        push(digits, 48 + x % 10)
         x = x / 10
     }
-    let mut k = buf.len
+    let mut k = digits.len
     while k > 0 {
         k = k - 1
-        push(A11Y_out, buf[k])
+        push(A11Y_out, digits[k])
     }
 }
 
@@ -1186,57 +1202,128 @@ fn engine_a11y_bytes() -> []int {
     return A11Y_out
 }
 
+fn a11y_keep(i: int) -> bool {
+    if arena.shown_in_tree(i) == 0 {
+        return false
+    }
+    let role = nodes.ui[i].a11y_role
+    let label = nodes.ui[i].a11y_label
+    let txt = nodes.look[i].text
+    if role.len == 0 && label.len == 0 && txt.len == 0 {
+        return false
+    }
+    if fmt.eq(role, "presentation") {
+        return false
+    }
+    if role.len == 0 && label.len == 0 && a11y_redundant(i) {
+        return false
+    }
+    return true
+}
+
+fn a11y_role_id(role: string) -> int {
+    if role == "button" {
+        return 1
+    }
+    if role == "textbox" {
+        return 2
+    }
+    if role == "slider" {
+        return 3
+    }
+    if role == "switch" || role == "checkbox" {
+        return 4
+    }
+    if role == "list" {
+        return 5
+    }
+    if role == "table" {
+        return 6
+    }
+    if role == "img" {
+        return 7
+    }
+    return 0
+}
+
+let mut a11y_ids: []int = []int {}
+
+fn engine_a11y_count() -> int {
+    while a11y_ids.len > 0 {
+        pop(a11y_ids)
+    }
+    let n = nodes.tree.len
+    for i in 1..n {
+        if a11y_keep(i) {
+            push(a11y_ids, i)
+        }
+    }
+    return a11y_ids.len
+}
+
+fn engine_a11y_item(
+    idx: int,
+    x: &mut int,
+    y: &mut int,
+    w: &mut int,
+    h: &mut int,
+    role_id: &mut int
+) -> string {
+    if idx < 0 || idx >= a11y_ids.len {
+        *x = 0
+        *y = 0
+        *w = 0
+        *h = 0
+        *role_id = 0
+        return ""
+    }
+    let i = a11y_ids[idx]
+    *x = nodes.box[i].x
+    *y = nodes.box[i].y
+    *w = nodes.box[i].w
+    *h = nodes.box[i].h
+    *role_id = a11y_role_id(nodes.ui[i].a11y_role)
+    let label = nodes.ui[i].a11y_label
+    return if label.len > 0 { label } else { nodes.look[i].text }
+}
+
 fn a11y_build() {
-    A11Y_out = []int {}
+    while A11Y_out.len > 0 {
+        pop(A11Y_out)
+    }
     let n = nodes.tree.len
     let mut i = 1
     while i < n {
-        // Shown in the tree, not merely by its own flag: the items of a closed
-        // menu or a hidden panel are not on the page and must not be read.
-        if arena.shown_in_tree(i) != 0 {
+        if a11y_keep(i) {
             let role = nodes.ui[i].a11y_role
             let label = nodes.ui[i].a11y_label
             let txt = nodes.look[i].text
-            let mut keep = role.len > 0 || label.len > 0 || txt.len > 0
-            if fmt.eq(role, "presentation") {
-                keep = false
-            } else if role.len == 0 && label.len == 0 && a11y_redundant(i) {
-                keep = false
+            let r = if role.len > 0 { role } else { "text" }
+            let l = if label.len > 0 { label } else { txt }
+            let mut d = 0
+            let mut p = nodes.tree[i].parent
+            while p > 0 {
+                d = d + 1
+                p = nodes.tree[p].parent
             }
-            if keep {
-                let mut r = role
-                let mut l = label
-                if l.len == 0 {
-                    l = txt
-                }
-                if r.len == 0 {
-                    r = "text"
-                }
-                let mut d = 0
-                let mut p = nodes.tree[i].parent
-                while p > 0 {
-                    d = d + 1
-                    p = nodes.tree[p].parent
-                }
-                a11y_num(d)
-                push(A11Y_out, 9)
-                a11y_push(r)
-                push(A11Y_out, 9)
-                a11y_push(l)
-                push(A11Y_out, 9)
-                a11y_num(nodes.box[i].x)
-                push(A11Y_out, 9)
-                a11y_num(nodes.box[i].y)
-                push(A11Y_out, 9)
-                a11y_num(nodes.box[i].w)
-                push(A11Y_out, 9)
-                a11y_num(nodes.box[i].h)
-                push(A11Y_out, 9)
-                a11y_num(i)
-                push(A11Y_out, 9)
-                a11y_num(a11y_state_bits(i))
-                push(A11Y_out, 10)
-            }
+            a11y_num(d)
+            push(A11Y_out, 9)
+            a11y_push(r)
+            push(A11Y_out, 9)
+            a11y_push(l)
+            push(A11Y_out, 9)
+            a11y_num(nodes.box[i].x)
+            push(A11Y_out, 9)
+            a11y_num(nodes.box[i].y)
+            push(A11Y_out, 9)
+            a11y_num(nodes.box[i].w)
+            push(A11Y_out, 9)
+            a11y_num(nodes.box[i].h)
+            push(A11Y_out, 9)
+            a11y_num(i)
+            push(A11Y_out, 9)
+            a11y_num(a11y_state_bits(i))
+            push(A11Y_out, 10)
         }
         i = i + 1
     }
@@ -2001,4 +2088,521 @@ fn engine_picked_image(src: string, w: int, h: int) {
 /** *`mediastate`. */
 fn engine_media_picked(name: string, src: string) {
     mediastate.picked(name, src)
+}
+
+// --- host loop, event routing and buffers (R7.1) ----------------------------
+
+let mut host_last_ms: int = 0
+let mut host_rm_done: int = 0
+
+/** *Elapsed ms since the previous host frame, clamped to `1..=64` (17 on the */
+/** *first frame or when the clock has not moved). */
+fn host_frame_dt_ms() -> int {
+    let now = platform.plat_now_ms()
+    let mut dt = if host_last_ms > 0 { now - host_last_ms } else { 0 }
+    host_last_ms = now
+    if dt < 1 {
+        dt = 17
+    }
+    if dt > 64 {
+        dt = 64
+    }
+    return dt
+}
+
+/** *One web-host frame (`zeus_paint`): layout, step, paint, then return 0 when */
+/** *idle, 1 when another frame is due now, or the ms until the next timer. */
+fn engine_wasm_paint() -> int {
+    let dt = host_frame_dt_ms()
+    engine_layout(platform.host_window_width(), platform.host_window_height())
+    let more = engine_step_dt(dt)
+    engine_paint()
+    if more != 0 {
+        return 1
+    }
+    let due = engine_next_ms()
+    if due < 0 {
+        return 1
+    }
+    return due
+}
+
+/** *One native host frame at the stored window size (Android `nativePaint`). */
+fn engine_host_frame() -> int {
+    let dt = host_frame_dt_ms()
+    engine_layout(platform.host_window_width(), platform.host_window_height())
+    let more = engine_step_dt(dt)
+    engine_paint()
+    return more
+}
+
+/** *Resize and safe-area insets together (Android `nativeResize`). */
+fn engine_host_resize(w: int, h: int, top: int, right: int, bottom: int, left: int) {
+    platform.host_set_window_size(w, h)
+    platform.plat_set_insets(top, right, bottom, left)
+    if w > 0 && h > 0 {
+        engine_layout(w, h)
+    }
+}
+
+/** *One iOS `drawRect:` pass: safe-area insets, one-time reduced-motion sync, */
+/** *display-link delta clamping, layout, step and paint. */
+fn engine_ios_frame(
+    w: int,
+    h: int,
+    top: int,
+    right: int,
+    bottom: int,
+    left: int,
+    dt_ms: int,
+    reduce_motion: int
+) {
+    platform.plat_set_insets(top, right, bottom, left)
+    if host_rm_done == 0 {
+        host_rm_done = 1
+        engine_set_reduced_motion(reduce_motion)
+    }
+    let step_ms = if dt_ms <= 0 || dt_ms > 50 { 17 } else { dt_ms }
+    engine_layout(w, h)
+    engine_step_dt(step_ms)
+    engine_paint()
+}
+
+/** *Layout and paint at the current window size (Linux X11). */
+fn engine_host_paint() {
+    engine_layout(platform.host_window_width(), platform.host_window_height())
+    engine_paint()
+}
+
+/** *`poll` timeout in ms for an event-loop host: -1 when idle, 0 when a frame */
+/** *is due immediately, else the timer delay. */
+fn engine_poll_timeout_ms() -> int {
+    let due = engine_next_ms()
+    return if due == 0 { -1 } else if due < 0 { 0 } else { due }
+}
+
+/** *X11 `ButtonPress`: wheel notches (4/5) smooth-scroll, anything else clicks, */
+/** *then repaint. */
+fn engine_x11_button(button: int, x: int, y: int) {
+    if button == 4 {
+        engine_scroll_smooth(x, y, 0, -100)
+    } else if button == 5 {
+        engine_scroll_smooth(x, y, 0, 100)
+    } else {
+        engine_click(x, y)
+    }
+    engine_host_paint()
+}
+
+/** *X11 `KeyPress`: map `KeySym` to a Zeus key code, dispatch, then repaint. */
+fn engine_x11_key(ks: int) {
+    let mut key = 0
+    if ks == 65293 {
+        key = 13
+    } else if ks == 65289 {
+        key = 9
+    } else if ks == 65288 {
+        key = 8
+    } else if ks == 65307 {
+        key = 27
+    } else if ks >= 32 && ks < 127 {
+        key = ks
+    }
+    if key != 0 {
+        engine_key(key)
+    }
+    engine_host_paint()
+}
+
+/** *Pointer move with optional scroll delta (web, Android, macOS drag). */
+fn engine_pointer_move(x: int, y: int, dx: int, dy: int) -> int {
+    let mut dirty = engine_drag(x, y)
+    if engine_hover(x, y) != 0 {
+        dirty = 1
+    }
+    if (dx != 0 || dy != 0) && engine_scroll(x, y, dx, dy) != 0 {
+        dirty = 1
+    }
+    return dirty
+}
+
+// Touch state machine (iOS, coordinates in 1/256 point so sub-point drags
+// carry their remainder across events without float drift).
+let mut touch_tracking: int = 0
+let mut touch_scrolling: int = 0
+let mut touch_last_x256: int = 0
+let mut touch_last_y256: int = 0
+let mut touch_start_x256: int = 0
+let mut touch_start_y256: int = 0
+let mut touch_rem_x256: int = 0
+let mut touch_rem_y256: int = 0
+
+fn engine_touch_began(x256: int, y256: int) -> int {
+    touch_last_x256 = x256
+    touch_last_y256 = y256
+    touch_start_x256 = x256
+    touch_start_y256 = y256
+    touch_rem_x256 = 0
+    touch_rem_y256 = 0
+    touch_tracking = 1
+    touch_scrolling = 0
+    let px = x256 / 256
+    let py = y256 / 256
+    let mut dirty = engine_hover(px, py)
+    if engine_click(px, py) != 0 {
+        dirty = 1
+    }
+    return dirty
+}
+
+fn engine_touch_moved(x256: int, y256: int) -> int {
+    if touch_tracking == 0 {
+        return 0
+    }
+    let fx256 = touch_last_x256 - x256 + touch_rem_x256
+    let fy256 = touch_last_y256 - y256 + touch_rem_y256
+    let dx = fx256 / 256
+    let dy = fy256 / 256
+    touch_rem_x256 = fx256 - dx * 256
+    touch_rem_y256 = fy256 - dy * 256
+    let px = x256 / 256
+    let py = y256 / 256
+    let mut dirty = engine_drag(px, py)
+    if engine_hover(px, py) != 0 {
+        dirty = 1
+    }
+    if touch_scrolling == 0 {
+        let sx = i64(touch_start_x256 - x256)
+        let sy = i64(touch_start_y256 - y256)
+        if sx * sx + sy * sy > i64(64) * i64(65536) {
+            touch_scrolling = 1
+        }
+    }
+    if touch_scrolling != 0 && (dx != 0 || dy != 0) {
+        if engine_scroll(px, py, dx, dy) != 0 {
+            dirty = 1
+        }
+    }
+    touch_last_x256 = x256
+    touch_last_y256 = y256
+    return dirty
+}
+
+fn engine_touch_ended() {
+    touch_tracking = 0
+    touch_scrolling = 0
+    engine_mouseup()
+}
+
+/** *UIKeyInput `insertText:`: a newline submits as Return (13), anything else */
+/** *inserts into the focused input. */
+fn engine_ios_insert(text: string) -> int {
+    if text == "\n" {
+        return engine_key_ev(13, 0)
+    }
+    return engine_insert(text)
+}
+
+// Reused NUL-terminated byte buffers for the web host (`zeus_a11y_sync`,
+// `zeus_state_snapshot`, `zeus_cursor_sync`, `zeus_text_buf`). Keeping them in
+// Loam means `wasm.c` holds no static buffers or `realloc` loops, and a steady
+// frame allocates nothing.
+
+let mut a11y_last_gen: int = -1
+let mut a11y_sync_buf: []u8 = []u8 {}
+let mut state_snap_buf: []u8 = []u8 {}
+let mut cursor_sync_buf: []u8 = []u8 {}
+const HOST_TEXT_CAP: int = 4096
+let mut host_text_buf: []u8 = []u8 {}
+
+fn fill_u8_from_ints(dst: &mut []u8, src: &[]int) {
+    while dst.len > 0 {
+        pop(*dst)
+    }
+    for i in 0..src.len {
+        push(*dst, u8(src[i] & 255))
+    }
+    push(*dst, u8(0))
+}
+
+/** *Re-dump the semantic tree into `a11y_sync_buf` when a layout ran since the */
+/** *last call or `force` is non-zero; empty when unchanged. */
+fn engine_a11y_sync(force: int) -> []u8 {
+    if layout_gen == a11y_last_gen && force == 0 {
+        return []u8 {}
+    }
+    a11y_last_gen = layout_gen
+    a11y_build()
+    fill_u8_from_ints(&mut a11y_sync_buf, &A11Y_out)
+    return a11y_sync_buf
+}
+
+/** *Signal snapshot as NUL-terminated UTF-8 bytes in `state_snap_buf`. */
+fn engine_state_snapshot() -> []u8 {
+    while A11Y_out.len > 0 {
+        pop(A11Y_out)
+    }
+    let n = arena.sigs.len
+    for i in 0..n {
+        a11y_num(i)
+        push(A11Y_out, 9)
+        a11y_num(arena.sigs[i])
+        push(A11Y_out, 10)
+    }
+    fill_u8_from_ints(&mut state_snap_buf, &A11Y_out)
+    return state_snap_buf
+}
+
+/** *Current CSS cursor name as NUL-terminated UTF-8 bytes in `cursor_sync_buf`. */
+fn engine_cursor_sync() -> []u8 {
+    let name = engine_cursor()
+    while cursor_sync_buf.len > 0 {
+        pop(cursor_sync_buf)
+    }
+    for i in 0..name.len {
+        push(cursor_sync_buf, u8(name[i] & 255))
+    }
+    push(cursor_sync_buf, u8(0))
+    return cursor_sync_buf
+}
+
+fn engine_text_buf() -> []u8 {
+    if host_text_buf.len < HOST_TEXT_CAP {
+        host_text_buf = buf.with_len(HOST_TEXT_CAP)
+    }
+    return host_text_buf
+}
+
+fn engine_text_buf_cap() -> int {
+    return HOST_TEXT_CAP
+}
+
+fn host_text_prefix(n: int) -> string {
+    let _ = engine_text_buf()
+    let mut len = if n < 0 { 0 } else { n }
+    if len >= HOST_TEXT_CAP {
+        len = HOST_TEXT_CAP - 1
+    }
+    return buf.prefix_to_string(&host_text_buf, len)
+}
+
+fn engine_text_commit(n: int) {
+    engine_insert(host_text_prefix(n))
+}
+
+fn engine_marked_commit(n: int) {
+    engine_marked(host_text_prefix(n))
+}
+
+fn engine_picked_commit(n: int, w: int, h: int) {
+    engine_picked_image(host_text_prefix(n), w, h)
+}
+
+/** *AppKit / desktop cursor id for the current CSS cursor name: */
+/** *0 arrow, 1 pointer, 2 text, 3 crosshair, 4 not-allowed, 5 grab, */
+/** *6 grabbing, 7 ew-resize, 8 ns-resize. */
+fn engine_cursor_id() -> int {
+    let c = engine_cursor()
+    if c == "pointer" {
+        return 1
+    }
+    if c == "text" {
+        return 2
+    }
+    if c == "crosshair" {
+        return 3
+    }
+    if c == "not-allowed" || c == "no-drop" {
+        return 4
+    }
+    if c == "grab" || c == "move" {
+        return 5
+    }
+    if c == "grabbing" {
+        return 6
+    }
+    if c == "col-resize" || c == "e-resize" || c == "w-resize" || c == "ew-resize" {
+        return 7
+    }
+    if c == "row-resize" || c == "n-resize" || c == "s-resize" || c == "ns-resize" {
+        return 8
+    }
+    return 0
+}
+
+let mut wheel_rem_x256: int = 0
+let mut wheel_rem_y256: int = 0
+
+/** *Desktop `scrollWheel:` routing: `dx256`/`dy256` are scrolling deltas in */
+/** *1/256 point (or 1/256 line when `precise == 0`), `shift` swaps vertical */
+/** *onto horizontal, `reset` clears the sub-point remainder on gesture start. */
+fn engine_wheel(
+    x: int,
+    y: int,
+    dx256: int,
+    dy256: int,
+    precise: int,
+    shift: int,
+    reset: int
+) -> int {
+    let mut vx = if precise != 0 { dx256 } else { dx256 * 16 }
+    let mut vy = if precise != 0 { dy256 } else { dy256 * 16 }
+    if shift != 0 && vx == 0 && vy != 0 {
+        vx = vy
+        vy = 0
+    }
+    if reset != 0 {
+        wheel_rem_x256 = 0
+        wheel_rem_y256 = 0
+    }
+    if (wheel_rem_x256 > 0 && vx < 0) || (wheel_rem_x256 < 0 && vx > 0) {
+        wheel_rem_x256 = 0
+    }
+    if (wheel_rem_y256 > 0 && vy < 0) || (wheel_rem_y256 < 0 && vy > 0) {
+        wheel_rem_y256 = 0
+    }
+    vx = vx + wheel_rem_x256
+    vy = vy + wheel_rem_y256
+    let ix = vx / 256
+    let iy = vy / 256
+    wheel_rem_x256 = vx - ix * 256
+    wheel_rem_y256 = vy - iy * 256
+    if ix == 0 && iy == 0 {
+        return 0
+    }
+    if precise != 0 {
+        return engine_scroll_step(x, y, 0 - ix, 0 - iy)
+    }
+    return engine_scroll_smooth(x, y, 0 - ix, 0 - iy)
+}
+
+/** *macOS `mouseDown:` routing: 1 = redraw, 2 = title-bar window drag, */
+/** *0 = nothing changed. */
+fn engine_mac_mouse_down(x: int, y: int, ctrl: int) -> int {
+    if ctrl != 0 && engine_context_click(x, y) != 0 {
+        return 1
+    }
+    if engine_window_drag_at(x, y) != 0 {
+        return 2
+    }
+    return if engine_click(x, y) != 0 { 1 } else { 0 }
+}
+
+fn mac_keycode_to_key(code: int, ch: int, raw_ch: int, mods: int, is_up: int) -> int {
+    let mut key = 0
+    if code == 53 {
+        key = 27
+    } else if code == 51 {
+        key = 8
+    } else if code == 36 {
+        key = 13
+    } else if code == 123 {
+        key = 1000
+    } else if code == 124 {
+        key = 1001
+    } else if code == 126 {
+        key = 1002
+    } else if code == 125 {
+        key = 1003
+    } else if code == 116 {
+        key = 1004
+    } else if code == 121 {
+        key = 1005
+    } else if is_up == 0 && code == 115 {
+        key = 1006
+    } else if is_up == 0 && code == 119 {
+        key = 1007
+    } else if is_up == 0 && ch >= 32 && ch < 127 {
+        key = ch
+    }
+    if code == 48 {
+        key = 9
+    }
+    if key == 0 || is_up != 0 || (mods & 14) != 0 {
+        let mut rc = raw_ch
+        if rc >= 65 && rc <= 90 {
+            rc = rc + 32
+        }
+        if rc >= 32 && rc < 127 {
+            key = rc
+        }
+    }
+    return key
+}
+
+/** *macOS `keyDown:` routing: 3 = paste (`Cmd+V`), 2 = hand to */
+/** *`interpretKeyEvents:`, 1 = handled (redraw), 0 = unhandled (`super`). */
+fn engine_mac_key_down(code: int, ch: int, raw_ch: int, mods: int) -> int {
+    if (mods & 8) != 0 && code == 9 {
+        return 3
+    }
+    if code != 48 && code != 53 && (mods & 10) == 0 && engine_focus_captures_text() != 0 {
+        return 2
+    }
+    let key = mac_keycode_to_key(code, ch, raw_ch, mods, 0)
+    if key != 0 && engine_key_ev(key, mods) != 0 {
+        return 1
+    }
+    return 0
+}
+
+/** *macOS `keyUp:` routing: 1 = handled (redraw), 0 = unhandled (`super`). */
+fn engine_mac_key_up(code: int, raw_ch: int, mods: int) -> int {
+    let key = mac_keycode_to_key(code, 0, raw_ch, mods, 1)
+    return if key != 0 && engine_key_up(key, mods) != 0 { 1 } else { 0 }
+}
+
+/** *macOS `mac_frame`: one-time reduced-motion sync, layout, step and paint. */
+fn engine_mac_frame(vw: int, vh: int, reduce_motion: int, media_live: int) -> int {
+    if host_rm_done == 0 {
+        host_rm_done = 1
+        engine_set_reduced_motion(reduce_motion)
+    }
+    let dt = host_frame_dt_ms()
+    let step_ms = if dt > 50 { 50 } else { dt }
+    engine_layout(vw, vh)
+    let mut more = engine_step_dt(step_ms)
+    engine_paint()
+    if media_live != 0 {
+        more = 1
+    }
+    return more
+}
+
+/** *Parse `ZEUS_SNAPSHOT_SIZE=WxH` (if set) and return the snapshot size. */
+fn engine_snapshot_prepare(w: &mut int, h: &mut int) {
+    let mut rw = platform.host_window_width()
+    let mut rh = platform.host_window_height()
+    let sz = sys.env("ZEUS_SNAPSHOT_SIZE")
+    let mut i = 0
+    let mut sw = 0
+    let mut sh = 0
+    while i < sz.len && sz[i] >= 48 && sz[i] <= 57 {
+        sw = sw * 10 + int(sz[i] - 48)
+        i = i + 1
+    }
+    if i < sz.len && (sz[i] == 120 || sz[i] == 88) {
+        i = i + 1
+        while i < sz.len && sz[i] >= 48 && sz[i] <= 57 {
+            sh = sh * 10 + int(sz[i] - 48)
+            i = i + 1
+        }
+    }
+    if sw > 0 && sh > 0 {
+        rw = sw
+        rh = sh
+        platform.host_set_window_size(rw, rh)
+    }
+    *w = rw
+    *h = rh
+}
+
+/** *Settle animations (60 frames at 17 ms) and paint the snapshot frame. */
+fn engine_snapshot_paint(w: int, h: int) {
+    engine_layout(w, h)
+    for _ in 0..60 {
+        engine_step_dt(17)
+    }
+    engine_layout(w, h)
+    engine_paint()
 }

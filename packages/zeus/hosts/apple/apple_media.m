@@ -212,7 +212,7 @@ static int64_t za_media_state(ZAMedia *m) {
     return 2;
 }
 
-int64_t za_media_get(int64_t slot, int64_t what) {
+static int64_t za_media_get(int64_t slot, int64_t what) {
     ZAMedia *m = za_media_at(slot);
     if (!m) return 0;
     if (what == 3) return za_media_state(m);
@@ -295,15 +295,8 @@ void za_media_draw(int64_t x, int64_t y, int64_t w, int64_t h, int64_t slot, int
         iw = m->fw;
         ih = m->fh;
     }
-    za_draw_cgimage(img, CGRectMake((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h),
-                    za_image_dest(x, y, w, h, iw, ih, fit), radius, alpha, 1);
+    za_draw_cgimage(img, x, y, w, h, iw, ih, radius, alpha, fit, 1);
 }
-
-int64_t za_media_slot_of(const char *src) {
-    if (!src || strncmp(src, "media:", 6) != 0) return -1;
-    return (int64_t)atoi(src + 6);
-}
-
 
 void za_media_table(ZeusMedia *t) {
     t->open = za_media_open;

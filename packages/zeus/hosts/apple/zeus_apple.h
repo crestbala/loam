@@ -49,20 +49,18 @@ void za_redraw(void);
 /* The platform's colour for 0xRRGGBB at `a` (0..1). macOS keeps calibrated
    RGB, as AppKit always drew it; iOS uses UIKit's default. */
 ZAColor *za_color(int64_t rgb, CGFloat a);
-/* The system font, or the family `zeus_font_family()` names, at `px`. */
 ZAFont *za_font(int64_t px);
+void za_set_family(const char *fam);
 void za_measure(const char *s, int64_t px, int64_t *w, int64_t *h);
 /* Every paint callback, ready for `zeus_paint` / `zeus_bind_draw`. */
 ZeusDraw za_draw_table(void);
 void za_image_size(const char *src, int64_t *w, int64_t *h);
 int za_load_font(const char *family, const char *src);
-/* The rect an image of `iw` x `ih` fills inside (x, y, w, h) for `fit`
-   (0 stretch, 1 contain, 2 cover, 3 none). */
-CGRect za_image_dest(int64_t x, int64_t y, int64_t w, int64_t h, int64_t iw, int64_t ih,
-                     int64_t fit);
-/* Draw `img` into `dest`, clipped to `box` with `radius`, at `alpha` 0..255. */
-void za_draw_cgimage(CGImageRef img, CGRect box, CGRect dest, int64_t radius, int64_t alpha,
-                     int smooth);
+/* Draw `img` (intrinsic `iw` x `ih`) inside `(x, y, w, h)` under `fit`,
+   clipped with `radius`, at `alpha` 0..255. */
+void za_draw_cgimage(CGImageRef img, int64_t x, int64_t y, int64_t w, int64_t h,
+                     int64_t iw, int64_t ih, int64_t radius, int64_t alpha,
+                     int64_t fit, int smooth);
 
 /* --- shared: apple_media.m ----------------------------------------------- */
 
@@ -71,9 +69,6 @@ void za_draw_cgimage(CGImageRef img, CGRect box, CGRect dest, int64_t radius, in
 void za_media_table(ZeusMedia *m);
 /* 1 while any player wants frames (playing, buffering, seeking). */
 int za_media_live(void);
-/* The slot a `media:<n>` src names, or -1. */
-int64_t za_media_slot_of(const char *src);
-int64_t za_media_get(int64_t slot, int64_t what);
 void za_media_draw(int64_t x, int64_t y, int64_t w, int64_t h, int64_t slot, int64_t radius,
                    int64_t alpha, int64_t fit);
 

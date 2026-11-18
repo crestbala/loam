@@ -2381,6 +2381,90 @@ with R6.2).
 
 **R7. Hosts** (`packages/zeus/hosts`, outside the runtime directory).
 
-- [ ] R7.1 Layout, event routing and state out of `linux.c`, `android.c`,
-      `wasm.c` and `ios.m`; toolkit calls stay native.
-- [ ] R7.2 Then `mac.m` and `apple_draw.m`.
+- [x] R7.1 Layout, event routing and state out of `linux.c`, `android.c`,
+      `wasm.c` and `ios.m`; toolkit calls stay native. Done 2026-11-18.
+      - **Common host seam (`zeus_host.c`, 634 → 505, −129) and `platform.loam` /
+        `zeus.loam` / `metrics.loam` / `mediastate.loam` / `imagesize.loam`:**
+        - Startup trap recovery (`booting` flag, `engine_boot_begin`,
+          `engine_boot_end`, and startup reload return code `2` in
+          `engine_recover`) moved from `wasm.c` and `zeus_host.c` into
+          `zeus.loam`.
+        - Frame dt calculation and clamping (`host_frame_dt_ms`, last frame
+          timestamp, `[0, 100]` ms clamp) moved into `zeus.loam`, replacing
+          duplicate clock-delta state across `wasm.c`, `linux.c`, `android.c`,
+          `ios.m`, and `mac.m`.
+        - Host frame/resize/paint drivers (`engine_wasm_paint`,
+          `engine_host_frame`, `engine_host_resize`, `engine_ios_frame`,
+          `engine_host_paint`) and poll timeout policy (`engine_poll_timeout_ms`)
+          moved into `zeus.loam`.
+        - Pointer and touch event routing (`engine_pointer_move`,
+          `engine_touch_began`, `engine_touch_moved`, `engine_touch_ended`),
+          X11 button/wheel/keysym routing (`engine_x11_button`,
+          `engine_x11_key`), and iOS text insertion (`engine_ios_insert`) moved
+          into `zeus.loam`.
+        - Shared host UTF-8 Staging buffer (`host_text_buf`, `engine_text_buf`,
+          `engine_text_buf_cap`, `engine_text_commit`, `engine_marked_commit`,
+          `engine_picked_commit`) moved into `zeus.loam`, and wasm font upload
+          staging (`font_buf`, `font_reserve`, `font_commit`) moved into
+          `metrics.loam`.
+        - Accessibility mirror diffing (`engine_a11y_sync` with role table and
+          scroll origin adjustment), hot-reload state snapshot/restore
+          (`engine_state_snapshot`, `engine_state_restore`), and cursor dirty
+          tracking (`engine_cursor_sync`) moved into `zeus.loam`.
+        - `plat_measure`, `plat_measure_int`, `plat_measure_span`,
+          `default_measure`, `plat_set_font_family`, `plat_load_font`,
+          `plat_font_bytes`, `plat_image_size`, `plat_pick_image`, `plat_blit`,
+          `plat_run`, `plat_headless`, and `plat_now_ms` moved from
+          `zeus_host.c` and `wasm.c` into `platform.loam` (using `#[os("wasm")]`
+          JS imports on web), and `host_redraw` / `image_host_bound` moved into
+          `mediastate.loam` / `imagesize.loam`.
+        - `router.engine_open_url` and `runtime.preset_store` copy their input
+          slice on entry so C hosts pass borrowed `(loam_str){ptr, len, 0}`
+          views without `loam_abi_str_copy` / `loam_abi_str_release`.
+      - **Per-host reductions:** `wasm.c` 488 → 262 (−226), `linux.c` 213 → 132
+        (−81), `android.c` 635 → 581 (−54), `ios.m` 382 → 299 (−83),
+        `zeus_host.c` 634 → 505 (−129).
+      - **Count:** **Hosts: 6,319 → 5,770** (−549). Runtime stays **0** (budget 0);
+        `unsafe` stays **674**.
+- [x] R7.2 Then `mac.m` and `apple_draw.m`. Done 2026-11-18.
+      - **`apple_draw.m` (764 → 671, −93), `apple_media.m` (313 → 306, −7),
+        `zeus_apple.h` (80 → 75, −5):**
+        - Shadow radius clamping (`0..min(w, h)/2`), nine-slice geometry
+          calculation (`shadow_geom`: `inset`, `margin`, `side`, `tscale`,
+          `ZEUS_SHADOW_DIRECT` check, and minimum dimension test), and image
+          aspect-fit / fill / none / scale-down rectangle calculation
+          (`image_fit`) moved into `zeuscore/replay.loam`.
+        - `"media:<slot>"` URI parsing (`imagesize.media_slot`) and media-frame
+          dimension lookup moved into `zeuscore/imagesize.loam`, deleting
+          `za_media_slot_of` in `apple_media.m` and the duplicate branch in
+          `za_image_size` in `apple_draw.m`.
+      - **`packages/zeus/hosts/desktop/mac.m` (2,022 → 1,454, −568):**
+        - Display-path selection (`DP_UNSET` / `DP_TILE` / `DP_LAYER` /
+          `DP_WANTS_LAYER`), fullscreen resize stabilization, dirty-region /
+          full-damage selection, tile-vs-surface paint dispatch, cursor + IME
+          sync, and benchmark/RSS sampling orchestration moved into
+          `engine_mac_frame` in `zeus.loam`.
+        - Mouse multi-click / right-click / drag routing (`engine_mac_mouse_down`),
+          scroll wheel delta scaling (`engine_wheel`), and macOS virtual-keycode /
+          modifier / command-shortcut / key-repeat routing (`engine_mac_key_down`,
+          `engine_mac_key_up`) moved into `zeus.loam`.
+        - Accessibility element filtering (`a11y_keep`, `a11y_role_id`,
+          `engine_a11y_count`, `engine_a11y_item`) and snapshot orchestration
+          (`engine_snapshot_prepare`, `engine_snapshot_paint`) moved into
+          `zeus.loam`.
+      - **`packages/maya/src/hosts/mac.m` (350 → 222, −128):**
+        - Fixed-step frame accumulator and view rebuild (`engine_draw`), key
+          filtering (`engine_key_down`), mouse drag delta tracking
+          (`engine_mouse_down`, `engine_mouse_drag`), scroll wheel scaling
+          (`engine_wheel`), and starfield PRNG (`present_map` → `maya_mac_star`)
+          moved into `packages/maya/src/maya.loam`.
+      - **Checks:** `host_contract`, `wasm_smoke`, `wasm_trap`, `wasm_float`,
+        `android_project`, `api_freeze`, `arena_lint`, `design_lint`,
+        `one_surface`, `loader_cases`, `serve_build`, `routes_app`, `c_layouts`,
+        `server_split`, `lsp`, `modules`, `cost`, `ownership_asan`,
+        `thread_tsan`, `selfhost_seed` (seed = stage 1 = stage 2, 5,615,749
+        bytes), `fresh_cache`, iOS Simulator build, and macOS `ZEUS_SNAPSHOT`
+        pixel parity pass.
+      - **Count:** **Hosts: 5,770 → 4,984** (−786 in R7.2; **6,319 → 4,984,
+        −1,335 lines / −21.1% across R7**). Runtime stays **0** (budget 0);
+        `unsafe` stays **674**.

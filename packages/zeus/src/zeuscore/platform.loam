@@ -10,13 +10,17 @@ import "mediastate.loam"
 import "std:buf"
 import "std:sys"
 
-fn plat_run() {}
+fn plat_run() {
+    run_os()
+}
 /** *1 with no window to draw in: no host run loop is bound, or */
 /** *`ZEUS_HEADLESS` is set (read once). */
 fn plat_headless() -> int {
-    return if native_run_bound() == 0 || headless_env_os() != 0 { 1 } else { 0 }
+    return if run_bound_os() == 0 || headless_env_os() != 0 { 1 } else { 0 }
 }
-fn plat_measure(s: string, px: int, w: &mut int, h: &mut int) {}
+fn plat_measure(s: string, px: int, w: &mut int, h: &mut int) {
+    plat_measure_span(s, 0, s.len, px, w, h)
+}
 /** *The frame: the whole draw list in one call, in the versioned format of */
 /** *`packages/zeus/docs/frame-format.md` (the op table lives there, once). */
 /** *`head` is `magic version stride n ns np`; `ops` holds `n` records of */
@@ -29,20 +33,49 @@ fn plat_frame(head: []int, ops: []int, strs: []string, path: []int) {}
 /** *a per-node field: the text ABI carries a pixel size only, and every host */
 /** *(Cocoa / Canvas2D / Android) would have to change to thread a family */
 /** *through it. A design system uses one typeface, so the host holds it. */
-fn plat_set_font_family(name: string) {}
+fn plat_set_font_family(name: string) {
+    font_family = name
+    set_font_family_os(name)
+    mediastate.host_redraw()
+}
 /** *Register a font the host does not already have: `src` is a file path or, */
 /** *on the web, a URL. Returns 1 when the host accepted it. Call before */
 /** *`plat_set_font_family(name)`. */
-fn plat_load_font(family: string, src: string) -> int {}
-fn plat_measure_int(v: int, px: int, w: &mut int, h: &mut int) {}
+fn plat_load_font(family: string, src: string) -> int {
+    return load_font_os(family, src)
+}
+fn plat_measure_int(v: int, px: int, w: &mut int, h: &mut int) {
+    if native_measure_bound() == 0 {
+        default_measure(int_text_len(v), px, w, h)
+        return
+    }
+    plat_measure("{{v}}", px, w, h)
+}
 /** *Measure the bytes `s[from..to)` as one line, without slicing `s`: how */
 /** *the wrap (`metrics.host_wrap`) and the text-edit caret measure words. */
-fn plat_measure_span(s: string, from: int, to: int, px: int, w: &mut int, h: &mut int) {}
+fn plat_measure_span(s: string, from: int, to: int, px: int, w: &mut int, h: &mut int) {
+    let mut a = if from < 0 { 0 } else { from }
+    let mut b = if to > s.len { s.len } else { to }
+    if b < a {
+        b = a
+    }
+    if native_measure_bound() != 0 {
+        *w = 0
+        *h = 0
+        native_measure_span(s, a, b, px, w, h)
+        if *h > 0 {
+            return
+        }
+    }
+    default_measure(span_c_len(s, a, b), px, w, h)
+}
 /** *Bytes of a font file for in-tree metrics (`std:font`) from a host hook (a */
 /** *URL fetch on the web). Empty when no hook answers; `zeus.use_font` then */
 /** *reads `src` as a path, and keeps host measurement if that is empty too */
 /** *(`packages/zeus/src/zeuscore/metrics.loam`). */
-fn plat_font_bytes(src: string) -> string {}
+fn plat_font_bytes(src: string) -> string {
+    return font_bytes_os(src)
+}
 fn plat_set_window(title: string, width: int, height: int) {
     window_title = title
     set_window_size_os(width, height)
@@ -118,11 +151,15 @@ fn plat_view_height() -> int {
 /** *aspect ratio and shrinks to the container (device) width instead of */
 /** *collapsing to zero height. Hosts answer from their decode cache; a remote */
 /** *image reports 0 for a frame or two, then the host's own redraw re-lays out. */
-fn plat_image_size(src: string, w: &mut int, h: &mut int) {}
+fn plat_image_size(src: string, w: &mut int, h: &mut int) {
+    image_size_os(src, w, h)
+}
 /** *Open a host image picker. Returns a path / blob URL immediately, or empty */
 /** *if the host completes later via `engine_picked_image`. `w`/`h` are the */
 /** *image's intrinsic size in layout points (0 if still loading). */
-fn plat_pick_image(w: &mut int, h: &mut int) -> string {}
+fn plat_pick_image(w: &mut int, h: &mut int) -> string {
+    return pick_image_os(w, h)
+}
 /** *Media playback (video and audio), decoded and played by the host: an */
 /** *HTMLVideoElement on the web, AVPlayer on macOS. `slot` (1..7) names one */
 /** *player. An `Image` whose src is `"media:<slot>"` paints that player's */
@@ -179,7 +216,12 @@ fn plat_fullscreen(on: int) -> int {
 /** *the pixels once and rebuilds its wrapper only when this number moves, which */
 /** *is what keeps a frame from churning a second full-size buffer. Returns 1 when */
 /** *the host presented, 0 when it has no display to present to. */
-fn plat_blit(buf: []u8, w: int, h: int, gen: int, scale: int) -> int {}
+fn plat_blit(px_buf: []u8, w: int, h: int, gen: int, scale: int) -> int {
+    if w <= 0 || h <= 0 || i64(px_buf.len) < i64(w) * i64(h) * 4 {
+        return 0
+    }
+    return blit_os(px_buf, w, h, gen, scale)
+}
 /** *Host process memory in KB: Apple phys_footprint (Xcode's memory-gauge */
 /** *number), Linux/Android resident set, or the live wasm heap on the web */
 /** *host. 0 when the host reports nothing. */
@@ -190,7 +232,7 @@ fn plat_mem_kb() -> int {
 /** *across an idle host sleep: the engine's own `now_ms` advances by a capped */
 /** *frame delta, so it lags wall time after a wake. */
 fn plat_now_ms() -> int {
-    return int(native_clock_ms() + clock_skipped)
+    return int(clock_ms_os() + clock_skipped)
 }
 /** *Move that clock forward: a test's way through a timeline without waiting. */
 fn plat_clock_skip(ms: int) {
@@ -294,8 +336,10 @@ const DEFAULT_WINDOW_W: int = 640
 const DEFAULT_WINDOW_H: int = 480
 
 let mut window_title: string = ""
+let mut font_family: string = ""
 let mut window_w: int = DEFAULT_WINDOW_W
 let mut window_h: int = DEFAULT_WINDOW_H
+let mut image_size_pair: []int = []int { 0, 0 }
 /** *Set once the host's window exists: the view size is the window's from */
 /** *then on, not the screen's. */
 let mut window_opened: bool = false
@@ -317,6 +361,34 @@ let mut headless_env: int = -1
 
 fn at_least_zero(v: int) -> int {
     return if v < 0 { 0 } else { v }
+}
+
+/** *Fallback line box when no host measure hook is bound (`measure_default`). */
+fn default_measure(len: int, px: int, w: &mut int, h: &mut int) {
+    let size = if px < 8 { 8 } else { px }
+    *w = len * (size * 6 / 10)
+    *h = size + 4
+}
+
+/** *Bytes of `s[from..to)` before the first NUL, as `strlen` on a slice sees it. */
+fn span_c_len(s: string, from: int, to: int) -> int {
+    for i in from..to {
+        if s[i] == 0 {
+            return i - from
+        }
+    }
+    return to - from
+}
+
+/** *Decimal character count of `v` (including `-` for negatives). */
+fn int_text_len(v: int) -> int {
+    let mut u: i64 = if v < 0 { 0 - i64(v) } else { i64(v) }
+    let mut n = if v < 0 { 2 } else { 1 }
+    while u >= 10 {
+        u = u / 10
+        n = n + 1
+    }
+    return n
 }
 
 /** *Host entry: the window size the app asked for. */
@@ -354,12 +426,104 @@ fn host_retitle() {
     native_title_changed(window_title)
 }
 
+/** *1 when the requested window size equals the screen's initial work area, */
+/** *so a desktop host opens screen-filling instead of centered. */
+fn host_window_fills_screen() -> int {
+    let iw = native_initial_w()
+    let ih = native_initial_h()
+    if iw < 1 || ih < 1 {
+        return 0
+    }
+    return if iw == window_w && ih == window_h { 1 } else { 0 }
+}
+
+let mut display_path_cfg: int = -1
+let mut surface_count_cfg: int = 0
+let mut env_flag_cache: []int = []int { -1, -1, -1, -1 }
+
+fn env_truthy(name: string) -> bool {
+    let v = sys.env(name)
+    return v.len > 0 && v != "0"
+}
+
+/** *Desktop presentation mode: 2 owned IOSurface set (default), 1 owned */
+/** *bitmap (`ZEUS_OWN_SURFACE=0` / `ZEUS_OWN_BUFFER=1`), 0 AppKit store */
+/** *(`APP_KIT=1` / `ZEUS_OWN_BUFFER=0`). */
+fn host_display_path() -> int {
+    if display_path_cfg < 0 {
+        if env_truthy("APP_KIT") {
+            display_path_cfg = 0
+        } else if sys.env("ZEUS_OWN_SURFACE").len > 0 {
+            display_path_cfg = if env_truthy("ZEUS_OWN_SURFACE") { 2 } else { 1 }
+        } else if sys.env("ZEUS_OWN_BUFFER").len > 0 {
+            display_path_cfg = if env_truthy("ZEUS_OWN_BUFFER") { 1 } else { 0 }
+        } else {
+            display_path_cfg = 2
+        }
+    }
+    return display_path_cfg
+}
+
+fn host_set_display_path(mode: int) {
+    display_path_cfg = mode
+}
+
+/** *Number of rotating IOSurfaces (2..4, default 2; `ZEUS_OWN_SURFACES` or */
+/** *`ZEUS_OWN_SURFACE` >= 2). */
+fn host_surface_count() -> int {
+    if surface_count_cfg <= 0 {
+        let mut e = sys.env("ZEUS_OWN_SURFACES")
+        if e.len == 0 {
+            e = sys.env("ZEUS_OWN_SURFACE")
+        }
+        let mut n = 2
+        if e.len > 0 && e[0] >= 50 && e[0] <= 57 {
+            n = int(e[0] - 48)
+        }
+        if n < 2 {
+            n = 2
+        }
+        if n > 4 {
+            n = 4
+        }
+        surface_count_cfg = n
+    }
+    return surface_count_cfg
+}
+
+/** *Cached host env flag: 0 `ZEUS_FRAME_DEBUG`, 1 `ZEUS_FRAME_BENCH`, */
+/** *2 `ZEUS_MEM_DEBUG`, 3 `ZEUS_WIDE_GAMUT`. */
+fn host_env_flag(which: int) -> int {
+    if which < 0 || which >= 4 {
+        return 0
+    }
+    if env_flag_cache[which] < 0 {
+        let name = if which == 0 {
+            "ZEUS_FRAME_DEBUG"
+        } else if which == 1 {
+            "ZEUS_FRAME_BENCH"
+        } else if which == 2 {
+            "ZEUS_MEM_DEBUG"
+        } else {
+            "ZEUS_WIDE_GAMUT"
+        }
+        env_flag_cache[which] = if env_truthy(name) { 1 } else { 0 }
+    }
+    return env_flag_cache[which]
+}
+
 // --- native hooks -----------------------------------------------------------
 // What only a native host can answer, through the callbacks it registered in
 // `zeus_host.c`. Each answers 0 / does nothing when none is.
 
+/** *Run the native host's event loop (`zeus_set_platform`). */
+fn native_run() {}
 /** *1 when a host run loop is bound (`zeus_set_platform`). */
 fn native_run_bound() -> int {}
+/** *1 when a host text-measure hook is bound (`zeus_set_platform`). */
+fn native_measure_bound() -> int {}
+/** *Measure `s[from..to)` at `px` through the bound host hook. */
+fn native_measure_span(s: string, from: int, to: int, px: int, w: &mut int, h: &mut int) {}
 /** *The screen work area a desktop window will open at, or 0. */
 fn native_initial_w() -> int {}
 fn native_initial_h() -> int {}
@@ -369,11 +533,119 @@ fn native_clock_ms() -> i64 {}
 fn native_title_changed(title: string) {}
 /** *To the host's pasteboard hook (`zeus_set_clipboard_hook`). */
 fn native_clipboard_write(text: string) {}
+/** *To the host's font hooks (`zeus_set_font_hooks`). */
+fn native_set_font_family(name: string) {}
+fn native_load_font(family: string, src: string) -> int {}
+/** *To the host's image-size and image-picker hooks. */
+fn native_image_size(src: string, w: &mut int, h: &mut int) {}
+fn native_pick_image(w: &mut int, h: &mut int) -> string {}
+/** *To the host's software-rasterizer blit hook (`zeus_set_blit`). */
+fn native_blit(px_buf: []u8, w: int, h: int, gen: int, scale: int) -> int {}
 
 // --- per target -------------------------------------------------------------
 // The web host's side of the contract is its `zeus` imports (`#[os("wasm")]`
 // `#[c]` bindings, `hosts/web/loader.js`). Elsewhere a browser-only service
 // does nothing, and what a native host provides is a C hook in `zeus_host.c`.
+
+#[os("wasm")]
+fn run_os() {
+    return
+}
+
+#[os("posix", "windows")]
+fn run_os() {
+    native_run()
+}
+
+#[os("wasm")]
+fn run_bound_os() -> int {
+    return 1
+}
+
+#[os("posix", "windows")]
+fn run_bound_os() -> int {
+    return native_run_bound()
+}
+
+#[os("wasm")]
+fn clock_ms_os() -> i64 {
+    return js_now_ms()
+}
+
+#[os("posix", "windows")]
+fn clock_ms_os() -> i64 {
+    return native_clock_ms()
+}
+
+#[os("wasm")]
+fn set_font_family_os(name: string) {
+    js_set_font_family(name)
+}
+
+#[os("posix", "windows")]
+fn set_font_family_os(name: string) {
+    native_set_font_family(name)
+}
+
+#[os("wasm")]
+fn load_font_os(family: string, src: string) -> int {
+    return if js_load_font(family, src) != 0 { 1 } else { 0 }
+}
+
+#[os("posix", "windows")]
+fn load_font_os(family: string, src: string) -> int {
+    return native_load_font(family, src)
+}
+
+#[os("wasm")]
+fn font_bytes_os(src: string) -> string {
+    if src.len > 0 {
+        js_font_fetch(src)
+    }
+    return ""
+}
+
+#[os("posix", "windows")]
+fn font_bytes_os(src: string) -> string {
+    return ""
+}
+
+#[os("wasm")]
+fn image_size_os(src: string, w: &mut int, h: &mut int) {
+    image_size_pair[0] = 0
+    image_size_pair[1] = 0
+    js_image_size(src, &mut image_size_pair)
+    *w = image_size_pair[0]
+    *h = image_size_pair[1]
+}
+
+#[os("posix", "windows")]
+fn image_size_os(src: string, w: &mut int, h: &mut int) {
+    native_image_size(src, w, h)
+}
+
+#[os("wasm")]
+fn pick_image_os(w: &mut int, h: &mut int) -> string {
+    *w = 0
+    *h = 0
+    js_pick_image()
+    return ""
+}
+
+#[os("posix", "windows")]
+fn pick_image_os(w: &mut int, h: &mut int) -> string {
+    return native_pick_image(w, h)
+}
+
+#[os("wasm")]
+fn blit_os(buf: []u8, w: int, h: int, gen: int, scale: int) -> int {
+    return 0
+}
+
+#[os("posix", "windows")]
+fn blit_os(buf: []u8, w: int, h: int, gen: int, scale: int) -> int {
+    return native_blit(buf, w, h, gen, scale)
+}
 
 #[os("wasm")]
 fn set_title_os(title: string) {
@@ -733,3 +1005,27 @@ fn js_open_external(url: string) {}
 #[os("wasm")]
 #[c("boot_path")]
 fn js_boot_path(out: &mut []u8, cap: int) -> int {}
+
+#[os("wasm")]
+#[c("now_ms")]
+fn js_now_ms() -> i64 {}
+
+#[os("wasm")]
+#[c("set_font_family")]
+fn js_set_font_family(name: string) {}
+
+#[os("wasm")]
+#[c("load_font")]
+fn js_load_font(family: string, src: string) -> int {}
+
+#[os("wasm")]
+#[c("font_fetch")]
+fn js_font_fetch(src: string) -> int {}
+
+#[os("wasm")]
+#[c("image_size")]
+fn js_image_size(src: string, out: &mut []int) {}
+
+#[os("wasm")]
+#[c("pick_image")]
+fn js_pick_image() {}

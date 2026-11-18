@@ -12,7 +12,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include <time.h>
 #include <unistd.h>
 
 int loam_app_main(void);
@@ -25,7 +24,6 @@ static JNIEnv *g_env;
 static jobject g_canvas;
 static int g_started;
 static volatile int g_ready;
-static int g_view_w, g_view_h;
 
 /* Android drops stdout, and `std:log` and `fmt.println` write there. The write
    end of this pipe becomes stdout, and each line reaches logcat as tag `zeus`,
@@ -211,13 +209,7 @@ static void android_measure(const char *s, int64_t px, int64_t *w, int64_t *h) {
     JNIEnv *env = g_env ? g_env : env_now();
     jstring js;
     jlong packed;
-    if (!env || !g_view || !m_measure) {
-        size_t n = s ? strlen(s) : 0;
-        if (px < 8) px = 8;
-        if (w) *w = (int64_t)n * (px * 6 / 10);
-        if (h) *h = px + 4;
-        return;
-    }
+    if (!env || !g_view || !m_measure) return;
     js = (*env)->NewStringUTF(env, s ? s : "");
     packed = (*env)->CallLongMethod(env, g_view, m_measure, js, (jint)px);
     (*env)->DeleteLocalRef(env, js);
@@ -239,9 +231,7 @@ static void android_image_size(const char *src, int64_t *w, int64_t *h) {
     if (h) *h = (int64_t)(packed & 0xffffffffL);
 }
 
-static void android_run(void) {
-    /* Activity already created the view; layout happens on first paint. */
-}
+static void android_run(void) {}
 
 static void android_pick_image(char *out, int cap, int64_t *w, int64_t *h) {
     JNIEnv *env = g_env ? g_env : env_now();
@@ -259,8 +249,7 @@ static void android_redraw(void) {
 }
 
 static void bind_canvas(void) {
-    ZeusDraw d;
-    memset(&d, 0, sizeof d);
+    ZeusDraw d = {0};
     d.fill = draw_fill;
     d.fill_a = draw_fill_a;
     d.fill_g = draw_fill_g;
@@ -269,6 +258,7 @@ static void bind_canvas(void) {
     d.fill4 = draw_fill4;
     d.xform = draw_xform;
     d.text = draw_text;
+    d.text_rot = draw_text_rot;
     d.save = draw_save;
     d.alpha = draw_alpha;
     d.clip = draw_clip;
@@ -337,11 +327,7 @@ JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativeResize(JNIEnv *env, job
                                                                 jint inset_b, jint inset_l) {
     (void)thiz;
     g_env = env;
-    if (w > 0) g_view_w = w;
-    if (h > 0) g_view_h = h;
-    zeus_set_window_size(w, h);
-    zeus_set_insets(inset_t, inset_r, inset_b, inset_l);
-    if (w > 0 && h > 0) loam_zeus_engine_layout(w, h);
+    loam_zeus_engine_host_resize(w, h, inset_t, inset_r, inset_b, inset_l);
 }
 
 JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativeReducedMotion(JNIEnv *env, jobject thiz,
@@ -353,47 +339,11 @@ JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativeReducedMotion(JNIEnv *e
 
 JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativePaint(JNIEnv *env, jobject thiz,
                                                                jobject canvas) {
-    ZeusDraw d;
-    int w, h;
-    static double last_ms;
-    double now_ms;
-    double dt_ms;
-    struct timespec ts;
     (void)thiz;
     if (!g_ready) return;
     g_env = env;
     g_canvas = canvas;
-    /* Same as iOS: layout to the view, not theme.Page's 560×520. */
-    w = g_view_w > 0 ? g_view_w : (int)zeus_window_width();
-    h = g_view_h > 0 ? g_view_h : (int)zeus_window_height();
-    /* Drive animations by elapsed time, not frame count, so a 60 Hz and a
-       120 Hz device look the same. */
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    now_ms = (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1000000.0;
-    dt_ms = 1000.0 / 60.0;
-    if (last_ms > 0.0) dt_ms = now_ms - last_ms;
-    last_ms = now_ms;
-    if (dt_ms < 1.0) dt_ms = 1000.0 / 60.0;
-    if (dt_ms > 64.0) dt_ms = 64.0;
-    loam_zeus_engine_layout(w, h);
-    (void)loam_zeus_engine_step_dt((int32_t)(dt_ms + 0.5));
-    memset(&d, 0, sizeof d);
-    d.fill = draw_fill;
-    d.fill_a = draw_fill_a;
-    d.fill_g = draw_fill_g;
-    d.shadow = draw_shadow;
-    d.stroke = draw_stroke;
-    d.fill4 = draw_fill4;
-    d.xform = draw_xform;
-    d.text = draw_text;
-    d.text_rot = draw_text_rot;
-    d.save = draw_save;
-    d.alpha = draw_alpha;
-    d.clip = draw_clip;
-    d.restore = draw_restore;
-    d.path = draw_path;
-    d.image = draw_image;
-    zeus_paint(NULL, d);
+    (void)loam_zeus_engine_host_frame();
     g_canvas = NULL;
 }
 
@@ -407,13 +357,9 @@ JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativePointerDown(JNIEnv *env
 JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativePointerMove(JNIEnv *env, jobject thiz,
                                                                      jint x, jint y, jint dx,
                                                                      jint dy) {
-    int dirty;
     (void)env;
     (void)thiz;
-    dirty = loam_zeus_engine_drag(x, y);
-    dirty |= loam_zeus_engine_hover(x, y);
-    if (dx || dy) dirty |= loam_zeus_engine_scroll(x, y, dx, dy);
-    (void)dirty;
+    (void)loam_zeus_engine_pointer_move(x, y, dx, dy);
 }
 
 JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativePointerUp(JNIEnv *env, jobject thiz) {
