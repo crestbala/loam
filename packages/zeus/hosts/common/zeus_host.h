@@ -138,7 +138,8 @@ typedef struct {
 void zeus_set_media(ZeusMedia media);
 /* `zeuscore/mediastate.loam` and `imagesize.loam`: bodyless hooks. One bit of
    `media_host_caps` per non-NULL `ZeusMedia` callback, plus 256 on wasm. */
-int32_t loam_imagesize_image_host_bound(void);
+int32_t loam_imagesize_native_image_host_bound(void);
+int32_t loam_imagesize_media_slot(loam_str src);
 int32_t loam_mediastate_native_caps(void);
 int32_t loam_mediastate_native_open(int32_t slot, loam_str src);
 void loam_mediastate_native_cmd(int32_t slot, int32_t command, int32_t value);
@@ -148,7 +149,7 @@ void loam_mediastate_native_pick(void);
 void loam_mediastate_native_pick_audio(void);
 int32_t loam_mediastate_native_voice(int32_t what, loam_str src, loam_str out);
 int32_t loam_mediastate_native_fullscreen(int32_t on);
-void loam_mediastate_host_redraw(void);
+void loam_mediastate_native_redraw(void);
 
 /* Phase 4: the ONE blit of a frame Zeus rasterized itself — the sole place a
    host may touch our pixels.
@@ -168,36 +169,20 @@ typedef int64_t (*ZeusBlit)(void *ctx, const uint8_t *px, int64_t w, int64_t h,
                             int64_t gen, int64_t scale);
 void zeus_set_blit(void *ctx, ZeusBlit fn);
 
-/* Empty packages/zeus/src/zeus.loam fns → these C symbols. */
-void loam_zeus_plat_run(void);
-/* Current global font family ("" = host default) and the hook a host
-   registers to load one. See zeus_host.c for why the family is global. */
-const char *zeus_font_family(void);
+/* Font hooks a host registers to load or switch a family. */
 void zeus_set_font_hooks(int (*load)(const char *family, const char *src),
                          void (*set_family)(const char *family));
-/* Bytes for in-tree metrics. Desktop/iOS/Android default to reading `src` as a
-   file; the web host (no filesystem) installs a hook that fetches it. */
-void zeus_set_font_bytes_hook(loam_str (*fetch)(loam_str src));
 void loam_platform_plat_set_font_family(loam_str name);
 int32_t loam_platform_plat_load_font(loam_str family, loam_str src);
-
-void loam_zeus_plat_measure(loam_str s, int32_t px, int32_t *w, int32_t *h);
-void loam_zeus_plat_measure_int(int32_t v, int32_t px, int32_t *w, int32_t *h);
-void loam_zeus_plat_image_size(loam_str src, int32_t *w, int32_t *h);
-loam_str loam_zeus_plat_pick_image(int32_t *w, int32_t *h);
-
-/* The engine side of the blit: dispatched to the hook `zeus_set_blit`
-   registered, or a no-op returning 0 when no host did. */
-int64_t loam_zeus_plat_blit(const uint8_t *px, int64_t w, int64_t h, int64_t gen,
-                           int64_t scale);
+loam_vec loam_metrics_font_reserve(int32_t n);
+int32_t loam_metrics_font_commit(int32_t n);
 
 void zeus_set_insets(int64_t top, int64_t right, int64_t bottom, int64_t left);
 
-/* packages/zeus/src/zeuscore/platform.loam FFI (aliases of loam_zeus_plat_*). */
+/* packages/zeus/src/zeuscore/platform.loam exports and bodyless hooks. */
 void loam_platform_plat_run(void);
-/* The seam state is Loam (`zeuscore/platform.loam`). Hosts reach it through
-   `zeus_set_insets`, `zeus_window_width`, ... which call these. */
 int32_t loam_platform_plat_headless(void);
+int32_t loam_platform_plat_mem_kb(void);
 void loam_platform_plat_set_insets(int32_t top, int32_t right, int32_t bottom, int32_t left);
 void loam_platform_plat_set_titlebar_box(int32_t height, int32_t lead, int32_t trail);
 int32_t loam_platform_host_window_width(void);
@@ -206,22 +191,40 @@ void loam_platform_host_set_window_size(int32_t width, int32_t height);
 int32_t loam_platform_host_window_chrome(void);
 void loam_platform_host_window_opened(void);
 void loam_platform_host_retitle(void);
-/* Its bodyless hooks, answered from what a native host registered. */
+int32_t loam_platform_host_window_fills_screen(void);
+int32_t loam_platform_host_display_path(void);
+void loam_platform_host_set_display_path(int32_t mode);
+int32_t loam_platform_host_surface_count(void);
+int32_t loam_platform_host_env_flag(int32_t which);
+void loam_platform_native_run(void);
 int32_t loam_platform_native_run_bound(void);
+int32_t loam_platform_native_measure_bound(void);
+void loam_platform_native_measure_span(loam_str s, int32_t from, int32_t to, int32_t px,
+                                       int32_t *w, int32_t *h);
 int32_t loam_platform_native_initial_w(void);
 int32_t loam_platform_native_initial_h(void);
 int64_t loam_platform_native_clock_ms(void);
 void loam_platform_native_title_changed(loam_str title);
 void loam_platform_native_clipboard_write(loam_str text);
+void loam_platform_native_set_font_family(loam_str name);
+int32_t loam_platform_native_load_font(loam_str family, loam_str src);
+void loam_platform_native_image_size(loam_str src, int32_t *w, int32_t *h);
+loam_str loam_platform_native_pick_image(int32_t *w, int32_t *h);
+int32_t loam_platform_native_blit(loam_vec buf, int32_t w, int32_t h, int32_t gen,
+                                  int32_t scale);
 void loam_platform_plat_measure(loam_str s, int32_t px, int32_t *w, int32_t *h);
-loam_str loam_platform_plat_font_bytes(loam_str src);
 void loam_platform_plat_measure_int(int32_t v, int32_t px, int32_t *w, int32_t *h);
 void loam_platform_plat_measure_span(loam_str s, int32_t from, int32_t to, int32_t px,
                                      int32_t *w, int32_t *h);
 void loam_platform_plat_image_size(loam_str src, int32_t *w, int32_t *h);
 loam_str loam_platform_plat_pick_image(int32_t *w, int32_t *h);
-/* `zeuscore/replay.loam`'s forwarders into the bound ZeusDraw (zeus_host.c). */
+/* `zeuscore/replay.loam`'s forwarders and geometry helpers. */
 int32_t loam_replay_draw_caps(void);
+void loam_replay_image_fit(int32_t x, int32_t y, int32_t w, int32_t h, int32_t iw, int32_t ih,
+                           int32_t fit, int32_t *dx, int32_t *dy, int32_t *dw, int32_t *dh);
+int32_t loam_replay_shadow_geom(int32_t w, int32_t h, int32_t radius, int32_t blur, int32_t dx,
+                                int32_t dy, int32_t scale, int32_t *inset, int32_t *margin,
+                                int32_t *side, int32_t *tscale);
 void loam_replay_draw_fill(int32_t x, int32_t y, int32_t w, int32_t h, int32_t rgb, int32_t r);
 void loam_replay_draw_fill_a(int32_t x, int32_t y, int32_t w, int32_t h, int32_t rgb, int32_t r,
                              int32_t a);
@@ -248,10 +251,7 @@ void loam_replay_draw_xform(int32_t dx, int32_t dy, int32_t scale, int32_t rot, 
 void loam_replay_draw_path(const loam_vec *path, int32_t start, int32_t n, int32_t rgb, int32_t a,
                            int32_t width, int32_t style);
 /* Phase 4 blit. The Loam `[]u8` arrives as a `loam_vec` (ptr/len/cap) BY VALUE,
-   so the pixels are handed over rather than copied. See loam_zeus_plat_blit.
-   The parameter types are `int32_t` because that is exactly what codegen emits
-   in the forward declaration it writes for this bodyless fn (`int` is i32), and
-   C requires the declaration and the definition to agree. */
+   so the pixels are handed over rather than copied. */
 void loam_platform_plat_frame(loam_vec head, loam_vec ops, loam_vec strs, loam_vec path);
 int32_t loam_platform_plat_blit(loam_vec buf, int32_t w, int32_t h, int32_t gen,
                                 int32_t scale);
@@ -275,9 +275,48 @@ void loam_zeus_engine_set_reduced_motion(int32_t on);
 /* ms until the next async timer is due (0 = none; -1 = a spawn waits). */
 int32_t loam_zeus_engine_next_ms(void);
 /* wasm: a trap unwound out of an export; hand it to the innermost Boundary.
-   1 = recovered, 0 = nothing could take it. */
+   1 = recovered, 2 = startup trap, 0 = nothing could take it. */
 int32_t loam_zeus_engine_recover(void);
 int32_t loam_zeus_engine_trap_seq(void);
+void loam_zeus_engine_boot_begin(void);
+void loam_zeus_engine_boot_end(void);
+int32_t loam_zeus_engine_wasm_paint(void);
+int32_t loam_zeus_engine_host_frame(void);
+void loam_zeus_engine_host_resize(int32_t w, int32_t h, int32_t top, int32_t right,
+                                  int32_t bottom, int32_t left);
+void loam_zeus_engine_ios_frame(int32_t w, int32_t h, int32_t top, int32_t right,
+                                int32_t bottom, int32_t left, int32_t dt_ms,
+                                int32_t reduce_motion);
+void loam_zeus_engine_host_paint(void);
+int32_t loam_zeus_engine_poll_timeout_ms(void);
+void loam_zeus_engine_x11_button(int32_t button, int32_t x, int32_t y);
+void loam_zeus_engine_x11_key(int32_t ks);
+int32_t loam_zeus_engine_pointer_move(int32_t x, int32_t y, int32_t dx, int32_t dy);
+int32_t loam_zeus_engine_touch_began(int32_t x256, int32_t y256);
+int32_t loam_zeus_engine_touch_moved(int32_t x256, int32_t y256);
+void loam_zeus_engine_touch_ended(void);
+int32_t loam_zeus_engine_ios_insert(loam_str text);
+loam_vec loam_zeus_engine_a11y_sync(int32_t force);
+loam_vec loam_zeus_engine_state_snapshot(void);
+loam_vec loam_zeus_engine_cursor_sync(void);
+loam_vec loam_zeus_engine_text_buf(void);
+int32_t loam_zeus_engine_text_buf_cap(void);
+void loam_zeus_engine_text_commit(int32_t n);
+void loam_zeus_engine_marked_commit(int32_t n);
+void loam_zeus_engine_picked_commit(int32_t n, int32_t w, int32_t h);
+int32_t loam_zeus_engine_cursor_id(void);
+int32_t loam_zeus_engine_a11y_count(void);
+loam_str loam_zeus_engine_a11y_item(int32_t idx, int32_t *x, int32_t *y, int32_t *w, int32_t *h,
+                                    int32_t *role_id);
+int32_t loam_zeus_engine_wheel(int32_t x, int32_t y, int32_t dx256, int32_t dy256, int32_t precise,
+                               int32_t shift, int32_t reset);
+int32_t loam_zeus_engine_mac_mouse_down(int32_t x, int32_t y, int32_t ctrl);
+int32_t loam_zeus_engine_mac_key_down(int32_t code, int32_t ch, int32_t raw_ch, int32_t mods);
+int32_t loam_zeus_engine_mac_key_up(int32_t code, int32_t raw_ch, int32_t mods);
+int32_t loam_zeus_engine_mac_frame(int32_t vw, int32_t vh, int32_t reduce_motion,
+                                   int32_t media_live);
+void loam_zeus_engine_snapshot_prepare(int32_t *w, int32_t *h);
+void loam_zeus_engine_snapshot_paint(int32_t w, int32_t h);
 int32_t loam_zeus_engine_click(int32_t x, int32_t y);
 /* What a finger grabs without pressing: 1 slider/thumb, 2 on_drag, 0 else. */
 int32_t loam_zeus_engine_grab(int32_t x, int32_t y);

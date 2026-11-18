@@ -59,6 +59,7 @@
 
 import "zeus"
 import "zui"
+import "std:str"
 import "zeuscore/input.loam" as input
 import "zeuscore/logs.loam" as logs
 import "zeuscore/platform.loam"
@@ -475,7 +476,11 @@ fn apply_meta(m: Meta) {
     }
     platform.plat_set_head("title", m.title)
     platform.plat_set_head("description", m.description)
-    platform.plat_set_head("canonical", if m.canonical.len > 0 { m.canonical } else { clean_path(cur_path.peek()) })
+    platform.plat_set_head("canonical", if m.canonical.len > 0 {
+        m.canonical
+    } else {
+        clean_path(cur_path.peek())
+    })
     platform.plat_set_head("robots", m.robots)
     platform.plat_set_head("og_type", m.og_type)
     platform.plat_set_head("jsonld", m.jsonld)
@@ -549,8 +554,9 @@ fn back() {
 /** *receive; the core keeps the stack). */
 fn engine_open_url(url: string) {
     ensure_path()
-    note_nav("open", url)
-    push_path(url)
+    let owned = str.slice(url, 0, url.len)
+    note_nav("open", owned)
+    push_path(owned)
 }
 
 /** *How many times `preload` has matched a route. A hover onto a node with */

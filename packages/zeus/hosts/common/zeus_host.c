@@ -15,16 +15,8 @@
 static void (*plat_run)(void);
 static void (*plat_measure)(const char *s, int64_t px, int64_t *w, int64_t *h);
 
-/* One global font family, not a per-node field: the text ABI carries a pixel
-   size only, and threading a family through it would change every host
-   (Cocoa / Canvas2D / Android / iOS). A design system uses one typeface, so
-   the host reads the current family here when it measures and draws. "" =
-   the host default. */
-static char font_family[128];
 static int (*plat_load_font_fn)(const char *family, const char *src);
 static void (*plat_set_family_fn)(const char *family);
-
-const char *zeus_font_family(void) { return font_family; }
 
 void zeus_set_font_hooks(int (*load)(const char *family, const char *src),
                          void (*set_family)(const char *family)) {
@@ -61,21 +53,6 @@ static void *paint_ctx;
 static ZeusDraw paint_draw;
 static int have_draw;
 
-/* Decimal text of `v` at `out` (at most 20 bytes, no NUL); its length. No
-   printf: wasm has none, and these are the only numbers this file writes. */
-static size_t plat_put_int(char *out, int64_t v) {
-    char tmp[20];
-    size_t n = 0, k = 0;
-    uint64_t u = v < 0 ? 0 - (uint64_t)v : (uint64_t)v;
-    do {
-        tmp[n++] = (char)('0' + u % 10);
-        u /= 10;
-    } while (u);
-    if (v < 0) out[k++] = '-';
-    while (n) out[k++] = tmp[--n];
-    return k;
-}
-
 static void plat_out_of_memory(void) {
     (void)write(2, "zeus: out of memory\n", 20);
     abort();
@@ -93,13 +70,6 @@ static char *dup_ys(loam_str s) {
 /* Defined with the frame forwarders. Image and media hooks above them use it. */
 static char *cstr_in(loam_str s, char *buf, size_t cap);
 static void cstr_done(char *p, char *buf);
-
-static void measure_default(const char *s, int64_t px, int64_t *w, int64_t *h) {
-    size_t n = s ? strlen(s) : 0;
-    if (px < 8) px = 8;
-    *w = (int64_t)n * (px * 6 / 10);
-    *h = px + 4;
-}
 
 void zeus_set_platform(void (*run)(void),
                       void (*measure)(const char *s, int64_t px, int64_t *w, int64_t *h),
@@ -124,7 +94,7 @@ void zeus_set_blit(void *ctx, ZeusBlit fn) {
 
 /* The header parse lives in `zeuscore/imagesize.loam`. This only asks the
    host hook, and leaves both sides 0 when the host has not registered one. */
-void loam_zeus_plat_image_size(loam_str src, int32_t *w, int32_t *h) {
+void loam_platform_native_image_size(loam_str src, int32_t *w, int32_t *h) {
     int64_t host_w = 0, host_h = 0;
     if (plat_image_size_fn) {
         char stack_buf[256];
@@ -136,7 +106,7 @@ void loam_zeus_plat_image_size(loam_str src, int32_t *w, int32_t *h) {
     if (h) *h = (int32_t)host_h;
 }
 
-loam_str loam_zeus_plat_pick_image(int32_t *w, int32_t *h) {
+loam_str loam_platform_native_pick_image(int32_t *w, int32_t *h) {
     char buf[4096];
     int64_t lw = 0, lh = 0;
     buf[0] = 0;
@@ -146,114 +116,51 @@ loam_str loam_zeus_plat_pick_image(int32_t *w, int32_t *h) {
     return loam_abi_str_copy(buf, (int64_t)strlen(buf));
 }
 
-void loam_zeus_plat_run(void) {
+void loam_platform_native_run(void) {
     if (plat_run) plat_run();
 }
 
 int32_t loam_platform_native_run_bound(void) { return plat_run ? 1 : 0; }
+int32_t loam_platform_native_measure_bound(void) { return plat_measure ? 1 : 0; }
 
-/* The one blit of a finished frame (Phase 4). The pixels were produced by the
-   Loam rasterizer; this forwards the raw bytes to whatever host registered a
-   hook. No hook means no display (headless, or a host that has not implemented
-   it), which answers 0 rather than pretending a frame was presented. */
-int64_t loam_zeus_plat_blit(const uint8_t *px, int64_t w, int64_t h, int64_t gen,
-                           int64_t scale) {
-    if (!blit_fn || !px || w <= 0 || h <= 0) return 0;
-    return blit_fn(blit_ctx, px, w, h, gen, scale);
-}
-
-void loam_platform_plat_set_font_family(loam_str name) {
-    char *p = dup_ys(name);
-    if (p) {
-        size_t n = strlen(p);
-        if (n >= sizeof font_family) n = sizeof font_family - 1;
-        memcpy(font_family, p, n);
-        font_family[n] = 0;
-        free(p);
+void loam_platform_native_set_font_family(loam_str name) {
+    if (plat_set_family_fn) {
+        char buf[256], *f = cstr_in(name, buf, sizeof buf);
+        plat_set_family_fn(f);
+        cstr_done(f, buf);
     }
-    /* Metrics change with the family, so anything cached is stale. A host
-       that caches by size (Canvas2D) needs telling; one that reads
-       zeus_font_family() per call (Cocoa) does not. */
-    if (plat_set_family_fn) plat_set_family_fn(font_family);
     if (plat_redraw) plat_redraw();
 }
 
-int32_t loam_platform_plat_load_font(loam_str family, loam_str src) {
-    char *f, *u;
+int32_t loam_platform_native_load_font(loam_str family, loam_str src) {
+    char fam_buf[256], src_buf[256], *f, *u;
     int ok = 0;
     if (!plat_load_font_fn) return 0;
-    f = dup_ys(family);
-    u = dup_ys(src);
-    if (f && u) ok = plat_load_font_fn(f, u);
-    free(f);
-    free(u);
+    f = cstr_in(family, fam_buf, sizeof fam_buf);
+    u = cstr_in(src, src_buf, sizeof src_buf);
+    ok = plat_load_font_fn(f, u);
+    cstr_done(f, fam_buf);
+    cstr_done(u, src_buf);
     return ok ? 1 : 0;
 }
 
-/* In-tree metrics (`packages/zeus/src/zeuscore/metrics.loam`) parse the font's tables, so
-   they need its bytes. The web host has no filesystem and installs a hook
-   that fetches the URL and pushes the bytes back (packages/zeus/hosts/web).
-   Without a hook the answer is empty and `zeus.use_font` reads `src` as a
-   path in Loam (`sys.read_file`, R2.2) — desktop, iOS, and Android. */
-static loam_str (*plat_font_bytes_fn)(loam_str src);
-
-void zeus_set_font_bytes_hook(loam_str (*fetch)(loam_str src)) {
-    plat_font_bytes_fn = fetch;
-}
-
-loam_str loam_platform_plat_font_bytes(loam_str src) {
-    if (plat_font_bytes_fn) return plat_font_bytes_fn(src);
-    return (loam_str){"", 0};
-}
-
-void loam_zeus_plat_measure(loam_str s, int32_t px, int32_t *w, int32_t *h) {
-    char *p = dup_ys(s);
-    int64_t tw = 0, th = 0;
-    if (plat_measure) plat_measure(p, px, &tw, &th);
-    else measure_default(p, px, &tw, &th);
-    if (w) *w = (int32_t)tw;
-    if (h) *h = (int32_t)th;
-    free(p);
-}
-
-void loam_zeus_plat_measure_int(int32_t v, int32_t px, int32_t *w, int32_t *h) {
-    char buf[32];
-    int64_t tw = 0, th = 0;
-    buf[plat_put_int(buf, v)] = '\0';
-    if (plat_measure) plat_measure(buf, px, &tw, &th);
-    else measure_default(buf, px, &tw, &th);
-    if (w) *w = (int32_t)tw;
-    if (h) *h = (int32_t)th;
-}
-
-static void measure_span(const char *s, int64_t n, int64_t px, int64_t *w, int64_t *h) {
-    char stack[256];
-    char *tmp;
-    if (n < 0) n = 0;
-    if ((size_t)n + 1 <= sizeof stack) {
-        tmp = stack;
-    } else {
-        tmp = (char *)malloc((size_t)n + 1);
-        if (!tmp) abort();
-    }
-    if (n) memcpy(tmp, s, (size_t)n);
-    tmp[n] = '\0';
-    if (plat_measure) plat_measure(tmp, px, w, h);
-    else measure_default(tmp, px, w, h);
-    if (tmp != stack) free(tmp);
-}
-
-/* `s[from..to)` as the host measures it: no allocation, `measure_span`
-   copies the bytes to a terminated stack buffer. The wrap and the text-edit
-   caret are Loam (`metrics.host_wrap`, `edit.loam`) and measure words and
-   prefixes through this. */
-void loam_platform_plat_measure_span(loam_str s, int32_t from, int32_t to, int32_t px,
-                                     int32_t *w, int32_t *h) {
-    int64_t tw = 0, th = 0;
+/* `s[from..to)` as the host measures it: no allocation when it fits in 255
+   bytes (`stack`), else heap-allocated for the call. Default metrics and empty
+   spans are handled in `zeuscore/platform.loam`. */
+void loam_platform_native_measure_span(loam_str s, int32_t from, int32_t to, int32_t px,
+                                       int32_t *w, int32_t *h) {
+    char stack[256], *tmp;
+    int64_t tw = 0, th = 0, n;
     if (from < 0) from = 0;
     if (to > s.len) to = (int32_t)s.len;
     if (to < from) to = from;
-    measure_span(s.ptr ? s.ptr + from : "", to - from, px, &tw, &th);
+    n = to - from;
+    tmp = (size_t)n + 1 <= sizeof stack ? stack : (char *)malloc((size_t)n + 1);
+    if (!tmp) plat_out_of_memory();
+    if (n && s.ptr) memcpy(tmp, s.ptr + from, (size_t)n);
+    tmp[n] = '\0';
+    if (plat_measure) plat_measure(tmp, px, &tw, &th);
+    if (tmp != stack) free(tmp);
     if (w) *w = (int32_t)tw;
     if (h) *h = (int32_t)th;
 }
@@ -288,54 +195,27 @@ void zeus_set_titlebar_box(int64_t height, int64_t lead, int64_t trail) {
     loam_platform_plat_set_titlebar_box((int32_t)height, (int32_t)lead, (int32_t)trail);
 }
 
-/* packages/zeus/src/zeuscore/platform.loam is the GPUI-style platform leaf. Empty Loam stubs
-   compile to loam_platform_plat_*; the Cocoa implementations stay as
-   loam_zeus_plat_* so existing callers do not change. */
-void loam_platform_plat_run(void) { loam_zeus_plat_run(); }
-
-loam_str loam_platform_plat_pick_image(int32_t *w, int32_t *h) {
-    return loam_zeus_plat_pick_image(w, h);
-}
-void loam_platform_plat_image_size(loam_str src, int32_t *w, int32_t *h) {
-    loam_zeus_plat_image_size(src, w, h);
-}
-
 /* The clock `platform.plat_now_ms` runs on (it adds a test's skip itself):
-   the one `std:async` reads, CLOCK_MONOTONIC (the JS clock on wasm), without
-   the allocation `async.now_ms` makes for its `timespec`. */
-#ifdef __wasm32__
-__attribute__((import_module("zeus"), import_name("now_ms")))
-int64_t zeus_js_now_ms(void);
-int64_t loam_platform_native_clock_ms(void) { return zeus_js_now_ms(); }
-#else
+   the one `std:async` reads, CLOCK_MONOTONIC, without the allocation
+   `async.now_ms` makes for its `timespec`. */
 int64_t loam_platform_native_clock_ms(void) {
+#ifdef __wasm32__
+    return 0;
+#else
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000);
-}
 #endif
+}
 
 /* Phase 4: the one blit. `buf` is the Loam framebuffer vector handed over by
    value — we pass its first byte and its length straight through, so not one
-   pixel is copied here. `gen` is bumped by the Loam side ONLY on reallocation
-   (a size or backing-scale change), which is the signal a host needs to rebuild
-   its wrapper; between bumps the same bytes stay wrapped.
-
-   The integer types are int32_t to match the prototype codegen emits for the
-   bodyless `platform.plat_blit`; `w * h * 4` is widened to int64_t so a large
-   surface cannot overflow the length check. */
-int32_t loam_platform_plat_blit(loam_vec buf, int32_t w, int32_t h, int32_t gen,
-                                int32_t scale) {
+   pixel is copied here. */
+int32_t loam_platform_native_blit(loam_vec buf, int32_t w, int32_t h, int32_t gen,
+                                  int32_t scale) {
     int64_t need = (int64_t)w * (int64_t)h * 4;
-    if (!buf.ptr || w <= 0 || h <= 0 || (int64_t)buf.len < need) return 0;
-    return (int32_t)loam_zeus_plat_blit((const uint8_t *)buf.ptr, w, h, gen, scale);
-}
-
-void loam_platform_plat_measure(loam_str s, int32_t px, int32_t *w, int32_t *h) {
-    loam_zeus_plat_measure(s, px, w, h);
-}
-void loam_platform_plat_measure_int(int32_t v, int32_t px, int32_t *w, int32_t *h) {
-    loam_zeus_plat_measure_int(v, px, w, h);
+    if (!blit_fn || !buf.ptr || w <= 0 || h <= 0 || (int64_t)buf.len < need) return 0;
+    return (int32_t)blit_fn(blit_ctx, (const uint8_t *)buf.ptr, w, h, gen, scale);
 }
 
 /* The title and the clipboard text are kept in Loam. These hand a native host
@@ -384,16 +264,7 @@ void zeus_paint(void *ctx, ZeusDraw draw) {
 }
 
 void zeus_boundary_preset_add(int32_t seq, const char *msg, size_t n) {
-    loam_str owned;
-    if (!msg) {
-        msg = "";
-        n = 0;
-    }
-    /* The parameter is borrowed: the store retains what it keeps, and drops
-       nothing. Release the temporary here, including the one past the cap. */
-    owned = loam_abi_str_copy(msg, (int64_t)n);
-    loam_runtime_preset_store(seq, owned);
-    loam_abi_str_release(&owned);
+    loam_runtime_preset_store(seq, (loam_str){msg ? msg : "", (int64_t)(msg ? n : 0), 0});
 }
 
 /* Router host entry points. A build that never imports `std:router` has no
@@ -571,7 +442,7 @@ int32_t loam_mediastate_native_caps(void) {
     return bits;
 }
 
-int32_t loam_imagesize_image_host_bound(void) {
+int32_t loam_imagesize_native_image_host_bound(void) {
     return plat_image_size_fn ? 1 : 0;
 }
 
@@ -629,6 +500,6 @@ int32_t loam_mediastate_native_fullscreen(int32_t on) {
     return (int32_t)media_host.fullscreen((int64_t)on);
 }
 
-void loam_mediastate_host_redraw(void) {
+void loam_mediastate_native_redraw(void) {
     if (plat_redraw) plat_redraw();
 }

@@ -142,8 +142,21 @@ fn host_fullscreen(on: int) -> int {
     return native_fullscreen(on)
 }
 
-fn host_redraw() {}
+fn host_redraw() {
+    redraw_os()
+}
 
+#[os("wasm")]
+fn redraw_os() {
+    js_request_frame()
+}
+
+#[os("posix", "windows")]
+fn redraw_os() {
+    native_redraw()
+}
+
+fn native_redraw() {}
 fn native_caps() -> int {}
 fn native_open(slot: int, src: string) -> int {}
 fn native_cmd(slot: int, command: int, value: int) {}
@@ -177,6 +190,10 @@ fn js_media_pick() {}
 #[os("wasm")]
 #[c("fullscreen")]
 fn js_fullscreen(on: int) -> int {}
+
+#[os("wasm")]
+#[c("request_frame")]
+fn js_request_frame() {}
 
 let mut slot_state = [8]int { 0, 0, 0, 0, 0, 0, 0, 0 }
 let mut slot_position = [8]int { 0, 0, 0, 0, 0, 0, 0, 0 }

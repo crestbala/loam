@@ -43,25 +43,43 @@ let mut TODO: []int = []int {}
 fn c_roots(module_name: string) -> []string {
     if module_name == "zeus" {
         return []string {
-            "engine_layout", "engine_paint", "engine_step", "engine_step_dt", "engine_set_reduced_motion",
-            "engine_next_ms", "engine_fonts_changed", "engine_click", "engine_grab", "engine_scroll",
-            "engine_scroll_latch", "engine_scroll_step", "engine_scroll_smooth", "engine_drag", "engine_hover",
-            "engine_mouseup", "engine_over_button", "engine_cursor", "engine_a11y_dump", "engine_a11y_bytes",
+            "engine_layout", "engine_paint", "engine_step", "engine_step_dt",
+            "engine_set_reduced_motion",
+            "engine_next_ms", "engine_fonts_changed", "engine_click", "engine_grab",
+            "engine_scroll",
+            "engine_scroll_latch", "engine_scroll_step", "engine_scroll_smooth", "engine_drag",
+            "engine_hover",
+            "engine_mouseup", "engine_over_button", "engine_cursor", "engine_a11y_dump",
+            "engine_a11y_bytes",
             "engine_layout_gen", "engine_signals_dump", "engine_state_load", "engine_a11y_activate",
             "engine_a11y_focus", "engine_focus_id", "engine_focus_captures_text", "engine_key",
             "engine_key_ev", "engine_key_up", "engine_set_mods", "engine_insert", "engine_marked",
             "engine_picked_image", "engine_media_picked", "engine_context_click",
-            "engine_window_drag_at", "engine_recover",
-            "engine_trap_seq", "get", "set", "signal",
+            "engine_window_drag_at", "engine_recover", "engine_trap_seq",
+            "engine_boot_begin", "engine_boot_end", "engine_wasm_paint", "engine_host_frame",
+            "engine_host_resize", "engine_ios_frame", "engine_host_paint", "engine_poll_timeout_ms",
+            "engine_x11_button", "engine_x11_key", "engine_pointer_move",
+            "engine_touch_began", "engine_touch_moved", "engine_touch_ended", "engine_ios_insert",
+            "engine_a11y_sync", "engine_state_snapshot", "engine_cursor_sync",
+            "engine_text_buf", "engine_text_buf_cap", "engine_text_commit", "engine_marked_commit",
+            "engine_picked_commit", "engine_cursor_id", "engine_a11y_count", "engine_a11y_item",
+            "engine_wheel", "engine_mac_mouse_down", "engine_mac_key_down", "engine_mac_key_up",
+            "engine_mac_frame", "engine_snapshot_prepare", "engine_snapshot_paint",
+            "get", "set", "signal",
         }
     }
     if module_name == "maya" {
         return []string {
-            "engine_cam_orbit", "engine_cam_pan", "engine_cam_reset", "engine_fixed_update", "engine_frame",
-            "engine_hud", "engine_input_key", "engine_cam_zoom", "engine_fb_at", "engine_fb_h", "engine_fb_w",
-            "engine_present",
+            "engine_cam_orbit", "engine_cam_pan", "engine_cam_reset", "engine_fixed_update",
+            "engine_frame",
+            "engine_hud", "engine_input_key", "engine_cam_zoom", "engine_fb_at", "engine_fb_h",
+            "engine_fb_w",
+            "engine_present", "engine_draw", "engine_key_down", "engine_mouse_down",
+            "engine_mouse_drag",
+            "engine_wheel",
             "engine_is_map", "engine_note_present", "engine_set_viewport", "engine_sprite_count",
-            "engine_sprite_is_sun", "engine_sprite_name", "engine_sprite_orbit_r", "engine_sprite_r",
+            "engine_sprite_is_sun", "engine_sprite_name", "engine_sprite_orbit_r",
+            "engine_sprite_r",
             "engine_sprite_rgb", "engine_sprite_x", "engine_sprite_y",
         }
     }
@@ -74,9 +92,9 @@ fn c_roots(module_name: string) -> []string {
     if module_name == "batch" {
         return []string { "serve" }
     }
-    // The web host binds fonts through `loam_metrics_bind`.
+    // The web host binds fonts through `loam_metrics_bind` / `font_reserve` / `font_commit`.
     if module_name == "metrics" {
-        return []string { "bind" }
+        return []string { "bind", "font_reserve", "font_commit" }
     }
     // Hosts deliver deep links, the OS back button and chunk loads.
     // `zeus_boundary_preset_add` calls this before `main`. Nothing in Loam does.
@@ -87,13 +105,28 @@ fn c_roots(module_name: string) -> []string {
     // asked for (`zeus_set_insets`, `zeus_window_width`, ... in zeus_host.c).
     if module_name == "platform" {
         return []string {
-            "plat_headless", "plat_set_insets", "plat_set_titlebar_box", "host_window_width",
-            "host_window_height", "host_set_window_size", "host_window_chrome", "host_window_opened",
-            "host_retitle",
+            "plat_headless", "plat_mem_kb", "plat_set_insets", "plat_set_titlebar_box",
+            "host_window_width",
+            "host_window_height", "host_set_window_size", "host_window_chrome",
+            "host_window_opened",
+            "host_retitle", "host_window_fills_screen", "host_display_path",
+            "host_set_display_path",
+            "host_surface_count", "host_env_flag",
         }
     }
+    if module_name == "replay" {
+        return []string { "image_fit", "shadow_geom" }
+    }
+    if module_name == "imagesize" {
+        return []string { "media_slot" }
+    }
     if module_name == "router" {
-        return []string { "engine_open_url", "engine_history_back", "engine_chunks_done", "engine_chunks_slow" }
+        return []string {
+            "engine_open_url",
+            "engine_history_back",
+            "engine_chunks_done",
+            "engine_chunks_slow",
+        }
     }
     return []string {}
 }
@@ -334,7 +367,9 @@ fn root_full_package_imports() {
             continue
         }
         let x = ast.ex(im)
-        if !ast.EXTRA[x].has_text || !entry_full_package(ast.EXTRA[x].text) || !ast.EXTRA[x].has_sname {
+        if !ast.EXTRA[x].has_text ||
+            !entry_full_package(ast.EXTRA[x].text) ||
+            !ast.EXTRA[x].has_sname {
             continue
         }
         let resolved = ast.EXTRA[x].sname
@@ -436,7 +471,10 @@ fn run() {
         let decls = ast.NODES[root].kids
         for i in 0..decls.len {
             let d = decls[i]
-            if kind(d) != Kind.Fn || ast.EXTRA[ast.ex(d)].strs.len == 0 || KEPT[d] || !has_mono_instance(d) {
+            if kind(d) != Kind.Fn ||
+                ast.EXTRA[ast.ex(d)].strs.len == 0 ||
+                KEPT[d] ||
+                !has_mono_instance(d) {
                 continue
             }
             walk(ast.NODES[d].b)

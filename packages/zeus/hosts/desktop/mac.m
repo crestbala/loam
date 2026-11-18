@@ -17,14 +17,10 @@
 #include <string.h>
 #include <stdlib.h>
 #include <malloc/malloc.h>
-#include <mach/mach.h>
 
 static NSView *g_view;
 static NSWindow *g_win;
 
-/* The shared Apple layer (../apple/zeus_apple.h) paints, measures, decodes
-   images and plays media; this file supplies its two hooks and the rest:
-   window, view, input, display, pickers, voice tools and hot reload. */
 CGContextRef za_cg(void) {
     return [[NSGraphicsContext currentContext] CGContext];
 }
@@ -33,33 +29,14 @@ void za_redraw(void) {
     if (g_view) [g_view setNeedsDisplay:YES];
 }
 
-static void mac_redraw(void) {
-    [g_view setNeedsDisplay:YES];
-}
-
-/* `ZEUS_MEM_DEBUG=1`: once a second, log the process footprint next to the
-   malloc heap Loam actually owns. The two tell different stories — a spike in
-   `phys` with `malloc` flat is the graphics stack (window drawable, CoreText
-   caches), not the engine — which is the first thing to check when chasing
-   app memory. */
-/* This process's `phys_footprint` in KB, the number Xcode's memory gauge shows. */
-static long long mac_phys_kb(void) {
-    struct task_vm_info info;
-    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
-    if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&info, &count) != KERN_SUCCESS)
-        return 0;
-    return (long long)(info.phys_footprint / 1024);
-}
-
 static void mac_mem_debug(void) {
     static int frames;
     malloc_statistics_t ms;
-    if (!getenv("ZEUS_MEM_DEBUG")) return;
-    if ((frames++ % 60) != 0) return;
+    if (!loam_platform_host_env_flag(2) || (frames++ % 60) != 0) return;
     malloc_zone_statistics(malloc_default_zone(), &ms);
-    fprintf(stderr, "[mem] malloc=%uKB blocks=%u phys=%lldKB win=%lldx%lld view=%.0fx%.0f\n",
+    fprintf(stderr, "[mem] malloc=%uKB blocks=%u phys=%dKB win=%lldx%lld view=%.0fx%.0f\n",
             (unsigned)(ms.size_in_use / 1024), (unsigned)ms.blocks_in_use,
-            mac_phys_kb(),
+            (int)loam_platform_plat_mem_kb(),
             (long long)zeus_window_width(), (long long)zeus_window_height(),
             g_view ? g_view.bounds.size.width : 0.0, g_view ? g_view.bounds.size.height : 0.0);
 }
@@ -421,41 +398,22 @@ static int64_t mac_fullscreen(int64_t on) {
     return is;
 }
 
-/* CSS cursor name (from `cursor = "pointer"` props) → AppKit cursor.
- * Names are the CSS values; shapes AppKit cannot draw fall back to the
- * arrow. Web hosts can set `style.cursor` directly with the same string. */
-static NSCursor *zeus_cursor_for(const char *name) {
-    if (!name || !*name || strcmp(name, "default") == 0)
-        return [NSCursor arrowCursor];
-    if (strcmp(name, "pointer") == 0) return [NSCursor pointingHandCursor];
-    if (strcmp(name, "text") == 0) return [NSCursor IBeamCursor];
-    if (strcmp(name, "crosshair") == 0) return [NSCursor crosshairCursor];
-    if (strcmp(name, "not-allowed") == 0 || strcmp(name, "no-drop") == 0)
-        return [NSCursor operationNotAllowedCursor];
-    if (strcmp(name, "grab") == 0 || strcmp(name, "move") == 0)
-        return [NSCursor openHandCursor];
-    if (strcmp(name, "grabbing") == 0) return [NSCursor closedHandCursor];
-    if (strcmp(name, "col-resize") == 0 || strcmp(name, "e-resize") == 0 ||
-        strcmp(name, "w-resize") == 0 || strcmp(name, "ew-resize") == 0)
-        return [NSCursor resizeLeftRightCursor];
-    if (strcmp(name, "row-resize") == 0 || strcmp(name, "n-resize") == 0 ||
-        strcmp(name, "s-resize") == 0 || strcmp(name, "ns-resize") == 0)
-        return [NSCursor resizeUpDownCursor];
-    /* wait, help, cell, copy, alias, context-menu, progress, vertical-text,
-       zoom-in/out, diagonal resizes, all-scroll: no AppKit shape → arrow. */
-    return [NSCursor arrowCursor];
+static NSCursor *mac_cursor_for_id(int id) {
+    switch (id) {
+    case 1: return [NSCursor pointingHandCursor];
+    case 2: return [NSCursor IBeamCursor];
+    case 3: return [NSCursor crosshairCursor];
+    case 4: return [NSCursor operationNotAllowedCursor];
+    case 5: return [NSCursor openHandCursor];
+    case 6: return [NSCursor closedHandCursor];
+    case 7: return [NSCursor resizeLeftRightCursor];
+    case 8: return [NSCursor resizeUpDownCursor];
+    default: return [NSCursor arrowCursor];
+    }
 }
 
-/* The cursor for what is under the pointer now. */
 static NSCursor *mac_cursor_now(void) {
-    char name[64];
-    loam_str s = loam_zeus_engine_cursor();
-    size_t n = s.len > 0 && s.ptr ? (size_t)s.len : 0;
-    if (n > sizeof name - 1) n = sizeof name - 1;
-    if (n) memcpy(name, s.ptr, n);
-    name[n] = '\0';
-    loam_abi_str_release(&s);
-    return zeus_cursor_for(name);
+    return mac_cursor_for_id(loam_zeus_engine_cursor_id());
 }
 
 @interface ZeusView : NSView <NSTextInputClient> {
@@ -465,19 +423,6 @@ static NSCursor *mac_cursor_now(void) {
 }
 - (void)zeusRender;
 @end
-
-/* Semantic role string from `engine_a11y_dump` → NSAccessibility role. */
-static NSAccessibilityRole mac_a11y_role(NSString *r) {
-    if ([r isEqualToString:@"button"]) return NSAccessibilityButtonRole;
-    if ([r isEqualToString:@"textbox"]) return NSAccessibilityTextFieldRole;
-    if ([r isEqualToString:@"slider"]) return NSAccessibilitySliderRole;
-    if ([r isEqualToString:@"switch"]) return NSAccessibilityCheckBoxRole;
-    if ([r isEqualToString:@"checkbox"]) return NSAccessibilityCheckBoxRole;
-    if ([r isEqualToString:@"list"]) return NSAccessibilityListRole;
-    if ([r isEqualToString:@"table"]) return NSAccessibilityTableRole;
-    if ([r isEqualToString:@"img"]) return NSAccessibilityImageRole;
-    return NSAccessibilityStaticTextRole;
-}
 
 /* A CG-drawn window's drawable is IOSurface memory the compositor allocates at
    the display's scale, and it does *not* follow `layer.contentsScale` — a window
@@ -551,57 +496,9 @@ static CGColorSpaceRef own_colorspace(void) {
     return cs;
 }
 
-static int env_truthy(const char *name) {
-    const char *e = getenv(name);
-    return e && e[0] && e[0] != '0';
-}
+static int own_buffer_on(void) { return loam_platform_host_display_path() == 1; }
+static int own_surface_on(void) { return loam_platform_host_display_path() == 2; }
 
-/* The presentation path, chosen once, from the environment:
-
-     2  owned IOSurface set    DEFAULT — our pixels ARE the layer's texture, so
-                              a frame is never copied, and the set is what lets
-                              the next frame be drawn while the compositor still
-                              reads the last one (`ZEUS_OWN_SURFACE=1`).
-     1  owned bitmap           one `CGBitmapContext` wrapped in a fresh CGImage
-                              per frame, handed to the layer as its `contents`
-                              (`ZEUS_OWN_SURFACE=0`, `ZEUS_OWN_BUFFER=1`).
-     0  AppKit's own store     `drawRect:` paints straight into the window's
-                              backing store (`APP_KIT=1`, `ZEUS_OWN_BUFFER=0`).
-
-   The IOSurface set is the default; the bitmap and AppKit's store are opt-in,
-   and a surface allocation failure falls back to the bitmap. */
-static int display_path = -1;
-
-static int display_path_get(void) {
-    if (display_path < 0) {
-        /* Every explicit spelling keeps the path it always meant; only the
-           ABSENCE of all of them moved. Order matters only if more than one is
-           set: APP_KIT wins, then ZEUS_OWN_SURFACE, then ZEUS_OWN_BUFFER. */
-        if (env_truthy("APP_KIT"))
-            display_path = 0;
-        else if (getenv("ZEUS_OWN_SURFACE"))
-            display_path = env_truthy("ZEUS_OWN_SURFACE") ? 2 : 1;
-        else if (getenv("ZEUS_OWN_BUFFER"))
-            display_path = env_truthy("ZEUS_OWN_BUFFER") ? 1 : 0;
-        else
-            display_path = 2;
-    }
-    return display_path;
-}
-
-/* The two owned paths, as predicates. `own_buffer_on()` is the bitmap path,
-   `own_surface_on()` the IOSurface pair; `wantsUpdateLayer` asks whether either
-   is in use, since both hand the layer memory we own and AppKit must not then
-   allocate a store for the view. */
-static int own_buffer_on(void) { return display_path_get() == 1; }
-static int own_surface_on(void) { return display_path_get() == 2; }
-
-/* A `CGImage` over the bitmap's own pixels, without copying them.
-   `CGBitmapContextCreateImage` allocates a fresh buffer and memcpy's the whole
-   frame on every call — tens of MB of allocation and copy per frame at Retina,
-   which is the scroll and paint latency this path introduced. The image is
-   read-only in principle; CoreAnimation reads it during the commit that follows
-   this call, before the next frame's draw starts. */
 static CGImageRef own_image(void) {
     CGDataProviderRef prov;
     CGImageRef img;
@@ -621,11 +518,6 @@ static CGImageRef own_image(void) {
     return img;
 }
 
-/* `ZEUS_FRAME_DEBUG=1`: what a frame actually costs, split so the parts add up.
-   `setup` is the graphics-context plumbing, `engine` is layout + step + paint,
-   `image` is the bitmap→CGImage hand-off, `set` is the `contents` assignment and
-   commit, and `other` is whatever is left of `interval` — CoreAnimation's own
-   work plus the wait for the next vsync, which no code of ours can time. */
 typedef struct {
     double setup_ms, engine_ms, image_ms, set_ms;
     int more;
@@ -634,21 +526,10 @@ static double frame_now_ms(void) {
     return CFAbsoluteTimeGetCurrent() * 1000.0;
 }
 
-/* Frames the surface path skipped because the compositor held every surface.
-   Printed by the frame trace, so a stutter can be told from a slow frame. */
 static int own_surf_skips;
-/* When every surface is busy, the frame is retried shortly instead of at the
-   next display refresh (see `zeusRenderSurface:`). `own_surf_wait_t0` is when
-   the current wait began (0 = not waiting); `own_surf_last_wait` is how long
-   the last drawn frame waited for a free surface, for the frame trace. */
 static double own_surf_wait_t0;
 static double own_surf_last_wait;
 
-/* Hand freed malloc pages back to the system. Start-up (font atlas, decoded
-   images, the first layouts) frees ~15 MB of large blocks that the zone keeps
-   dirty and the footprint keeps counting; relief returns them. Run once when
-   start-up has settled (frame 120), then whenever the window goes idle, at
-   most every 5 s — never per frame, since it walks every zone. */
 static void mac_memory_relief(int more) {
     static int frames;
     static double last;
@@ -660,23 +541,13 @@ static void mac_memory_relief(int more) {
     }
 }
 
-static int frame_debug_on(void) {
-    static int v = -1;
-    if (v < 0) {
-        const char *e = getenv("ZEUS_FRAME_DEBUG");
-        v = (e && e[0] && e[0] != '0') ? 1 : 0;
-    }
-    return v;
-}
-
 static void frame_trace(double t0, FramePhases p) {
     static double prev;
     static int n;
     double interval = (prev > 0.0) ? (t0 - prev) : 0.0;
     double work = p.setup_ms + p.engine_ms + p.image_ms + p.set_ms;
     prev = t0;
-    if (!frame_debug_on()) return;
-    if ((n++ % 30) != 0) return;
+    if (!loam_platform_host_env_flag(0) || (n++ % 30) != 0) return;
     fprintf(stderr,
             "[frame] interval=%.1fms setup=%.2f engine=%.1f image=%.2f set=%.2f other=%.1f "
             "more=%d next=%dms surf_skip=%d surf_wait=%.1f\n",
@@ -684,30 +555,6 @@ static void frame_trace(double t0, FramePhases p) {
             (int)loam_zeus_engine_next_ms(), own_surf_skips, own_surf_last_wait);
 }
 
-/* Reduced-motion preference (§3.2): reported once to the engine, which makes
-   animations jump to their final value. */
-static void mac_sync_reduced_motion(void) {
-    static int done = 0;
-    int on = 0;
-    if (done) return;
-    done = 1;
-    if (@available(macOS 10.12, *)) {
-        on = [NSWorkspace sharedWorkspace].accessibilityDisplayShouldReduceMotion ? 1 : 0;
-    }
-    loam_zeus_engine_set_reduced_motion(on);
-}
-
-/* One engine frame: layout, step, and paint through the host's draw callbacks.
-   Both display paths share it so they stay frame-for-frame identical. Returns 1
-   when the engine wants another frame (animation running, async work pending). */
-/* App-drawn chrome (`zeus.window_chrome(CHROME_CUSTOM)`): the content view
-   runs under a transparent title bar with the system title hidden, and the
-   window buttons stay where they are. The app's `TitleBar` paints the strip;
-   this reports its box each frame — the bar's height (0 in full screen, where
-   the system bar slides in over the content on its own) and the room the
-   buttons take — and a press on the bar, off any control, moves the window
-   (`mouseDown`). Checked every frame, so it does not matter whether the app
-   asked before or after the window opened. */
 static void mac_sync_chrome(void) {
     NSWindow *w = g_win;
     NSRect lr;
@@ -740,24 +587,11 @@ static void mac_sync_chrome(void) {
     zeus_set_titlebar_box((int64_t)(h + 0.5), (int64_t)(lead + 0.5), (int64_t)(trail + 0.5));
 }
 
-
-/* `ZEUS_SNAPSHOT=out.png`: paint one frame at 2x through the real draw table
-   into an offscreen sRGB bitmap, write it as PNG, and exit, with no window.
-   `ZEUS_SNAPSHOT_SIZE=WxH` overrides the window size (a tall one captures a
-   whole scrolling page).
-   Animations are stepped for one simulated second first, so the frame is the
-   settled one. For host-level pixel checks and before / after diffs. */
 static void mac_snapshot(const char *path) {
     @autoreleasepool {
-        int64_t w = zeus_window_width(), h = zeus_window_height();
-        const char *sz = getenv("ZEUS_SNAPSHOT_SIZE");
-        long sw = 0, sh = 0;
+        int32_t w = 0, h = 0;
         CGFloat scale = 2;
-        if (sz && sscanf(sz, "%ldx%ld", &sw, &sh) == 2 && sw > 0 && sh > 0) {
-            w = sw;
-            h = sh;
-            zeus_set_window_size(w, h);
-        }
+        loam_zeus_engine_snapshot_prepare(&w, &h);
         size_t pw = (size_t)(w * scale), ph = (size_t)(h * scale);
         CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
         CGContextRef bc = CGBitmapContextCreate(NULL, pw, ph, 8, 0, cs,
@@ -771,10 +605,7 @@ static void mac_snapshot(const char *path) {
         CGContextScaleCTM(bc, scale, -scale);
         [NSGraphicsContext setCurrentContext:
             [NSGraphicsContext graphicsContextWithCGContext:bc flipped:YES]];
-        loam_zeus_engine_layout((int32_t)w, (int32_t)h);
-        for (int i = 0; i < 60; i++) loam_zeus_engine_step_dt(17);
-        loam_zeus_engine_layout((int32_t)w, (int32_t)h);
-        zeus_paint(NULL, za_draw_table());
+        loam_zeus_engine_snapshot_paint(w, h);
         CGImageRef img = CGBitmapContextCreateImage(bc);
         NSBitmapImageRep *rep = [[NSBitmapImageRep alloc] initWithCGImage:img];
         NSData *png = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
@@ -786,33 +617,14 @@ static void mac_snapshot(const char *path) {
 }
 
 static int mac_frame(int64_t vw, int64_t vh) {
-    static CFAbsoluteTime last;
-    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
-    float dt = (last > 0) ? (float)(now - last) : (1.f / 60.f);
-    ZeusDraw d;
-    int more;
-    last = now;
-    if (dt > 0.05f) dt = 0.05f;
-    if (dt < 0.001f) dt = 1.f / 60.f;
-    mac_sync_reduced_motion();
+    int rm = 0;
+    if (@available(macOS 10.12, *))
+        rm = [NSWorkspace sharedWorkspace].accessibilityDisplayShouldReduceMotion ? 1 : 0;
     mac_mem_debug();
     mac_sync_chrome();
-    loam_zeus_engine_layout((int32_t)vw, (int32_t)vh);
-    more = loam_zeus_engine_step_dt((int32_t)(dt * 1000.0f + 0.5f));
-    d = za_draw_table();
-    zeus_paint(NULL, d);
-    if (za_media_live()) more = 1;
-    return more;
+    return loam_zeus_engine_mac_frame((int32_t)vw, (int32_t)vh, rm, za_media_live());
 }
 
-/* Frame clock. Asking for the next frame from inside the display callback
-   (`dispatch_async` → `setNeedsDisplay`) lands one runloop hop late, and the
-   display then falls two vsyncs out: with `ZEUS_FRAME_DEBUG=1` the interval
-   stayed pinned at 33.3 ms while `engine` ranged from 4.8 to 17.5 ms — a spare
-   vsync we had the headroom for and never used. A display link asks at the
-   display's own cadence instead, which is what puts a frame back inside one
-   vsync. Paused whenever no frame is wanted, so an idle app still costs
-   nothing. */
 static CADisplayLink *g_link;
 static int g_link_want;
 
@@ -820,16 +632,11 @@ static void mac_link_tick(void) {
     static double prev;
     static int n;
     double now = frame_now_ms();
-    /* The clock's own cadence, next to the frame cost: if this is ~16.7ms and
-       frames still take longer, the gap is after our render, not in it. */
-    if (frame_debug_on() && prev > 0.0 && (n++ % 30) == 0)
+    if (loam_platform_host_env_flag(0) && prev > 0.0 && (n++ % 30) == 0)
         fprintf(stderr, "[tick] period=%.1fms want=%d\n", now - prev, g_link_want);
     prev = now;
     if (!g_link_want || !g_view) return;
     g_link_want = 0;
-    /* Mark only. Rendering inside the tick puts CoreAnimation's flush straight
-       onto the clock and measured *worse* (39 ms vs 24 ms) — the display pass
-       is where that work belongs. */
     [g_view setNeedsDisplay:YES];
 }
 
@@ -842,29 +649,13 @@ static void mac_link_arm(void) {
     }
 }
 
-/* `setNeedsDisplay` from inside a display callback is dropped by AppKit; queue
-   the next frame instead — or sleep until the next async deadline when idle.
-   -1 = a spawn is waiting, draw a frame soon. */
-/* A benchmark hook. The engine stops asking for frames when nothing is pending
-   (the tail of `mac_schedule_next`), so frame cost can only be sampled while
-   something is animating — which would make `bench/own_buffer.sh` depend on a
-   human moving the mouse, and let the two display paths be measured at different
-   workloads. `ZEUS_FRAME_BENCH=1` keeps frames coming. Off by default; it exists
-   so the memory numbers can be re-derived. */
-static int frame_bench_on(void) {
-    static int v = -1;
-    if (v < 0) v = env_truthy("ZEUS_FRAME_BENCH");
-    return v;
-}
-
 static void mac_schedule_next(int more) {
     NSView *v = g_view;
     int64_t due;
     if (!v) return;
-    if (frame_bench_on()) more = 1;
+    if (loam_platform_host_env_flag(1)) more = 1;
     if (more) {
         if (g_link) {
-            /* The link asks at the next display refresh (see `mac_link_tick`). */
             g_link_want = 1;
             g_link.paused = NO;
             return;
@@ -883,7 +674,6 @@ static void mac_schedule_next(int more) {
         });
         return;
     }
-    /* Nothing pending: stop the clock so an idle window costs nothing. */
     if (g_link) g_link.paused = YES;
 }
 
@@ -951,36 +741,7 @@ static IOSurfaceRef own_surf[OWN_SURFACES_MAX];
 static CGContextRef own_surf_ctx[OWN_SURFACES_MAX];
 static NSGraphicsContext *own_surf_gc[OWN_SURFACES_MAX];
 static int own_surf_cur;
-static int own_surf_n;
 static int own_surf_w, own_surf_h;
-
-/* How many surfaces to rotate over. 2 by default; the count is clamped to 2..4
-   and read once, so a frame never re-parses the environment.
-
-   `ZEUS_OWN_SURFACE` and `ZEUS_OWN_SURFACES` differ by one letter and mean
-   different things, which is a trap worth closing: the singular selects the
-   DISPLAY PATH (0 = bitmap, 1 = this one) and the plural sets the COUNT. To make
-   the singular forgiving, a value of 2 or more there is taken as the count too,
-   so `ZEUS_OWN_SURFACE=2` means what it reads as — the surface path, two
-   buffers — rather than silently meaning `=1` with three. The plural wins when
-   both are set. */
-static int own_surf_count(void) {
-    if (own_surf_n <= 0) {
-        const char *e = getenv("ZEUS_OWN_SURFACES");
-        int n = OWN_SURFACES_DEFAULT;
-        if (!e || !e[0]) e = getenv("ZEUS_OWN_SURFACE");
-        if (e && e[0]) {
-            int v = atoi(e);
-            /* A bare "1" (or a non-numeric truthy value) is the path switch, not
-               a count; anything 2+ is a count. */
-            if (v >= 2) n = v;
-        }
-        if (n < 2) n = 2;
-        if (n > OWN_SURFACES_MAX) n = OWN_SURFACES_MAX;
-        own_surf_n = n;
-    }
-    return own_surf_n;
-}
 
 static void own_surf_free(void) {
     int i;
@@ -1001,15 +762,12 @@ static void own_surf_free(void) {
     own_surf_cur = 0;
 }
 
-/* (Re)create the set at physical size: 1 on success. On failure everything is
-   released and the caller falls back to the bitmap path — a display path that
-   cannot be allocated must cost memory, not the window. */
 static int own_surf_ensure(int px_w, int px_h) {
     NSDictionary *props;
     int i, n;
     if (own_surf[0] && own_surf_w == px_w && own_surf_h == px_h) return 1;
     own_surf_free();
-    n = own_surf_count();
+    n = loam_platform_host_surface_count();
     props = @{ (id)kIOSurfaceWidth : @(px_w),
                (id)kIOSurfaceHeight : @(px_h),
                (id)kIOSurfaceBytesPerElement : @4,
@@ -1019,14 +777,7 @@ static int own_surf_ensure(int px_w, int px_h) {
         void *base;
         size_t bpr;
         own_surf[i] = IOSurfaceCreate((CFDictionaryRef)props);
-        if (!own_surf[i]) {
-            own_surf_free();
-            return 0;
-        }
-        /* The stride is the surface's, not necessarily `px_w * 4`: IOSurface is
-           free to pad rows. Read it rather than assume it, and build the
-           context over what it really is. */
-        if (IOSurfaceLock(own_surf[i], 0, NULL) != 0) {
+        if (!own_surf[i] || IOSurfaceLock(own_surf[i], 0, NULL) != 0) {
             own_surf_free();
             return 0;
         }
@@ -1052,10 +803,6 @@ static int own_surf_ensure(int px_w, int px_h) {
     return 1;
 }
 
-/* The size the surface set is allocated at for a frame of `px_w x px_h`: the
-   current set if it already fits, else the window's screen at its backing
-   scale (the largest a drag can make the window), or the frame itself when
-   that is somehow bigger. Growth only — see the note above `OWN_SURFACES_MAX`. */
 static void own_surf_alloc_size(NSView *v, int px_w, int px_h, int *aw, int *ah) {
     NSScreen *scr;
     NSRect f;
@@ -1077,13 +824,6 @@ static void own_surf_alloc_size(NSView *v, int px_w, int px_h, int *aw, int *ah)
     if ((int)(f.size.height * s + 0.5) > *ah) *ah = (int)(f.size.height * s + 0.5);
 }
 
-/* Draw one frame into `ctx`: physical pixels, `scale` pixels per point, y down
-   (the view is flipped). `ctx_h` is the CONTEXT's height in pixels, which is
-   what puts logical (0,0) at the first row of the buffer; the frame may be
-   shorter than the context (the surface path draws into the top-left of a
-   larger surface). BOTH display paths go through here, which is what keeps
-   their pixels from drifting apart — the memory being drawn into is the only
-   thing that differs between them. */
 static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat scale,
                     int64_t lw, int64_t lh, double *engine_ms) {
     double t0;
@@ -1104,8 +844,6 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
 @implementation ZeusView
 - (BOOL)isFlipped { return YES; }
 
-/* A file dropped on the window goes where the media picker's result goes
-   (`engine_media_picked`); the app decides what to do with it. */
 - (void)viewDidMoveToWindow {
     [super viewDidMoveToWindow];
     if ([self window]) [self registerForDraggedTypes:@[ NSPasteboardTypeFileURL ]];
@@ -1128,47 +866,36 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
     }
     return any;
 }
-/* The engine paints every pixel of the viewport — the root scroller carries the
-   page background, so scroll edges and short pages stay paper. Saying so lets
-   the compositor copy the window instead of blending it, which is one fewer
-   surface for a full-window canvas. */
 - (BOOL)isOpaque { return YES; }
 - (BOOL)acceptsFirstResponder { return YES; }
 - (BOOL)preservesContentDuringLiveResize { return NO; }
 
-/* Accessibility bridge (§2.3): the UI is a canvas, so VoiceOver would see one
-   opaque view. This returns the semantic tree as accessibility children,
-   built from the roles/labels the widgets already set. It is not a render
-   target and never affects layout. */
 - (BOOL)isAccessibilityElement { return NO; }
 - (NSArray *)accessibilityChildren {
+    NSAccessibilityRole const roles[] = {
+        NSAccessibilityStaticTextRole, NSAccessibilityButtonRole,
+        NSAccessibilityTextFieldRole,  NSAccessibilitySliderRole,
+        NSAccessibilityCheckBoxRole,   NSAccessibilityListRole,
+        NSAccessibilityTableRole,      NSAccessibilityImageRole,
+    };
     NSMutableArray *kids = [NSMutableArray array];
-    loam_str dump = loam_zeus_engine_a11y_dump();
-    NSString *s = nil;
-    if (dump.ptr && dump.len > 0)
-        s = [[[NSString alloc] initWithBytes:dump.ptr
-                                      length:(NSUInteger)dump.len
-                                    encoding:NSUTF8StringEncoding] autorelease];
-    loam_abi_str_release(&dump);
-    if (!s) return kids;
-    for (NSString *line in [s componentsSeparatedByString:@"\n"]) {
-        if (line.length == 0) continue;
-        NSArray *parts = [line componentsSeparatedByString:@"\t"];
-        if (parts.count < 3) continue;
-        NSString *role = parts[1];
-        NSString *label = parts[2];
-        NSRect frame = NSZeroRect;
-        if (parts.count >= 7) {
-            frame = NSMakeRect([parts[3] doubleValue], [parts[4] doubleValue],
-                               [parts[5] doubleValue], [parts[6] doubleValue]);
-            frame = [self convertRect:frame toView:nil];
-            if (self.window) frame = [self.window convertRectToScreen:frame];
-        }
-        NSAccessibilityElement *el = [NSAccessibilityElement accessibilityElementWithRole:
-                                                                                         mac_a11y_role(role)
-                                                                                             frame:frame
-                                                                                             label:label
-                                                                                            parent:self];
+    int32_t i, n = loam_zeus_engine_a11y_count();
+    for (i = 0; i < n; i++) {
+        int32_t x = 0, y = 0, w = 0, h = 0, rid = 0;
+        loam_str lbl = loam_zeus_engine_a11y_item(i, &x, &y, &w, &h, &rid);
+        NSString *label = lbl.ptr && lbl.len > 0
+                              ? [[[NSString alloc] initWithBytes:lbl.ptr
+                                                          length:(NSUInteger)lbl.len
+                                                        encoding:NSUTF8StringEncoding] autorelease]
+                              : @"";
+        loam_abi_str_release(&lbl);
+        NSRect frame = [self convertRect:NSMakeRect(x, y, w, h) toView:nil];
+        if (self.window) frame = [self.window convertRectToScreen:frame];
+        NSAccessibilityElement *el =
+            [NSAccessibilityElement accessibilityElementWithRole:roles[rid >= 0 && rid < 8 ? rid : 0]
+                                                           frame:frame
+                                                           label:label
+                                                          parent:self];
         if (el) [kids addObject:el];
     }
     return kids;
@@ -1176,9 +903,6 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
 
 - (void)updateTrackingAreas {
     [super updateTrackingAreas];
-    /* The old area is owned by us (+1 from alloc) *and* retained by the view.
-       `removeTrackingArea:` drops the view's retain only, so the alloc must be
-       balanced here or every resize leaks an NSTrackingArea. */
     if (track) {
         [self removeTrackingArea:track];
         [track release];
@@ -1209,9 +933,8 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
     (void)dirty;
     @autoreleasepool {
         NSRect b = self.bounds;
-        FramePhases p;
+        FramePhases p = {0};
         double t0 = frame_now_ms();
-        memset(&p, 0, sizeof p);
         p.more = mac_frame((int64_t)b.size.width, (int64_t)b.size.height);
         p.engine_ms = frame_now_ms() - t0;
         frame_trace(t0, p);
@@ -1219,11 +942,7 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
     }
 }
 
-/* Default display path: AppKit calls these instead of `drawRect:` and allocates
-   no store for the view, so the layer's pixels are the bitmap we hand it. */
 - (BOOL)wantsUpdateLayer {
-    /* Both owned paths paint into memory they hand the layer, so AppKit must
-       not allocate a store for the view. */
     return (own_buffer_on() || own_surface_on()) ? YES : NO;
 }
 
@@ -1232,27 +951,19 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
     mac_link_tick();
 }
 
-/* The frame. AppKit reaches it through `updateLayer` (input, resize, a forced
-   display); the frame clock calls it directly, which keeps the runloop out of
-   the per-frame path. */
 - (void)zeusRender {
     NSRect b = self.bounds;
     CGImageRef img;
-    FramePhases p;
+    FramePhases p = {0};
     double t0, tprev, tnow;
     int px_w, px_h;
-    memset(&p, 0, sizeof p);
     t0 = tprev = frame_now_ms();
     if (!self.layer || b.size.width < 1 || b.size.height < 1) return;
-    /* The display's own scale: the bitmap is always Retina resolution. */
     own_ctx_scale = self.window ? self.window.backingScaleFactor : 2.0;
     if (own_ctx_scale < 1.0) own_ctx_scale = 1.0;
     px_w = (int)(b.size.width * own_ctx_scale + 0.5);
     px_h = (int)(b.size.height * own_ctx_scale + 0.5);
     if (px_w < 1 || px_h < 1) return;
-    /* The owned-IOSurface path, when asked for: one buffer and no copy, instead
-       of a bitmap plus CoreAnimation's own texture. Falling through (0) means
-       the surfaces could not be allocated, and the bitmap path below runs. */
     if (own_surface_on()) {
         if ([self zeusRenderSurface:b pxw:px_w pxh:px_h]) return;
     }
@@ -1269,24 +980,16 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
                                             kCGBitmapByteOrder32Little);
         own_ctx_w = px_w;
         own_ctx_h = px_h;
-        /* The AppKit wrapper is a property of the context, not of a frame:
-           building one per frame was pure churn on the hot path. */
         if (own_ctx)
             own_gc = [[NSGraphicsContext graphicsContextWithCGContext:own_ctx
                                                              flipped:YES] retain];
-        self.layer.contents = nil; /* the old image belongs to the old context */
-        /* Static layer properties: set them when the backing changes, never per
-           frame. Writing `contentsScale` every frame marks the layer dirty and
-           can force a texture reallocation — the exact cost this path exists to
-           avoid. */
+        self.layer.contents = nil;
         self.layer.contentsGravity = kCAGravityResize;
         self.layer.contentsScale = own_ctx_scale;
         self.layer.magnificationFilter = kCAFilterLinear;
         self.layer.opaque = YES;
     }
     if (!own_ctx) return;
-    /* Draw in layout points, y down (the view is flipped), with `own_ctx_scale`
-       pixels per point. */
     tnow = frame_now_ms();
     p.setup_ms = tnow - tprev;
     tprev = tnow;
@@ -1298,11 +1001,6 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
     p.image_ms = tnow - tprev;
     tprev = tnow;
     if (img) {
-        /* Assigning `contents` is not a plain write. Outside a transaction with
-           actions disabled, CoreAnimation treats the change as an implicit
-           animation, so each frame cross-fades into the next — work per frame,
-           and precisely the "the content isn't ready yet" feel this path
-           showed. */
         [CATransaction begin];
         [CATransaction setDisableActions:YES];
         self.layer.contents = (id)img;
@@ -1315,68 +1013,41 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
     mac_schedule_next(p.more);
 }
 
-/* The owned-IOSurface frame. Returns 1 when it drew (or deliberately skipped)
-   the frame and 0 when the path is unavailable, in which case the caller draws
-   the bitmap path instead. */
 - (int)zeusRenderSurface:(NSRect)b pxw:(int)px_w pxh:(int)px_h {
-    /* The region of the surface the layer shows, in pixels. A resize moves this
-       and nothing else — see the note above `OWN_SURFACES_MAX`. */
     static int shown_w, shown_h;
-    FramePhases p;
+    FramePhases p = {0};
     double t0, tprev;
     int i, more, realloc, aw, ah;
     own_surf_alloc_size(self, px_w, px_h, &aw, &ah);
     realloc = (!own_surf[0] || own_surf_w != aw || own_surf_h != ah) ? 1 : 0;
-    if (frame_debug_on() && realloc)
+    if (loam_platform_host_env_flag(0) && realloc)
         fprintf(stderr, "[surf] set %dx%d for a %dx%d frame\n", aw, ah, px_w, px_h);
     if (!own_surf_ensure(aw, ah)) {
-        /* No surface: fall back to the bitmap, not to AppKit's store — the view
-           is already layer-backed, so AppKit's drawn path is not available. */
-        display_path = 1;
+        loam_platform_host_set_display_path(1);
         self.layer.contents = nil;
         return 0;
     }
     if (realloc) {
-        /* Static layer properties: set them when the backing changes, never per
-           frame. Writing `contentsScale` every frame marks the layer dirty and
-           can force a texture reallocation. The old surface stays the layer's
-           contents until the new one is drawn below — never nil in between. */
         self.layer.contentsGravity = kCAGravityResize;
         self.layer.contentsScale = own_ctx_scale;
         self.layer.magnificationFilter = kCAFilterLinear;
         self.layer.opaque = YES;
-        /* Say the surface is 8-bit RGBA — the same thing the bitmap path's
-           CGImage says. Without it CoreAnimation has to guess the format. */
         if ([self.layer respondsToSelector:@selector(setContentsFormat:)])
             self.layer.contentsFormat = kCAContentsFormatRGBA8Uint;
         shown_w = shown_h = 0;
     }
-    /* Rotate to a surface the compositor is NOT using, then draw into it. This is
-       the whole point of having more than one: the surface in `layer.contents`
-       is being read, and writing it mid-scanout is what shows as a flash or a
-       tear. `IOSurfaceIsInUse` is the only non-blocking probe for that. If none
-       is free (the compositor is holding all of them), never write over one it
-       is reading — a late frame is one frame of animation, a torn one is a
-       visible flash. */
     i = own_surf_cur;
     int tries = 0;
-    int ns = own_surf_count();
+    int ns = loam_platform_host_surface_count();
     while (tries < ns && IOSurfaceIsInUse(own_surf[i])) {
         i = (i + 1) % ns;
         tries++;
     }
     if (tries == ns) {
-        /* The compositor lets go of the surface it showed last a little after
-           the refresh that replaced it — usually just after the link tick that
-           brought us here. Waiting for the next tick would drop a whole frame,
-           so poll again in 1 ms, for up to `OWN_SURF_WAIT_MS`, and only then
-           fall back to the next refresh. */
         double now = frame_now_ms();
         own_surf_skips++;
         if (own_surf_wait_t0 == 0.0) own_surf_wait_t0 = now;
         if (now - own_surf_wait_t0 < OWN_SURF_WAIT_MS) {
-            /* Render directly: `setNeedsDisplay:` would be coalesced to the
-               next refresh, which is exactly the frame this wait saves. */
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)NSEC_PER_MSEC),
                            dispatch_get_main_queue(), ^{
                 [self zeusRender];
@@ -1389,33 +1060,19 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
     }
     own_surf_last_wait = (own_surf_wait_t0 == 0.0) ? 0.0 : frame_now_ms() - own_surf_wait_t0;
     own_surf_wait_t0 = 0.0;
-    /* Only for the CPU write now, and it contends with nobody: the surface was
-       just found unused. A blocking lock is correct here (and its options must
-       match the unlock's, which `kIOSurfaceLockAvoidSync` did not). */
     if (IOSurfaceLock(own_surf[i], 0, NULL) != 0) {
         own_surf_skips++;
         mac_schedule_next(1);
         return 1;
     }
-    memset(&p, 0, sizeof p);
     t0 = tprev = frame_now_ms();
     more = own_draw(own_surf_ctx[i], own_surf_gc[i], ah, own_ctx_scale,
                     (int64_t)b.size.width, (int64_t)b.size.height, &p.engine_ms);
     IOSurfaceUnlock(own_surf[i], 0, NULL);
     tprev = frame_now_ms();
-    p.setup_ms = 0.0;
-    p.image_ms = 0.0; /* there is no image step on this path by definition */
-    /* Assigning `contents` is not a plain write: outside a transaction with
-       actions disabled, CoreAnimation cross-fades between frames. */
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     if (shown_w != px_w || shown_h != px_h) {
-        /* The frame lives in the surface's top-left; `contentsRect` is in unit
-           coordinates of the contents, origin at its top-left, so this is the
-           one rectangle the compositor stretches to the layer — 1:1, since the
-           region is `bounds x scale` pixels and `contentsScale` is `scale`.
-           Moved in the same commit as the frame drawn for it, so a skipped
-           frame keeps the old frame with the old rectangle. */
         self.layer.contentsRect = CGRectMake(0, 0, (CGFloat)px_w / (CGFloat)aw,
                                              (CGFloat)px_h / (CGFloat)ah);
         shown_w = px_w;
@@ -1425,14 +1082,13 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
     [CATransaction commit];
     p.more = more;
     p.set_ms = frame_now_ms() - tprev;
-    own_surf_cur = (i + 1) % own_surf_count(); /* next frame starts past this one */
+    own_surf_cur = (i + 1) % ns;
     frame_trace(t0, p);
     mac_memory_relief(more);
     mac_schedule_next(more);
     return 1;
 }
 
-/* AppKit's entry: input, resize, or a forced display. */
 - (void)updateLayer {
     [self zeusRender];
 }
@@ -1447,22 +1103,15 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
 - (void)mouseExited:(NSEvent *)event {
     (void)event;
     if (loam_zeus_engine_hover(-1, -1)) [self setNeedsDisplay:YES];
-    [zeus_cursor_for(0) set];
+    [[NSCursor arrowCursor] set];
 }
 
 - (void)mouseDown:(NSEvent *)event {
     [[self window] makeFirstResponder:self];
     NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
-    /* Control-click is the Mac's secondary click. */
-    if (([event modifierFlags] & NSEventModifierFlagControl) &&
-        loam_zeus_engine_context_click((int32_t)p.x, (int32_t)p.y)) {
-        [self setNeedsDisplay:YES];
-        return;
-    }
-    /* An app-drawn title bar moves the window like the system's: drag it
-       anywhere off its controls, double-click to zoom (or whatever the user
-       chose for title-bar double-clicks in System Settings). */
-    if (loam_zeus_engine_window_drag_at((int32_t)p.x, (int32_t)p.y)) {
+    int ctrl = ([event modifierFlags] & NSEventModifierFlagControl) ? 1 : 0;
+    int r = loam_zeus_engine_mac_mouse_down((int32_t)p.x, (int32_t)p.y, ctrl);
+    if (r == 2) {
         if ([event clickCount] == 2) {
             NSString *act = [[NSUserDefaults standardUserDefaults] stringForKey:@"AppleActionOnDoubleClick"];
             if ([act isEqualToString:@"Minimize"]) [[self window] performMiniaturize:nil];
@@ -1470,10 +1119,9 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
         } else {
             [[self window] performWindowDragWithEvent:event];
         }
-        return;
-    }
-    if (loam_zeus_engine_click((int32_t)p.x, (int32_t)p.y))
+    } else if (r == 1) {
         [self setNeedsDisplay:YES];
+    }
 }
 
 - (void)rightMouseDown:(NSEvent *)event {
@@ -1487,9 +1135,8 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
 
 - (void)mouseDragged:(NSEvent *)event {
     NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
-    int dirty = loam_zeus_engine_drag((int32_t)p.x, (int32_t)p.y);
-    dirty |= loam_zeus_engine_hover((int32_t)p.x, (int32_t)p.y);
-    if (dirty) [self setNeedsDisplay:YES];
+    if (loam_zeus_engine_pointer_move((int32_t)p.x, (int32_t)p.y, 0, 0))
+        [self setNeedsDisplay:YES];
 }
 
 - (void)mouseUp:(NSEvent *)event {
@@ -1499,121 +1146,34 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
 
 - (void)scrollWheel:(NSEvent *)event {
     NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
-    CGFloat dx = [event scrollingDeltaX];
-    CGFloat dy = [event scrollingDeltaY];
-    BOOL precise = [event hasPreciseScrollingDeltas];
-    if (!precise) {
-        /* Mouse notches are discrete: scale lines to points and stop exactly
-           there — no coast, no rubber-band, like the platform scroll view. */
-        dx *= 16.0;
-        dy *= 16.0;
-    }
-    if (([event modifierFlags] & NSEventModifierFlagShift) && dx == 0.0 && dy != 0.0) {
-        dx = dy;
-        dy = 0.0;
-    }
-    /* The engine scrolls in whole points, but a trackpad reports fractions —
-       a slow drag or the tail of a momentum glide is a stream of 0.3-0.9 pt
-       deltas. Truncating each one dropped them all (the content froze, then
-       jumped when a delta finally crossed 1 pt) and shaved distance off every
-       fast one: the stagger. Carry the remainder into the next event instead,
-       and start fresh when a new gesture begins or the direction flips. */
-    static CGFloat rem_x, rem_y;
-    if (event.phase == NSEventPhaseBegan || event.phase == NSEventPhaseMayBegin ||
-        event.momentumPhase == NSEventPhaseBegan) {
-        rem_x = 0;
-        rem_y = 0;
-    }
-    if ((rem_x > 0 && dx < 0) || (rem_x < 0 && dx > 0)) rem_x = 0;
-    if ((rem_y > 0 && dy < 0) || (rem_y < 0 && dy > 0)) rem_y = 0;
-    dx += rem_x;
-    dy += rem_y;
-    int64_t ix = (int64_t)dx, iy = (int64_t)dy;
-    rem_x = dx - (CGFloat)ix;
-    rem_y = dy - (CGFloat)iy;
-    if (ix == 0 && iy == 0) return;
-    /* No engine coast: a trackpad's inertia already arrives from AppKit as a
-       stream of momentum-phase events, so precise deltas step exactly where
-       they land. A mouse notch eases to its target instead, like a browser's
-       smooth wheel scroll — bounded, and retargeted by the next notch. */
-    int dirty;
-    if (precise)
-        dirty = loam_zeus_engine_scroll_step((int32_t)p.x, (int32_t)p.y, (int32_t)-ix, (int32_t)-iy);
-    else
-        dirty = loam_zeus_engine_scroll_smooth((int32_t)p.x, (int32_t)p.y, (int32_t)-ix, (int32_t)-iy);
-    if (dirty) [self setNeedsDisplay:YES];
+    int reset = (event.phase == NSEventPhaseBegan || event.phase == NSEventPhaseMayBegin ||
+                 event.momentumPhase == NSEventPhaseBegan) ? 1 : 0;
+    int shift = ([event modifierFlags] & NSEventModifierFlagShift) ? 1 : 0;
+    if (loam_zeus_engine_wheel((int32_t)p.x, (int32_t)p.y,
+                               (int32_t)([event scrollingDeltaX] * 256.0),
+                               (int32_t)([event scrollingDeltaY] * 256.0),
+                               [event hasPreciseScrollingDeltas] ? 1 : 0, shift, reset))
+        [self setNeedsDisplay:YES];
 }
 
 - (int)zeusMods:(NSEvent *)event {
     NSEventModifierFlags f = [event modifierFlags];
-    int mods = 0;
-    if (f & NSEventModifierFlagShift) mods |= ZEUS_MOD_SHIFT;
-    if (f & NSEventModifierFlagControl) mods |= ZEUS_MOD_CTRL;
-    if (f & NSEventModifierFlagOption) mods |= ZEUS_MOD_ALT;
-    if (f & NSEventModifierFlagCommand) mods |= ZEUS_MOD_CMD;
-    return mods;
-}
-
-- (int)zeusKeyFromEvent:(NSEvent *)event {
-    int key = 0;
-    unsigned short code = [event keyCode];
-    if (code == 53) key = 27;
-    else if (code == 51) key = 8;
-    else if (code == 36) key = 13;
-    else if (code == 123) key = 1000;
-    else if (code == 124) key = 1001;
-    else if (code == 126) key = 1002;
-    else if (code == 125) key = 1003;
-    else if (code == 116) key = 1004;
-    else if (code == 121) key = 1005;
-    else if (code == 115) key = 1006;
-    else if (code == 119) key = 1007;
-    else {
-        NSString *chars = [event characters];
-        if ([chars length] > 0) {
-            unichar c = [chars characterAtIndex:0];
-            if (c >= 32 && c < 127) key = (int)c;
-        }
-    }
-    int mods = [self zeusMods:event];
-    if (code == 48) key = ZEUS_K_TAB;
-    if (!key || (mods & ~ZEUS_MOD_SHIFT)) {
-        NSString *raw = [event charactersIgnoringModifiers];
-        if ([raw length] > 0) {
-            unichar c = [raw characterAtIndex:0];
-            if (c >= 'A' && c <= 'Z') c = c + 32;
-            if (c >= 32 && c < 127) key = (int)c;
-        }
-    }
-    return key;
+    return ((f & NSEventModifierFlagShift) ? ZEUS_MOD_SHIFT : 0) |
+           ((f & NSEventModifierFlagControl) ? ZEUS_MOD_CTRL : 0) |
+           ((f & NSEventModifierFlagOption) ? ZEUS_MOD_ALT : 0) |
+           ((f & NSEventModifierFlagCommand) ? ZEUS_MOD_CMD : 0);
 }
 
 - (void)keyDown:(NSEvent *)event {
-    int mods = [self zeusMods:event];
-    unsigned short code = [event keyCode];
-    if ((mods & ZEUS_MOD_CMD) && code == 9) {
-        /* Cmd+V: the bare Zeus view has no Edit menu, so route the
-           key equivalent straight to the pasteboard handler. */
-        [self paste:nil];
-        return;
-    }
-    if (code == 48 || code == 53 || (mods & (ZEUS_MOD_CMD | ZEUS_MOD_CTRL))) {
-        int key = [self zeusKeyFromEvent:event];
-        if (key && loam_zeus_engine_key_ev(key, mods))
-            [self setNeedsDisplay:YES];
-        else
-            [super keyDown:event];
-        return;
-    }
-    if (loam_zeus_engine_focus_captures_text()) {
-        [self interpretKeyEvents:@[ event ]];
-        return;
-    }
-    int key = [self zeusKeyFromEvent:event];
-    if (key && loam_zeus_engine_key_ev(key, mods))
-        [self setNeedsDisplay:YES];
-    else
-        [super keyDown:event];
+    NSString *chars = [event characters];
+    NSString *raw = [event charactersIgnoringModifiers];
+    int ch = [chars length] > 0 ? (int)[chars characterAtIndex:0] : 0;
+    int rch = [raw length] > 0 ? (int)[raw characterAtIndex:0] : 0;
+    int r = loam_zeus_engine_mac_key_down([event keyCode], ch, rch, [self zeusMods:event]);
+    if (r == 3) [self paste:nil];
+    else if (r == 2) [self interpretKeyEvents:@[ event ]];
+    else if (r == 1) [self setNeedsDisplay:YES];
+    else [super keyDown:event];
 }
 
 - (void)insertText:(id)string {
@@ -1642,8 +1202,7 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
     [marked release];
     marked = [s copy];
     markedSel = selectedRange;
-    const char *u = [s UTF8String];
-    loam_zeus_engine_marked(za_str(u));
+    loam_zeus_engine_marked(za_str([s UTF8String]));
     [self setNeedsDisplay:YES];
 }
 
@@ -1693,61 +1252,26 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
         key = 1006;
     else if (sel == @selector(moveToEndOfLine:) || sel == @selector(moveToRightEndOfLine:))
         key = 1007;
-    else if (sel == @selector(moveLeftAndModifySelection:)) {
-        key = 1000;
-        mods = ZEUS_MOD_SHIFT;
-    } else if (sel == @selector(moveRightAndModifySelection:)) {
-        key = 1001;
-        mods = ZEUS_MOD_SHIFT;
-    } else if (sel == @selector(moveUpAndModifySelection:)) {
-        key = 1002;
-        mods = ZEUS_MOD_SHIFT;
-    } else if (sel == @selector(moveDownAndModifySelection:)) {
-        key = 1003;
-        mods = ZEUS_MOD_SHIFT;
-    } else if (sel == @selector(insertTab:))
-        key = ZEUS_K_TAB;
-    else if (sel == @selector(cancelOperation:))
-        key = 27;
+    else if (sel == @selector(moveLeftAndModifySelection:)) { key = 1000; mods = ZEUS_MOD_SHIFT; }
+    else if (sel == @selector(moveRightAndModifySelection:)) { key = 1001; mods = ZEUS_MOD_SHIFT; }
+    else if (sel == @selector(moveUpAndModifySelection:)) { key = 1002; mods = ZEUS_MOD_SHIFT; }
+    else if (sel == @selector(moveDownAndModifySelection:)) { key = 1003; mods = ZEUS_MOD_SHIFT; }
+    else if (sel == @selector(insertTab:)) key = ZEUS_K_TAB;
+    else if (sel == @selector(cancelOperation:)) key = 27;
     if (key && loam_zeus_engine_key_ev(key, mods)) [self setNeedsDisplay:YES];
 }
 
 - (void)paste:(id)sender {
     (void)sender;
     NSString *s = [[NSPasteboard generalPasteboard] stringForType:NSPasteboardTypeString];
-    if (!s) return;
-    const char *u = [s UTF8String];
+    const char *u = s ? [s UTF8String] : NULL;
     if (u && loam_zeus_engine_insert(za_str(u))) [self setNeedsDisplay:YES];
 }
 
 - (void)keyUp:(NSEvent *)event {
-    int key = 0;
-    unsigned short code = [event keyCode];
-    if (code == 53) key = 27;
-    else if (code == 51) key = 8;
-    else if (code == 36) key = 13;
-    else if (code == 123) key = 1000;
-    else if (code == 124) key = 1001;
-    else if (code == 126) key = 1002;
-    else if (code == 125) key = 1003;
-    else if (code == 116) key = 1004;
-    else if (code == 121) key = 1005;
-    else {
-        NSString *chars = [event charactersIgnoringModifiers];
-        if ([chars length] > 0) {
-            unichar c = [chars characterAtIndex:0];
-            if (c >= 'A' && c <= 'Z') c = c + 32;
-            if (c >= 32 && c < 127) key = (int)c;
-        }
-    }
-    NSEventModifierFlags f = [event modifierFlags];
-    int mods = 0;
-    if (f & NSEventModifierFlagShift) mods |= ZEUS_MOD_SHIFT;
-    if (f & NSEventModifierFlagControl) mods |= ZEUS_MOD_CTRL;
-    if (f & NSEventModifierFlagOption) mods |= ZEUS_MOD_ALT;
-    if (f & NSEventModifierFlagCommand) mods |= ZEUS_MOD_CMD;
-    if (code == 48) key = ZEUS_K_TAB;
-    if (key && loam_zeus_engine_key_up(key, mods))
+    NSString *chars = [event charactersIgnoringModifiers];
+    int rch = [chars length] > 0 ? (int)[chars characterAtIndex:0] : 0;
+    if (loam_zeus_engine_mac_key_up([event keyCode], rch, [self zeusMods:event]))
         [self setNeedsDisplay:YES];
     else
         [super keyUp:event];
@@ -1762,31 +1286,23 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
     (void)app;
     return YES;
 }
-/* Finder's Open / Open With and a drop on the Dock icon, for a bundled app
-   that declares document types: each file goes where a picked or dropped one
-   does (`engine_media_picked`), in order. */
 - (void)application:(NSApplication *)app openURLs:(NSArray<NSURL *> *)urls {
     (void)app;
     for (NSURL *u in urls) {
-        if ([u isFileURL])
-            loam_zeus_engine_media_picked(za_str([[[u path] lastPathComponent] UTF8String]), za_str([[u path] UTF8String]));
-        else
-            loam_zeus_engine_media_picked(za_str([[[u path] lastPathComponent] UTF8String]), za_str([[u absoluteString] UTF8String]));
+        NSString *src = [u isFileURL] ? [u path] : [u absoluteString];
+        loam_zeus_engine_media_picked(za_str([[[u path] lastPathComponent] UTF8String]),
+                                      za_str([src UTF8String]));
     }
 }
 @end
 
 static NSRect mac_screen_visible(void);
-static int mac_window_fills_screen(void);
 
-/* Live window title (`zeus_set_title_hook`), driven by the router's
-   `Meta.title` on navigation. */
 static void mac_apply_title(const char *t) {
     if (!g_win) return;
     [g_win setTitle:(t && t[0]) ? [NSString stringWithUTF8String:t] : @"Zeus"];
 }
 
-/* `plat_clipboard_write` (`CopyButton`): the general pasteboard. */
 static void mac_clipboard_write(const char *t) {
     NSPasteboard *pb = [NSPasteboard generalPasteboard];
     [pb clearContents];
@@ -1811,43 +1327,22 @@ static void mac_run(void) {
                                                       backing:NSBackingStoreBuffered
                                                         defer:NO];
         g_win = win;
-        zeus_set_title_hook(mac_apply_title); /* titles the window now */
+        zeus_set_title_hook(mac_apply_title);
         zeus_set_clipboard_hook(mac_clipboard_write);
-        /* The window clears to white until the engine's first paper fill, so
-           scroll edges / the first frame never flash black. */
         [win setBackgroundColor:[NSColor whiteColor]];
         ZeusView *view = [[ZeusView alloc] initWithFrame:frame];
         g_view = view;
         [win setReleasedWhenClosed:YES];
         [win setRestorable:NO];
         [win setCollectionBehavior:NSWindowCollectionBehaviorFullScreenPrimary];
-        /* The window's colour space decides the *depth* of the store AppKit
-           gives it. Left alone, a window inherits the display's ICC profile
-           ("Color LCD"), which on a wide-gamut Mac is a P3/EDR space — and
-           CoreAnimation then backs the window with an RGBA **half-float**
-           surface: `vmmap` shows 'CA Whippet Drawable', 2940x1612 (RGhA),
-           36.2 MB per buffer, three of them. That is 8 bytes per pixel where the
-           pixels need 4, and it is the whole of the AppKit path's IOSurface
-           cost. Pinning the window to sRGB makes the store 32-bpp BGRA and
-           halves it — to ~54 MB — and costs no fidelity here, because every
-           colour this host can name is already a 24-bit packed value (see
-           `zeus_color`): 8 bits per channel holds all of them. `ZEUS_WIDE_GAMUT=1`
-           keeps the display profile, and so the half-float store, for anyone who
-           wants extended range. */
-        if (!env_truthy("ZEUS_WIDE_GAMUT"))
+        if (!loam_platform_host_env_flag(3))
             [win setColorSpace:[NSColorSpace sRGBColorSpace]];
         [view setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
         [win setContentView:view];
-        /* The default size is the work area, so this fills the screen; any
-           other size is an explicit request and is centered as asked. */
-        if (mac_window_fills_screen()) {
+        if (loam_platform_host_window_fills_screen())
             [win setFrame:mac_screen_visible() display:YES];
-        } else {
+        else
             [win center];
-        }
-        /* The owned paths supply the layer's content themselves, so the view
-           must be layer-backed; with `APP_KIT=true` AppKit manages the store as
-           usual. */
         if (own_buffer_on() || own_surface_on()) [view setWantsLayer:YES];
         mac_link_arm();
         zeus_window_opened();
@@ -1858,50 +1353,19 @@ static void mac_run(void) {
     }
 }
 
-
-/* ── screen-size plumbing ────────────────────────────────────────────
-   The engine's pre-window window_size() and the native default window both
-   come from the main screen's work area (points, like the whole engine). */
 static NSRect mac_screen_visible(void) {
     @autoreleasepool {
-        /* NSScreen only answers once AppKit has a window-server connection, and
-           `window_size()` is read from `zeus.App` — before `mac_run` sets one
-           up and outside its pool. Asking for the shared app here (idempotent)
-           is what makes the pre-window size the real work area rather than a
-           zero frame. */
         NSRect vis;
         [NSApplication sharedApplication];
         vis = [[NSScreen mainScreen] visibleFrame];
-        if (vis.size.width < 1 || vis.size.height < 1) {
-            /* No main screen yet (pre-WindowServer launch): keep a sane desktop
-               default instead of a zero-sized frame. */
+        if (vis.size.width < 1 || vis.size.height < 1)
             vis = NSMakeRect(0, 0, (CGFloat)ZEUS_DEFAULT_WIN_W, (CGFloat)ZEUS_DEFAULT_WIN_H);
-        }
         return vis;
     }
 }
 
-static int64_t mac_initial_w(void) {
-    NSRect vis = mac_screen_visible();
-    return (int64_t)(vis.size.width + 0.5);
-}
-
-static int64_t mac_initial_h(void) {
-    NSRect vis = mac_screen_visible();
-    return (int64_t)(vis.size.height + 0.5);
-}
-
-/* `zeus.App`'s default size is the host's `window_size()` — the work area — so
-   a default app lands here with the whole work area and opens screen-filling.
-   Any other size is an explicit request, and gets a centered window instead. */
-static int mac_window_fills_screen(void) {
-    NSRect vis = mac_screen_visible();
-    int64_t want_w = zeus_window_width();
-    int64_t want_h = zeus_window_height();
-    if (vis.size.width < 1 || vis.size.height < 1) return 0;
-    return (int64_t)(vis.size.width + 0.5) == want_w &&
-           (int64_t)(vis.size.height + 0.5) == want_h;
-}
+static int64_t mac_initial_w(void) { return (int64_t)(mac_screen_visible().size.width + 0.5); }
+static int64_t mac_initial_h(void) { return (int64_t)(mac_screen_visible().size.height + 0.5); }
 
 static void mac_pick_image(char *out, int cap, int64_t *w, int64_t *h) {
     NSOpenPanel *p;
@@ -1916,12 +1380,10 @@ static void mac_pick_image(char *out, int cap, int64_t *w, int64_t *h) {
     [p setCanChooseFiles:YES];
     [p setCanChooseDirectories:NO];
     [p setAllowsMultipleSelection:NO];
-    [p setAllowedFileTypes:[NSArray arrayWithObjects:@"png", @"jpg", @"jpeg", @"gif",
-                                                     @"webp", nil]];
+    [p setAllowedFileTypes:@[ @"png", @"jpg", @"jpeg", @"gif", @"webp" ]];
     dirs = NSSearchPathForDirectoriesInDomains(NSDownloadsDirectory, NSUserDomainMask, YES);
-    if ([dirs count] > 0) {
+    if ([dirs count] > 0)
         [p setDirectoryURL:[NSURL fileURLWithPath:[dirs objectAtIndex:0]]];
-    }
     if ([p runModal] != NSModalResponseOK) return;
     path = [[p URL] path];
     utf = path ? [path UTF8String] : NULL;
@@ -1931,31 +1393,12 @@ static void mac_pick_image(char *out, int cap, int64_t *w, int64_t *h) {
     za_image_size(utf, w, h);
 }
 
-/* Phase 4: the ONE blit of a frame Zeus rasterized itself.
-
-   The Loam rasterizer has already produced every pixel, in its own BGRA8
-   premultiplied sRGB buffer. This wraps those bytes and hands the image to the
-   layer: nothing is redrawn here and no pixel is copied in our code — the data
-   provider reads the engine's buffer directly.
-
-   Two details that are easy to get wrong and expensive to get wrong:
-
-     * The CGImage WRAPPER is recreated per frame. Assigning the same CGImage
-       object back to `contents` is a pointer store that CoreAnimation treats as
-       "no change", so a reused wrapper would simply never repaint. The wrapper
-       is a header over the same bytes, so this costs an allocation, not a
-       20 MB copy.
-     * The data PROVIDER and the buffer are reused across frames, keyed by
-       `gen`, which the Loam side bumps only on reallocation (a size or
-       backing-scale change). That is the contract that keeps a steady frame
-       from churning a second full-size buffer. */
 static CGDataProviderRef blit_prov = NULL;
 static int64_t blit_gen = -1;
 
 static CGColorSpaceRef blit_srgb(void) {
     static CGColorSpaceRef cs;
     if (!cs) cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
-    /* A missing sRGB profile is not a reason to skip the frame. */
     if (!cs) cs = own_colorspace();
     return cs;
 }
@@ -1963,10 +1406,8 @@ static CGColorSpaceRef blit_srgb(void) {
 static int64_t mac_blit(void *ctx, const uint8_t *px, int64_t w, int64_t h,
                        int64_t gen, int64_t scale) {
     (void)ctx;
-    if (!px || w <= 0 || h <= 0) return 0;
-    /* Headless, or no window yet: say so rather than pretend we presented. */
-    if (loam_platform_plat_headless() || !g_view) return 0;
-    if (!g_view.layer) return 0;
+    if (!px || w <= 0 || h <= 0 || loam_platform_plat_headless() || !g_view || !g_view.layer)
+        return 0;
     if (!blit_prov || blit_gen != gen) {
         if (blit_prov) { CGDataProviderRelease(blit_prov); blit_prov = NULL; }
         blit_prov = CGDataProviderCreateWithData(NULL, (void *)px,
@@ -1974,8 +1415,6 @@ static int64_t mac_blit(void *ctx, const uint8_t *px, int64_t w, int64_t h,
         if (!blit_prov) return 0;
         blit_gen = gen;
     }
-    /* BGRA8 premultiplied, dimensions exactly the buffer's, scale exactly the
-       buffer's — so the compositor neither converts nor resamples (rules 1-3). */
     CGImageRef img = CGImageCreate((size_t)w, (size_t)h, 8, 32, (size_t)w * 4,
                                    blit_srgb(),
                                    kCGImageAlphaPremultipliedFirst |
@@ -1996,12 +1435,12 @@ static int64_t mac_blit(void *ctx, const uint8_t *px, int64_t w, int64_t h,
 
 __attribute__((constructor))
 static void zeus_mac_register(void) {
-    zeus_set_platform(mac_run, za_measure, mac_redraw);
+    zeus_bind_draw(za_draw_table());
+    zeus_set_platform(mac_run, za_measure, za_redraw);
     zeus_set_pick_image(mac_pick_image);
     zeus_set_image_size(za_image_size);
     {
-        ZeusMedia media;
-        memset(&media, 0, sizeof media);
+        ZeusMedia media = {0};
         za_media_table(&media);
         media.pick = mac_media_pick;
         media.pick_audio = mac_audio_pick;
@@ -2009,14 +1448,7 @@ static void zeus_mac_register(void) {
         media.fullscreen = mac_fullscreen;
         zeus_set_media(media);
     }
-    zeus_set_font_hooks(za_load_font, NULL);
-    /* The one blit of a frame: the engine hands its own BGRA8 buffer over, and
-       this wraps it in a CGImage over a reused data provider. */
+    zeus_set_font_hooks(za_load_font, za_set_family);
     zeus_set_blit(NULL, mac_blit);
-    /* `zeus.App` reads `window_size()` before any other host entry point runs,
-       so the lazy work-area getters must be known by load time or the engine
-       answers with the 640×480 placeholder and a default app opens as a small
-       centered window. This stores two pointers only; the AppKit read happens
-       on first call, and only on a real (non-headless) run. */
     zeus_set_initial_view(mac_initial_w, mac_initial_h);
 }

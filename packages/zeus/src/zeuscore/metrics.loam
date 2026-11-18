@@ -11,11 +11,30 @@
 // a bound font can differ slightly from what the host draws.
 
 import "platform.loam"
+import "std:buf"
 import "std:font"
 import "std:unicode"
 
 /** *Font bytes for in-tree metrics, or `""` when unbound. */
 let mut metrics_font: string = ""
+/** *Scratch buffer the web loader writes fetched font bytes into. */
+let mut font_buf: []u8 = []u8 {}
+
+/** *Ensure `font_buf` holds at least `n` bytes and return it (`zeus_font_reserve`). */
+fn font_reserve(n: int) -> []u8 {
+    if n > font_buf.len {
+        font_buf = buf.with_len(n)
+    }
+    return font_buf
+}
+
+/** *Bind the first `n` bytes of `font_buf` (`zeus_font_set`). */
+fn font_commit(n: int) -> int {
+    if n <= 0 || n > font_buf.len {
+        return 0
+    }
+    return bind(buf.prefix_to_string(&font_buf, n))
+}
 
 // --- text-measure cache ---------------------------------------------------
 // Layout measures every label each time it runs, and a wrap measures word by

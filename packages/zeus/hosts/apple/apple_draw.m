@@ -40,31 +40,26 @@ static void za_set_fill(CGContextRef cg, int64_t rgb, CGFloat a) {
 
 /* --- fonts and text ------------------------------------------------------ */
 
-/* Keyed by size and dropped when the family changes (`zeus_font_family()` is
-   global, see zeus_host.c). A missing face falls back to the system font. */
+static ZAFont *g_fonts[72];
+static NSString *g_font_family;
+
+void za_set_family(const char *fam) {
+    for (int k = 0; k < 72; k++) {
+        [g_fonts[k] release];
+        g_fonts[k] = nil;
+    }
+    [g_font_family release];
+    g_font_family = (fam && fam[0]) ? [[NSString alloc] initWithUTF8String:fam] : nil;
+}
+
 ZAFont *za_font(int64_t px) {
-    static ZAFont *cache[72];
-    static char family[128];
-    const char *fam = zeus_font_family();
-    int i = (int)px;
-    if (!fam) fam = "";
-    if (strcmp(fam, family) != 0) {
-        for (int k = 0; k < 72; k++) {
-            [cache[k] release];
-            cache[k] = nil;
-        }
-        strncpy(family, fam, sizeof family - 1);
-        family[sizeof family - 1] = 0;
-    }
-    if (i < 8) i = 8;
-    if (i > 71) i = 71;
-    if (!cache[i]) {
-        ZAFont *f = nil;
-        if (fam[0]) f = [ZAFont fontWithName:[NSString stringWithUTF8String:fam] size:(CGFloat)i];
+    int i = px < 8 ? 8 : (px > 71 ? 71 : (int)px);
+    if (!g_fonts[i]) {
+        ZAFont *f = g_font_family ? [ZAFont fontWithName:g_font_family size:(CGFloat)i] : nil;
         if (!f) f = [ZAFont systemFontOfSize:(CGFloat)i];
-        cache[i] = [f retain];
+        g_fonts[i] = [f retain];
     }
-    return cache[i];
+    return g_fonts[i];
 }
 
 /* Register a .ttf / .otf / .ttc with the process so `fontWithName:` finds it. */
@@ -369,54 +364,16 @@ static void za_shadow_direct(CGContextRef cg, int64_t x, int64_t y, int64_t w, i
 }
 
 #if !TARGET_OS_IPHONE
-/* Cached shadows (macOS). The direct path runs a Gaussian over the whole
- * padded rect on every call, and a scroll repaints every card each frame: the
- * gallery spent ~45 % of its frame in that convolution. The blur of a rounded
- * rect only varies near its corners, so one small template, drawn by the
- * direct path with the same radius, blur, colour, alpha and offset, is
- * nine-sliced onto any rect at least as large as its corner region. Corners
- * land 1:1 and edges stretch a band that is constant along the stretch, so the
- * result matches the direct path. Rects too small to slice, and
- * `ZEUS_SHADOW_DIRECT=1`, keep the direct path. */
 static NSMutableDictionary *g_shadow_cache;
 
-/* Template geometry for (radius, blur, offset): `margin` is how far it draws
-   past the rect, `inset` the corner region (past it every row / column of an
-   edge is the same), `side` the template's edge in points. */
-static void za_shadow_geom(int64_t radius, int64_t blur, int64_t dx, int64_t dy, int64_t *inset,
-                           int64_t *margin, int64_t *side) {
-    int64_t ax = dx < 0 ? -dx : dx, ay = dy < 0 ? -dy : dy;
-    int64_t d = ax > ay ? ax : ay;
-    int64_t reach = blur * 2 + 2; /* a Gaussian of this radius is spent within 2x */
-    int64_t m = reach + d;
-    int64_t k = m + radius + reach + d;
-    *margin = m;
-    *inset = k;
-    *side = 2 * k + 2;
-}
-
-/* Largest template kept, in pixels per side (~2.3 MB). A bigger one is built
-   at a coarser whole scale (1x on a 2x display): a wide blur is a smooth ramp,
-   so the upscale is invisible. Only one over the cap even at 1x goes direct. */
-#define SHADOW_TEMPLATE_MAX_PX 768
-
-/* The template for one (radius, colour, alpha, blur, offset, scale): `side`
-   points square, rows top-down. `scale` is its pixels per point; `ratio` is
-   that over the backing scale, which the pixel-space blur and offset are
-   multiplied by. */
 static CGImageRef za_shadow_template(CGFloat scale, CGFloat ratio, int64_t radius, int64_t rgb,
                                      int64_t alpha, int64_t blur, int64_t dx, int64_t dy,
-                                     int64_t *inset, int64_t *margin, int64_t *side_out) {
-    int64_t k, m, side;
+                                     int32_t m, int32_t side) {
     NSString *key = [NSString stringWithFormat:@"%lld,%lld,%lld,%lld,%lld,%lld,%.2f,%.3f",
                                                (long long)radius, (long long)rgb,
                                                (long long)alpha, (long long)blur, (long long)dx,
                                                (long long)dy, (double)scale, (double)ratio];
     CGImageRef ci;
-    za_shadow_geom(radius, blur, dx, dy, &k, &m, &side);
-    *inset = k;
-    *margin = m;
-    *side_out = side;
     if (!g_shadow_cache) g_shadow_cache = [[NSMutableDictionary alloc] init];
     ci = (CGImageRef)[g_shadow_cache objectForKey:key];
     if (ci) return ci;
@@ -428,8 +385,6 @@ static CGImageRef za_shadow_template(CGFloat scale, CGFloat ratio, int64_t radiu
                                                     kCGBitmapByteOrder32Host);
         CGColorSpaceRelease(cs);
         if (!bc) return NULL;
-        /* y-down at `scale` pixels per point: the space the view draws in, so
-           the direct path's blur and offset come out identical. */
         CGContextTranslateCTM(bc, 0, (CGFloat)pw);
         CGContextScaleCTM(bc, scale, -scale);
         za_shadow_direct(bc, m, m, side - 2 * m, side - 2 * m, radius, rgb, alpha,
@@ -438,18 +393,12 @@ static CGImageRef za_shadow_template(CGFloat scale, CGFloat ratio, int64_t radiu
         CGContextRelease(bc);
         if (!ci) return NULL;
     }
-    /* Elevations come from a short token list; the bound is for an app that
-       animates a shadow's blur or offset. */
     if ([g_shadow_cache count] >= 256) [g_shadow_cache removeAllObjects];
     [g_shadow_cache setObject:(id)ci forKey:key];
     CGImageRelease(ci);
     return ci;
 }
 
-/* One slice of the template, `src` in points from its top-left, into `dst`.
-   `CGContextDrawImage` puts row 0 at the rect's max y, so under a y-down CTM
-   the slice is flipped back. Nearest sampling is exact (corners 1:1, edges a
-   constant band) and skips the resampler. */
 static void za_shadow_slice(CGContextRef cg, CGImageRef ci, CGFloat scale, int smooth, int down,
                             CGRect src, CGRect dst) {
     CGImageRef part;
@@ -471,41 +420,27 @@ static void za_shadow_slice(CGContextRef cg, CGImageRef ci, CGFloat scale, int s
     CGImageRelease(part);
 }
 
-/* 1 when the template path drew the shadow. */
 static int za_shadow_cached(CGContextRef cg, int64_t x, int64_t y, int64_t w, int64_t h,
                             int64_t radius, int64_t rgb, int64_t alpha, int64_t blur, int64_t dx,
                             int64_t dy) {
-    static int direct = -1;
     CGAffineTransform ctm = CGContextGetCTM(cg);
     CGFloat scale = fabs(ctm.a), tscale, K, S, T, X0, Y0, X1, Y1, W, H;
-    int64_t k = 0, m = 0, side = 0;
+    int32_t k = 0, m = 0, side = 0, ts = 0;
     int smooth, down = ctm.d < 0;
     CGImageRef ci;
-    if (direct < 0) {
-        const char *e = getenv("ZEUS_SHADOW_DIRECT");
-        direct = (e && e[0] && e[0] != '0') ? 1 : 0;
-    }
-    if (direct) return 0;
-    /* Only the plain pixel grid takes the cache: a rotated or fractionally
-       scaled context would resample the template. */
     if (scale < 1.0 || ctm.b != 0 || ctm.c != 0 || fabs(fabs(ctm.d) - scale) > 0.001 ||
         fabs(scale - floor(scale + 0.5)) > 0.001)
         return 0;
-    /* The edge band must exist on both axes, and the template be small enough
-       to keep; a rect that fails either never builds one. */
-    za_shadow_geom(radius, blur, dx, dy, &k, &m, &side);
-    tscale = scale;
-    if ((CGFloat)side * tscale > (CGFloat)SHADOW_TEMPLATE_MAX_PX)
-        tscale = floor((CGFloat)SHADOW_TEMPLATE_MAX_PX / (CGFloat)side);
-    if (w + 2 * m < 2 * k + 2 || h + 2 * m < 2 * k + 2 || tscale < 1.0) return 0;
-    smooth = tscale != scale;
-    ci = za_shadow_template(tscale, tscale / scale, radius, rgb, alpha, blur, dx, dy, &k, &m,
-                            &side);
+    if (!loam_replay_shadow_geom((int32_t)w, (int32_t)h, (int32_t)radius, (int32_t)blur,
+                                 (int32_t)dx, (int32_t)dy, (int32_t)(scale + 0.5), &k, &m, &side,
+                                 &ts))
+        return 0;
+    tscale = (CGFloat)ts;
+    smooth = ts != (int32_t)(scale + 0.5);
+    ci = za_shadow_template(tscale, tscale / scale, radius, rgb, alpha, blur, dx, dy, m, side);
     if (!ci) return 0;
     K = (CGFloat)k;
     S = (CGFloat)side;
-    /* Only a ring `T` deep is drawn: past the margin and the rounded corner the
-       template is transparent. `T` <= `K` by construction. */
     T = (CGFloat)(m + radius);
     X0 = (CGFloat)(x - m);
     Y0 = (CGFloat)(y - m);
@@ -513,24 +448,26 @@ static int za_shadow_cached(CGContextRef cg, int64_t x, int64_t y, int64_t w, in
     H = (CGFloat)(h + 2 * m);
     X1 = X0 + W - K;
     Y1 = Y0 + H - K;
-#define SL(sx, sy, sw, sh, dx_, dy_, dw, dh)                                                       \
-    za_shadow_slice(cg, ci, tscale, smooth, down, CGRectMake(sx, sy, sw, sh),                     \
-                    CGRectMake(dx_, dy_, dw, dh))
-    /* top and bottom strips: corners 1:1, a 1-point column stretched between */
-    SL(0, 0, K, T, X0, Y0, K, T);
-    SL(K, 0, 1, T, X0 + K, Y0, W - 2 * K, T);
-    SL(S - K, 0, K, T, X1, Y0, K, T);
-    SL(0, S - T, K, T, X0, Y0 + H - T, K, T);
-    SL(K, S - T, 1, T, X0 + K, Y0 + H - T, W - 2 * K, T);
-    SL(S - K, S - T, K, T, X1, Y0 + H - T, K, T);
-    /* left and right strips between them: corner tails 1:1, a 1-point row */
-    SL(0, T, T, K - T, X0, Y0 + T, T, K - T);
-    SL(0, K, T, 1, X0, Y0 + K, T, H - 2 * K);
-    SL(0, S - K, T, K - T, X0, Y1, T, K - T);
-    SL(S - T, T, T, K - T, X0 + W - T, Y0 + T, T, K - T);
-    SL(S - T, K, T, 1, X0 + W - T, Y0 + K, T, H - 2 * K);
-    SL(S - T, S - K, T, K - T, X0 + W - T, Y1, T, K - T);
-#undef SL
+    {
+        const CGFloat s[12][8] = {
+            {0, 0, K, T, X0, Y0, K, T},
+            {K, 0, 1, T, X0 + K, Y0, W - 2 * K, T},
+            {S - K, 0, K, T, X1, Y0, K, T},
+            {0, S - T, K, T, X0, Y0 + H - T, K, T},
+            {K, S - T, 1, T, X0 + K, Y0 + H - T, W - 2 * K, T},
+            {S - K, S - T, K, T, X1, Y0 + H - T, K, T},
+            {0, T, T, K - T, X0, Y0 + T, T, K - T},
+            {0, K, T, 1, X0, Y0 + K, T, H - 2 * K},
+            {0, S - K, T, K - T, X0, Y1, T, K - T},
+            {S - T, T, T, K - T, X0 + W - T, Y0 + T, T, K - T},
+            {S - T, K, T, 1, X0 + W - T, Y0 + K, T, H - 2 * K},
+            {S - T, S - K, T, K - T, X0 + W - T, Y1, T, K - T},
+        };
+        for (int i = 0; i < 12; i++)
+            za_shadow_slice(cg, ci, tscale, smooth, down,
+                            CGRectMake(s[i][0], s[i][1], s[i][2], s[i][3]),
+                            CGRectMake(s[i][4], s[i][5], s[i][6], s[i][7]));
+    }
     return 1;
 }
 #endif
@@ -540,11 +477,6 @@ static void za_shadow(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h, int
     CGContextRef cg = za_cg();
     (void)ctx;
     if (!cg) return;
-    /* What gets drawn is clamped to half the short side (as CSS does); keying
-       templates on a nominal 999 pill radius built ~2000-point templates. */
-    if (radius > w / 2) radius = w / 2;
-    if (radius > h / 2) radius = h / 2;
-    if (radius < 0) radius = 0;
 #if !TARGET_OS_IPHONE
     if (blur > 0 && alpha > 0 && za_shadow_cached(cg, x, y, w, h, radius, rgb, alpha, blur, dx, dy))
         return;
@@ -669,44 +601,31 @@ static CGImageRef za_img_get(const char *src) {
     return img;
 }
 
-CGRect za_image_dest(int64_t x, int64_t y, int64_t w, int64_t h, int64_t iw, int64_t ih,
-                     int64_t fit) {
-    int64_t dw, dh;
-    if ((fit != 1 && fit != 2 && fit != 3) || iw <= 0 || ih <= 0)
-        return CGRectMake((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h);
-    if (fit == 3) return CGRectMake((CGFloat)x, (CGFloat)y, (CGFloat)iw, (CGFloat)ih);
-    if ((fit == 1 && iw * h <= ih * w) || (fit == 2 && iw * h >= ih * w)) {
-        dh = h;
-        dw = iw * h / ih;
-    } else {
-        dw = w;
-        dh = ih * w / iw;
-    }
-    return CGRectMake((CGFloat)(x + (w - dw) / 2), (CGFloat)(y + (h - dh) / 2), (CGFloat)dw,
-                      (CGFloat)dh);
-}
-
-void za_draw_cgimage(CGImageRef img, CGRect box, CGRect dest, int64_t radius, int64_t alpha,
-                     int smooth) {
+void za_draw_cgimage(CGImageRef img, int64_t x, int64_t y, int64_t w, int64_t h,
+                     int64_t iw, int64_t ih, int64_t radius, int64_t alpha,
+                     int64_t fit, int smooth) {
     CGContextRef cg = za_cg();
+    int32_t dx = 0, dy = 0, dw = 0, dh = 0;
     if (!img || !cg) return;
+    loam_replay_image_fit((int32_t)x, (int32_t)y, (int32_t)w, (int32_t)h, (int32_t)iw, (int32_t)ih,
+                          (int32_t)fit, &dx, &dy, &dw, &dh);
     CGContextSaveGState(cg);
-    za_add_rrect(cg, box, (CGFloat)radius);
+    za_add_rrect(cg, CGRectMake((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h), (CGFloat)radius);
     CGContextClip(cg);
     if (alpha >= 0 && alpha < 255) CGContextSetAlpha(cg, (CGFloat)alpha / 255.0);
     if (smooth) CGContextSetInterpolationQuality(cg, kCGInterpolationHigh);
     /* The context is y-down; CGContextDrawImage paints row 0 at the bottom of
        its rect, so flip about the destination. */
-    CGContextTranslateCTM(cg, dest.origin.x, dest.origin.y + dest.size.height);
+    CGContextTranslateCTM(cg, (CGFloat)dx, (CGFloat)(dy + dh));
     CGContextScaleCTM(cg, 1.0, -1.0);
-    CGContextDrawImage(cg, CGRectMake(0, 0, dest.size.width, dest.size.height), img);
+    CGContextDrawImage(cg, CGRectMake(0, 0, (CGFloat)dw, (CGFloat)dh), img);
     CGContextRestoreGState(cg);
 }
 
 static void za_image(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h, const char *src,
                      int64_t radius, int64_t alpha, int64_t fit) {
     CGImageRef img;
-    int64_t slot = za_media_slot_of(src);
+    int32_t slot = loam_imagesize_media_slot(za_str(src));
     (void)ctx;
     if (w <= 0 || h <= 0) return;
     if (slot >= 0) {
@@ -715,27 +634,15 @@ static void za_image(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h, cons
     }
     img = za_img_get(src);
     if (!img) return;
-    za_draw_cgimage(img, CGRectMake((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h),
-                    za_image_dest(x, y, w, h, (int64_t)CGImageGetWidth(img),
-                                  (int64_t)CGImageGetHeight(img), fit),
-                    radius, alpha, 0);
+    za_draw_cgimage(img, x, y, w, h, (int64_t)CGImageGetWidth(img),
+                    (int64_t)CGImageGetHeight(img), radius, alpha, fit, 0);
 }
 
-/* Intrinsic size for layout, in pixels as on the web (`naturalWidth`): from
-   the same cache `image` draws from, so a widthless `Image` keeps the source
-   aspect. A remote load reports 0 and answers on a later frame. A media slot
-   reports its video's display size. */
 void za_image_size(const char *src, int64_t *w, int64_t *h) {
     CGImageRef img;
-    int64_t slot = za_media_slot_of(src);
     if (w) *w = 0;
     if (h) *h = 0;
     if (!src) return;
-    if (slot >= 0) {
-        if (w) *w = za_media_get(slot, 4);
-        if (h) *h = za_media_get(slot, 5);
-        return;
-    }
     img = za_img_get(src);
     if (!img) return;
     if (w) *w = (int64_t)CGImageGetWidth(img);

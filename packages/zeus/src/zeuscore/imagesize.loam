@@ -12,6 +12,7 @@
 
 import "std:str"
 import "std:sys"
+import "mediastate.loam"
 import "platform.loam"
 
 /** *First `cap` bytes of `path`, or empty on wasm and on any failure. */
@@ -20,7 +21,17 @@ fn read_head(path: string, cap: int) -> []u8 {
 }
 
 /** *1 when the host has an image-size hook. Hosts bind it before `main`. */
-fn image_host_bound() -> int {}
+#[os("wasm")]
+fn image_host_bound() -> int {
+    return 1
+}
+
+#[os("posix", "windows")]
+fn image_host_bound() -> int {
+    return native_image_host_bound()
+}
+
+fn native_image_host_bound() -> int {}
 
 /** *-1 until the first `measure`. The hook is not rebound after that. */
 let mut host_bound: int = -1
@@ -203,7 +214,9 @@ fn little_endian_u16(bytes: &[4096]u8, index: int) -> int {
 }
 
 fn four_bytes(bytes: &[4096]u8, index: int, b0: int, b1: int, b2: int, b3: int) -> bool {
-    return int(bytes[index]) == b0 && int(bytes[index + 1]) == b1 && int(bytes[index + 2]) == b2 &&
+    return int(bytes[index]) == b0 &&
+        int(bytes[index + 1]) == b1 &&
+        int(bytes[index + 2]) == b2 &&
         int(bytes[index + 3]) == b3
 }
 
@@ -237,8 +250,7 @@ fn jpeg_size(bytes: &[4096]u8, count: int, width: &mut int, height: &mut int) {
                 index = index + 2
             } else if marker == 0xD9 || marker == 0xDA {
                 return
-            } else if marker >= 0xC0 && marker <= 0xCF && marker != 0xC4 && marker != 0xC8 &&
-                marker != 0xCC {
+            } else if marker >= 0xC0 && marker <= 0xCF && marker != 0xC4 && marker != 0xC8 && marker != 0xCC {
                 *height = big_endian_u16(bytes, index + 5)
                 *width = big_endian_u16(bytes, index + 7)
                 return
@@ -250,14 +262,22 @@ fn jpeg_size(bytes: &[4096]u8, count: int, width: &mut int, height: &mut int) {
 }
 
 fn png_signature(bytes: &[4096]u8) -> bool {
-    return int(bytes[0]) == 0x89 && int(bytes[1]) == 0x50 && int(bytes[2]) == 0x4E &&
-        int(bytes[3]) == 0x47 && int(bytes[4]) == 0x0D && int(bytes[5]) == 0x0A &&
-        int(bytes[6]) == 0x1A && int(bytes[7]) == 0x0A
+    return int(bytes[0]) == 0x89 &&
+        int(bytes[1]) == 0x50 &&
+        int(bytes[2]) == 0x4E &&
+        int(bytes[3]) == 0x47 &&
+        int(bytes[4]) == 0x0D &&
+        int(bytes[5]) == 0x0A &&
+        int(bytes[6]) == 0x1A &&
+        int(bytes[7]) == 0x0A
 }
 
 fn gif_signature(bytes: &[4096]u8) -> bool {
-    if int(bytes[0]) != 0x47 || int(bytes[1]) != 0x49 || int(bytes[2]) != 0x46 ||
-        int(bytes[3]) != 0x38 || int(bytes[5]) != 0x61 {
+    if int(bytes[0]) != 0x47 ||
+        int(bytes[1]) != 0x49 ||
+        int(bytes[2]) != 0x46 ||
+        int(bytes[3]) != 0x38 ||
+        int(bytes[5]) != 0x61 {
         return false
     }
     let version = int(bytes[4])
@@ -290,7 +310,8 @@ fn read_header(bytes: &[4096]u8, count: int, width: &mut int, height: &mut int) 
         jpeg_size(bytes, count, width, height)
         return
     }
-    if count >= 30 && four_bytes(bytes, 0, 0x52, 0x49, 0x46, 0x46) &&
+    if count >= 30 &&
+        four_bytes(bytes, 0, 0x52, 0x49, 0x46, 0x46) &&
         four_bytes(bytes, 8, 0x57, 0x45, 0x42, 0x50) {
         if four_bytes(bytes, 12, 0x56, 0x50, 0x38, 0x58) {
             *width = int(bytes[24]) + (int(bytes[25]) << 8) + (int(bytes[26]) << 16) + 1
@@ -396,8 +417,38 @@ fn read_source(src: string, width: &mut int, height: &mut int) {
     file_size(path, width, height)
 }
 
+/** *The media player slot a `"media:<n>"` source names, or -1. */
+fn media_slot(src: string) -> int {
+    if !c_prefix(src, "media:") {
+        return -1
+    }
+    let mut index = 6
+    while index < src.len && (src[index] == 32 || src[index] == 9) {
+        index = index + 1
+    }
+    let mut sign = 1
+    if index < src.len && src[index] == 45 {
+        sign = -1
+        index = index + 1
+    } else if index < src.len && src[index] == 43 {
+        index = index + 1
+    }
+    let mut val = 0
+    while index < src.len && src[index] >= 48 && src[index] <= 57 {
+        val = val * 10 + (src[index] - 48)
+        index = index + 1
+    }
+    return val * sign
+}
+
 /** *Host hook first. The header fallback runs only when either side is still unknown. */
 fn measure(src: string, width: &mut int, height: &mut int) {
+    let slot = media_slot(src)
+    if slot >= 0 {
+        *width = mediastate.get(slot, 4)
+        *height = mediastate.get(slot, 5)
+        return
+    }
     if host_bound < 0 {
         host_bound = image_host_bound()
     }
@@ -408,7 +459,11 @@ fn measure(src: string, width: &mut int, height: &mut int) {
     }
     if host_width <= 0 || host_height <= 0 {
         // `data:` is the hot path: one call, not the file/http dispatch.
-        if src.len >= 5 && src[0] == 100 && src[1] == 97 && src[2] == 116 && src[3] == 97 &&
+        if src.len >= 5 &&
+            src[0] == 100 &&
+            src[1] == 97 &&
+            src[2] == 116 &&
+            src[3] == 97 &&
             src[4] == 58 {
             data_uri_size(src, &mut host_width, &mut host_height)
         } else {

@@ -81,8 +81,8 @@ fn plat_run() {
 
 // What the Cocoa host draws a frame with, called from `engine_present`.
 #[os("macos")]
-#[c("maya_mac_stars")]
-fn host_stars() {}
+#[c("maya_mac_star")]
+fn host_star(x16: int, y16: int, s100: int, w100: int) {}
 #[os("macos")]
 #[c("maya_mac_clear")]
 fn host_clear() {}
@@ -101,6 +101,14 @@ fn host_hud(text: string) {}
 #[os("macos")]
 #[c("maya_mac_blit")]
 fn host_blit(rgba: []u8, w: int, h: int) {}
+
+let mut host_vw: int = 640
+let mut host_vh: int = 480
+let mut host_last_ms: i64 = 0
+let mut host_acc_ms: int = 0
+let mut host_mouse_x: int = 0
+let mut host_mouse_y: int = 0
+let mut host_have_mouse: int = 0
 
 /** *Draw the current frame through the Cocoa host: the 2D map (stars, orbit */
 /** *rings around the sun, discs, names) or the traced 3D frame, then the HUD. */
@@ -128,7 +136,16 @@ fn engine_present() {
 
 #[os("macos")]
 fn present_map() {
-    host_stars()
+    host_clear()
+    for i in 0..220 {
+        let mut h = wrapping_add(wrapping_mul(u32(i), u32(374761393)), u32(668265263))
+        h = h ^ (h >> u32(17))
+        let x16 = int(h & u32(4095)) * host_vw / 256
+        let y16 = int((h >> u32(12)) & u32(4095)) * host_vh / 256
+        let s100 = 60 + int((h >> u32(10)) & u32(7)) * 12
+        let w100 = 55 + int((h >> u32(6)) & u32(7)) * 6
+        host_star(x16, y16, s100, w100)
+    }
     let n = scene.sprite_count()
     let mut cx = 0
     let mut cy = 0
@@ -401,4 +418,109 @@ fn engine_fb_h() -> int {
 
 fn engine_fb_at(i: int) -> int {
     return scene.fb_at(i)
+}
+
+fn engine_draw(vw: int, vh: int) {
+    if vw < 1 || vh < 1 {
+        return
+    }
+    host_vw = vw
+    host_vh = vh
+    let now = plat_now_ms()
+    if host_last_ms == 0 {
+        host_last_ms = now
+    }
+    let mut dt_ms = int(now - host_last_ms)
+    host_last_ms = now
+    if dt_ms < 1 {
+        dt_ms = 1
+    }
+    scene.note_present(dt_ms)
+    if dt_ms > 250 {
+        dt_ms = 250
+    }
+    scene.set_viewport(vw, vh)
+    if scene.is_map() != 0 {
+        host_acc_ms = host_acc_ms + dt_ms
+        while host_acc_ms >= 16 {
+            scene.fixed_update(16)
+            host_acc_ms = host_acc_ms - 16
+        }
+    } else {
+        engine_frame()
+    }
+    engine_present()
+}
+
+fn engine_key_down(key: int) -> int {
+    if scene.is_map() != 0 {
+        if key == 32 || key == 43 || key == 61 || key == 45 || key == 95 {
+            scene.input_key(key)
+            return 1
+        }
+        return 0
+    }
+    let mut k = key
+    if k == 63234 {
+        k = 97
+    } else if k == 63235 {
+        k = 100
+    } else if k == 63232 {
+        k = 119
+    } else if k == 63233 {
+        k = 115
+    }
+    let lo = if k >= 65 && k <= 90 { k + 32 } else { k }
+    if lo == 97 ||
+        lo == 100 ||
+        lo == 119 ||
+        lo == 115 ||
+        lo == 113 ||
+        lo == 101 ||
+        lo == 114 ||
+        k == 43 ||
+        k == 61 ||
+        k == 45 ||
+        k == 95 {
+        scene.input_key(k)
+        return 1
+    }
+    return 0
+}
+
+fn engine_mouse_down(x: int, y: int) {
+    host_mouse_x = x
+    host_mouse_y = y
+    host_have_mouse = 1
+}
+
+fn engine_mouse_drag(x: int, y: int, pan: int) -> int {
+    if host_have_mouse == 0 {
+        host_mouse_x = x
+        host_mouse_y = y
+        host_have_mouse = 1
+        return 0
+    }
+    let dx = x - host_mouse_x
+    let dy = y - host_mouse_y
+    host_mouse_x = x
+    host_mouse_y = y
+    if scene.is_map() != 0 {
+        return 0
+    }
+    if pan != 0 {
+        scene.cam_pan(dx, 0 - dy)
+    } else {
+        scene.cam_orbit(dx, 0 - dy)
+    }
+    return 1
+}
+
+fn engine_wheel(dy100: int, precise: int) -> int {
+    if scene.is_map() != 0 {
+        return 0
+    }
+    let d = if precise != 0 { dy100 } else { dy100 * 4 }
+    scene.cam_zoom(d)
+    return 1
 }
